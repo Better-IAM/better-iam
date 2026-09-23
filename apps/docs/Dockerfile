@@ -20,6 +20,11 @@ ARG DOCS_SITE_URL
 ARG RAILWAY_PUBLIC_DOMAIN
 ARG NEXT_PUBLIC_DOCS_REPOSITORY_URL=https://github.com/Better-IAM/better-iam
 ARG NEXT_PUBLIC_DOCS_REPOSITORY_BRANCH=main
+# Optional: the site's X account on link cards, and search console ownership tokens.
+ARG DOCS_X_HANDLE
+ARG DOCS_GOOGLE_SITE_VERIFICATION
+ARG DOCS_BING_SITE_VERIFICATION
+ARG DOCS_YANDEX_VERIFICATION
 RUN pnpm --filter @better-iam/docs build
 
 ENV NODE_ENV=production

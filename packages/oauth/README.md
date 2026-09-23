@@ -13,4 +13,4 @@ Use `better-iam/oauth` from the umbrella installation or install this package di
 
 See the repository's `docs/protocols.md` and runnable examples for integration and protocol limits.
 
-License: MIT.
+License: Apache-2.0.

@@ -23,4 +23,4 @@ Prefer one adapter instance per process and database: two instances on the same 
 
 `migrate()` is idempotent and checks the persisted schema version. `close()` releases the client. Never call `close()` from inside a transaction. Uniqueness errors expose `IamError` code `CONFLICT`; lock timeouts expose `STORAGE_BUSY`. Retry the entire operation after a busy response, not an isolated write.
 
-License: MIT.
+License: Apache-2.0.

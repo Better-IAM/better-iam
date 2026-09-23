@@ -1,7 +1,8 @@
 import type { ReactNode } from 'react';
-import { Package } from 'lucide-react';
+import { RiBox3Line } from 'react-icons/ri';
 import packages from '@/generated/packages.json';
 import { sourceFileUrl } from '@/lib/shared';
+import { cx } from '@/utils/cx';
 
 interface PackageInfo {
   name: string;
@@ -14,7 +15,8 @@ interface PackageInfo {
   peerDependencies: string[];
 }
 
-const cardClass = 'group flex flex-col gap-2 rounded-xl border bg-fd-card p-4 transition-colors';
+const cardClass =
+  'group flex flex-col gap-2 rounded-2xl border border-border-button-default bg-background-primary-default p-4 shadow-xs transition-[background-color,border-color]';
 
 /** A package card links to its manifest only when a public repository is configured. */
 function CardShell({ href, children }: { href?: string; children: ReactNode }) {
@@ -23,7 +25,10 @@ function CardShell({ href, children }: { href?: string; children: ReactNode }) {
       href={href}
       target="_blank"
       rel="noreferrer noopener"
-      className={`${cardClass} hover:border-fd-primary/40`}
+      className={cx(
+        cardClass,
+        'hover:border-border-button-hover hover:bg-background-primary-hover',
+      )}
     >
       {children}
     </a>
@@ -40,19 +45,19 @@ export function PackageTable({ filter }: { filter?: string[] }) {
       {list.map((pkg) => (
         <CardShell key={pkg.name} href={sourceFileUrl(`${pkg.directory}/package.json`)}>
           <div className="flex items-center gap-2">
-            <Package className="size-4 text-fd-primary" />
-            <code className="font-mono text-sm font-medium">{pkg.name}</code>
-            <span className="ms-auto font-mono text-xs text-fd-muted-foreground">
+            <RiBox3Line className="size-4 text-foreground-icon-primary" aria-hidden />
+            <code className="font-mono text-body-medium">{pkg.name}</code>
+            <span className="ms-auto font-mono text-caption-1-regular text-text-secondary">
               {pkg.version}
             </span>
           </div>
-          <p className="text-sm text-fd-muted-foreground">{pkg.description}</p>
+          <p className="text-body-regular text-text-secondary">{pkg.description}</p>
           {pkg.exports.length > 1 ? (
             <div className="flex flex-wrap gap-1">
               {pkg.exports.slice(1).map((entry) => (
                 <code
                   key={entry}
-                  className="rounded bg-fd-muted px-1.5 py-0.5 font-mono text-[0.7rem] text-fd-muted-foreground"
+                  className="rounded-md bg-background-secondary-default px-1.5 py-0.5 font-mono text-[0.7rem] text-text-secondary"
                 >
                   {entry.slice(pkg.name.length)}
                 </code>
@@ -60,7 +65,7 @@ export function PackageTable({ filter }: { filter?: string[] }) {
             </div>
           ) : null}
           {pkg.peerDependencies.length ? (
-            <p className="text-xs text-fd-muted-foreground">
+            <p className="text-caption-1-regular text-text-secondary">
               Peers: <span className="font-mono">{pkg.peerDependencies.join(', ')}</span>
             </p>
           ) : null}

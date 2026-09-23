@@ -1,8 +1,8 @@
 'use client';
 
-import { Check, Copy } from 'lucide-react';
+import { RiCheckLine, RiFileCopyLine } from 'react-icons/ri';
 import { useCopyButton } from 'fumadocs-ui/utils/use-copy-button';
-import { cn } from '@/lib/cn';
+import { cx } from '@/utils/cx';
 
 export function CopyText({
   text,
@@ -20,12 +20,16 @@ export function CopyText({
       aria-label={checked ? 'Copied' : label}
       title={checked ? 'Copied' : label}
       onClick={onClick}
-      className={cn(
-        'inline-flex size-6 shrink-0 items-center justify-center rounded-md text-fd-muted-foreground transition-colors hover:bg-fd-accent hover:text-fd-accent-foreground',
+      className={cx(
+        'inline-flex size-6 shrink-0 items-center justify-center rounded-md text-foreground-icon-secondary transition-colors hover:bg-background-secondary-default hover:text-foreground-icon-primary',
         className,
       )}
     >
-      {checked ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
+      {checked ? (
+        <RiCheckLine className="size-3.5" aria-hidden />
+      ) : (
+        <RiFileCopyLine className="size-3.5" aria-hidden />
+      )}
     </button>
   );
 }

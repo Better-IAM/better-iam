@@ -25,6 +25,25 @@ pnpm --filter @better-iam/docs build
 | `components/`                                                                                   | Site and MDX components (`playground/` is the policy playground, `home/` the landing page)             |
 | `proxy.ts`                                                                                      | `/docs/x.md` and `Accept: text/markdown` serve a page's Markdown                                       |
 
+## Design system
+
+The site is monochrome and built on [BoardUI](https://www.boardui.com): its components are source files in this
+app (`npx boardui@latest add <name>` from `apps/docs` adds more), and every color is a BoardUI semantic token.
+
+- `styles/theme.css`, `styles/typography.css`: BoardUI's tokens and type ramp, unmodified (`text-body-medium`,
+  `bg-background-primary-default`, `border-border-button-default`, ...).
+- `styles/monochrome.css`: the site's layer on top. It turns BoardUI's accent ramp neutral (black controls in light
+  mode, white in dark), and maps Fumadocs' `--color-fd-*` palette onto the same tokens so the docs shell matches.
+- `components/base/*`, `utils/cx.ts`: BoardUI components. Two local changes, marked in the source: the primary
+  button label and the selected switch thumb read tokens, so they invert correctly in dark mode. Icons come from
+  `react-icons/ri` (the same Remix Icon set BoardUI uses) instead of `@remixicon/react`.
+- `components/application/theme/theme-toggle.tsx`: BoardUI's theme toggle, backed by next-themes.
+- `components/site/*`: the marketing shell (header, footer, Lenis smooth scrolling, and the rail frame every
+  landing band aligns to). `components/docs/*`: BoardUI versions of Fumadocs' `Callout` and `Card`.
+- `lib/code-themes.ts`: grayscale Shiki themes for every code block.
+
+No hues and no radial gradients: states are told apart by weight (solid ink, outline, dashed, hatched).
+
 ## Deploying
 
 The package is private: `pnpm publish -r` skips it. [`Dockerfile`](Dockerfile) builds the site from the repository
@@ -35,10 +54,32 @@ checks `/` as the health check, and redeploys only when the docs, the packages, 
 Generate a public domain; it becomes the site's canonical URL (sitemap, `llms.txt`, social cards) on the next
 deploy. Optional service variables, read at build time:
 
-| Variable                          | Default                                            | Purpose                                       |
-| --------------------------------- | -------------------------------------------------- | --------------------------------------------- |
-| `DOCS_SITE_URL`                   | `https://$RAILWAY_PUBLIC_DOMAIN`                   | Canonical origin, for example a custom domain |
-| `NEXT_PUBLIC_DOCS_REPOSITORY_URL` | `https://github.com/Better-IAM/better-iam` (image) | "Edit this page", source, and issue links     |
+| Variable                          | Default                                    | Purpose                                                                              |
+| --------------------------------- | ------------------------------------------ | ------------------------------------------------------------------------------------ |
+| `DOCS_SITE_URL`                   | `https://$RAILWAY_PUBLIC_DOMAIN`           | Canonical origin, for example a custom domain                                        |
+| `NEXT_PUBLIC_DOCS_REPOSITORY_URL` | `https://github.com/Better-IAM/better-iam` | GitHub button, "Edit this page", source, and issue links                             |
+| `DOCS_X_HANDLE`                   | unset                                      | The site's X account (`@name`) as `twitter:site` and `twitter:creator` on link cards |
+| `DOCS_GOOGLE_SITE_VERIFICATION`   | unset                                      | Google Search Console ownership token                                                |
+| `DOCS_BING_SITE_VERIFICATION`     | unset                                      | Bing Webmaster Tools ownership token (`msvalidate.01`)                               |
+| `DOCS_YANDEX_VERIFICATION`        | unset                                      | Yandex Webmaster ownership token                                                     |
+
+## Search and social metadata
+
+Every page has a title, description, canonical URL, keywords, Open Graph and X card tags, and a 1200×630 social
+card. Facebook, LinkedIn, X, Slack, Discord, iMessage, WhatsApp, Telegram, Bluesky, and Mastodon all read these
+tags. Docs pages add `article:*` tags, Slack's "Section" and "Reading time" labels, and schema.org `TechArticle` and
+`BreadcrumbList` data. The home page describes the site, the software, and its creator in JSON-LD.
+
+| Path                                                                               | What it is                                                                                   |
+| ---------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| `lib/metadata.ts`                                                                  | Site title, description, and keywords; `pageMetadata()` for every page; JSON-LD builders     |
+| `lib/docs-seo.ts`                                                                  | A docs page's document title, section trail, keywords, and breadcrumbs                       |
+| `lib/og.tsx`, `lib/og-fonts.ts`                                                    | The social card renderer (Inter and JetBrains Mono, fetched from Google Fonts at build time) |
+| `app/og/docs/[...slug]/route.tsx`, `app/og/[image]/route.tsx`                      | Cards for docs pages (`/og/docs/{slug}/image.png`), the home page, and the playground        |
+| `app/manifest.ts`, `public/{favicon.ico,icon.svg,apple-touch-icon.png,icon-*.png}` | Web app manifest and icons                                                                   |
+
+The icons are drawn from the logo mark in `components/logo.tsx`. After changing the mark, run
+`node apps/docs/scripts/generate-icons.mjs` to redraw every icon for the docs site and the console.
 
 ## How the reference is generated
 
@@ -70,8 +111,9 @@ Set `DOCS_COVERAGE=1` to list functions, codes, and commands that still lack a c
 ```yaml
 ---
 title: Just-in-time elevation # short, sentence case
+metaTitle: Just-in-time privileged access # optional: tab, search result, and link-card title when `title` is too terse out of context
 description: Eligible bindings that people activate for a bounded time, with justification, MFA, and approval.
-icon: KeyRound # optional, a canonical lucide icon name (see below)
+icon: KeyRound # optional, a name exported from lib/icons.ts (see below)
 status: new # optional: new | beta | experimental | deprecated (sidebar + header badge)
 packages: ['@better-iam/server'] # optional: packages the page documents
 sources: ['packages/server/src/api/bindings.ts'] # optional: repository files the page was written from
@@ -79,7 +121,8 @@ sources: ['packages/server/src/api/bindings.ts'] # optional: repository files th
 ```
 
 The description is one sentence, at most about 160 characters: it is the search snippet, the social card, and
-the `llms.txt` summary.
+the `llms.txt` summary. The document title is `metaTitle` (or `title`) plus " | Better IAM", so keep `metaTitle`
+under about 47 characters. API reference groups are titled "{group} API" automatically.
 
 **Voice.** Second person, present tense, short sentences. Explain what a feature is for before how to call it.
 Sentence-case headings. `##` headings are the page's table of contents; use `###` below them. No marketing
@@ -111,10 +154,11 @@ braces or angle brackets in backticks, write "less than" in words, or escape as 
 | ` ```mermaid ` fences                                                                | Diagrams (flowcharts, sequence diagrams, state diagrams).                                                                                                                 |
 | ` ```npm ` fences                                                                    | `npm i x` rendered as npm / pnpm / yarn / bun tabs.                                                                                                                       |
 
-Icons for `Feature`/`Card` props come from `lucide-react` and must be imported at the top of the page:
-`import { KeyRound } from 'lucide-react';`. For frontmatter and `meta.json` `icon` fields use names that exist in
-lucide's canonical `icons` map (aliases such as `Building2` are not found; check with
-`node -e "import('lucide-react').then(m => console.log(!!m.icons['KeyRound']))"` from `apps/docs`).
+Icons come from the site's registry, `lib/icons.ts`, which maps semantic names to react-icons (Remix Icon, the set
+BoardUI is drawn with; Simple Icons for framework logos). Import them at the top of the page for `Feature`/`Card`
+props: `import { KeyRound } from '@/lib/icons';`. Frontmatter and `meta.json` `icon` fields use the same names; an
+unknown name logs `[icons] Unknown icon` during the build. To add one, export it from `lib/icons.ts`
+(`RiXxxLine as Name` from `react-icons/ri`).
 
 **Code blocks** always carry a language and, when it helps, a title: ` ```ts title="lib/iam.ts" `.
 Shiki notation works in comments: `// [!code highlight]`, `// [!code ++]`, `// [!code --]`, `// [!code focus]`.

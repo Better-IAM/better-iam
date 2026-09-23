@@ -4,6 +4,7 @@ import type { ReactNode } from 'react';
 import { highlight } from 'fumadocs-core/highlight';
 import { CodeBlock, Pre } from 'fumadocs-ui/components/codeblock';
 import { TypeTable, type TypeNode } from 'fumadocs-ui/components/type-table';
+import { codeThemes } from '@/lib/code-themes';
 
 interface Schema {
   $ref?: string;
@@ -226,7 +227,7 @@ async function HttpExample({ id, input, open }: { id: string; input?: Schema; op
   ].join('\n');
   const rendered = await highlight(code, {
     lang: 'bash',
-    themes: { light: 'github-light', dark: 'github-dark' },
+    themes: codeThemes,
     defaultColor: false,
     components: { pre: (props) => <Pre {...props} /> },
   });

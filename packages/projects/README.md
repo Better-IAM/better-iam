@@ -33,4 +33,4 @@ The plugin implements the plugin `purge` callback: when `iam.purgeDeleted()` rem
 
 The default hierarchy `root → organization → project` places projects under any tenant, including the installation root tenant; tenant type does not restrict project records. Tenant isolation comes from the server's authorization service, not from this plugin.
 
-License: MIT.
+License: Apache-2.0.

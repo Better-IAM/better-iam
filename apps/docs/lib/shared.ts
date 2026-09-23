@@ -4,6 +4,8 @@ export const appName = 'Better IAM';
 export const appDescription =
   'Embeddable authentication, identity provisioning, and access management for TypeScript applications.';
 export const version = '0.1.0';
+/** Better IAM's creator, credited in page metadata, llms.txt, the site and docs footers, every docs page, and social cards. */
+export const creator = 'Sean Filimon';
 
 export const docsRoute = '/docs';
 export const docsImageRoute = '/og/docs';
@@ -18,12 +20,13 @@ export const siteUrl = (
 ).replace(/\/$/, '');
 
 /**
- * The public repository, for "Edit this page", source-file, and issue links, for example
- * `NEXT_PUBLIC_DOCS_REPOSITORY_URL=https://github.com/acme/better-iam`. Unset (the default), the site shows no
- * repository links at all rather than guessing a URL that may not exist.
+ * The public repository, for the header's GitHub button and the "Edit this page", source-file, and issue links.
+ * Defaults to github.com/Better-IAM/better-iam (as the Dockerfile does); a fork sets
+ * `NEXT_PUBLIC_DOCS_REPOSITORY_URL=https://github.com/acme/better-iam`.
  */
-export const repositoryUrl =
-  process.env.NEXT_PUBLIC_DOCS_REPOSITORY_URL?.replace(/\/$/, '') || undefined;
+export const repositoryUrl: string =
+  process.env.NEXT_PUBLIC_DOCS_REPOSITORY_URL?.replace(/\/$/, '') ||
+  'https://github.com/Better-IAM/better-iam';
 export const repositoryBranch = process.env.NEXT_PUBLIC_DOCS_REPOSITORY_BRANCH || 'main';
 
 /** A link to a file in the repository, or undefined when no repository is configured. */

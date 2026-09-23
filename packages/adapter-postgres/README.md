@@ -24,4 +24,4 @@ The shared generic record schema has no application foreign keys. Better IAM ser
 
 Integration tests use a dedicated database configured through `BETTER_IAM_POSTGRES_URL`. They skip explicitly when this environment variable is absent and clean only their randomly named test collection.
 
-License: MIT.
+License: Apache-2.0.

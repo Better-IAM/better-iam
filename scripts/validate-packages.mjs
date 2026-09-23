@@ -9,8 +9,8 @@ for (const name of await readdir(resolve(root, 'packages'))) {
   const directory = resolve(root, 'packages', name);
   const manifest = JSON.parse(await readFile(resolve(directory, 'package.json'), 'utf8'));
   versions.add(manifest.version);
-  if (manifest.license !== 'MIT' || manifest.private)
-    throw new Error(`${name}: expected publishable MIT package`);
+  if (manifest.license !== 'Apache-2.0' || manifest.private)
+    throw new Error(`${name}: expected publishable Apache-2.0 package`);
   if (manifest.publishConfig?.access !== 'public' || !manifest.repository?.directory)
     throw new Error(`${name}: expected publishConfig.access "public" and repository.directory`);
   for (const entry of Object.values(manifest.exports))

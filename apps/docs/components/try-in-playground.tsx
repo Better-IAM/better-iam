@@ -1,6 +1,8 @@
 import type { ReactNode } from 'react';
 import Link from 'next/link';
-import { FlaskConical } from 'lucide-react';
+import { RiArrowRightLine, RiFlaskLine } from 'react-icons/ri';
+import { buttonStyles } from '@/components/base/buttons/button';
+import { cx } from '@/utils/cx';
 
 const pretty = (value: unknown) => JSON.stringify(value, null, 2);
 
@@ -48,10 +50,19 @@ export function TryInPlayground({
   return (
     <Link
       href={playgroundUrl({ grants, boundaries, action, resource, context })}
-      className="not-prose -mt-2 mb-6 inline-flex items-center gap-1.5 rounded-lg border bg-fd-card px-3 py-1.5 text-sm text-fd-primary transition-colors hover:border-fd-primary/40 hover:bg-fd-accent"
+      className={cx(
+        buttonStyles.base,
+        buttonStyles.size.small,
+        buttonStyles.variant.secondary,
+        'not-prose group/try -mt-2 mb-6 gap-1.5 px-2.5 no-underline',
+      )}
     >
-      <FlaskConical className="size-4" />
-      {children}
+      <RiFlaskLine className="size-4" aria-hidden />
+      <span className={buttonStyles.label.small}>{children}</span>
+      <RiArrowRightLine
+        className="size-4 transition-transform group-hover/try:translate-x-0.5"
+        aria-hidden
+      />
     </Link>
   );
 }

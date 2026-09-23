@@ -173,4 +173,4 @@ export class InvoicesController {
 
 This path imports only `@better-iam/server/assertions`, so the verifying service never loads the IAM server or its native dependencies. The IAM server is never contacted, so a revocation takes effect once the short-lived assertion expires.
 
-License: MIT.
+License: Apache-2.0.

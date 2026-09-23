@@ -1,31 +1,39 @@
 import Link from 'next/link';
-import { BookOpen, Globe, KeyRound, Lock, LockOpen, Server } from 'lucide-react';
+import {
+  RiBookOpenLine,
+  RiGlobalLine,
+  RiKey2Line,
+  RiLock2Line,
+  RiLockUnlockLine,
+  RiServerLine,
+} from 'react-icons/ri';
 import { CopyText } from '@/components/copy-text';
 import { apiUsage } from '@/lib/api-usage';
-import { cn } from '@/lib/cn';
+import { cx } from '@/utils/cx';
 
 const basePath = '/api/iam';
 
+/** Who may call a route, told apart by weight: credential-gated is solid ink, public outlined, server-only muted. */
 function credentialBadge(credential: string) {
   if (credential === 'none')
     return {
-      icon: LockOpen,
+      icon: RiLockUnlockLine,
       label: 'Public',
       title: 'Callable without a credential',
-      className: 'text-sky-600 ring-sky-500/25 bg-sky-500/10 dark:text-sky-400',
+      className: 'border border-text-primary text-text-primary',
     };
   if (credential === 'required')
     return {
-      icon: Lock,
+      icon: RiLock2Line,
       label: 'Credential',
       title: 'Requires a session, API key, or assumed-role credential',
-      className: 'text-fd-primary ring-fd-primary/25 bg-fd-primary/10',
+      className: 'bg-text-primary text-background-full',
     };
   return {
-    icon: Server,
+    icon: RiServerLine,
     label: 'Server only',
     title: 'Not exposed over HTTP; call it from trusted server code',
-    className: 'text-fd-muted-foreground ring-fd-border bg-fd-muted',
+    className: 'bg-background-secondary-default text-text-secondary',
   };
 }
 
@@ -51,14 +59,14 @@ export async function ApiEndpoint({
     <>
       <Endpoint group={group} method={method} http={http} path={path} badge={badge} />
       {guides.length ? (
-        <p className="not-prose -mt-2 mb-4 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-fd-muted-foreground">
-          <BookOpen className="size-3.5" />
+        <p className="not-prose -mt-2 mb-4 flex flex-wrap items-center gap-x-2 gap-y-1 text-caption-1-regular text-text-secondary">
+          <RiBookOpenLine className="size-3.5" aria-hidden />
           <span>Used in</span>
           {guides.slice(0, 6).map((guide, index) => (
             <span key={guide.url}>
               <Link
                 href={guide.url}
-                className="text-fd-foreground hover:text-fd-primary hover:underline"
+                className="text-text-primary underline-offset-2 hover:underline"
               >
                 {guide.title}
               </Link>
@@ -86,21 +94,21 @@ function Endpoint({
   badge: ReturnType<typeof credentialBadge>;
 }) {
   return (
-    <div className="not-prose my-4 flex flex-col gap-2 rounded-xl border bg-fd-card p-2 text-sm sm:flex-row sm:items-center">
+    <div className="not-prose my-4 flex flex-col gap-2 rounded-2xl border border-border-button-default bg-surface-sunken p-2 text-body-regular sm:flex-row sm:items-center">
       {path ? (
-        <div className="flex min-w-0 flex-1 items-center gap-2 rounded-lg bg-fd-background px-2 py-1.5 ring-1 ring-fd-border">
-          <span className="rounded-md bg-emerald-500/12 px-1.5 py-0.5 font-mono text-[0.7rem] font-semibold text-emerald-700 dark:text-emerald-400">
+        <div className="flex min-w-0 flex-1 items-center gap-2 rounded-xl border border-border-button-default bg-background-primary-default px-2 py-1.5 shadow-xs">
+          <span className="rounded-md bg-text-primary px-1.5 py-0.5 font-mono text-[0.7rem] font-semibold text-background-full">
             POST
           </span>
           <code className="min-w-0 flex-1 truncate font-mono text-[0.8rem]">{path}</code>
           <CopyText text={path} label="Copy route" />
         </div>
       ) : (
-        <div className="flex flex-1 items-center gap-2 px-2 py-1.5 text-fd-muted-foreground">
-          <Server className="size-4" />
+        <div className="flex flex-1 items-center gap-2 px-2 py-1.5 text-text-secondary">
+          <RiServerLine className="size-4" aria-hidden />
           <span>
             Call{' '}
-            <code className="font-mono text-[0.8rem] text-fd-foreground">{`iam.api.${group}.${method}()`}</code>{' '}
+            <code className="font-mono text-[0.8rem] text-text-primary">{`iam.api.${group}.${method}()`}</code>{' '}
             from server code.
           </span>
         </div>
@@ -109,20 +117,20 @@ function Endpoint({
         {http ? (
           <span
             title="Browser client call"
-            className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 font-mono text-[0.75rem] text-fd-muted-foreground ring-1 ring-fd-border ring-inset"
+            className="inline-flex items-center gap-1.5 rounded-lg border border-border-button-default bg-background-primary-default px-2 py-1 font-mono text-[0.75rem] text-text-secondary"
           >
-            <Globe className="size-3.5" />
+            <RiGlobalLine className="size-3.5" aria-hidden />
             {`client.${group}.${method}()`}
           </span>
         ) : null}
         <span
           title={badge.title}
-          className={cn(
-            'inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium ring-1 ring-inset',
+          className={cx(
+            'inline-flex items-center gap-1 rounded-lg px-2 py-1 text-caption-1-medium',
             badge.className,
           )}
         >
-          <badge.icon className="size-3.5" />
+          <badge.icon className="size-3.5" aria-hidden />
           {badge.label}
         </span>
       </div>
@@ -140,31 +148,34 @@ export function ApiGroupSummary({
   routed: boolean;
 }) {
   const items = [
-    { icon: KeyRound, label: 'Server', value: `iam.api.${group}` },
+    { icon: RiKey2Line, label: 'Server', value: `iam.api.${group}` },
     ...(routed
       ? [
-          { icon: Globe, label: 'Client', value: `client.${group}` },
-          { icon: Server, label: 'HTTP', value: `POST ${basePath}/${group}/*` },
+          { icon: RiGlobalLine, label: 'Client', value: `client.${group}` },
+          { icon: RiServerLine, label: 'HTTP', value: `POST ${basePath}/${group}/*` },
         ]
       : []),
   ];
   return (
-    <div className="not-prose my-6 grid gap-px overflow-hidden rounded-xl border bg-fd-border sm:grid-cols-4">
-      <div className="flex flex-col gap-1 bg-fd-card p-3">
-        <span className="text-xs text-fd-muted-foreground">Methods</span>
-        <span className="text-xl font-semibold tabular-nums">{methods}</span>
+    <div className="not-prose my-6 grid gap-px overflow-hidden rounded-2xl border border-border-button-default bg-separator-border sm:grid-cols-4">
+      <div className="flex flex-col gap-1 bg-background-primary-default p-3">
+        <span className="text-caption-1-regular text-text-secondary">Methods</span>
+        <span className="text-title-2-semibold tabular-nums">{methods}</span>
       </div>
       {items.map((item) => (
-        <div key={item.label} className="flex min-w-0 flex-col gap-1 bg-fd-card p-3">
-          <span className="inline-flex items-center gap-1 text-xs text-fd-muted-foreground">
-            <item.icon className="size-3.5" />
+        <div
+          key={item.label}
+          className="flex min-w-0 flex-col gap-1 bg-background-primary-default p-3"
+        >
+          <span className="inline-flex items-center gap-1 text-caption-1-regular text-text-secondary">
+            <item.icon className="size-3.5" aria-hidden />
             {item.label}
           </span>
           <code className="truncate font-mono text-[0.8rem]">{item.value}</code>
         </div>
       ))}
       {!routed ? (
-        <div className="col-span-2 flex items-center bg-fd-card p-3 text-xs text-fd-muted-foreground">
+        <div className="col-span-2 flex items-center bg-background-primary-default p-3 text-caption-1-regular text-text-secondary">
           This group has no HTTP routes; call it from trusted server code.
         </div>
       ) : null}

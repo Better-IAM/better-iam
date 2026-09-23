@@ -17,6 +17,9 @@ import {
   TagsListItem,
   type SharedProps,
 } from 'fumadocs-ui/components/dialog/search';
+import { Kbd } from '@/components/base/kbd/kbd';
+
+const kbd = 'min-w-5 bg-background-secondary-default px-1.5 font-mono text-text-secondary';
 
 const tags = [
   { name: 'Guides', value: 'guides' },
@@ -68,10 +71,10 @@ export default function Search(props: SharedProps) {
               </TagsListItem>
             ))}
           </TagsList>
-          <span className="ms-auto hidden items-center gap-1.5 text-xs text-fd-muted-foreground sm:inline-flex">
-            <kbd className="rounded border bg-fd-background px-1 font-mono">↑↓</kbd> navigate
-            <kbd className="rounded border bg-fd-background px-1 font-mono">↵</kbd> open
-            <kbd className="rounded border bg-fd-background px-1 font-mono">esc</kbd> close
+          <span className="ms-auto hidden items-center gap-1.5 text-caption-1-regular text-text-secondary sm:inline-flex">
+            <Kbd className={kbd}>↑↓</Kbd> navigate
+            <Kbd className={kbd}>↵</Kbd> open
+            <Kbd className={kbd}>esc</Kbd> close
           </span>
         </SearchDialogFooter>
       </SearchDialogContent>

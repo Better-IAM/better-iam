@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { ArrowUpRight, Braces, FileCode2, MessageSquareWarning } from 'lucide-react';
+import { RiArrowRightUpLine, RiBracesLine, RiFeedbackLine, RiFileCodeLine } from 'react-icons/ri';
 import { referenceUrl } from '@/lib/api-usage';
 import { newIssueUrl, sourceFileUrl } from '@/lib/shared';
 
@@ -20,28 +20,28 @@ export function TocFooter({
   const issue = newIssueUrl(`Docs: ${url}`, `Page: ${url}\n\n`);
   if (!source && !issue && !methods.length) return null;
   const link =
-    'inline-flex items-center gap-1.5 text-xs text-fd-muted-foreground transition-colors hover:text-fd-foreground';
+    'inline-flex items-center gap-1.5 text-caption-1-regular text-text-secondary transition-colors hover:text-text-primary';
   const shown = methods.slice(0, 12);
   return (
-    <div className="mt-4 flex flex-col gap-4 border-t pt-4">
+    <div className="mt-4 flex flex-col gap-4 border-t border-separator-border pt-4">
       {shown.length ? (
         <div className="flex flex-col gap-1.5">
-          <p className="inline-flex items-center gap-1.5 text-xs font-medium text-fd-foreground">
-            <Braces className="size-3.5" /> API on this page
+          <p className="inline-flex items-center gap-1.5 text-caption-1-semibold text-text-primary">
+            <RiBracesLine className="size-3.5" aria-hidden /> API on this page
           </p>
           <ul className="flex flex-col gap-1">
             {shown.map((key) => (
               <li key={key}>
                 <Link
                   href={referenceUrl(key)}
-                  className="font-mono text-[0.7rem] text-fd-muted-foreground transition-colors hover:text-fd-primary"
+                  className="font-mono text-[0.7rem] text-text-secondary underline-offset-2 transition-colors hover:text-text-primary hover:underline"
                 >
                   {key}
                 </Link>
               </li>
             ))}
             {methods.length > shown.length ? (
-              <li className="text-[0.7rem] text-fd-muted-foreground">
+              <li className="text-[0.7rem] text-text-tertiary">
                 and {methods.length - shown.length} more
               </li>
             ) : null}
@@ -52,13 +52,14 @@ export function TocFooter({
         <div className="flex flex-col gap-2">
           {source ? (
             <a href={source} target="_blank" rel="noreferrer noopener" className={link}>
-              <FileCode2 className="size-3.5" /> Edit this page <ArrowUpRight className="size-3" />
+              <RiFileCodeLine className="size-3.5" aria-hidden /> Edit this page{' '}
+              <RiArrowRightUpLine className="size-3" aria-hidden />
             </a>
           ) : null}
           {issue ? (
             <a href={issue} target="_blank" rel="noreferrer noopener" className={link}>
-              <MessageSquareWarning className="size-3.5" /> Report an issue{' '}
-              <ArrowUpRight className="size-3" />
+              <RiFeedbackLine className="size-3.5" aria-hidden /> Report an issue{' '}
+              <RiArrowRightUpLine className="size-3" aria-hidden />
             </a>
           ) : null}
         </div>

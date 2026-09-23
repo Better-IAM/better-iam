@@ -17,15 +17,19 @@ import {
   remarkAutoTypeTable,
 } from 'fumadocs-typescript';
 import { z } from 'zod';
+import { codeThemes } from './lib/code-themes';
 
 /**
  * Page frontmatter. `status` renders a sidebar badge, `packages` lists the npm packages a page documents
  * (shown in the page header), and `sources` points at the repository files a page was written from.
+ * `metaTitle` replaces the title in the browser tab, search results, and link previews when the sidebar title
+ * is too terse on its own ("Guards" under Next.js becomes "Next.js guards").
  */
 export const docs = defineDocs({
   dir: 'content/docs',
   docs: {
     schema: pageSchema.extend({
+      metaTitle: z.string().optional(),
       status: z.enum(['new', 'beta', 'experimental', 'deprecated']).optional(),
       packages: z.array(z.string()).optional(),
       sources: z.array(z.string()).optional(),
@@ -110,10 +114,7 @@ export default defineConfig({
     },
     rehypeCodeOptions: {
       ...rehypeCodeDefaultOptions,
-      themes: {
-        light: 'github-light',
-        dark: 'github-dark',
-      },
+      themes: codeThemes,
       langs: [
         'ts',
         'tsx',

@@ -1,9 +1,10 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { ThumbsDown, ThumbsUp } from 'lucide-react';
-import { cn } from '@/lib/cn';
+import { RiThumbDownLine, RiThumbUpLine } from 'react-icons/ri';
+import { buttonStyles } from '@/components/base/buttons/button';
 import { newIssueUrl } from '@/lib/shared';
+import { cx } from '@/utils/cx';
 
 type Opinion = 'good' | 'bad';
 
@@ -40,15 +41,15 @@ export function PageFeedback({ url }: { url: string }) {
   );
 
   return (
-    <div className="mt-10 flex flex-col gap-3 rounded-xl border bg-fd-card p-4 text-sm sm:flex-row sm:items-center">
-      <p className="font-medium">
+    <div className="mt-10 flex flex-col gap-3 rounded-2xl border border-border-button-default bg-surface-sunken p-4 sm:flex-row sm:items-center sm:ps-5">
+      <p className="text-body-medium">
         {opinion ? 'Thanks for the feedback.' : 'Was this page helpful?'}
       </p>
       <div className="flex items-center gap-2 sm:ms-auto">
         {(
           [
-            ['good', ThumbsUp, 'Yes'],
-            ['bad', ThumbsDown, 'No'],
+            ['good', RiThumbUpLine, 'Yes'],
+            ['bad', RiThumbDownLine, 'No'],
           ] as const
         ).map(([value, Icon, label]) => (
           <button
@@ -56,15 +57,15 @@ export function PageFeedback({ url }: { url: string }) {
             type="button"
             aria-pressed={opinion === value}
             onClick={() => choose(value)}
-            className={cn(
-              'inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 transition-colors',
-              opinion === value
-                ? 'border-fd-primary/50 bg-fd-primary/10 text-fd-primary'
-                : 'hover:bg-fd-accent hover:text-fd-accent-foreground',
+            className={cx(
+              buttonStyles.base,
+              buttonStyles.size.small,
+              opinion === value ? buttonStyles.variant.primary : buttonStyles.variant.secondary,
+              'gap-1.5 px-2.5',
             )}
           >
-            <Icon className="size-3.5" />
-            {label}
+            <Icon className="size-4" aria-hidden />
+            <span className={buttonStyles.label.small}>{label}</span>
           </button>
         ))}
         {opinion === 'bad' && issueUrl ? (
@@ -72,7 +73,7 @@ export function PageFeedback({ url }: { url: string }) {
             href={issueUrl}
             target="_blank"
             rel="noreferrer noopener"
-            className="rounded-lg px-2 py-1.5 text-fd-primary underline-offset-4 hover:underline"
+            className="rounded-lg px-2 py-1.5 text-body-medium underline-offset-4 hover:underline"
           >
             Tell us what was missing
           </a>

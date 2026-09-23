@@ -358,4 +358,4 @@ export const POST = createWebhookHandler({
 
 `iamNext.assertion({ tenantId, audience })` issues the token for the current session (the caller needs `iam:assertions:create` on `iam/{audience}`); the receiving service gets the key from `iam.assertionKey()`.
 
-License: MIT.
+License: Apache-2.0.

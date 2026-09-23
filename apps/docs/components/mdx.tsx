@@ -8,6 +8,8 @@ import { TypeTable } from 'fumadocs-ui/components/type-table';
 import * as Twoslash from 'fumadocs-twoslash/ui';
 import type { MDXComponents } from 'mdx/types';
 import type { ComponentProps } from 'react';
+import { Callout } from '@/components/docs/callout';
+import { Card, Cards } from '@/components/docs/card';
 import { Mermaid } from '@/components/mermaid';
 import { ApiEndpoint, ApiGroupSummary } from '@/components/api-reference';
 import { ApiShape } from '@/components/api-shape';
@@ -21,6 +23,10 @@ export function getMDXComponents(components?: MDXComponents) {
   return {
     ...defaultMdxComponents,
     ...Twoslash,
+    // BoardUI-styled replacements for Fumadocs' defaults (components/docs).
+    Callout,
+    Card,
+    Cards,
     img: (props: ComponentProps<'img'>) => (
       <ImageZoom {...(props as ComponentProps<typeof ImageZoom>)} />
     ),

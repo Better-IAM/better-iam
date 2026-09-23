@@ -1,6 +1,6 @@
 import { notFound } from 'next/navigation';
 import { docsLlms, source } from '@/lib/source';
-import { getPageMarkdownUrl } from '@/lib/shared';
+import { getPageMarkdownUrl, siteUrl } from '@/lib/shared';
 
 export const revalidate = false;
 
@@ -12,7 +12,11 @@ export async function GET(_req: Request, { params }: RouteContext<'/llms.mdx/doc
   if (!page) notFound();
 
   return new Response(await docsLlms.page(page), {
-    headers: { 'Content-Type': 'text/markdown; charset=utf-8' },
+    headers: {
+      'Content-Type': 'text/markdown; charset=utf-8',
+      // Search engines index the HTML page; this Markdown copy (also served at /docs/x.md) points back to it.
+      Link: `<${new URL(page.url, siteUrl)}>; rel="canonical"`,
+    },
   });
 }
 

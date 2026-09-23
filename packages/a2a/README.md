@@ -156,4 +156,4 @@ for servers written directly with an A2A SDK.
 
 See [AI agents](../../docs/agents.md) for agents, sponsors, delegation, and hand-offs between agents.
 
-License: MIT.
+License: Apache-2.0.

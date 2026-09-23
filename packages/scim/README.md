@@ -10,4 +10,4 @@ Use `better-iam/scim` from the umbrella installation or install this package dir
 
 See the repository's `docs/protocols.md` for supported filters and attribute paths.
 
-License: MIT.
+License: Apache-2.0.

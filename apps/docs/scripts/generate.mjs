@@ -657,7 +657,7 @@ async function generateChangelog() {
   await mkdir(dirname(target), { recursive: true });
   await writeFile(
     target,
-    `---\ntitle: Changelog\ndescription: Every notable change to the Better IAM packages, newest first.\nicon: RotateCcwClock\n---\n\n<!-- Generated from CHANGELOG.md by apps/docs/scripts/generate.mjs. Do not edit. -->\n\n${body}`,
+    `---\ntitle: Changelog\ndescription: Release notes for the Better IAM packages and documentation site, every notable change in each version, newest first.\nicon: RotateCcwClock\n---\n\n<!-- Generated from CHANGELOG.md by apps/docs/scripts/generate.mjs. Do not edit. -->\n\n${body}`,
   );
   return `changelog (${relative(root, target)})`;
 }
@@ -1184,7 +1184,7 @@ async function generateApiPages(filter) {
           .map((group) => (groupInfo[group.name] ?? ['Braces'])[0]),
       ),
     ];
-    index.splice(8, 0, `import { ${icons.join(', ')} } from 'lucide-react';`, '');
+    index.splice(8, 0, `import { ${icons.join(', ')} } from '@/lib/icons';`, '');
     await writeFile(join(dir, 'index.mdx'), index.join('\n'));
     await writeFile(
       join(dir, 'meta.json'),
@@ -1328,6 +1328,7 @@ async function generateCliPage() {
   const lines = [
     '---',
     'title: CLI',
+    'metaTitle: CLI reference',
     `description: ${JSON.stringify(`The better-iam command line: what each of its ${cli.commands.length} commands does, when to run it, and its flags.`)}`,
     'icon: SquareTerminal',
     '---',

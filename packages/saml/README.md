@@ -8,4 +8,4 @@ Use `better-iam/saml` from the umbrella installation or install this package dir
 
 See the repository's `docs/protocols.md` for configuration, email trust and protocol limits.
 
-License: MIT.
+License: Apache-2.0.

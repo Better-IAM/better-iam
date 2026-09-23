@@ -36,4 +36,4 @@ export default defineEventHandler(async (event) => {
 - Server auto-imports: `getIamSession`, `requireIamSession`, `requireIamAccess`, `iamCan`, `issueIamAssertion`, `iamCredential`, and `useIam`.
 - `@better-iam/nuxt/h3` exports `createIamH3` for h3 v1/v2 and Nitro apps without the module.
 
-License: MIT.
+License: Apache-2.0.

@@ -49,4 +49,4 @@ const { resources } = useAccessible(() => ({
 - Server rendering: with `server: true` (detected when `window` is absent), queries in rendered components are awaited through `onServerPrefetch` and written to `hydration`. On the client, each hydrated result is used once instead of fetching, so markup matches. `createHydration(state?)` is a plain-object implementation to serialize.
 - `createSessionStore` / `isUnauthenticated` come from `@better-iam/client/session`, shared with `@better-iam/react`.
 
-License: MIT.
+License: Apache-2.0.

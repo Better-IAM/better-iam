@@ -2,7 +2,8 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { motion, useScroll, useSpring } from 'motion/react';
-import { cn } from '@/lib/cn';
+import { Frame } from '@/components/site/frame';
+import { cx } from '@/utils/cx';
 
 export const chapters = [
   { id: 'pipeline', label: 'Pipeline' },
@@ -16,7 +17,10 @@ export const chapters = [
   { id: 'reference', label: 'Reference' },
 ] as const;
 
-/** Sticky chapter list under the site header: highlights the section in view and shows how far down the page you are. */
+/**
+ * Sticky chapter bar under the site header: highlights the chapter in view and shows how far down the page you
+ * are. Its anchors glide through Lenis (components/site/smooth-scroll.tsx) and land below both sticky bars.
+ */
 export function ChapterNav() {
   const [active, setActive] = useState<string>();
   const list = useRef<HTMLDivElement>(null);
@@ -50,44 +54,48 @@ export function ChapterNav() {
   return (
     <nav
       aria-label="On this page"
-      className="sticky top-14 z-30 border-y bg-fd-background/80 backdrop-blur-lg"
+      className="sticky top-14 z-30 border-b border-separator-border bg-background-full/80 backdrop-blur-md"
     >
-      <div
-        ref={list}
-        className="mx-auto flex w-full max-w-6xl items-center gap-1 overflow-x-auto px-5 py-2 [scrollbar-width:none] sm:px-6"
-      >
-        {chapters.map((chapter, index) => (
-          <a
-            key={chapter.id}
-            href={`#${chapter.id}`}
-            data-chapter={chapter.id}
-            aria-current={active === chapter.id ? 'location' : undefined}
-            className={cn(
-              'relative isolate inline-flex h-8 shrink-0 items-center gap-2 rounded-lg px-3 text-[0.8125rem] transition-colors',
-              active === chapter.id
-                ? 'text-fd-foreground'
-                : 'text-fd-muted-foreground hover:text-fd-foreground',
-            )}
-          >
-            {active === chapter.id ? (
-              <motion.span
-                layoutId="chapter-active"
-                className="absolute inset-0 -z-10 rounded-lg bg-fd-accent"
-                transition={{ type: 'spring', stiffness: 450, damping: 38 }}
-              />
-            ) : null}
-            <span className="font-mono text-[0.6875rem] tabular-nums text-fd-muted-foreground">
-              {String(index + 1).padStart(2, '0')}
-            </span>
-            {chapter.label}
-          </a>
-        ))}
-      </div>
-      <motion.div
-        aria-hidden
-        className="absolute inset-x-0 -bottom-px h-px origin-left bg-fd-primary"
-        style={{ scaleX: progress }}
-      />
+      <Frame>
+        <div
+          ref={list}
+          data-lenis-prevent-horizontal
+          // Links carry 10px of padding, so the row sits 10px inside the gutter and the labels line up with it.
+          className="flex items-center gap-1 overflow-x-auto px-2.5 py-1.5 [scrollbar-width:none] sm:px-[22px] lg:px-[38px]"
+        >
+          {chapters.map((chapter, index) => (
+            <a
+              key={chapter.id}
+              href={`#${chapter.id}`}
+              data-chapter={chapter.id}
+              aria-current={active === chapter.id ? 'location' : undefined}
+              className={cx(
+                'relative isolate inline-flex h-8 shrink-0 items-center gap-2 rounded-lg px-2.5 text-body-2-regular transition-colors',
+                active === chapter.id
+                  ? 'text-text-primary'
+                  : 'text-text-secondary hover:text-text-primary',
+              )}
+            >
+              {active === chapter.id ? (
+                <motion.span
+                  layoutId="chapter-active"
+                  className="absolute inset-0 -z-10 rounded-lg bg-background-secondary-default"
+                  transition={{ type: 'spring', stiffness: 450, damping: 38 }}
+                />
+              ) : null}
+              <span className="font-mono text-caption-2-regular text-text-tertiary tabular-nums">
+                {String(index + 1).padStart(2, '0')}
+              </span>
+              {chapter.label}
+            </a>
+          ))}
+        </div>
+        <motion.div
+          aria-hidden
+          className="absolute inset-x-0 -bottom-px h-px origin-left bg-text-primary"
+          style={{ scaleX: progress }}
+        />
+      </Frame>
     </nav>
   );
 }

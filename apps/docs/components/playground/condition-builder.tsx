@@ -1,7 +1,10 @@
 'use client';
 
-import { useId, useMemo, useState } from 'react';
-import { Plus } from 'lucide-react';
+import { useEffect, useId, useMemo, useState } from 'react';
+import { AnimatePresence, motion } from 'motion/react';
+import { RiAddLine, RiCheckLine } from 'react-icons/ri';
+import { Button } from '@/components/base/buttons/button';
+import { cx } from '@/utils/cx';
 import { contextKeys } from './presets';
 
 /** Every condition operator of `@better-iam/core`, with the value type it compares and a plain-English meaning. */
@@ -58,6 +61,25 @@ function parseValue(kind: string, raw: string): unknown {
   return text;
 }
 
+/** A check that pops in, for buttons that confirm what they just did (copy, share, add). */
+export function PopCheck({ className }: { className?: string }) {
+  return (
+    <motion.span
+      aria-hidden
+      className={cx('inline-flex items-center justify-center', className)}
+      initial={{ scale: 0.3, rotate: -40, opacity: 0 }}
+      animate={{ scale: 1, rotate: 0, opacity: 1 }}
+      transition={{ type: 'spring', stiffness: 600, damping: 22 }}
+    >
+      <RiCheckLine className="size-full" />
+    </motion.span>
+  );
+}
+
+/** The BoardUI input look, as a native field (selects and a datalist need the platform controls). */
+export const fieldClass =
+  'h-8 min-w-0 rounded-lg border border-border-button-default bg-background-primary-default px-2.5 font-mono text-caption-1-regular text-text-primary shadow-xs outline-none transition-[border-color,box-shadow] duration-150 placeholder:text-text-tertiary hover:border-border-button-hover focus:border-border-button-active focus:ring-2 focus:ring-border-focus-ring';
+
 /**
  * Adds a condition to a statement of one policy document without hand-editing JSON. It rewrites the document text,
  * so the result stays visible (and editable) in the editor above.
@@ -82,7 +104,14 @@ export function ConditionBuilder({
   const [operator, setOperator] = useState('StringEquals');
   const [key, setKey] = useState('principal.id');
   const [value, setValue] = useState('');
+  const [added, setAdded] = useState(false);
   const kind = operators.find((entry) => entry.name === operator)?.kind ?? 'string';
+
+  useEffect(() => {
+    if (!added) return;
+    const timer = setTimeout(() => setAdded(false), 1400);
+    return () => clearTimeout(timer);
+  }, [added]);
 
   if (!statements?.length) return null;
 
@@ -97,31 +126,42 @@ export function ConditionBuilder({
       target.conditions[operator]![key] = parseValue(kind, value || placeholders[kind]!);
       onChange(JSON.stringify(document, null, 2));
       setValue('');
+      setAdded(true);
     } catch {
       // The editor shows the JSON error; nothing to add to an invalid document.
     }
   }
 
-  const field =
-    'min-w-0 rounded-lg border bg-fd-background px-2 py-1.5 font-mono text-xs text-fd-foreground outline-none focus:border-fd-primary/60';
   return (
-    <details className="rounded-lg border bg-fd-background text-xs">
-      <summary className="cursor-pointer select-none px-3 py-2 text-fd-muted-foreground hover:text-fd-foreground">
+    <details className="group/builder rounded-xl border border-dashed border-border-button-default text-caption-1-regular transition-colors duration-200 open:border-solid open:bg-background-primary-default hover:border-border-button-hover">
+      <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2 text-caption-1-medium text-text-secondary transition-colors select-none hover:text-text-primary [&::-webkit-details-marker]:hidden">
+        <span className="flex size-5 items-center justify-center rounded-md border border-border-button-default bg-background-primary-default shadow-xs transition-[transform,border-color] duration-200 group-hover/builder:border-border-button-hover group-open/builder:rotate-45">
+          <RiAddLine className="size-3.5" aria-hidden />
+        </span>
         Add a condition without editing JSON
       </summary>
-      <div className="flex flex-col gap-2 border-t p-3">
-        <p className="text-fd-muted-foreground">
+      <div className="flex flex-col gap-3 border-t border-separator-border p-3">
+        <p className="text-text-secondary">
           The statement applies only when the context value{' '}
-          <span className="text-fd-foreground">
-            {operators.find((entry) => entry.name === operator)?.meaning}
-          </span>
+          <AnimatePresence mode="wait" initial={false}>
+            <motion.span
+              key={operator}
+              className="text-caption-1-medium text-text-primary"
+              initial={{ opacity: 0, y: 3 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -3 }}
+              transition={{ duration: 0.15 }}
+            >
+              {operators.find((entry) => entry.name === operator)?.meaning}
+            </motion.span>
+          </AnimatePresence>
           .
         </p>
-        <div className="grid gap-2 sm:grid-cols-2">
-          <label className="flex flex-col gap-1 text-fd-muted-foreground">
+        <div className="grid gap-2.5 sm:grid-cols-2">
+          <label className="flex flex-col gap-1 text-caption-1-medium text-text-secondary">
             Statement
             <select
-              className={field}
+              className={fieldClass}
               value={statement}
               onChange={(event) => setStatement(Number(event.target.value))}
             >
@@ -132,10 +172,10 @@ export function ConditionBuilder({
               ))}
             </select>
           </label>
-          <label className="flex flex-col gap-1 text-fd-muted-foreground">
+          <label className="flex flex-col gap-1 text-caption-1-medium text-text-secondary">
             Operator
             <select
-              className={field}
+              className={fieldClass}
               value={operator}
               onChange={(event) => setOperator(event.target.value)}
             >
@@ -146,10 +186,10 @@ export function ConditionBuilder({
               ))}
             </select>
           </label>
-          <label className="flex flex-col gap-1 text-fd-muted-foreground">
+          <label className="flex flex-col gap-1 text-caption-1-medium text-text-secondary">
             Context key
             <input
-              className={field}
+              className={fieldClass}
               list={listId}
               value={key}
               onChange={(event) => setKey(event.target.value)}
@@ -162,23 +202,24 @@ export function ConditionBuilder({
               ))}
             </datalist>
           </label>
-          <label className="flex flex-col gap-1 text-fd-muted-foreground">
+          <label className="flex flex-col gap-1 text-caption-1-medium text-text-secondary">
             Value
             <input
-              className={field}
+              className={fieldClass}
               placeholder={placeholders[kind]}
               value={value}
               onChange={(event) => setValue(event.target.value)}
             />
           </label>
         </div>
-        <button
-          type="button"
+        <Button
+          size="small"
+          leadingIcon={added ? PopCheck : RiAddLine}
           onClick={add}
-          className="inline-flex items-center gap-1.5 self-start rounded-lg bg-fd-primary px-3 py-1.5 font-medium text-fd-primary-foreground transition-opacity hover:opacity-90"
+          className="self-start"
         >
-          <Plus className="size-3.5" /> Add condition
-        </button>
+          {added ? 'Condition added' : 'Add condition'}
+        </Button>
       </div>
     </details>
   );

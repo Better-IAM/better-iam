@@ -1,26 +1,40 @@
 'use client';
 
-import { Check, Copy, Terminal } from 'lucide-react';
+import { RiCheckLine, RiFileCopyLine } from 'react-icons/ri';
 import { useCopyButton } from 'fumadocs-ui/utils/use-copy-button';
+import { buttonStyles } from '@/components/base/buttons/button';
+import { cx } from '@/utils/cx';
 
-export function InstallCommand({ command = 'npm i better-iam' }: { command?: string }) {
+/** The install command as a BoardUI secondary button: one click copies it. */
+export function InstallCommand({
+  command = 'npm i better-iam',
+  className,
+}: {
+  command?: string;
+  className?: string;
+}) {
   const [checked, onClick] = useCopyButton(() => navigator.clipboard.writeText(command));
   return (
     <button
       type="button"
       onClick={onClick}
-      className="group inline-flex h-11 items-center gap-3 rounded-xl border bg-fd-card/80 px-4 font-mono text-sm backdrop-blur transition-colors hover:border-fd-primary/40"
-      aria-label={`Copy ${command}`}
+      aria-label={checked ? 'Copied' : `Copy ${command}`}
+      className={cx(
+        buttonStyles.base,
+        buttonStyles.size.medium,
+        buttonStyles.variant.secondary,
+        'gap-3 px-3 font-mono text-body-2-regular',
+        className,
+      )}
     >
-      <Terminal className="size-4 text-fd-muted-foreground" />
       <span>
-        <span className="text-fd-muted-foreground">$ </span>
+        <span className="text-text-tertiary">$ </span>
         {command}
       </span>
       {checked ? (
-        <Check className="size-4 text-fd-primary" />
+        <RiCheckLine className="size-4 text-foreground-icon-primary" aria-hidden />
       ) : (
-        <Copy className="size-4 text-fd-muted-foreground transition-colors group-hover:text-fd-foreground" />
+        <RiFileCopyLine className="size-4 text-foreground-icon-secondary" aria-hidden />
       )}
     </button>
   );

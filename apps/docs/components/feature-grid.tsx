@@ -1,10 +1,10 @@
 import type { ReactNode } from 'react';
 import Link from 'next/link';
-import { cn } from '@/lib/cn';
+import { cx } from '@/utils/cx';
 
 export function FeatureGrid({ children, className }: { children: ReactNode; className?: string }) {
   return (
-    <div className={cn('not-prose my-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-3', className)}>
+    <div className={cx('not-prose my-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-3', className)}>
       {children}
     </div>
   );
@@ -24,20 +24,27 @@ export function Feature({
 }) {
   const body = (
     <>
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2.5">
         {icon ? (
-          <span className="flex size-7 items-center justify-center rounded-lg bg-fd-primary/10 text-fd-primary [&_svg]:size-4">
+          <span className="flex size-7 items-center justify-center rounded-lg border border-border-button-default bg-background-primary-default text-foreground-icon-primary shadow-xs transition-colors [&_svg]:size-4 group-hover:border-text-primary group-hover:bg-text-primary group-hover:text-background-full">
             {icon}
           </span>
         ) : null}
-        <h3 className="text-sm font-semibold">{title}</h3>
+        <h3 className="text-body-semibold">{title}</h3>
       </div>
-      <div className="text-sm leading-relaxed text-fd-muted-foreground">{children}</div>
+      <div className="text-body-regular leading-6 text-text-secondary">{children}</div>
     </>
   );
-  const className = 'flex flex-col gap-2 rounded-xl border bg-fd-card p-4 transition-colors';
+  const className =
+    'group flex flex-col gap-2 rounded-2xl border border-border-button-default bg-background-primary-default p-4 shadow-xs transition-[background-color,border-color]';
   return href ? (
-    <Link href={href} className={cn(className, 'hover:border-fd-primary/40 hover:bg-fd-accent/40')}>
+    <Link
+      href={href}
+      className={cx(
+        className,
+        'hover:border-border-button-hover hover:bg-background-primary-hover',
+      )}
+    >
       {body}
     </Link>
   ) : (

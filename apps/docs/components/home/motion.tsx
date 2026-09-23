@@ -62,6 +62,8 @@ export function useStepper(
   const reduced = useReducedMotionSafe();
   const [step, setStep] = useState(0);
   const [paused, setPaused] = useState(false);
+  // While the reader points at (or focuses) the diagram, the timer waits without counting as a pause.
+  const [hovered, setHovered] = useState(false);
   // Pressing play is an explicit choice, so it overrides the reduced-motion default.
   const [chosen, setChosen] = useState(false);
   const held = paused || (reduced && !chosen);
@@ -74,17 +76,20 @@ export function useStepper(
   }, [reduced, chosen, count]);
 
   useEffect(() => {
-    if (held || !inView) return;
+    if (held || hovered || !inView) return;
     const last = step >= count - 1;
     const { interval: every, hold: rest } = timing.current;
     const wait = last ? rest : typeof every === 'function' ? every(step) : every;
     const timer = setTimeout(() => setStep(last ? 0 : step + 1), wait);
     return () => clearTimeout(timer);
-  }, [step, inView, held, count]);
+  }, [step, inView, held, hovered, count]);
 
   return {
     ref,
     step,
+    /** Hold the timer while the reader is looking (pointer over the diagram); pass false to resume. */
+    setHovered,
+    hovered,
     /** Whether the diagram is on screen; ambient loops should run only then. */
     inView,
     /** Jump to a step and stop autoplay, for when the reader takes over. */

@@ -1,4 +1,5 @@
 import { highlight } from 'fumadocs-core/highlight';
+import { codeThemes } from '@/lib/code-themes';
 import { CodeTourView, type TourStep } from './code-tour-view';
 
 /** Checked against the real APIs; keep lines under ~84 characters so the panel never scrolls sideways. */
@@ -136,7 +137,7 @@ export async function CodeTour() {
       raw: source,
       code: await highlight(source, {
         lang,
-        themes: { light: 'github-light', dark: 'github-dark' },
+        themes: codeThemes,
         defaultColor: false,
       }),
     })),

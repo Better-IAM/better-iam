@@ -22,4 +22,4 @@ Records use the same schema and strict JSON filter semantics as the PostgreSQL a
 
 The shared generic record schema intentionally has no application-level foreign keys. Better IAM services validate tenant hierarchy, identity ownership, and references within transactions. Writing database records directly bypasses service-level authorization and referential checks.
 
-License: MIT.
+License: Apache-2.0.

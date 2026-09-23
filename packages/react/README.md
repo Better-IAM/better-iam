@@ -56,4 +56,4 @@ function Workspace({ tenantId }: { tenantId: string }) {
 - `useMySpend({ tenantId, period?, groupBy? })` loads the signed-in person's own spend for a month (their usage and their agents', by meter, day, agent, tenant or tag) with a projection and the budgets set on them; `useSpendCheck({ tenantId, meter? })` tells whether an enforced spend budget blocks them (`allowed`, `blockedBy`). See [billing](../../docs/billing.md).
 - `createSessionStore(client)` is the framework-agnostic core the hooks use; it works with `useSyncExternalStore` or any subscription mechanism.
 
-License: MIT.
+License: Apache-2.0.
