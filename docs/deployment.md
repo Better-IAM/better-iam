@@ -238,7 +238,7 @@ node scripts/packed-smoke.mjs
 
 `scripts/release-version.mjs VERSION` updates synchronized package versions. Update the changelog, reinstall to refresh the lockfile, and rerun checks. Packed package tests install all tarballs into a fresh consumer and verify exports, native dependencies, migrations, and bootstrap.
 
-All packages are MIT licensed and publish publicly to npm (`publishConfig.access: public`). Releases are published by `.github/workflows/release.yml`: push a `vX.Y.Z` tag matching the package versions (or run the workflow manually), and it reruns the checks and packed smoke tests, then runs `pnpm publish -r --provenance`. The workflow needs an `NPM_TOKEN` repository secret (an npm automation or granular token with publish rights on `better-iam` and the `@better-iam` scope). Pre-release versions (`1.2.0-beta.0`) publish under the `next` dist-tag.
+All packages are MIT licensed and publish publicly to npm (`publishConfig.access: public`). Releases are published by the `publish` job in `.github/workflows/ci.yml`: after every green push to `main` (all test matrix jobs and the PostgreSQL job), it publishes with `pnpm publish -r --provenance` when the package version is not on npm yet, then tags `vX.Y.Z` and creates a GitHub release. Pushes that keep the version publish nothing, so a release is cut by bumping the version with `scripts/release-version.mjs`. The workflow needs an `NPM_TOKEN` repository secret (an npm automation or granular token with publish rights on `better-iam` and the `@better-iam` scope). Pre-release versions (`1.2.0-beta.0`) publish under the `next` dist-tag.
 
 ## PostgreSQL integration checks
 

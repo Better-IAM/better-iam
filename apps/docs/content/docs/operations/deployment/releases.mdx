@@ -2,7 +2,7 @@
 title: Build and release
 description: How a Better IAM release is checked, packed, smoke-tested as installed tarballs, versioned in lockstep, and prepared for publication.
 icon: Package
-sources: ['docs/deployment.md', 'package.json', 'scripts/release-version.mjs', 'scripts/pack.mjs', 'scripts/packed-smoke.mjs', 'scripts/check-packed-types.mjs', 'scripts/validate-packages.mjs', '.github/workflows/release.yml']
+sources: ['docs/deployment.md', 'package.json', 'scripts/release-version.mjs', 'scripts/pack.mjs', 'scripts/packed-smoke.mjs', 'scripts/check-packed-types.mjs', 'scripts/validate-packages.mjs', '.github/workflows/ci.yml']
 ---
 
 Better IAM ships as a set of workspace packages under `packages/*` that are always released together at one
@@ -81,18 +81,19 @@ isolates its cases.
 
 ## Publication
 
-All packages are MIT licensed and publish publicly to npm. `.github/workflows/release.yml` publishes a release:
+All packages are MIT licensed and publish publicly to npm. Pushing a new version to `main` publishes it:
 
 ```sh
 node scripts/release-version.mjs 1.4.0
 # update CHANGELOG.md, pnpm install, pnpm check, commit
-git tag v1.4.0
-git push origin main v1.4.0
+git push origin main
 ```
 
-The workflow checks that the tag matches the package versions, reruns the checks and the packed smoke tests, then
-runs `pnpm publish -r --provenance`, so every tarball carries an npm provenance attestation. Pre-release versions
-(`1.4.0-beta.0`) publish under the `next` dist-tag.
+The `publish` job in `.github/workflows/ci.yml` waits for every test job and the PostgreSQL job. When the package
+version is not on npm yet, it runs `pnpm publish -r --provenance`, so every tarball carries an npm provenance
+attestation, then tags `v1.4.0` and creates a GitHub release. Pushes that keep the version publish nothing.
+Pre-release versions (`1.4.0-beta.0`) publish under the `next` dist-tag. pnpm skips packages already published, so
+rerunning the job finishes a partial release.
 
 <Callout type="info" title="Registry credentials">
 The workflow reads an `NPM_TOKEN` repository secret: an npm granular or automation token with publish rights on

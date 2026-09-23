@@ -20,7 +20,7 @@ npm install better-iam
 - OAuth/OIDC sign-in, Google/GitHub, a persistent OAuth/OIDC provider with device authorization, SAML SSO, and SCIM Users/Groups.
 - A tamper-evident audit log (per-tenant hash chain with verification and export), events on every audit record, signed webhooks per tenant, in-process subscribers, observability spans with built-in Prometheus metrics and health endpoints, stateless service assertions, a typed browser client with React hooks, Next.js helpers, Vue composables, and a Nuxt module, SQL adapters, CLI, plugins, a reference tenant-scoped Projects plugin, filterable audit records, and an encrypted transactional delivery outbox.
 
-The workspace contains separately publishable `@better-iam/*` packages. The umbrella `better-iam` package installs them together and exposes subpath imports. Protocol packages are loaded only when their subpaths are imported. Releases are published to npm from `.github/workflows/release.yml` when a `v*` tag is pushed.
+The workspace contains separately publishable `@better-iam/*` packages. The umbrella `better-iam` package installs them together and exposes subpath imports. Protocol packages are loaded only when their subpaths are imported. CI (`.github/workflows/ci.yml`) publishes to npm when a new version lands on `main` and every check passes.
 
 ## Develop locally
 
