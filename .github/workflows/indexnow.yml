@@ -1,0 +1,44 @@
+name: indexnow
+# After Railway reports a successful deploy of the docs site, tell Bing (IndexNow) which pages changed since the
+# previous live deploy, so they are recrawled right away. Google reads the sitemap instead.
+on:
+  deployment_status:
+permissions:
+  contents: read
+  deployments: read
+jobs:
+  submit:
+    # Railway creates a GitHub deployment per deploy in its "<project> / production" environment.
+    if: github.event.deployment_status.state == 'success' && endsWith(github.event.deployment.environment, 'production')
+    runs-on: ubuntu-latest
+    concurrency:
+      group: indexnow
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.deployment.sha }}
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Find the previous live deploy
+        id: previous
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ENVIRONMENT: ${{ github.event.deployment.environment }}
+          ID: ${{ github.event.deployment.id }}
+        run: |
+          environment=$(jq -rn --arg value "$ENVIRONMENT" '$value | @uri')
+          for row in $(gh api "repos/$GITHUB_REPOSITORY/deployments?environment=$environment&per_page=30" \
+            --jq ".[] | select(.id < $ID) | \"\(.id):\(.sha)\""); do
+            # Deploys that went live are "success", or "inactive" once a newer one replaced them.
+            state=$(gh api "repos/$GITHUB_REPOSITORY/deployments/${row%%:*}/statuses?per_page=1" --jq '.[0].state')
+            if [ "$state" = success ] || [ "$state" = inactive ]; then
+              echo "sha=${row#*:}" >> "$GITHUB_OUTPUT"
+              break
+            fi
+          done
+      - name: Submit changed pages
+        # With no previous deploy, every URL in the sitemap is submitted.
+        run: node apps/docs/scripts/indexnow.mjs --site "${{ vars.DOCS_SITE_URL || 'https://better-iam.com' }}" --changed "${{ steps.previous.outputs.sha }}" "${{ github.event.deployment.sha }}"

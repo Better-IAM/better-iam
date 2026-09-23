@@ -81,6 +81,29 @@ tags. Docs pages add `article:*` tags, Slack's "Section" and "Reading time" labe
 The icons are drawn from the logo mark in `components/logo.tsx`. After changing the mark, run
 `node apps/docs/scripts/generate-icons.mjs` to redraw every icon for the docs site and the console.
 
+### Search engine indexing
+
+The site lives at `https://better-iam.com`, which Railway serves and `DOCS_SITE_URL` names as the canonical origin.
+
+- `app/robots.ts` allows every crawler everywhere except `/api/` and points to `app/sitemap.ts`. The sitemap lists
+  the home page, the playground, and every docs page.
+- `next.config.mjs` sends `www.` and Railway's `*.up.railway.app` hosts to the canonical origin with a permanent
+  redirect, so each page has one address. It also marks `llms.txt` and `llms-full.txt` `noindex`, and the Markdown
+  copies (`/docs/x.md`) name their HTML page as canonical.
+- Bing, Yandex, Seznam, and Naver learn about changed pages through [IndexNow](https://www.indexnow.org). The key
+  is `public/<key>.txt`, and `.github/workflows/indexnow.yml` runs `scripts/indexnow.mjs --changed` after every
+  successful Railway deploy. Run `node apps/docs/scripts/indexnow.mjs --all` to submit every URL in the sitemap.
+- Google reads the sitemap from Search Console and `robots.txt`. It does not use IndexNow or sitemap pings.
+
+Set up once, outside the repository:
+
+1. DNS: add a `CNAME` record for `www` to the Railway target, and add `www.better-iam.com` as a custom domain on
+   the Railway service. The app then redirects it to `https://better-iam.com`.
+2. Google Search Console: add a Domain property for `better-iam.com` (verified with a DNS `TXT` record), or a
+   URL-prefix property verified with `DOCS_GOOGLE_SITE_VERIFICATION`. Then submit `https://better-iam.com/sitemap.xml`.
+3. Bing Webmaster Tools: import the site from Search Console, or add `https://better-iam.com` and verify it with
+   `DOCS_BING_SITE_VERIFICATION`. Then submit the same sitemap.
+
 ## How the reference is generated
 
 `scripts/generate.mjs` reads the repository, never a hand-maintained list:
