@@ -9,8 +9,13 @@ export const docsRoute = '/docs';
 export const docsImageRoute = '/og/docs';
 export const docsContentRoute = '/llms.mdx/docs';
 
-/** Canonical origin used for metadata, sitemap and llms.txt links. */
-export const siteUrl = (process.env.DOCS_SITE_URL ?? 'http://localhost:4000').replace(/\/$/, '');
+/** Canonical origin used for metadata, sitemap and llms.txt links; on Railway, the service's public domain. */
+export const siteUrl = (
+  process.env.DOCS_SITE_URL ??
+  (process.env.RAILWAY_PUBLIC_DOMAIN
+    ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`
+    : 'http://localhost:4000')
+).replace(/\/$/, '');
 
 /**
  * The public repository, for "Edit this page", source-file, and issue links, for example

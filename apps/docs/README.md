@@ -25,6 +25,21 @@ pnpm --filter @better-iam/docs build
 | `components/`                                                                                   | Site and MDX components (`playground/` is the policy playground, `home/` the landing page)             |
 | `proxy.ts`                                                                                      | `/docs/x.md` and `Accept: text/markdown` serve a page's Markdown                                       |
 
+## Deploying
+
+The package is private: `pnpm publish -r` skips it. [`Dockerfile`](Dockerfile) builds the site from the repository
+root (install, `pnpm build` for the workspace packages, then `next build`) and runs `next start` on `$PORT`.
+
+On Railway, create a service from this repository with no root directory: `/railway.json` selects that Dockerfile,
+checks `/` as the health check, and redeploys only when the docs, the packages, or the workspace manifests change.
+Generate a public domain; it becomes the site's canonical URL (sitemap, `llms.txt`, social cards) on the next
+deploy. Optional service variables, read at build time:
+
+| Variable                          | Default                                            | Purpose                                       |
+| --------------------------------- | -------------------------------------------------- | --------------------------------------------- |
+| `DOCS_SITE_URL`                   | `https://$RAILWAY_PUBLIC_DOMAIN`                   | Canonical origin, for example a custom domain |
+| `NEXT_PUBLIC_DOCS_REPOSITORY_URL` | `https://github.com/Better-IAM/better-iam` (image) | "Edit this page", source, and issue links     |
+
 ## How the reference is generated
 
 `scripts/generate.mjs` reads the repository, never a hand-maintained list:
