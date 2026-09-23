@@ -1,0 +1,520 @@
+---
+title: Next.js
+description: Set up @better-iam/next in an App Router project, mount the IAM API, and read the session in server components, layouts, and client components.
+icon: Triangle
+packages:
+  - '@better-iam/next'
+sources:
+  - docs/nextjs.md
+  - packages/next/README.md
+  - packages/next/src/index.ts
+  - packages/next/src/edge.ts
+  - examples/nextjs/README.md
+  - examples/nextjs/lib/iam.ts
+  - examples/nextjs/next.config.mjs
+  - examples/nextjs/app/providers.tsx
+  - examples/nextjs/app/[org]/layout.tsx
+---
+
+import { Building, Settings2, ShieldCheck, Waypoints, Zap } from 'lucide-react';
+
+`@better-iam/next` integrates Better IAM with the Next.js 15 App Router (React 19). The App Router spreads a
+request across server components, layouts, route handlers, server actions, and middleware, and each exposes the
+request differently: `headers()` and `cookies()` in components, a `Request` in route handlers, form data in
+actions, and an edge runtime without database access in middleware. Calling the core API directly would mean
+building the <Term id="credential">credential</Term>, redirecting with a safe `?next=`, mapping refusals to status codes, and writing <Term id="session">session</Term>
+cookies by hand in each of those places. One `createIamNext(iam)` call does it once and gives your server code:
+
+- **Sessions in server components**: `getSession()` and `requireSession()`, memoized per request.
+- **Guards**: `page()` for pages and layouts, `route()` and `apiRoute()` for route handlers, `action()` for server
+  actions, and `require()` for one-off checks.
+- **Rendering by permission**: `can()`, `allowed()`, and the `<iamNext.Can>` server component, batched into one
+  `authorizeMany` per request.
+- **A server-side typed client**: `client()` calls the IAM handler in process and writes the cookies it issues,
+  so server actions can sign people in and out without client JavaScript.
+- **Cross-site checks**: `route()`, `apiRoute()`, and `pages.api()` refuse cookie-authenticated mutations sent by
+  another site's page ([details](/docs/frameworks/nextjs/guards#cross-site-requests)). Next checks server
+  actions itself.
+- **Hydration**: `sessionForClient()` hands the session to `IamNextProvider`, so client components render the
+  signed-in person on the first pass, matching the server's HTML ([Client components](#client-components)).
+- **Auth forms**: drop-in server actions and unstyled, accessible forms for sign-in, MFA, step-up, password
+  reset, sign-up, email verification, and invitations.
+- **Organizations in the URL**, **edge middleware**, **step-up**, **service credentials**, **webhooks and
+  assertions**, **background delivery**, and the **Pages Router**.
+
+The package has three entries:
+
+| Entry | Use from | Contents |
+| --- | --- | --- |
+| `@better-iam/next` | Server components, route handlers, server actions | `createIamNext` and everything in the edge entry |
+| `@better-iam/next/edge` | Middleware, edge route handlers, any Web runtime | `createIamMiddleware`, `safeRedirectPath`, assertion and webhook verification. No Node, React, or database imports, so the edge bundle stays small |
+| `@better-iam/next/client` | Client components (`'use client'`) | `IamNextProvider`, `useSignOut`, the auth forms, and the React hooks |
+
+The umbrella package exposes the same entries as `better-iam/next`, `better-iam/next/edge`, and
+`better-iam/next/client`.
+
+<Accordions type="single">
+<Accordion title="Every export, by entry">
+
+**`@better-iam/next`** (also re-exports everything from the edge entry)
+
+| Export | What it does |
+| --- | --- |
+| `createIamNext(iam, options)` | Creates the `iamNext` helpers described on these pages |
+| `checkStepUp(session, requirement, now?)` | Checks a session (or an `apiRoute` principal) against a step-up requirement; returns `null` or the failure |
+| `isAuthenticationError(error)` | True for the errors `getSession` treats as "signed out" |
+| `isNextControlError(error)` | True for Next's `redirect()`, `notFound()`, `forbidden()`, and `unauthorized()` throws, which must propagate |
+| `parseSetCookie(header)` | Parses a `Set-Cookie` header into the arguments `cookies().set` takes |
+| `createAuthActions`, `authHiddenFields`, `authFields`, `authStepFields` | The building blocks behind `iamNext.authActions()` and the forms, for custom form containers |
+| `createBackground(resolveIam, options)` | The building block behind `iamNext.background`, for instances you manage yourself |
+
+**`@better-iam/next/edge`**
+
+| Export | What it does |
+| --- | --- |
+| `createIamMiddleware(options)` | Edge middleware: redirects visitors without a session cookie and forwards the path ([Middleware](/docs/frameworks/nextjs/middleware)) |
+| `safeRedirectPath(value, fallback?)` | Returns a same-origin path, or the fallback, so `?next=` cannot become an open redirect |
+| `matchPath(pattern, pathname)` | The `*` / `**` glob matcher behind `publicPaths` |
+| `sessionCookieName(secure)` | `__Host-better-iam.session` on HTTPS, `better-iam.session` otherwise |
+| `pathnameHeader` | The name of the forwarded-path header, `x-better-iam-pathname` |
+| `verifyAssertionToken(token, options)`, `withAssertion(options, handler)`, `AssertionError` | Verify assertions offline in another service ([Assertions](/docs/frameworks/nextjs/advanced#assertions-for-other-services)) |
+| `createWebhookHandler(options)`, `verifyWebhook(input)` | Receive and verify your deployment's webhooks ([Webhooks](/docs/frameworks/nextjs/advanced#receiving-your-own-webhooks)) |
+
+**`@better-iam/next/client`**
+
+| Export | What it does |
+| --- | --- |
+| `IamNextProvider` | `IamProvider` that refreshes server components when the signed-in identity changes |
+| `useRouterSync()` | The hook inside `IamNextProvider`, for a provider tree you assemble yourself |
+| `useSignOut({ redirectTo? })` | Returns a function that signs out, navigates, and refreshes server components |
+| `SignInForm`, `ReauthenticateForm`, `PasswordResetRequestForm`, `PasswordResetForm`, `SignUpForm`, `InvitationForm` and their `*View` twins | The auth forms ([Server actions and forms](/docs/frameworks/nextjs/server-actions#the-forms)) |
+| `useSession`, `useAuthorize`, `useAccessible`, `useIamClient`, `Can` | Re-exported from [`@better-iam/react`](/docs/frameworks/react) |
+
+</Accordion>
+</Accordions>
+
+## Install
+
+```npm
+npm i @better-iam/next @better-iam/client @better-iam/server @better-iam/adapter-sqlite
+```
+
+Or install the umbrella package, `better-iam`, and import from its subpaths. See
+[Installation](/docs/guides/installation) for other storage adapters.
+
+## Application layout
+
+A complete App Router setup spreads over these files. The instance, the helpers, and the API route are the
+minimum; the others add edge redirects, drop-in forms, and background delivery.
+
+<Files>
+  <Folder name="app" defaultOpen>
+    <Folder name="api" defaultOpen>
+      <Folder name="iam/[...path]" defaultOpen>
+        <File name="route.ts" />
+      </Folder>
+      <Folder name="webhooks/iam">
+        <File name="route.ts" />
+      </Folder>
+      <Folder name="cron">
+        <File name="route.ts" />
+      </Folder>
+    </Folder>
+    <Folder name="[org]">
+      <File name="layout.tsx" />
+      <File name="page.tsx" />
+    </Folder>
+    <Folder name="login">
+      <File name="page.tsx" />
+    </Folder>
+    <File name="auth-actions.ts" />
+    <File name="layout.tsx" />
+    <File name="providers.tsx" />
+  </Folder>
+  <Folder name="lib" defaultOpen>
+    <File name="iam.ts" />
+    <File name="iam-next.ts" />
+  </Folder>
+  <File name="middleware.ts" />
+  <File name="next.config.mjs" />
+</Files>
+
+| File | Holds | Runtime |
+| --- | --- | --- |
+| `lib/iam.ts` | `betterIam({ ... })` | Node only (database, argon2) |
+| `lib/iam-next.ts` | `createIamNext(iam, options)` | Server components, actions, route handlers |
+| `app/api/iam/[...path]/route.ts` | `iamNext.handlers()` | The browser client, OAuth/SAML/SCIM mounts, `/health` |
+| `middleware.ts` | `createIamMiddleware(...)` | Edge: cookie presence and path forwarding |
+| `app/auth-actions.ts` | `iamNext.authActions()` | Sign-in, step-up, and reset server actions |
+| `app/api/webhooks/iam/route.ts` | `createWebhookHandler(...)` | Optional: consume your own IAM events |
+| `app/api/cron/route.ts` | `iamNext.background.cron(...)` | Optional: scheduled delivery and maintenance |
+
+## Setup
+
+<Steps>
+<Step>
+
+### Create the instance
+
+```ts title="lib/iam.ts"
+import { betterIam } from '@better-iam/server';
+import { sqliteAdapter } from '@better-iam/adapter-sqlite';
+
+export const iam = betterIam({
+  database: sqliteAdapter({ filename: process.env.BETTER_IAM_DATABASE ?? '.data/iam.db' }),
+  secret: process.env.BETTER_IAM_SECRET!,
+  baseURL: process.env.BETTER_IAM_BASE_URL ?? 'http://localhost:3000',
+  permissions: { actions: ['documents:read', 'documents:write'] },
+});
+```
+
+`baseURL` matters here: it becomes `iam.endpoint.origin`, the origin the in-process client presents and the one
+the server trusts for cookie requests.
+
+</Step>
+<Step>
+
+### Create the Next.js helpers
+
+`createIamNext` wraps the instance in the helpers your pages, route handlers, and actions use. `loginPath` and
+`stepUpPath` are where guards send people who must sign in or confirm who they are.
+
+```ts title="lib/iam-next.ts"
+import { createIamNext } from '@better-iam/next';
+import { iam } from './iam';
+
+export const iamNext = createIamNext(iam, {
+  loginPath: '/login',
+  stepUpPath: '/reauth',
+  interrupts: 'forbidden', // denials render app/forbidden.tsx
+});
+```
+
+</Step>
+<Step>
+
+### Mount the IAM HTTP API
+
+The browser client (including passkey ceremonies) and the OAuth, SAML, and SCIM protocol mounts reach the server
+through this catch-all route.
+
+```ts title="app/api/iam/[...path]/route.ts"
+import { iamNext } from '@/lib/iam-next';
+
+export const runtime = 'nodejs';
+export const { GET, POST, OPTIONS } = iamNext.handlers();
+```
+
+GET serves the operational `/health` and `/metrics` endpoints; every API method is a POST.
+
+</Step>
+<Step>
+
+### Keep native modules out of the bundle
+
+The server and its native dependencies (`argon2`, `better-sqlite3`) must load as plain Node modules. List them in
+`serverExternalPackages`, or load the instance lazily and pass a factory instead of the instance.
+
+<Tabs items={['serverExternalPackages', 'Lazy factory']}>
+<Tab value="serverExternalPackages">
+
+```js title="next.config.mjs"
+/** @type {import('next').NextConfig} */
+export default {
+  serverExternalPackages: [
+    '@better-iam/server',
+    '@better-iam/auth',
+    '@better-iam/adapter-sqlite',
+    'argon2',
+    'better-sqlite3',
+  ],
+  experimental: { authInterrupts: true }, // only for interrupts: true or 'forbidden'
+};
+```
+
+</Tab>
+<Tab value="Lazy factory">
+
+```ts title="lib/iam.ts"
+import type { BetterIam } from '@better-iam/server';
+import { createIamNext } from '@better-iam/next';
+
+async function create(): Promise<BetterIam> {
+  // Loaded at runtime from node_modules, never bundled.
+  const [{ betterIam }, { sqliteAdapter }] = await Promise.all([
+    import(/* webpackIgnore: true */ '@better-iam/server'),
+    import(/* webpackIgnore: true */ '@better-iam/adapter-sqlite'),
+  ]);
+  const iam = betterIam({
+    database: sqliteAdapter({ filename: process.env.BETTER_IAM_DATABASE ?? '.data/iam.db' }),
+    secret: process.env.BETTER_IAM_SECRET!,
+    baseURL: process.env.BETTER_IAM_BASE_URL ?? 'http://localhost:3000',
+  });
+  await iam.initialize();
+  return iam;
+}
+
+// One instance per process: Next may evaluate this module once per server layer.
+const holder = globalThis as unknown as { __iam?: Promise<BetterIam> };
+export function getIam(): Promise<BetterIam> {
+  holder.__iam ??= create();
+  return holder.__iam;
+}
+
+export const iamNext = createIamNext(getIam, { loginPath: '/login' });
+```
+
+</Tab>
+</Tabs>
+
+`serverExternalPackages` only applies to packages resolved from `node_modules`. In a monorepo, workspace
+packages are symlinks outside it, so the example app and the console load the server with
+`import(/* webpackIgnore: true */ ...)` instead.
+
+</Step>
+<Step>
+
+### Protect routes at the edge
+
+Add [middleware](/docs/frameworks/nextjs/middleware) that redirects visitors without a session cookie and
+forwards the requested path, so `?next=` fills itself.
+
+```ts title="middleware.ts"
+import { NextResponse } from 'next/server';
+import { createIamMiddleware } from '@better-iam/next/edge';
+
+export const middleware = createIamMiddleware({
+  loginPath: '/login',
+  publicPaths: ['/', '/pricing', '/docs/**', '/invite/*'],
+  next: (init) => NextResponse.next(init),
+});
+export const config = { matcher: ['/((?!_next|favicon.ico).*)'] };
+```
+
+</Step>
+</Steps>
+
+## Reading the session
+
+```tsx title="app/dashboard/page.tsx"
+import { iamNext } from '@/lib/iam-next';
+
+export default async function Dashboard() {
+  const current = await iamNext.getSession();
+  if (!current) return <a href="/login">Sign in</a>;
+  return <h1>Welcome, {current.identity.name}</h1>;
+}
+```
+
+`iamNext.getSession()` reads the request's cookies (through `headers()` and `cookies()`) and returns
+`{ identity, session }`. It returns `null` whenever the server refuses the credential as a sign-in. That covers
+missing, expired, or revoked sessions, sessions that must step up, unverified email addresses, inactive tenants,
+and requests from a network the session or tenant does not allow. Any other failure is rethrown. `requireSession()` returns the session or redirects to the login
+page with `?next=`; [Guards](/docs/frameworks/nextjs/guards) covers it with the other wrappers.
+
+- **Per-request memoization.** The no-argument call goes through React `cache`, so a layout, its page, and nested
+  server components share one lookup per render. Calls that pass `headers` explicitly are not memoized. The
+  `cache` option replaces React's; pass `(fn) => fn` to disable it.
+- **After a server action.** The helper merges `cookies()` into the headers it sends. Cookies a server action
+  just set, such as a new session after sign-in, therefore apply to the re-render Next performs in the same
+  response.
+- **Direct API calls.** `iamNext.credential()` returns `{ headers }` for any `iam.api.*` call made as the
+  current visitor: `iam.api.identities.list(await iamNext.credential(), { tenantId })`.
+- **No cross-request state.** The helpers never cache across requests. Memoization is scoped to one render, and
+  there is no module-level session state.
+
+### Client components
+
+Client components get the session from the server so their first render needs no fetch.
+`iamNext.sessionForClient()` returns the session as plain JSON without the stored token hash, or `null`. Pass it
+to `IamNextProvider`, which is `IamProvider` plus a `router.refresh()` whenever the signed-in identity changes in
+the browser ([details](/docs/frameworks/nextjs/advanced#keeping-server-components-in-sync)).
+
+<Tabs items={['app/layout.tsx', 'app/providers.tsx']}>
+<Tab value="app/layout.tsx">
+
+```tsx title="app/layout.tsx"
+import type { ReactNode } from 'react';
+import { iamNext } from '@/lib/iam-next';
+import { Providers } from './providers';
+
+export default async function RootLayout({ children }: { children: ReactNode }) {
+  return (
+    <html lang="en">
+      <body>
+        <Providers initialSession={await iamNext.sessionForClient()}>{children}</Providers>
+      </body>
+    </html>
+  );
+}
+```
+
+</Tab>
+<Tab value="app/providers.tsx">
+
+```tsx title="app/providers.tsx"
+'use client';
+import type { ReactNode } from 'react';
+import { createIamClient } from '@better-iam/client';
+import { IamNextProvider } from '@better-iam/next/client';
+import type { BetterIam } from '@better-iam/server';
+
+// Never called during server rendering (the provider starts from initialSession), but it needs an origin.
+const client = createIamClient<BetterIam>({
+  baseURL: typeof window === 'undefined' ? 'http://localhost' : window.location.origin,
+});
+type Session = Awaited<ReturnType<BetterIam['api']['auth']['getSession']>>;
+
+export function Providers(props: { initialSession: Session | null; children: ReactNode }) {
+  return (
+    <IamNextProvider client={client} initialSession={props.initialSession}>
+      {props.children}
+    </IamNextProvider>
+  );
+}
+```
+
+</Tab>
+</Tabs>
+
+Inside the provider, the [React hooks](/docs/frameworks/react) (`useSession`, `useAuthorize`, `useAccessible`,
+`useIamClient`, `Can`) work as usual; `@better-iam/next/client` re-exports them.
+
+## Options
+
+`createIamNext(iam, options)` takes these options. Most applications set `loginPath`, `stepUpPath`, and
+`interrupts`; `headers`, `cookies`, `redirect`, and the other overrides exist for tests and custom setups.
+
+<TypeTable
+  type={{
+    loginPath: {
+      type: 'string',
+      description: <>Where <code>requireSession</code>, <code>page</code>, and <code>requireTenantSession</code> send signed-out visitors, with <code>?next=</code>.</>,
+      default: "'/login'",
+    },
+    stepUpPath: {
+      type: 'string',
+      description: <>The re-authentication page for <code>stepUp</code> guards; it receives <code>?next=</code> and <code>?reason=</code>. Without it, page guards throw the step-up error. See <a href="/docs/frameworks/nextjs/advanced#step-up">Step-up</a>.</>,
+    },
+    interrupts: {
+      type: "boolean | 'forbidden'",
+      description: <>Use Next's <code>unauthorized()</code> and <code>forbidden()</code> (<code>experimental.authInterrupts</code>) instead of redirects or thrown errors. <code>'forbidden'</code> interrupts denials only.</>,
+      default: 'false',
+    },
+    trustedOrigins: {
+      type: 'string[]',
+      description: <>Origins besides this application's own whose pages may send cookie-authenticated mutations to <code>route</code>, <code>apiRoute</code>, and <code>pages.api</code> handlers, for example a separate front end. The IAM origin is always trusted.</>,
+    },
+    dispatchAfterResponse: {
+      type: 'boolean',
+      description: <>Deliver queued email, SMS, webhooks, and events after each response with Next's <code>after()</code>. See <a href="/docs/frameworks/nextjs/advanced#background-work">Background work</a>.</>,
+      default: 'false',
+    },
+    background: {
+      type: 'BackgroundOptions',
+      description: <>Error reporting, batch size, and an <code>after()</code> override for background work.</>,
+    },
+    baseURL: {
+      type: 'string',
+      description: <>The IAM origin for <code>client()</code> when the instance does not report <code>endpoint</code>. Otherwise the origin comes from <code>x-forwarded-host</code> / <code>host</code>, and it must be one of the server's trusted origins.</>,
+    },
+    basePath: {
+      type: 'string',
+      description: <>The IAM mount path for <code>client()</code> when the instance does not report <code>endpoint</code>.</>,
+      default: "'/api/iam'",
+    },
+    cache: {
+      type: '(fn) => fn',
+      description: <>Memoizes the no-argument session read per request. Pass <code>(fn) =&gt; fn</code> to disable memoization.</>,
+      default: "React's cache",
+    },
+    headers: {
+      type: '() => Headers | Promise' + '<' + 'Headers>',
+      description: <>Reads the current request headers, which become the credential for every call. Override it only outside Next's request scope, for example in tests.</>,
+      default: 'headers() merged with cookies()',
+    },
+    cookies: {
+      type: '() => CookieStore | Promise' + '<' + 'CookieStore>',
+      description: <>The mutable cookie store <code>client()</code> writes issued cookies to (anything with <code>set(name, value, options)</code>).</>,
+      default: 'cookies() from next/headers',
+    },
+    redirect: {
+      type: '(url: string) => never',
+      description: <>Performs the login, step-up, and denial redirects; override it in tests.</>,
+      default: 'redirect() from next/navigation',
+    },
+    unauthorized: {
+      type: '() => never',
+      description: <>Replaces Next's <code>unauthorized()</code>, which signed-out guards call when <code>interrupts</code> is <code>true</code>.</>,
+      default: 'unauthorized() from next/navigation',
+    },
+    forbidden: {
+      type: '() => never',
+      description: <>Replaces Next's <code>forbidden()</code>, which denied guards call when <code>interrupts</code> is set.</>,
+      default: 'forbidden() from next/navigation',
+    },
+    notFound: {
+      type: '() => never',
+      description: <>Replaces Next's <code>notFound()</code>, which <code>requireTenantSession</code> calls for an unknown organization alias.</>,
+      default: 'notFound() from next/navigation',
+    },
+    now: {
+      type: '() => number',
+      description: <>The clock for step-up recency checks, for tests.</>,
+      default: 'Date.now',
+    },
+  }}
+/>
+
+`createIamNext` accepts the instance or a factory (`() => iam` or `() => Promise<iam>`). Any object with the
+`IamLike` surface works; a custom one without `endpoint` passes `baseURL` and `basePath`.
+
+## `iamNext` at a glance
+
+Everything `createIamNext` returns, and where each member is explained:
+
+| Member | What it does | Details |
+| --- | --- | --- |
+| `getSession(headers?)` | The current `{ identity, session }`, or `null`; memoized per request | [Reading the session](#reading-the-session) |
+| `requireSession({ ... })` | The session, or a redirect to the login page (or the step-up page) | [Guards](/docs/frameworks/nextjs/guards#lower-level-helpers) |
+| `require({ tenantId, action, resource })` | Enforces one action before rendering | [Guards](/docs/frameworks/nextjs/guards#lower-level-helpers) |
+| `page(render, spec)` | Wraps a page or layout: session, step-up, authorization, then render | [Guards](/docs/frameworks/nextjs/guards#pages-and-layouts) |
+| `route(handler, spec)` | Wraps a route handler for user sessions; answers IAM failures as JSON | [Guards](/docs/frameworks/nextjs/guards#route-handlers) |
+| `apiRoute(handler, spec)` | `route()` that also accepts API keys and assumed roles | [Service credentials](/docs/frameworks/nextjs/advanced#service-credentials) |
+| `action(fn, spec)` | Wraps a server action; returns `{ ok, data }` or `{ ok: false, error }` | [Server actions](/docs/frameworks/nextjs/server-actions#guarded-mutations) |
+| `can({ tenantId, checks })` | Several advisory decisions in one call, keyed `action@type/id` | [Rendering by permission](/docs/frameworks/nextjs/guards#rendering-by-permission) |
+| `allowed(action, resource?)`, `<iamNext.Can>` | One advisory decision, batched with every other check in the render | [Rendering by permission](/docs/frameworks/nextjs/guards#rendering-by-permission) |
+| `client()` | The typed API, running in process, writing issued cookies through `cookies()` | [In-process client](/docs/frameworks/nextjs/server-actions#the-in-process-client) |
+| `authActions(options)` | Drop-in server actions for sign-in, step-up, reset, sign-up, verification, and invitations | [Auth forms](/docs/frameworks/nextjs/server-actions#auth-forms) |
+| `handlers()` | `GET`, `POST`, and `OPTIONS` for the `app/api/iam/[...path]` route | [Setup](#setup) |
+| `sessionForClient()` | The session as plain JSON (no token hash) for `IamNextProvider` | [Client components](#client-components) |
+| `requireTenantSession({ slug })`, `tenant(slug)` | Resolve an organization alias and require a session in it | [Organizations](/docs/frameworks/nextjs/organizations) |
+| `assertion({ tenantId, audience })` | A short-lived signed assertion for a downstream service | [Assertions](/docs/frameworks/nextjs/advanced#assertions-for-other-services) |
+| `credential()` | `{ headers }` for direct `iam.api.*` calls as the current visitor | [Reading the session](#reading-the-session) |
+| `currentPath()` | The path the middleware forwarded for this request, when present and safe | [Middleware](/docs/frameworks/nextjs/middleware) |
+| `clearSessionCookie()` | Expires the session cookie in the current response | [Server actions](/docs/frameworks/nextjs/server-actions#the-in-process-client) |
+| `background` | Outbox and event dispatch: `dispatch()`, `schedule()`, and the `cron()` route | [Background work](/docs/frameworks/nextjs/advanced#background-work) |
+| `pages` | Pages Router helpers: `handler`, `withSession`, `api`, `client`, `getSession` | [Pages Router](/docs/frameworks/nextjs/advanced#pages-router) |
+
+## In this section
+
+<Cards>
+  <Card icon={<ShieldCheck />} title="Guards" href="/docs/frameworks/nextjs/guards">
+    `page`, `requireSession`, `require`, `route`, and rendering by permission.
+  </Card>
+  <Card icon={<Zap />} title="Server actions and forms" href="/docs/frameworks/nextjs/server-actions">
+    The in-process client, guarded actions, and the drop-in auth forms.
+  </Card>
+  <Card icon={<Building />} title="Organizations in the URL" href="/docs/frameworks/nextjs/organizations">
+    `requireTenantSession` for `/[org]/...` routes.
+  </Card>
+  <Card icon={<Waypoints />} title="Middleware" href="/docs/frameworks/nextjs/middleware">
+    Edge redirects, public paths, and `?next=` forwarding.
+  </Card>
+  <Card icon={<Settings2 />} title="Advanced" href="/docs/frameworks/nextjs/advanced">
+    Step-up, service credentials, webhooks, assertions, background work, and the Pages Router.
+  </Card>
+</Cards>
+
+The [example app](https://github.com/better-iam/better-iam/tree/main/examples/nextjs) (`examples/nextjs`) runs
+all of it on port 3300 with seeded accounts.

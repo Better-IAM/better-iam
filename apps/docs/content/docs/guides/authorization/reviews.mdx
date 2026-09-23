@@ -1,0 +1,276 @@
+---
+title: Access reviews
+description: Explain and review access without granting it. Simulate a decision, list who can act on a resource, see a person's effective actions, and scan for risk.
+icon: ClipboardCheck
+packages: ['@better-iam/server']
+sources:
+  - docs/policies.md
+  - docs/governance.md
+  - docs/recipes.md
+  - packages/server/src/api/policies.ts
+  - packages/server/src/api/analysis.ts
+  - packages/server/src/decisions.ts
+  - packages/server/src/api/invariants.ts
+---
+
+Sooner or later someone asks: why was Alice refused? Who can delete the payroll workspace? What can this
+contractor actually do? Answering by reading <Term id="role">roles</Term> and <Term id="policy">policies</Term> is
+slow and error-prone, because <Term id="group">groups</Term>, inheritance, <Term id="condition">conditions</Term>,
+<Term id="boundary">boundaries</Term>, and time windows all interact. The review calls answer these questions by
+running the real evaluator instead, against the tenant's live configuration.
+
+Three administrator-only reads, all under `iam:policies:simulate`, explain access without creating sessions or
+granting anything:
+
+| Question | Call |
+| --- | --- |
+| Why is this person allowed or refused? | [`policies.simulate`](#explain-one-decision) |
+| Who can perform this action on this resource? | [`policies.whoCan`](#who-can-act-on-a-resource) |
+| What can this person do on this resource? | [`policies.effectiveActions`](#what-can-a-person-do) |
+
+Each evaluates the <Term id="identity">identity</Term> in a
+<Term id="synthetic-session">synthetic session</Term>: a pretend sign-in that is never issued and cannot be used. With `assumeMfa: true` it simulates an MFA-verified session; otherwise conditions on
+`principal.mfa` see `false`. Results are <Term id="advisory">advisory</Term> and never enforcement.
+
+## Explain one decision
+
+When a person reports "access denied" or an auditor asks why someone was allowed, you need the evaluator's
+reasoning, not just yes or no. Public authorization responses deliberately hide it: they omit matched statements
+and report every denial as `ACCESS_DENIED`, so callers cannot probe your policies.
+
+`policies.simulate({ tenantId, identityId, action, resource, assumeMfa? })` returns the full decision for one check
+as that person, including the matched statements and the precise reason. It requires `iam:policies:simulate` on
+the identity (`iam/{identityId}`).
+
+```ts
+const decision = await iam.api.policies.simulate(credential, {
+  tenantId,
+  identityId: alice.id,
+  action: 'documents:delete',
+  resource: { type: 'document', id: 'q3-plan' },
+  assumeMfa: true,
+});
+// { allowed: false, reason: 'explicit-deny', matched: [...] }
+```
+
+`matched` lists the statements that applied, by their `sid` (or position), so you can find the deny or the
+allow responsible. Give statements a `sid` to make these explanations readable.
+
+The reasons a server decision can carry:
+
+| Reason | What it means | Where to look |
+| --- | --- | --- |
+| `allowed` | A grant allowed it, no deny matched, and every boundary allowed it. | |
+| `ROOT_OVERRIDE` | A root administrator in an MFA-verified session; policies are not consulted. | |
+| `explicit-deny` | A deny statement matched, in one of the person's roles or in a boundary. | The `matched` list names the statement. |
+| `boundary-deny` | A tenant, principal, session, or credential boundary does not allow the action. | [Boundaries](/docs/guides/authorization/policies#boundaries) |
+| `NO_APPLICABLE_GRANT` | No role allowed it within its authority ceilings: no role with the action, a condition that did not hold, or a ceiling that cut it off. | [`effectiveActions`](#what-can-a-person-do), the person's bindings |
+| `UNKNOWN_ACTION` | The action is not in the tenant's catalog. | [Permission catalog](/docs/guides/authorization/catalog) |
+| `TENANT_INACTIVE` | The tenant or one of its ancestors is suspended or not yet active. | |
+| `TENANT_MISMATCH` | The session belongs to another tenant. | |
+| `CREDENTIAL_AUTHORITY_REVOKED` | The API key's issuing authority was revoked, or, for a session exchanged from an external identity provider's token, the authority of whoever registered that provider. | [Grant authorities](/docs/guides/authorization/roles#grant-authorities) |
+
+To try a document that is not stored yet, use [`policies.test`](/docs/guides/authorization/policies#test-a-document-before-saving-it)
+instead: it evaluates a candidate document against a context you supply.
+
+## Who can act on a resource
+
+Before you delete a shared folder, hand an auditor a list of who can approve payments, or check that only the
+finance team can export the ledger, you need the inverse question: not "may Alice do this?" but "who may?".
+
+`policies.whoCan` lists every active identity that could perform an action on a resource, with the decision
+reason, plus a `total`:
+
+```ts
+const { identities, total } = await iam.api.policies.whoCan(credential, {
+  tenantId,
+  action: 'payments:approve',
+  resource: { type: 'ledger', id: 'main' },
+  assumeMfa: true,
+  limit: 50,
+});
+// identities: [{ identityId, name, email, kind, reason }], total: 12
+```
+
+<TypeTable
+  type={{
+    action: {
+      type: 'string',
+      description: 'The action to check. It must exist in the catalog (INVALID_ACTION otherwise).',
+      required: true,
+    },
+    resource: {
+      type: '{ type: string; id: string }',
+      description: 'The resource to check. Catalog resources and platform resources such as iam/... are both accepted, and the resource is resolved once for the whole review.',
+      required: true,
+    },
+    kind: {
+      type: "'user' | 'service'",
+      description: 'Only people (user) or only service accounts (service). Omit it to include both.',
+    },
+    assumeMfa: {
+      type: 'boolean',
+      description: 'Evaluate everyone as MFA-verified, the most they can reach. Without it, statements that require MFA do not count.',
+      default: 'false',
+    },
+    limit: {
+      type: 'number',
+      description: 'Page size, 1 to 1000.',
+      default: '100',
+    },
+    offset: {
+      type: 'number',
+      description: 'How many matches to skip, for paging.',
+      default: '0',
+    },
+  }}
+/>
+
+- It requires `iam:policies:simulate` on the tenant.
+- Root administrators are not listed because their override applies everywhere.
+- Access through groups, inheritance, relationships, activations, and access windows all counts.
+- The resource is resolved once, but grants are loaded per identity, so the call scales with the tenant's
+  directory size. It is meant for review screens, not per-request checks.
+
+## What can a person do
+
+When a contractor joins a project, or before an access-certification decision, the useful view is "everything
+this person can do here", not one action at a time.
+
+`policies.effectiveActions({ tenantId, identityId, resource, actions?, assumeMfa? })` evaluates every catalog
+action, or the list you pass (at most 200), against one resource for one identity. It loads the identity's grants
+once and returns `allowed` (the sorted action names) and `results` with a reason per action:
+
+```ts
+const { allowed, results } = await iam.api.policies.effectiveActions(credential, {
+  tenantId,
+  identityId: contractor.id,
+  resource: { type: 'folder', id: 'plans' },
+});
+// allowed: ['files:read', 'folders:read']
+// results: [{ action: 'folders:share', allowed: false, reason: 'NO_APPLICABLE_GRANT' }, ...]
+```
+
+It requires `iam:policies:simulate` on the identity. More than 200 actions fail with `INVALID_INPUT`, and an
+action outside the catalog with `INVALID_ACTION`. Platform resources (`iam/...`) are accepted, so you can also ask
+which administrative actions someone holds on a role or group.
+
+## What simulations take into account
+
+Simulations run the ordinary evaluator against the live configuration. Everything that shapes a real decision
+counts: bindings direct and through groups, role inheritance, conditions, relationships, boundaries, authority
+ceilings, live activations of eligible bindings, and access windows at the moment of evaluation.
+
+The synthetic session differs from a real one in a few ways:
+
+- `principal.mfa` is `false` unless you pass `assumeMfa: true`.
+- `principal.sessionKind` is `user` for people and `api-key` for service accounts, and `principal.authMethod` is
+  absent, so conditions on the sign-in method do not hold.
+- `principal.mfaTime` and `request.sourceIp` are always absent, even with `assumeMfa: true`, so conditions that
+  demand recent MFA or a particular network do not hold. `principal.authTime` is the moment of evaluation, and
+  the session carries no tags.
+- The session is never impersonated, and no session policy or API key scope applies.
+
+## Scan for risky configuration
+
+Individual reviews answer questions you already have. A scan finds the ones you did not think to ask: an admin
+policy without conditions, an owner without MFA, an API key nobody has used in months.
+
+`analysis.findings({ tenantId, dormantDays?, includeSuppressed? })` scans the tenant's configuration and returns
+`summary` counts and `findings` ordered by severity. It requires `iam:analysis:read`. Each finding carries a
+deterministic `id`, a `kind`, a `severity`, a `title`, a `detail`, and the `subject` it is about.
+
+```ts
+const { summary, findings } = await iam.api.analysis.findings(credential, { tenantId, dormantDays: 60 });
+// summary: { high: 1, medium: 3, low: 5, suppressed: 0 }
+```
+
+| Kind | Severity | What it reports |
+| --- | --- | --- |
+| `unrestricted-admin-policy` | high | Policies or inline role documents that allow `*` or `iam:*` on `*` without conditions. |
+| `admin-without-mfa` | high | Owners or holders of such roles without an authenticator or passkey, while the tenant does not require MFA. |
+| `separation-of-duties` | high | People holding roles a <Term id="sod">separation-of-duties</Term> [rule](/docs/guides/authorization/separation-of-duties) forbids together. |
+| `broad-action-wildcard` | medium | Unconditional service-wide wildcards such as `documents:*`. |
+| `service-account-admin` | medium | Service accounts with full administration. |
+| `dormant-access` | medium | People who hold bindings or ownership but have not signed in for `dormantDays` (default 90). |
+| `stale-api-key` | medium | API keys unused for `dormantDays`, or never used. |
+| `trust-without-mfa` | medium | Role trusts that do not require MFA. |
+| `standing-privileged-access` | medium | A person with a direct, permanent binding (not eligible, no end) to a role that grants full administration, which just-in-time eligibility or an end date would narrow. |
+| `manager-cycle` | medium | Reporting lines that loop. |
+| `unattached-policy` | low | Policies attached to no role. |
+| `unused-role`, `empty-role` | low | Roles bound to nobody, or granting nothing. |
+| `empty-group-with-access` | low | Groups that hold bindings but have no members. |
+| `unused-eligible-binding` | low | Eligible bindings nobody has activated within `dormantDays`. Only allowed activation and approval events count, so a member cannot hide it through `authorize`. |
+| `orphaned-manager` | low | People whose manager is missing, deleted, or disabled. |
+| `policy-lint` | low | Stored policies or inline role documents with [lint](/docs/guides/authorization/policies#lint) warnings. |
+
+System owner policies and protected roles are not reported as misconfiguration. The scan reads the whole tenant,
+so it is meant for review screens and scheduled reports rather than request paths.
+
+Some findings are accepted risks, such as a break-glass account that is meant to be dormant. Because finding IDs
+are deterministic, you can record that decision once. `analysis.suppress({ tenantId, findingId, reason })` hides a
+finding from future results with a reason kept for reviewers (at most 500 characters), and
+`analysis.unsuppress({ tenantId, findingId })` shows it again. Both require `iam:analysis:update`. Pass
+`includeSuppressed: true` to `analysis.findings` to list suppressed findings too.
+
+## Guardrails that must always hold
+
+Reviews look at access as it is today. Access <Term id="invariant">invariants</Term> go further: they are lines
+that must hold whatever roles and policies say, such as "contractors can never delete the payroll workspace" or
+"the on-call group can always restart production". They are checked continuously and, if you choose, enforced on
+every change.
+
+```ts
+await iam.api.invariants.create(credential, {
+  tenantId,
+  name: 'Contractors never approve payments',
+  subject: { attribute: { name: 'contractor', value: true } },
+  action: 'payments:approve',
+  resource: { type: 'ledger', id: 'main' },
+  expect: 'deny',
+  mode: 'enforce',
+});
+```
+
+- `invariants.create` stores one (`iam:invariants:manage`). The `subject` is exactly one of `{ identityId }`,
+  `{ groupId }` (its live members), `{ attribute: { name, value } }` (active identities whose declared attribute
+  equals the value), or `{ everyone: true }`. `expect: 'deny'` means nobody in the subject may be allowed;
+  `expect: 'allow'` means everyone in it must be. The resource must resolve.
+- `mode: 'monitor'` (the default) only reports; `'enforce'` also guards changes. `assumeMfa` (default true)
+  evaluates people as MFA-verified, the most they can reach.
+- `invariants.run({ tenantId, invariantId? })` (`iam:invariants:read`) evaluates them now with the ordinary
+  evaluator and returns, per invariant, `passed`, the `violations` (person and decision reason), and an `error`
+  when it can no longer be evaluated. At most 500 people are evaluated per invariant in a run.
+- `invariants.list` returns the tenant's invariants, `invariants.update` changes one (for example to switch it
+  from `monitor` to `enforce`), and `invariants.delete` removes one. Names are unique per tenant, and a tenant
+  holds at most 100.
+
+An enforced invariant is evaluated, for every subject, before and after each operation that can change access:
+role and policy edits, bindings, activations, group membership, identity changes, package assignments,
+configuration apply, relationship and resource changes, boundary and authority changes, and more. An operation
+that newly breaks one, or makes it impossible to evaluate, is refused with `INVARIANT_VIOLATION` (409) and rolled
+back. Violations that already existed do not block unrelated work, so you can switch an invariant to `enforce`
+while it is still broken.
+
+Scheduled jobs, inbound SCIM provisioning, and members accepting agreements run outside that envelope and are not
+guarded; schedule `iam.checkInvariants()` (CLI `better-iam monitor-invariants`) to be told when a monitored
+invariant breaks, and gate CI with `better-iam check-invariants --tenant ID --fail-on-broken`. The full lifecycle,
+alerts, and the change impact preview are covered in
+[Change safety](/docs/guides/governance/change-safety).
+
+## Related reviews
+
+<Cards>
+  <Card title="Certifications" href="/docs/guides/governance/certifications">
+    Campaigns in which reviewers keep or revoke each binding, with a recorded decision.
+  </Card>
+  <Card title="Usage and role mining" href="/docs/guides/governance/usage-and-mining">
+    Find unused access, redundant bindings, and peer outliers.
+  </Card>
+  <Card title="Change safety" href="/docs/guides/governance/change-safety">
+    Preview who gains and loses access before a change, and enforce invariants.
+  </Card>
+  <Card title="Access report" href="/docs/guides/privileged-access/access-report">
+    What ends soon, live activations, pending requests, and unused keys.
+  </Card>
+</Cards>

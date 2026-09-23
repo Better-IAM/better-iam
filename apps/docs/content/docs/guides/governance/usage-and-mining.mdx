@@ -1,0 +1,208 @@
+---
+title: Usage and role mining
+description: Record which actions people actually use, right-size roles, and mine the directory for redundant grants, bundles, and peer outliers.
+icon: Pickaxe
+packages: ['@better-iam/server', '@better-iam/cli']
+sources:
+  - docs/governance.md
+  - docs/policies.md
+  - packages/server/src/usage.ts
+  - packages/server/src/api/role-mining.ts
+---
+
+_Least privilege_ means everyone holds only the access they need. It is easy to agree with and hard to practice,
+because nobody knows which grants are still needed, and access granted one person at a time turns into a tangle
+nobody can review.
+
+Two features help. _Access usage_ records which actions each person actually uses, so you can find
+<Term id="role">roles</Term> nobody needs and actions no holder touches. _Role mining_ reads who holds what today
+and proposes simpler ways to grant the same access.
+
+Reading either needs `iam:analysis:read`; applying a role-mining suggestion needs `iam:analysis:update`. The
+console's Role mining page shows both, with Apply, Remove, and Create package buttons.
+
+## Access usage
+
+To know whether a grant is needed, you need to see it being used. Access usage counts every allowed check per
+person and action. It is off by default because it writes to storage; turn it on once and let it run for a review
+period, such as the 90 days the reports look back by default, before drawing conclusions.
+
+```ts title="iam.ts"
+const iam = betterIam({
+  // ...
+  accessUsage: true, // or { flushIntervalMs, maxBuffered }
+});
+
+// On shutdown, write what is still buffered.
+await iam.flushAccessUsage();
+```
+
+<TypeTable
+  type={{
+    flushIntervalMs: {
+      type: 'number',
+      description: 'How often buffered usage is written to storage, at least one second. Shorter means fresher reports, longer means fewer writes.',
+      default: '60000 (one minute)',
+    },
+    maxBuffered: {
+      type: 'number',
+      description: 'How many distinct (identity, action) pairs may wait in memory before they are written early, so a traffic spike cannot grow the buffer without bound.',
+      default: '10000',
+    },
+  }}
+/>
+
+### What is counted
+
+Every allowed `authorize` or `authorizeMany` check and every allowed provisioning operation counts. Root
+overrides and calls made during <Term id="impersonation">impersonation</Term> do not, because they are not the
+person's own use of their grants. Uses are counted in memory per person and action and written in batches, so the
+request path never waits on storage.
+
+The `accessUsage` collection holds one record per identity and action with `firstUsedAt`, `lastUsedAt`, and
+`count`. `accessUsageTracking` remembers when each tenant's recording began, so reports can tell whether the
+evidence covers a whole window.
+
+`iam.flushAccessUsage()` writes whatever is still buffered and returns `{ written }`. Call it in your shutdown
+hook, so a deploy does not lose the last minute of usage.
+
+### Read usage
+
+`roleMining.usage({ tenantId, identityId?, limit?, offset? })` lists the raw records, most recently used first,
+100 per page by default and at most 1000. It also returns `tracking` (whether the option is on), `trackingSince`
+(when recording began), and the `total` number of records. Use it to answer "what does this person actually do?"
+on a member's detail page.
+
+```ts
+const { records } = await iam.api.roleMining.usage(credential, { tenantId, identityId: alice.id });
+// records: [{ identityId, action, firstUsedAt, lastUsedAt, count }]
+```
+
+### Right-size roles
+
+Raw usage is too detailed to act on. `roleMining.rightSize({ tenantId, unusedDays? })` turns it into
+recommendations. It compares every live <Term id="binding">binding</Term> with its holders' use in the last
+`unusedDays` (90 by default). It then reports who holds a role they do not use, and which of a role's actions
+nobody uses at all. Run it after a full window:
+
+```ts
+const result = await iam.api.roleMining.rightSize(credential, { tenantId, unusedDays: 90 });
+if (!result.complete) console.warn('Usage does not cover the whole window yet');
+for (const entry of result.entries)
+  console.log(entry.identity.name, entry.role.name, entry.status, entry.unusedActions);
+for (const role of result.roles) console.log(role.role.name, 'never used:', role.neverUsed);
+```
+
+- A role's actions are the known actions its allow statements (own, attached, and inherited) match.
+- Each `entries` item is a person whose use of a role is `unused` (none of its actions) or `partial` (some never
+  used), with the used and unused actions and whether the role reaches them directly or through a group (`via`).
+- `roles` lists, per role, the actions no holder used: the candidates for a narrower role.
+- `complete` turns true once usage has been recorded for the whole window. Before that, "unused" only means "not
+  since tracking began".
+
+Both read methods write buffered usage first, so results include the latest checks. The console's Role mining
+page shows a Least privilege card with a Remove button for unused direct bindings.
+
+Usage also powers [review recommendations](/docs/guides/governance/certifications#recommendations) for
+<Term id="certification">certification campaigns</Term>, the periodic reviews where reviewers keep or revoke each
+binding.
+
+## Role mining
+
+Over time the same access gets granted in several ways: a role bound to a person directly and again through their
+group, the same role bound to every member of a team one by one, two roles with identical permissions. Each is
+harmless alone, but together they make access hard to review and easy to leave behind when people move.
+
+_Role mining_ finds these patterns. `roleMining.suggest({ tenantId, minIdentities?, minRoles?, kinds?, limit? })`
+reads who holds what and returns `summary` counts per kind and a list of `suggestions`, most actionable first.
+Each suggestion has:
+
+- a deterministic `id` (the same condition always gets the same ID);
+- the roles and people involved;
+- `savings`, the number of grants the change would save;
+- `applicable`, whether `roleMining.apply` can carry it out for you.
+
+`minIdentities` (default 3) is how many people must share a pattern, and `minRoles` (default 2) the smallest role
+combination reported as a bundle. `kinds` limits the result to some kinds and `limit` caps its length.
+
+| Kind                | What it finds                                                                                                                                                         | Carried out by       |
+| ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------- |
+| `redundant-binding` | Direct bindings of a role the person also receives through a permanent group membership, from a standing binding under the same authority that is at least as broad (no window, no later start, no earlier end). Removing them changes nothing today. | `roleMining.apply`   |
+| `group-binding`     | A role every permanent member of a group (at least `minIdentities`, default 3) holds through a plain direct binding (standing, permanent, not from a package). Bind it to the group once so joiners get it and leavers lose it. | `roleMining.apply`   |
+| `duplicate-roles`   | Roles whose inline, attached, and inherited statements are identical.                                                                                                | Role edits           |
+| `bundle`            | Role combinations of at least `minRoles` (default 2) roles held together by at least `minIdentities` people, skipped when a package or an inheriting role already has exactly those roles. | `packages.create`    |
+
+Bundles are found by looking for the largest sets of standing roles that the same group of people hold together
+(closed itemsets, in data-mining terms). Grant them as one <Term id="access-package">access package</Term>
+([access packages](/docs/guides/privileged-access/access-packages)), optionally assigned
+[automatically by attribute](/docs/guides/privileged-access/automatic-assignment), or as an inheriting role.
+
+### Apply a suggestion
+
+Two kinds of suggestion can be carried out for you, so a cleanup is one click (or one call) instead of dozens of
+binding edits:
+
+```ts
+const { suggestions } = await iam.api.roleMining.suggest(credential, { tenantId });
+const simplest = suggestions.find((item) => item.kind === 'group-binding' && item.applicable);
+if (simplest)
+  await iam.api.roleMining.apply(credential, { tenantId, suggestionId: simplest.id });
+// { applied, createdBindingId, removedBindingIds }
+```
+
+`roleMining.apply({ tenantId, suggestionId })` (`iam:analysis:update`) carries out a `group-binding` or
+`redundant-binding` suggestion in one transaction. It recomputes the suggestion first, so pass the same
+`minIdentities` and `minRoles` you gave `suggest`. It fails with `NOT_FOUND` once the suggestion no longer holds,
+and with `INVALID_INPUT` for a suggestion that is not `applicable`. It runs under the authority the original
+bindings used and with the caller's own binding rights:
+
+- The group binding is created under the authority the direct bindings share, so the caller needs that authority
+  (or root), `iam:bindings:create` on the role, and `iam:bindings:delete` on every removed binding.
+- Suggestions whose direct bindings come from different authorities are listed with `applicable: false`.
+- Bundles and duplicate roles are left to `packages.create` and role edits.
+- Enforced <Term id="invariant">invariants</Term> ([change safety](/docs/guides/governance/change-safety#access-invariants))
+  guard `roleMining.apply` like any other access change.
+
+### Peer outliers
+
+When someone moves from sales to finance, they often keep their sales access; when someone joins a team, they
+often lack something everyone else has. Comparing a person with their colleagues catches both.
+
+`roleMining.outliers({ tenantId, peerBy?, threshold?, commonShare?, minPeers? })` compares each active person
+with their peers: people with the same manager (`peerBy: 'manager'`, the default) or the same value of a declared
+identity attribute (`'attribute:department'`).
+
+```ts
+const { outliers } = await iam.api.roleMining.outliers(credential, {
+  tenantId,
+  peerBy: 'attribute:department',
+});
+// outliers: [{ identity, peerValue, peers, unusualRoles, missingRoles }]
+```
+
+- A role is **unusual** when fewer than `threshold` (0.25) of the peers hold it: access that outlived a move.
+- A role is **missing** when at least `commonShare` (0.8) of the peers hold it and the person does not: what a
+  joiner still needs.
+- Peer groups with fewer than `minPeers` (3) others are skipped, and just-in-time bindings count as held.
+
+## From the command line
+
+`better-iam mine-roles --tenant ID [--peer-by KEY]` prints both reports, the suggestions and the peer outliers,
+as JSON. It acts as the session or API key in `BETTER_IAM_TOKEN`, which needs `iam:analysis:read`. Run it weekly
+and keep the output as a snapshot, so you can see whether the access model is getting simpler over time.
+
+```sh
+BETTER_IAM_TOKEN=... better-iam mine-roles --config better-iam.config.mjs --tenant TENANT_ID --peer-by attribute:department
+```
+
+<Cards>
+  <Card title="Certifications" href="/docs/guides/governance/certifications">
+    Put the usage evidence in front of reviewers.
+  </Card>
+  <Card title="roleMining API reference" href="/docs/reference/api/role-mining">
+    Signatures and result types.
+  </Card>
+  <Card title="Access reviews" href="/docs/guides/authorization/reviews">
+    Simulation, who-can queries, and the access analysis findings.
+  </Card>
+</Cards>

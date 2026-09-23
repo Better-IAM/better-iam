@@ -1,0 +1,474 @@
+---
+title: SvelteKit
+description: A handle hook that serves the IAM API and guards sections, locals.iam for loads and form actions, and Svelte 4 and 5 stores for the browser.
+icon: Flame
+packages:
+  - '@better-iam/svelte'
+sources:
+  - docs/sveltekit.md
+  - packages/svelte/README.md
+  - packages/svelte/src/kit.ts
+  - packages/svelte/src/index.ts
+  - packages/middleware/src/index.ts
+  - examples/sveltekit/README.md
+  - examples/sveltekit/vite.config.js
+  - examples/sveltekit/src/lib/server/iam.ts
+  - examples/sveltekit/src/routes/+layout.server.ts
+  - examples/sveltekit/src/routes/+layout.svelte
+  - examples/sveltekit/src/routes/+page.svelte
+  - examples/sveltekit/src/routes/account/+page.server.ts
+  - examples/sveltekit/src/routes/login/+page.server.ts
+  - examples/sveltekit/src/routes/logout/+page.server.ts
+---
+
+`@better-iam/svelte` has two entry points:
+
+- **`@better-iam/svelte/kit`** is the server side. A `handle` hook serves the IAM HTTP API, attaches per-request
+  helpers to `event.locals.iam`, and enforces path rules. `guard` wraps server loads and `action` wraps form
+  actions.
+- **`@better-iam/svelte`** is the browser side: Svelte stores for the <Term id="session">session</Term> and <Term id="advisory">advisory decisions</Term>, for Svelte 4
+  and 5 (runes or not). Server loads can hand their results to the stores, so the first render needs no extra
+  requests.
+
+Why use it instead of calling the core from your loads? Every load and action would otherwise read the session
+from cookies, redirect signed-out visitors with a safe `?next=`, turn refusals into `error()` or `fail()`, and copy
+the cookies a sign-in issues into `event.cookies`. A whole section such as `/admin` would need the same check
+repeated in every load. The kit does these once:
+
+- **Sessions on the server.** `locals.iam` gives every load the same memoized helpers: `getSession()` reads the
+  cookie once per request, and cookies a sign-in issues land in `event.cookies`, so later loads in the same
+  request see the new session.
+- **Guards.** `handle` protects whole sections by path, and `guard` and `action` protect single routes. Each
+  requires a session, then any step-up, then the permission.
+- **Cross-site checks.** Form posts are checked by SvelteKit's own origin check (`csrf.checkOrigin`, on by
+  default), so the kit adds none of its own. Keep that option on.
+- **Hydration.** `sessionData` and `locals.iam.authorize` results seed the browser stores, so the first render
+  matches the server's HTML without extra requests.
+
+The umbrella package exposes the entries as `better-iam/svelte/kit` and `better-iam/svelte`. The per-request
+helpers are built on the same core as the [Express, Hono, and Fastify adapters](/docs/frameworks/node).
+
+| Export | Entry | What it does |
+| --- | --- | --- |
+| `createIamKit(iam, options)` | `/kit` | Creates the kit: `handle`, `guard`, `action`, `locals`, `sessionData`, and `resolve` (below) |
+| `IamLocals<typeof iam>` | `/kit` | The type of `event.locals.iam`, for `app.d.ts` |
+| `safeRedirectPath(value, fallback?)` | `/kit` | A same-site path for `?next=`, or the fallback |
+| `checkStepUp(session, requirement, now?)` | `/kit` | The step-up rule the guards use; `null` or the failure |
+| `isAuthenticationError(error)`, `isKitControlError(error)` | `/kit` | Test for "no usable session" errors, and for SvelteKit's own `redirect()` / `error()` throws that must propagate |
+| `parseSetCookie(header)` | `/kit` | Parses a `Set-Cookie` header into the arguments `event.cookies.set` takes |
+| `createIam({ client, initialSession?, ... })` | root | The browser side: one session store and the advisory stores |
+| `setIamContext(iam)`, `getIamContext()` | root | Share one `createIam` result with descendant components |
+| `createSessionStore`, `isUnauthenticated` | root | The framework-agnostic session store and its error test |
+
+| Kit member | What it does |
+| --- | --- |
+| `handle` | The server hook: serves the IAM API under `basePath`, attaches `event.locals.iam`, and enforces `protect` rules before any load, action, or endpoint runs |
+| `guard(load, spec)` | Wraps a server load (or a `+server.ts` handler): runs it with the session once the visitor is signed in, stepped up, and allowed |
+| `action(fn, spec)` | Wraps a form action: the same checks, with every IAM refusal returned as `fail(status, { code, message })` |
+| `locals(event)` | The per-request helpers for any request event; `handle` stores them on `event.locals.iam` |
+| `sessionData(event)` | `{ session }` for the root layout load, to seed the browser stores |
+| `resolve()` | The instance (the kit accepts the instance or a lazy factory) |
+
+## Install
+
+```npm
+npm i better-iam
+```
+
+Or install `@better-iam/svelte` and `@better-iam/client` next to `@better-iam/server` and a storage adapter. It
+supports SvelteKit 2 with Svelte 4 or 5.
+
+## Setup
+
+<Steps>
+<Step>
+
+### Create the instance and the kit
+
+```ts title="src/lib/server/iam.ts"
+import { betterIam } from 'better-iam';
+import { sqliteAdapter } from 'better-iam/adapter-sqlite';
+import { createIamKit } from 'better-iam/svelte/kit';
+
+export const iam = betterIam({
+  database: sqliteAdapter({ filename: '.data/iam.db' }),
+  secret: process.env.BETTER_IAM_SECRET!,
+  baseURL: process.env.BETTER_IAM_BASE_URL ?? 'http://localhost:5173',
+  permissions: { actions: ['projects:read', 'projects:manage'] },
+  resolveResource: async (reference) => loadProjectOwnership(reference),
+});
+
+export const iamKit = createIamKit(iam, {
+  protect: [
+    { path: '/app' }, // any session
+    { path: '/admin', authorize: { action: 'iam:identities:read' } },
+    { path: '/billing', stepUp: { mfa: true } },
+  ],
+  stepUpPath: '/verify',
+});
+```
+
+</Step>
+<Step>
+
+### Install the hook
+
+```ts title="src/hooks.server.ts"
+import { iam, iamKit } from '$lib/server/iam';
+
+export const init = () => iam.initialize();
+export const handle = iamKit.handle; // or sequence(iamKit.handle, yourHandle)
+```
+
+</Step>
+<Step>
+
+### Type `locals`
+
+```ts title="src/app.d.ts"
+import type { IamLocals } from 'better-iam/svelte/kit';
+import type { iam } from '$lib/server/iam';
+
+declare global {
+  namespace App {
+    interface Locals {
+      iam: IamLocals<typeof iam>;
+    }
+    interface Error {
+      message: string;
+      code?: string; // IAM refusals carry their code
+    }
+  }
+}
+export {};
+```
+
+</Step>
+<Step>
+
+### Hand the session to the browser
+
+The root layout load returns the session (and any decisions the first render needs); the layout component creates
+the stores from them. See [Browser stores](#browser-stores).
+
+</Step>
+</Steps>
+
+## Kit options
+
+`createIamKit(iam, options)` takes the options below. Most apps set only `protect`, `loginPath`, and
+`stepUpPath`.
+
+<TypeTable
+  type={{
+    protect: {
+      type: 'ProtectRule[]',
+      description: <>Path rules <code>handle</code> enforces before any load, action, or endpoint of the matching routes runs.</>,
+      default: '[]',
+    },
+    loginPath: {
+      type: 'string',
+      description: <>Where signed-out visitors go; <code>?next=</code> carries the path and query they wanted.</>,
+      default: "'/login'",
+    },
+    stepUpPath: {
+      type: 'string',
+      description: <>Where sessions that must step up go, with <code>?next=</code> and <code>?reason=</code> (<code>mfa</code>, <code>recent</code>, or <code>impersonation</code>).</>,
+      default: 'none: the failure is a 403 error page',
+    },
+    basePath: {
+      type: 'string',
+      description: <>Where <code>handle</code> serves the IAM HTTP API.</>,
+      default: "the instance's basePath, '/api/iam'",
+    },
+    serveApi: {
+      type: 'boolean',
+      description: <>Serve the API from <code>handle</code>. Turn it off when a <code>+server.ts</code> mounts <code>iam.handler</code>.</>,
+      default: 'true',
+    },
+    localsKey: {
+      type: 'string',
+      description: <>The <code>event.locals</code> property the helpers live under.</>,
+      default: "'iam'",
+    },
+    now: {
+      type: '() => number',
+      description: <>The clock for step-up checks, for tests.</>,
+      default: 'Date.now',
+    },
+  }}
+/>
+
+A `protect` rule's `path` can be a prefix (`/admin` covers `/admin/users`, not `/administrator`), a regular
+expression, or a `(url) => boolean`. `authorize` takes `{ action, resource?, tenantId? }`, where `resource` and
+`tenantId` are functions of `{ event, session }`; the resource defaults to the tenant (`iam/{tenantId}`) and the
+tenant to the session's. `stepUp` (<Term id="step-up">step-up authentication</Term>) takes `{ mfa?, maxAgeMs?, redirectTo? }`. With `deniedRedirect`, a refused
+visitor is redirected instead of shown a 403.
+
+<Callout type="warn" title="Pages without a server load">
+  SvelteKit renders a page that has no `+page.server.ts` or `+layout.server.ts` load entirely in the browser during
+  client-side navigation, so the request never reaches `handle` and its `protect` rules. Give every protected
+  section a server load, which is where its data comes from anyway (`iamKit.guard` is a good fit). Full page loads,
+  data requests (`__data.json`), form actions, and `+server.ts` endpoints always pass through `handle`, and
+  redirects thrown there reach client-side navigations as SvelteKit redirects.
+</Callout>
+
+## Server loads, actions, and endpoints
+
+`event.locals.iam` is created once per request. Sessions and decisions are memoized, and checks made in the same
+tick share one `authorizeMany` call. Cookies the in-process client receives are written to `event.cookies`, and
+later calls in the same request see them.
+
+| Member | Returns / does |
+| --- | --- |
+| `getSession()` | The session, or `null` |
+| `requireSession({ stepUp?, loginRedirect?, returnTo? })` | The session, or a 303 to the login or step-up page (a 403 error when no step-up page is set) |
+| `require(action, resource?, { tenantId?, deniedRedirect? })` | Signed out: login redirect. Denied: `deniedRedirect`, or `error(403, { code })` |
+| `can(action, resource?, { tenantId? })` | An advisory boolean (false when signed out) |
+| `authorize(checks, { tenantId? })` | `{ action, resource, allowed, reason }[]`, the shape the browser stores take as `initial` |
+| `listAccessible({ action, type, ... })` | The managed resources the caller may act on |
+| `assertion({ tenantId, audience, ... })` | A signed assertion for a downstream service |
+| `client` | A typed client calling `iam.handler` in process; `Set-Cookie` lands in `event.cookies` |
+| `credential()` | `{ headers }` for direct `iam.api.*` calls, including cookies set earlier in the request |
+| `signOut()` | Ends the session and clears the cookie |
+
+`iamKit.locals(event)` builds the same helpers for any request event, and `iamKit.sessionData(event)` returns
+`{ session }` for the root layout load.
+
+```ts title="src/routes/projects/[id]/+page.server.ts"
+import { iamKit } from '$lib/server/iam';
+
+export const load = iamKit.guard(
+  async (event, session) => ({
+    project: await loadProject(event.params.id),
+    canManage: await event.locals.iam.can('projects:manage', {
+      type: 'project',
+      id: event.params.id,
+    }),
+  }),
+  {
+    authorize: {
+      action: 'projects:read',
+      resource: ({ event }) => ({ type: 'project', id: event.params.id }),
+    },
+  },
+);
+
+export const actions = {
+  // IAM refusals come back as fail(status, { code, message }); redirects and other errors propagate.
+  rename: iamKit.action(
+    async (event, session) => {
+      const name = String((await event.request.formData()).get('name'));
+      return { project: await renameProject(event.params.id, name) };
+    },
+    {
+      authorize: {
+        action: 'projects:manage',
+        resource: ({ event }) => ({ type: 'project', id: event.params.id }),
+      },
+    },
+  ),
+};
+```
+
+- **`guard(load, spec)`** requires a session, then the optional `stepUp` and `authorize`, then calls
+  `load(event, session)`. Signed-out visitors are redirected to `loginRedirect ?? loginPath`, and denials become a
+  403 (or `deniedRedirect`). It also wraps `+server.ts` handlers that take the event.
+- **`action(fn, spec)`** runs the same checks but reports every IAM refusal as `fail()`: 401 `UNAUTHENTICATED`,
+  403 `MFA_REQUIRED`, `RECENT_AUTH_REQUIRED`, `IMPERSONATION_RESTRICTED`, or `ACCESS_DENIED`, 400 for invalid
+  input, and 429 when rate limited. The page's `form` prop can then show `form.code`. Kit redirects and errors
+  thrown by `fn` propagate, and so do IAM errors with a 5xx status.
+
+```svelte title="src/routes/account/+page.svelte"
+<script lang="ts">
+  let { data, form } = $props();
+</script>
+
+<form method="POST" action="?/rename">
+  <label>Name <input name="name" value={data.name} /></label>
+  <button>Rename</button>
+</form>
+{#if form && 'code' in form}<p>{form.code}</p>{/if}
+```
+
+For direct administrative calls inside a guarded load or action, pass the caller's credential:
+`iam.api.identities.list(event.locals.iam.credential(), { tenantId: session.session.tenantId, limit: 50 })`.
+
+### Sign-in and sign-out forms
+
+The in-process client makes a no-JavaScript sign-in form a few lines long:
+
+```ts title="src/routes/login/+page.server.ts"
+import { fail, redirect } from '@sveltejs/kit';
+import { safeRedirectPath } from 'better-iam/svelte/kit';
+
+export const actions = {
+  default: async ({ request, locals, url }) => {
+    const form = await request.formData();
+    let result;
+    try {
+      result = await locals.iam.client.auth.signIn({
+        tenantId: String(form.get('tenantId')),
+        email: String(form.get('email')),
+        password: String(form.get('password')),
+      });
+    } catch (error) {
+      return fail(400, { message: (error as Error).message });
+    }
+    // Outside the try: redirect() throws, and a catch would swallow it.
+    if ('mfaRequired' in result) redirect(303, `/verify?challenge=${result.challenge}`);
+    redirect(303, safeRedirectPath(url.searchParams.get('next')));
+  },
+};
+```
+
+```ts title="src/routes/logout/+page.server.ts"
+import { redirect } from '@sveltejs/kit';
+
+export const actions = {
+  default: async ({ locals }) => {
+    await locals.iam.signOut();
+    redirect(303, '/');
+  },
+};
+```
+
+`safeRedirectPath` accepts only same-site paths and falls back to `/` for anything else (`//host`, schemes,
+backslashes, control characters). The helpers check step-up with `checkStepUp(session, requirement)`, which is
+exported for your own use and follows the server's rules: impersonated sessions never satisfy a recency
+requirement, and `mfa: 'fresh'` refuses remembered devices, assumed roles, and API keys. `signOut()` never throws
+for an already-dead session and always clears the cookie.
+
+## Browser stores
+
+Components decide what to show from Svelte stores. The root layout load hands the server's session (and any
+decisions the first render needs) to the stores, the layout component creates them once, and descendants read
+them from context.
+
+<Tabs items={['+layout.server.ts', '+layout.svelte', 'Any component']}>
+<Tab value="+layout.server.ts">
+
+```ts title="src/routes/+layout.server.ts"
+import { iamKit } from '$lib/server/iam';
+
+export const load = async (event) => ({
+  ...(await iamKit.sessionData(event)), // { session }
+  permissions: await event.locals.iam.authorize([{ action: 'projects:create' }]),
+  origin: event.url.origin,
+});
+```
+
+</Tab>
+<Tab value="+layout.svelte">
+
+```svelte title="src/routes/+layout.svelte"
+<script lang="ts">
+  import { createIamClient } from 'better-iam/client';
+  import { createIam, setIamContext } from 'better-iam/svelte';
+  import type { iam as server } from '$lib/server/iam';
+
+  let { data, children } = $props();
+  const iam = setIamContext(
+    createIam({
+      client: createIamClient<typeof server>({ baseURL: data.origin }),
+      initialSession: data.session,
+    }),
+  );
+  const { session } = iam;
+  // Form actions re-run this load; keep the store on the server's answer.
+  $effect(() => iam.setSession(data.session));
+</script>
+
+{#if $session.session}Signed in as {$session.session.identity.email}{/if}
+{@render children()}
+```
+
+</Tab>
+<Tab value="Any component">
+
+```svelte title="src/lib/ManageButton.svelte"
+<script lang="ts">
+  import { toStore } from 'svelte/store';
+  import { getIamContext } from 'better-iam/svelte';
+
+  let { data, projectId } = $props();
+  const iam = getIamContext();
+  const canManage = iam.can(
+    toStore(() => ({
+      tenantId: data.session?.session.tenantId ?? '',
+      action: 'projects:manage',
+      resource: { type: 'project', id: projectId },
+    })),
+  );
+</script>
+
+{#if $canManage.allowed}<button>Manage</button>{/if}
+```
+
+</Tab>
+</Tabs>
+
+| Store | Value |
+| --- | --- |
+| `iam.session` | `{ status, session, error }`; `status` is `loading`, `authenticated`, `unauthenticated`, or `error` |
+| `iam.authorize(input, { initial? })` | `{ status, results, error, allowed(action, resource?) }` |
+| `iam.can(input, { initial? })` | `{ status, allowed }` |
+| `iam.accessible(input, { initial? })` | `{ status, resources, total, error }` |
+
+- **Inputs** can be plain objects or stores; with runes, use `toStore(() => ...)`. `authorize` takes
+  `{ tenantId, checks, enabled? }` (a check's `resource` defaults to the tenant), `can` takes
+  `{ tenantId, action, resource?, enabled? }`, and `accessible` takes `{ tenantId, action, type, limit?, offset?,
+  enabled? }`.
+- **Fetching.** A query fetches only while subscribed. It refetches when its input or the signed-in identity
+  changes, but not when a session refresh returns the same identity. Signing out resolves every check to denied
+  (`reason: 'UNAUTHENTICATED'`). Each store has `refresh()`.
+- **Seeding.** `initial` seeds a query with a server load's answer (for example `data.permissions` from
+  `locals.iam.authorize`, or a boolean for `can`), and that answer is used instead of the first fetch.
+- **Session.** `iam` also has `refresh()`, `signOut()`, `setSession(session)`, `store`, `client`, and `dispose()`.
+  `createIam({ client, initialSession?, refreshOnFocus?, refreshIntervalMs?, server? })` reloads the session when
+  the tab regains focus (`refreshOnFocus: false` turns it off) and never fetches while server rendering.
+- **Svelte 4.** Create the stores in a component and pass values the same way.
+- **Context.** `setIamContext(iam)` shares one instance with descendants; `getIamContext()` reads it.
+
+The stores only decide what to render. The server still enforces every operation.
+
+## Deployment notes
+
+- **Native modules.** Keep `better-iam` (or `@better-iam/server` and the adapter) out of the server bundle, for
+  example with `ssr: { external: ['better-iam'] }` in `vite.config`. `adapter-node` already leaves `dependencies`
+  external.
+- **One SvelteKit copy.** `redirect()` and `error()` are recognized by class. In a monorepo where the app and
+  `@better-iam/svelte` could resolve different `@sveltejs/kit` copies, add
+  `resolve: { dedupe: ['@sveltejs/kit', 'svelte'] }`.
+- **Build-time imports.** `vite build` imports server modules to analyze routes. Guard environment checks with
+  `building` from `$app/environment`; the example uses a placeholder secret and `:memory:` while building.
+- **Cookies.** The helpers pass the IAM server's cookie attributes straight to `event.cookies.set`, including an
+  explicit `secure` flag, so SvelteKit's localhost default doesn't change them. A stale cookie is harmless:
+  `getSession()` returns `null`, and `signOut()` clears it.
+- **Origin.** Form posts are checked against SvelteKit's own CSRF protection, so with `adapter-node` set `ORIGIN`
+  to the origin people browse, and keep `baseURL` on the same origin.
+
+```js title="vite.config.js"
+import { sveltekit } from '@sveltejs/kit/vite';
+import { defineConfig } from 'vite';
+
+export default defineConfig({
+  plugins: [sveltekit()],
+  resolve: { dedupe: ['@sveltejs/kit', 'svelte'] },
+  ssr: { external: ['@better-iam/server', '@better-iam/adapter-sqlite'] },
+});
+```
+
+## Next steps
+
+<Cards>
+  <Card title="Express, Hono, Fastify" href="/docs/frameworks/node">
+    The shared request helpers behind `locals.iam`, and the CSRF rule for other servers.
+  </Card>
+  <Card title="Step-up" href="/docs/frameworks/nextjs/advanced#step-up">
+    What `mfa: true`, `mfa: 'fresh'`, and `maxAgeMs` accept and refuse.
+  </Card>
+  <Card title="Policies" href="/docs/guides/authorization/policies">
+    What `authorize` rules actually evaluate.
+  </Card>
+</Cards>

@@ -1,0 +1,410 @@
+---
+title: React Router
+description: Root middleware, guarded loaders and actions, and an API resource route for React Router framework mode (v7.9+ and v8), with React hooks in the browser.
+icon: Route
+packages:
+  - '@better-iam/react-router'
+  - '@better-iam/react'
+sources:
+  - docs/react-router.md
+  - packages/react-router/README.md
+  - packages/react-router/src/index.ts
+  - packages/middleware/src/index.ts
+  - examples/react-router/README.md
+  - examples/react-router/vite.config.ts
+  - examples/react-router/app/iam.server.ts
+  - examples/react-router/app/root.tsx
+  - examples/react-router/app/routes.ts
+  - examples/react-router/app/routes/account.tsx
+  - examples/react-router/app/routes/login.tsx
+  - examples/react-router/app/routes/logout.tsx
+---
+
+`@better-iam/react-router` integrates Better IAM with React Router framework mode, v7.9+ and v8. Loaders and
+actions run on the server, so that is where <Term id="session">sessions</Term> are read and access is enforced. Calling the core API
+directly from them would leave you to read cookies from every request and map refusals to redirects or error
+responses. You would also check the `Origin` of form posts and copy the cookies a sign-in issues onto the
+response by hand. This package does that for you:
+
+- **A root middleware** creates per-request helpers (the session, memoized for the request) and adds the cookies
+  the in-process client receives to the response, including on redirects.
+- **A resource route** serves the IAM HTTP API for the browser client.
+- **`guard`** wraps loaders (login and step-up redirects, a 403 for the error boundary) and **`action`** wraps
+  actions (refusals returned for `useActionData`).
+- **Origin checks.** `guard` and `action` refuse cookie-authenticated requests from other origins before your
+  code runs ([why](#loaders-and-actions)).
+- **Hydration.** `sessionData` gives the root loader the session for `<IamProvider initialSession>`, so the first
+  browser render matches the server's HTML without a request.
+
+It is built on [`@better-iam/middleware`](/docs/frameworks/node), so the helpers are the same as `req.iam` in
+Express. Browser components use [`@better-iam/react`](/docs/frameworks/react) (`IamProvider`, `useSession`,
+`useAuthorize`, `Can`).
+
+## Install
+
+```npm
+npm i better-iam
+```
+
+The umbrella exposes this package as `better-iam/react-router`. Or install `@better-iam/react-router`,
+`@better-iam/react`, and `@better-iam/client` next to `@better-iam/server` and a storage adapter.
+
+<Callout type="info" title="Route middleware on React Router 7">
+  React Router 7 ships route middleware behind the `future.v8_middleware` flag in `react-router.config.ts`; turn
+  it on before adding `iamRouter.middleware`. React Router 8 always enables middleware.
+</Callout>
+
+## Setup
+
+<Steps>
+<Step>
+
+### Create the instance and the router helpers
+
+Keep this file server-only: its name ends in `.server.ts`, so the client bundle never contains server code.
+
+```ts title="app/iam.server.ts"
+import { betterIam } from 'better-iam';
+import { sqliteAdapter } from 'better-iam/adapter-sqlite';
+import { createIamRouter } from 'better-iam/react-router';
+
+export const iam = betterIam({
+  database: sqliteAdapter({ filename: '.data/iam.db' }),
+  secret: process.env.BETTER_IAM_SECRET!,
+  baseURL: process.env.BETTER_IAM_BASE_URL ?? 'http://localhost:5173',
+  permissions: { actions: ['projects:read', 'projects:manage'] },
+  resolveResource: async (reference) => loadProjectOwnership(reference),
+});
+export const iamRouter = createIamRouter(iam, { loginPath: '/login', stepUpPath: '/verify' });
+export const ready = iam.initialize();
+```
+
+</Step>
+<Step>
+
+### Add the middleware, the session loader, and the provider
+
+```tsx title="app/root.tsx"
+import { useEffect, useState } from 'react';
+import { Outlet } from 'react-router';
+import { createIamClient, type IamClient } from 'better-iam/client';
+import { IamProvider, useSession } from 'better-iam/react';
+import type { Route } from './+types/root';
+import { iamRouter, ready, type iam } from './iam.server';
+
+type Client = IamClient<typeof iam>;
+
+export const middleware: Route.MiddlewareFunction[] = [
+  async (_args, next) => {
+    await ready; // the first request waits for migrations
+    return next();
+  },
+  iamRouter.middleware,
+];
+
+export async function loader(args: Route.LoaderArgs) {
+  return { ...(await iamRouter.sessionData(args)), origin: new URL(args.request.url).origin };
+}
+
+export default function App({ loaderData }: Route.ComponentProps) {
+  const [client] = useState<Client>(() => createIamClient<typeof iam>({ baseURL: loaderData.origin }));
+  return (
+    <IamProvider client={client} initialSession={loaderData.session}>
+      <SessionSync session={loaderData.session} />
+      <Outlet />
+    </IamProvider>
+  );
+}
+
+// Actions (sign in, sign out) revalidate the root loader; keep the store on the server's answer.
+function SessionSync({ session }: { session: Route.ComponentProps['loaderData']['session'] }) {
+  const { setSession } = useSession<Client>();
+  useEffect(() => setSession(session), [session, setSession]);
+  return null;
+}
+```
+
+`initialSession` lets the first render show the signed-in person without a request from the browser, and
+server-rendered markup matches what the browser renders.
+
+</Step>
+<Step>
+
+### Serve the IAM API
+
+```ts title="app/routes.ts"
+import { type RouteConfig, index, route } from '@react-router/dev/routes';
+
+export default [
+  index('routes/home.tsx'),
+  route('login', 'routes/login.tsx'),
+  // The IAM HTTP API (sign-in, sessions, and every API group the client calls).
+  route('api/iam/*', 'routes/api.iam.ts'),
+] satisfies RouteConfig;
+```
+
+```ts title="app/routes/api.iam.ts"
+import { iamRouter } from '../iam.server';
+
+export const loader = iamRouter.api; // GET: /health, /metrics
+export const action = iamRouter.api; // POST: every API method
+```
+
+</Step>
+</Steps>
+
+## What `createIamRouter` returns
+
+`createIamRouter(iam, options)` accepts the instance or a factory that returns it, and gives back everything the
+routes need:
+
+| Member | What it does | Use it |
+| --- | --- | --- |
+| `middleware` | Creates the per-request helpers in the router context and appends issued `Set-Cookie` headers to the response | On the root route, once |
+| `api` | Passes the request to `iam.handler` | As the loader and action of the `api/iam/*` resource route |
+| `guard(loader, spec)` | Runs `loader(args, session)` only for a signed-in, stepped-up, allowed visitor | For loaders of protected routes |
+| `action(fn, spec)` | Runs `fn(args, session)` after the origin, session, step-up, and authorization checks; returns refusals as `data()` | For actions that change state |
+| `helpers(args)` | The per-request helpers (below) | In any loader or action |
+| `requireSession(args, { stepUp?, loginRedirect?, returnTo? })` | The session, or a login or step-up redirect | In hand-written loaders |
+| `require(args, action, resource?, { tenantId?, deniedRedirect? })` | Enforces one action; signed out redirects to login, denied throws a 403 `data()` or redirects | In hand-written loaders |
+| `sessionData(args)` | `{ session }` for `<IamProvider initialSession>` | In the root loader |
+| `context`, `resolve` | The router context key holding the helpers, and the instance resolver | Advanced wiring |
+
+The package also re-exports `safeRedirectPath`, `checkStepUp`, `checkRequestOrigin`, and `isAuthenticationError`
+from the middleware core.
+
+### Options
+
+<TypeTable
+  type={{
+    loginPath: {
+      type: 'string',
+      description: <>Where signed-out visitors are redirected; <code>?next=</code> carries the path they wanted.</>,
+      default: "'/login'",
+    },
+    stepUpPath: {
+      type: 'string',
+      description: <>Where sessions that must step up are redirected, with <code>?next=</code> and <code>?reason=</code> (<code>mfa</code>, <code>recent</code>, or <code>impersonation</code>). Without it, a step-up failure is a 403.</>,
+    },
+    basePath: {
+      type: 'string',
+      description: <>Where the IAM HTTP API is served, for the in-process client.</>,
+      default: "the instance's basePath, else '/api/iam'",
+    },
+    trustedOrigins: {
+      type: 'string[]',
+      description: <>Origins besides the request's own and the IAM origin that may send cookie-authenticated POST, PUT, PATCH, and DELETE requests, for example a separate front end.</>,
+    },
+    csrf: {
+      type: 'boolean',
+      description: <>Check the <code>Origin</code> of cookie-authenticated unsafe requests in <code>guard</code> and <code>action</code>. Turn it off only when another layer already checks origins.</>,
+      default: 'true',
+    },
+    now: {
+      type: '() => number',
+      description: <>The clock for step-up recency checks, for tests.</>,
+      default: 'Date.now',
+    },
+  }}
+/>
+
+## Loaders and actions
+
+Wrap a loader with `guard` when the page must not render for the wrong person, and an action with `action` when
+the form should show the refusal instead of an error page.
+
+```tsx title="app/routes/projects.$id.tsx"
+import { iamRouter } from '../iam.server';
+import type { Route } from './+types/projects.$id';
+
+export const loader = iamRouter.guard(
+  async (args: Route.LoaderArgs, session) => ({
+    project: await loadProject(args.params.id),
+    canManage: await iamRouter.helpers(args).can('projects:manage', { type: 'project', id: args.params.id }),
+  }),
+  {
+    authorize: {
+      action: 'projects:read',
+      resource: (args) => ({ type: 'project', id: args.params.id }),
+    },
+  },
+);
+
+export const action = iamRouter.action(
+  async (args: Route.ActionArgs, session) => renameProject(args.params.id, await args.request.formData()),
+  {
+    authorize: {
+      action: 'projects:manage',
+      resource: (args) => ({ type: 'project', id: args.params.id }),
+    },
+  },
+);
+```
+
+**`guard(loader, { stepUp?, authorize?, loginRedirect?, deniedRedirect? })`**
+
+- Signed-out visitors are redirected to `loginPath?next=…`. Document and `.data` requests both work, and `next`
+  never includes `.data`.
+- Sessions that must <Term id="step-up">step up</Term> are redirected to `stepUpPath?next=…&reason=…`.
+- A denial throws `data({ code, message }, { status: 403 })` for the route's `ErrorBoundary`
+  (`isRouteErrorResponse(error)`, `error.data.code`), or redirects to `deniedRedirect`.
+- `authorize` callbacks receive `(args, session)`; the resource defaults to the tenant (`iam/{tenantId}`) and the
+  tenant to the session's.
+- It runs the same origin check as `action` first. Loaders usually answer `GET`, which the check lets through.
+
+**`action(fn, { stepUp?, authorize? })`**
+
+- First refuses cookie-authenticated requests from untrusted origins (`UNTRUSTED_ORIGIN`, or `CSRF_REJECTED`
+  without an `Origin`). Session cookies are `SameSite=Lax`, which still sends them with posts from sibling
+  subdomains, so a page on another subdomain could otherwise act as the signed-in person.
+- Returns every IAM refusal as `data({ code, message }, { status })` for `useActionData`: 401, 403, 400 for
+  invalid input, 429 when rate limited. Redirects and other errors propagate.
+- React Router v8 also refuses cross-origin document action posts on its own (400), so the origin check is a
+  second layer that also covers `.data` requests.
+
+```tsx title="app/routes/account.tsx"
+export default function Account({ loaderData, actionData }: Route.ComponentProps) {
+  return (
+    <Form method="post">
+      <input name="name" defaultValue={loaderData.name} />
+      <button>Rename</button>
+      {actionData && 'code' in actionData ? <p role="alert">{actionData.code}</p> : null}
+    </Form>
+  );
+}
+```
+
+```tsx title="app/root.tsx (error boundary)"
+import { isRouteErrorResponse } from 'react-router';
+
+export function ErrorBoundary({ error }: Route.ErrorBoundaryProps) {
+  if (isRouteErrorResponse(error))
+    return (
+      <main>
+        <h1>{error.status}</h1>
+        <p>{(error.data as { code?: string } | undefined)?.code ?? error.statusText}</p>
+      </main>
+    );
+  return <h1>Something went wrong</h1>;
+}
+```
+
+## Per-request helpers
+
+`iamRouter.helpers(args)` returns the same helpers as the [Node adapters](/docs/frameworks/node#per-request-helpers):
+
+| Member | What it does |
+| --- | --- |
+| `getSession()` | The session, or `null`; memoized for the request |
+| `requireSession({ stepUp? })` / `require(action, resource?, { tenantId? })` | Throw the refusal instead of redirecting; prefer `iamRouter.requireSession(args)` and `iamRouter.require(args, ...)` in loaders |
+| `can(action, resource?, { tenantId? })` | An advisory boolean; checks made in the same tick share one `authorizeMany` call |
+| `authorize(checks, { tenantId? })` | `{ action, resource, allowed, reason }[]` for several checks |
+| `listAccessible({ action, type, ... })` | The managed resources the caller may act on |
+| `assertion({ tenantId, audience, ... })` | A signed assertion for a downstream service |
+| `credential()` | `{ headers }` for direct `iam.api.*` calls, including cookies set earlier in the request |
+| `client` | The typed client calling the IAM handler in process |
+| `signOut()` | Ends the session and clears its cookie |
+
+`client` is what makes sign-in work without browser JavaScript. `helpers(args).client.auth.signIn(...)` in an
+action, followed by `throw redirect(next)`, signs the person in; the middleware puts the session cookie on the
+redirect.
+
+<Tabs items={['Sign in', 'Sign out', 'Admin calls']}>
+<Tab value="Sign in">
+
+```tsx title="app/routes/login.tsx"
+import { Form, data, redirect } from 'react-router';
+import { safeRedirectPath } from 'better-iam/react-router';
+import { iamRouter } from '../iam.server';
+import type { Route } from './+types/login';
+
+export async function action(args: Route.ActionArgs) {
+  const form = await args.request.formData();
+  const email = String(form.get('email') ?? '');
+  let result;
+  try {
+    result = await iamRouter.helpers(args).client.auth.signIn({
+      tenantId: String(form.get('tenantId') ?? ''),
+      email,
+      password: String(form.get('password') ?? ''),
+    });
+  } catch (error) {
+    return data({ email, message: error instanceof Error ? error.message : 'Sign-in failed' }, { status: 400 });
+  }
+  if (!('token' in result)) throw redirect(`/verify?challenge=${result.challenge}`);
+  throw redirect(safeRedirectPath(new URL(args.request.url).searchParams.get('next')));
+}
+```
+
+</Tab>
+<Tab value="Sign out">
+
+```ts title="app/routes/logout.tsx"
+import { redirect } from 'react-router';
+import { iamRouter } from '../iam.server';
+import type { Route } from './+types/logout';
+
+export async function action(args: Route.ActionArgs) {
+  await iamRouter.helpers(args).signOut();
+  throw redirect('/');
+}
+```
+
+</Tab>
+<Tab value="Admin calls">
+
+```ts title="app/routes/admin.tsx"
+import { iam, iamRouter } from '../iam.server';
+import type { Route } from './+types/admin';
+
+// Only people with iam:identities:read on their tenant get past the guard; others see the 403 error boundary.
+export const loader = iamRouter.guard(
+  async (args: Route.LoaderArgs, session) => {
+    const identities = await iam.api.identities.list(iamRouter.helpers(args).credential(), {
+      tenantId: session.session.tenantId,
+      limit: 50,
+    });
+    return { members: identities.map((identity) => ({ id: identity.id, email: identity.email })) };
+  },
+  { authorize: { action: 'iam:identities:read' } },
+);
+```
+
+</Tab>
+</Tabs>
+
+`safeRedirectPath` accepts only same-site paths and falls back to `/` for anything else, so a `?next=` parameter
+cannot send people to another site after they sign in.
+
+## Build notes
+
+- **Native modules.** Keep the server packages out of the SSR bundle with `ssr: { external: ['better-iam'] }` (or
+  `@better-iam/server` plus the adapter).
+- **One React Router.** In a monorepo, also add `resolve: { dedupe: ['react-router', 'react', 'react-dom'] }` so
+  the app and the integration share one React Router instead of each resolving its own copy.
+- **Server-only code.** Keep `iam.server.ts` server-only; the example's client bundle contains no server code.
+
+```ts title="vite.config.ts"
+import { reactRouter } from '@react-router/dev/vite';
+import { defineConfig } from 'vite';
+
+export default defineConfig({
+  plugins: [reactRouter()],
+  resolve: { dedupe: ['react-router', 'react', 'react-dom'] },
+  ssr: { external: ['@better-iam/server', '@better-iam/adapter-sqlite'] },
+});
+```
+
+## Next steps
+
+<Cards>
+  <Card title="React" href="/docs/frameworks/react">
+    `IamProvider`, `useSession`, `useAuthorize`, and `Can` for your components.
+  </Card>
+  <Card title="Express, Hono, Fastify" href="/docs/frameworks/node">
+    The shared request helpers and the CSRF rule behind this package.
+  </Card>
+  <Card title="Policies" href="/docs/guides/authorization/policies">
+    What `authorize` rules actually evaluate.
+  </Card>
+</Cards>

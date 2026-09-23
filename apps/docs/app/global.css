@@ -1,0 +1,374 @@
+@import 'tailwindcss';
+@import 'fumadocs-ui/css/neutral.css';
+@import 'fumadocs-ui/css/preset.css';
+@import 'fumadocs-twoslash/twoslash.css';
+
+@source '../components';
+@source '../app';
+@source '../content';
+@source '../node_modules/fumadocs-typescript/dist/ui';
+@source '../node_modules/fumadocs-twoslash/dist/ui';
+
+/*
+ * Better IAM palette: cool slate neutrals with a "signal teal" primary. Light values sit on a near-white
+ * canvas; dark values sit on a deep ink background so code, diagrams and the teal accent stay legible.
+ */
+@theme {
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --color-fd-background: hsl(210, 20%, 99%);
+  --color-fd-foreground: hsl(222, 32%, 9%);
+  --color-fd-muted: hsl(214, 24%, 95.5%);
+  --color-fd-muted-foreground: hsl(218, 12%, 42%);
+  --color-fd-popover: hsl(0, 0%, 100%);
+  --color-fd-popover-foreground: hsl(222, 32%, 12%);
+  --color-fd-card: hsl(210, 24%, 97.6%);
+  --color-fd-card-foreground: hsl(222, 32%, 9%);
+  --color-fd-border: hsla(216, 22%, 76%, 0.55);
+  --color-fd-primary: hsl(172, 82%, 28%);
+  --color-fd-primary-foreground: hsl(0, 0%, 100%);
+  --color-fd-secondary: hsl(214, 26%, 94%);
+  --color-fd-secondary-foreground: hsl(222, 32%, 12%);
+  --color-fd-accent: hsla(172, 60%, 40%, 0.1);
+  --color-fd-accent-foreground: hsl(174, 80%, 20%);
+  --color-fd-ring: hsl(172, 70%, 38%);
+
+  --color-brand-50: hsl(166, 76%, 96%);
+  --color-brand-100: hsl(167, 85%, 89%);
+  --color-brand-200: hsl(168, 84%, 78%);
+  --color-brand-300: hsl(171, 77%, 64%);
+  --color-brand-400: hsl(172, 66%, 50%);
+  --color-brand-500: hsl(173, 80%, 40%);
+  --color-brand-600: hsl(175, 84%, 32%);
+  --color-brand-700: hsl(175, 77%, 26%);
+  --color-brand-800: hsl(176, 69%, 22%);
+  --color-brand-900: hsl(176, 61%, 19%);
+  --color-brand-950: hsl(179, 84%, 10%);
+}
+
+.dark {
+  --color-fd-background: hsl(222, 34%, 5.5%);
+  --color-fd-foreground: hsl(210, 30%, 93%);
+  --color-fd-muted: hsl(222, 26%, 10%);
+  --color-fd-muted-foreground: hsl(216, 16%, 66%);
+  --color-fd-popover: hsl(222, 30%, 8%);
+  --color-fd-popover-foreground: hsl(210, 30%, 90%);
+  --color-fd-card: hsl(222, 30%, 7.6%);
+  --color-fd-card-foreground: hsl(210, 30%, 94%);
+  --color-fd-border: hsla(216, 30%, 60%, 0.16);
+  --color-fd-primary: hsl(168, 72%, 56%);
+  --color-fd-primary-foreground: hsl(180, 60%, 6%);
+  --color-fd-secondary: hsl(222, 26%, 11%);
+  --color-fd-secondary-foreground: hsl(210, 30%, 92%);
+  --color-fd-accent: hsla(168, 70%, 50%, 0.1);
+  --color-fd-accent-foreground: hsl(166, 80%, 80%);
+  --color-fd-ring: hsl(168, 72%, 56%);
+}
+
+.dark #nd-sidebar {
+  --color-fd-muted: hsl(222, 26%, 11%);
+  --color-fd-secondary: hsl(222, 24%, 13%);
+}
+
+html {
+  scrollbar-gutter: stable;
+}
+
+html > body[data-scroll-locked] {
+  margin-right: 0px !important;
+  --removed-body-scroll-bar-size: 0px !important;
+}
+
+::selection {
+  background: color-mix(in oklab, var(--color-fd-primary) 28%, transparent);
+}
+
+/* Docs pages: a faint teal wash behind the header area in dark mode. */
+.dark #nd-docs-layout,
+.dark #nd-notebook-layout {
+  background-image: radial-gradient(
+    60rem 18rem at 50% -6rem,
+    hsla(168, 80%, 45%, 0.07),
+    transparent 70%
+  );
+  background-repeat: no-repeat;
+}
+
+/* Inline code: tighter pill that matches the palette. */
+.prose :where(code):not(:where(pre code, [class~='not-prose'] *)) {
+  border-radius: 0.375rem;
+  padding: 0.1em 0.35em;
+  font-size: 0.86em;
+}
+
+/* Tables generated from the API catalog can be wide: let them scroll instead of squeezing. */
+.prose :where(table) {
+  font-size: 0.875rem;
+}
+
+/* Landing page helpers (app/(home) and components/home) */
+@layer components {
+  .eyebrow {
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    line-height: 1rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--color-fd-primary);
+  }
+
+  .eyebrow-muted {
+    color: var(--color-fd-muted-foreground);
+  }
+
+  .btn-primary {
+    background: var(--color-fd-primary);
+    color: var(--color-fd-primary-foreground);
+    box-shadow:
+      inset 0 1px 0 rgb(255 255 255 / 0.22),
+      inset 0 -1px 0 rgb(0 0 0 / 0.12),
+      0 1px 2px rgb(14 18 27 / 0.24),
+      0 6px 16px -6px color-mix(in oklab, var(--color-fd-primary) 60%, transparent);
+    transition:
+      filter 150ms ease,
+      transform 80ms ease;
+  }
+
+  .btn-primary:hover {
+    filter: brightness(1.07);
+  }
+
+  .btn-primary:active {
+    transform: translateY(0.5px);
+  }
+}
+
+.bg-grid {
+  background-image:
+    linear-gradient(to right, var(--color-fd-border) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--color-fd-border) 1px, transparent 1px);
+  background-size: 48px 48px;
+}
+
+.mask-radial {
+  mask-image: radial-gradient(ellipse at center, black 25%, transparent 70%);
+}
+
+.hero-glow {
+  background: radial-gradient(
+    closest-side,
+    color-mix(in oklab, var(--color-fd-primary) 22%, transparent),
+    transparent
+  );
+  filter: blur(40px);
+}
+
+/* Only the second line of the hero headline: a restrained teal sweep. */
+.text-gradient {
+  background: linear-gradient(
+    100deg,
+    color-mix(in oklab, var(--color-fd-primary) 75%, var(--color-fd-foreground)) 0%,
+    var(--color-fd-primary) 55%,
+    color-mix(in oklab, var(--color-fd-primary) 70%, var(--color-fd-foreground)) 100%
+  );
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* Diagram cards: hairline border plus one soft, tight shadow; a teal highlight on the hero frame's top edge. */
+.hero-frame,
+.diagram-frame {
+  box-shadow:
+    0 1px 2px rgb(14 18 27 / 0.04),
+    0 16px 40px -20px rgb(14 18 27 / 0.18);
+}
+
+.dark .hero-frame,
+.dark .diagram-frame {
+  box-shadow: 0 24px 48px -28px rgb(0 0 0 / 0.7);
+}
+
+.hero-frame::before {
+  content: '';
+  position: absolute;
+  inset-inline: 12%;
+  top: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--color-fd-primary), transparent);
+  opacity: 0.7;
+}
+
+.live-dot {
+  position: relative;
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  flex-shrink: 0;
+  border-radius: 9999px;
+  background: var(--color-fd-primary);
+}
+
+.live-dot::after {
+  content: '';
+  position: absolute;
+  inset: -3px;
+  border-radius: inherit;
+  background: var(--color-fd-primary);
+  animation: live-pulse 1.8s ease-out infinite;
+}
+
+@keyframes live-pulse {
+  from {
+    transform: scale(0.5);
+    opacity: 0.5;
+  }
+  to {
+    transform: scale(1.8);
+    opacity: 0;
+  }
+}
+
+/* Work that happens after commit is hatched rather than solid. */
+.trace-bar-after {
+  background: repeating-linear-gradient(
+    -45deg,
+    color-mix(in oklab, var(--color-fd-primary) 75%, transparent) 0 3px,
+    transparent 3px 6px
+  );
+}
+
+/* Highlighted code inside landing diagrams: the pane provides padding and background. */
+.home-code .shiki {
+  --padding-left: 0;
+  --padding-right: 0;
+  margin: 0;
+  background: transparent;
+}
+
+@keyframes float-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.animate-float-in {
+  animation: float-in 600ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-float-in,
+  .live-dot::after {
+    animation: none;
+  }
+}
+
+/* Hero (components/home/hero-showcase.tsx) */
+.hero-grid-mask {
+  mask-image: radial-gradient(ellipse 80% 70% at 70% 30%, black 20%, transparent 70%);
+}
+
+.aurora {
+  filter: blur(64px);
+  will-change: transform;
+}
+
+.aurora-a {
+  background: radial-gradient(
+    closest-side,
+    color-mix(in oklab, var(--color-fd-primary) 30%, transparent),
+    transparent
+  );
+  animation: aurora-drift 18s ease-in-out infinite alternate;
+}
+
+.aurora-b {
+  background: radial-gradient(closest-side, hsl(205 80% 60% / 0.14), transparent);
+  animation: aurora-drift 22s ease-in-out -6s infinite alternate-reverse;
+}
+
+.dark .aurora-a {
+  background: radial-gradient(
+    closest-side,
+    color-mix(in oklab, var(--color-fd-primary) 22%, transparent),
+    transparent
+  );
+}
+
+@keyframes aurora-drift {
+  from {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  to {
+    transform: translate3d(-4rem, 2.5rem, 0) scale(1.12);
+  }
+}
+
+/* Film grain keeps the aurora from banding; an inline SVG noise tile, no network request. */
+.grain {
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='180' height='180'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+  opacity: 0.045;
+  mix-blend-mode: overlay;
+}
+
+.dark .grain {
+  opacity: 0.07;
+}
+
+.hero-card {
+  box-shadow:
+    0 1px 2px rgb(14 18 27 / 0.05),
+    0 24px 60px -28px rgb(14 18 27 / 0.28);
+}
+
+.dark .hero-card {
+  box-shadow: 0 30px 70px -30px rgb(0 0 0 / 0.85);
+}
+
+.caret {
+  animation: caret-blink 1s steps(2, start) infinite;
+}
+
+@keyframes caret-blink {
+  to {
+    visibility: hidden;
+  }
+}
+
+@keyframes blur-in {
+  from {
+    opacity: 0;
+    filter: blur(10px);
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    filter: blur(0);
+    transform: none;
+  }
+}
+
+.animate-blur-in {
+  animation: blur-in 900ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .aurora-a,
+  .aurora-b,
+  .caret,
+  .animate-blur-in {
+    animation: none;
+  }
+}
+
+/* Keyboard focus on every landing control: a clear ring in the brand color, never on mouse clicks. */
+.landing :is(a, button):focus-visible {
+  outline: 2px solid var(--color-fd-ring);
+  outline-offset: 2px;
+}

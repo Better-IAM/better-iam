@@ -1,0 +1,337 @@
+---
+title: Adapters and plugins
+description: The IamStore contract and conformance suite for new storage adapters, and the plugin contract for actions, resource types, endpoints, hooks, and context.
+icon: Puzzle
+packages: ['@better-iam/core', '@better-iam/server', '@better-iam/projects']
+sources: ['docs/extensions.md', 'docs/architecture.md', 'packages/core/src/index.ts', 'packages/core/src/storage.ts', 'packages/core/src/sql.ts', 'packages/server/src/plugins.ts', 'packages/server/src/operations.ts', 'packages/projects/src/index.ts']
+---
+
+Better IAM has two extension points. A <Term id="adapter">storage adapter</Term> puts IAM data in a database the
+reference adapters do not cover. A <Term id="plugin">plugin</Term> adds product features that run inside IAM's
+transactional authorization envelope: new <Term id="action">actions</Term> and
+<Term id="resource-type">resource types</Term>, HTTP endpoints, hooks around every operation, and extra
+<Term id="policy">policy</Term> context. Both run as
+trusted server code, so review them like the rest of your server.
+
+## Adapter contract
+
+Write an adapter when your data has to live in a database the reference adapters do not support, or behind a
+storage layer your organization mandates. IAM only ever talks to storage through the `IamStore` interface from
+`better-iam/core`, so an adapter that honors this contract gets every feature, including the security guarantees
+that depend on transactions.
+
+| Method | What it does | What IAM relies on it for |
+| --- | --- | --- |
+| `get(collection, id)` | Returns one record, or `undefined`. | Loading a known record, such as a tenant or a session by id. |
+| `find(collection, filter?, { limit, offset, after }?)` | Returns records matching a strict equality filter, ordered by id. | Every lookup: sessions by token hash, bindings by identity, members by group. |
+| `insert(collection, record)` | Creates a record; a duplicate id or natural key is a conflict. | Creating anything, with uniqueness (one email per tenant) enforced by the database. |
+| `put(collection, record)` | Updates an existing record. It is not an upsert. | Changing state without accidentally resurrecting a deleted record. |
+| `delete(collection, id)` | Removes a record. | Revocations, purges, and the retention sweep. |
+| `transaction(fn)` | Runs `fn` as one serializable read-modify-write; nested calls join the outer transaction. | Atomic operations: the change and its audit event commit together or not at all. |
+| `migrate()` | Creates or upgrades the schema. | `iam.initialize()` and `better-iam migrate`. |
+| `close()` | Releases connections. | Clean shutdown of the application and every CLI command. |
+| `findOrdered?`, `collections?`, `describe?` | Optional extras; see [below](#optional-methods). | Fast audit paging, snapshots, and `doctor`. |
+
+### Rules every adapter must keep
+
+These rules make the adapters interchangeable, and IAM's security guarantees rest on them. An adapter that bends
+one can leak access or lose a revocation, so the conformance suite tests each of them.
+
+- **Records** have `id`, `tenantId`, optional `uniqueKey`, and JSON-compatible fields. Field values may hold any
+  string. Identifiers (collection, `id`, `tenantId`, `uniqueKey`) containing an unpaired surrogate are refused with
+  `INVALID_RECORD`, because drivers encode text as UTF-8 and would store U+FFFD instead, so two ids would share a
+  row. Reads and deletes treat such identifiers as absent.
+- **`uniqueKey`** is unique within collection and tenant. Enforce this in the database.
+- **`put`** updates an existing record; it is not an upsert. Tenant ownership is immutable.
+- **Filters** use strict, typed equality on top-level fields. The string `"1"` never matches the number `1`, `null`
+  matches only a stored `null`, `undefined` matches only an absent field, and objects compare deeply with key order
+  ignored and array order kept.
+- **Ordering.** Results are ordered by `id` in code-point order, which is the order of SQLite's `BINARY` and
+  PostgreSQL's `"C"` collation. Pagination uses `limit` and `offset` over that order. `after` is a keyset cursor:
+  only records whose id sorts after it, so each page costs the same however deep it is, and `offset` applies after
+  the cursor.
+- **Writes require `transaction()`.** Nested transactions join the current transaction and propagate rollback. Do
+  not expose transaction handles after completion.
+- **Serialization.** Concurrent check-and-write operations must serialize before reading mutable authorization
+  state. Token consumption and last-owner protection depend on this guarantee.
+- **Errors** map to `IamError` without exposing SQL or serialized credentials.
+
+### Build on `RecordStore`
+
+The PostgreSQL, SQLite, and libSQL adapters are reference implementations. All three share the `RecordStore` base
+from `better-iam/core`, so a new adapter only implements a row driver, transaction boundaries, migration, and
+close. `RecordStore` validates records, applies the filter semantics, and pages results.
+
+```ts
+import type { RecordDriver, StorageRow } from 'better-iam/core';
+
+// Rows are { collection, id, tenant_id, unique_key, data } with data as a JSON string.
+const driver: RecordDriver = {
+  async select(collection, id, tenantId): Promise<StorageRow[]> {
+    /* SELECT ... WHERE collection = ? [AND id = ?] [AND tenant_id = ?] */
+  },
+  async insert(row) {
+    /* INSERT; map unique violations to a conflict */
+  },
+  async update(row) {
+    /* UPDATE ... WHERE collection = ? AND id = ? AND tenant_id = ?; return whether a row changed */
+  },
+  async delete(collection, id) {
+    /* DELETE ... WHERE collection = ? AND id = ? */
+  },
+  // Optional: evaluate filters in SQL.
+  // query(query) { ... },
+  // queryCapabilities: { json: true, order: true },
+  // collections() { ... },
+};
+```
+
+A driver that also implements the optional `query(RecordQuery)` method receives each filter as typed field
+conditions and evaluates it in SQL. `RecordStore` then pages in SQL whenever the whole filter could be expressed
+there, and filters the rest in memory.
+
+- Values a database cannot compare exactly stay in memory: strings with U+0000 or unpaired surrogates, sparse
+  arrays, and filters beyond `MAX_QUERY_CONDITIONS` (24) keys.
+- If a driver returns a row the filter rejects, `find` repeats the query without paging and filters in memory, so a
+  lenient driver is slow but never wrong. A driver that drops matching rows cannot be corrected this way, and the
+  conformance suite is designed to catch it.
+- `RecordStore` passes the keyset cursor to drivers as `RecordQuery.after`, which SQL drivers evaluate as
+  `id > ?`. When a driver ignores it, the extra rows are caught and the query is repeated without paging, so the
+  result stays correct.
+- Drivers without `query` stay correct and read by collection, id, and tenant only.
+
+`planQuery`, `sqliteSelect`, `postgresSelect`, and `applyMigrations` are exported for SQL adapters.
+`applyMigrations` records named schema steps in an `iam_migrations` table (see
+[Database operations](/docs/operations/deployment/database#migrations)).
+
+### Optional methods
+
+Three store methods are optional. Callers fall back when a store lacks them, so implement them when your database
+can do the work faster than the fallback, or when you need the feature that depends on them:
+
+- **`findOrdered(collection, filter, { field, direction, from, to, offset, limit })`** returns records whose field
+  holds a number, ordered by that field and then by id, within the inclusive `from` and `to` bounds. Records
+  without a numeric value are left out. The audit log reads through it. A driver opts in with
+  `queryCapabilities: { order: true }`. Callers use the exported `findOrdered(store, ...)` helper, which sorts in
+  memory for stores without the method and accepts an extra `where` predicate that it applies page by page.
+- **`collections()`** lists the collections that hold records. Snapshots (`exportStore`, `importStore`,
+  `copyStore`) rely on it; a driver provides it with `collections()` returning the distinct collection names.
+- **`describe()`** returns a `StoreDescription` for `doctor`: adapter name, schema version, applied migrations,
+  record counts per collection, and adapter settings. `describeRecords` builds one from any SQL executor.
+
+`instrumentStore(store, onCall)` wraps any store and reports each call, which helps verify that a new adapter's
+lookups stay selective. It forwards the optional methods only when the wrapped store has them.
+
+### Conformance suite
+
+The conformance suite is how you prove a new adapter behaves exactly like the reference ones before trusting it
+with production data. `@better-iam/core/conformance` exports the behavioral contract as framework-agnostic cases,
+and every reference adapter runs it in `tests/adapter-conformance.test.ts`. Give each case a fresh, migrated store:
+
+```ts title="my-adapter.test.ts"
+import { describe, it } from 'vitest';
+import { adapterConformanceCases } from '@better-iam/core/conformance';
+import { myAdapter } from './my-adapter';
+
+describe('my adapter', () => {
+  for (const test of adapterConformanceCases())
+    it(test.name, async () => {
+      const store = myAdapter(options);
+      await store.migrate();
+      try {
+        await test.run(store);
+      } finally {
+        await store.close();
+      }
+    });
+});
+```
+
+`runAdapterConformance(createStore)` runs every case and returns `{ passed, failed }` for runners without per-case
+reporting. The cases cover:
+
+- typed filters, including integers above 2^53 and extreme exponents;
+- strings with U+0000 and unpaired surrogates;
+- code-point ordering and selective pagination over hundreds of rows;
+- ordered and bounded reads, and reads of uncommitted writes;
+- natural-key uniqueness, transaction rollback and nesting, and serialization of concurrent read-modify-write;
+- record validation and error hygiene.
+
+Run the service security tests against a new adapter as well.
+
+## Plugin contract
+
+Write a plugin when a product feature should behave like part of IAM. Typical reasons are permissions that tenants
+can grant in roles and policies, endpoints that are authorized and audited like the built-in API, and rules that
+must run inside every IAM change. A plugin is a plain object with a unique `id`; everything else is optional.
+
+<TypeTable
+  type={{
+    id: {
+      type: 'string',
+      required: true,
+      description: 'Names the plugin and its endpoint path (plugins/id/...). Unique among the instance plugins; a duplicate is rejected at construction.',
+    },
+    actions: {
+      type: 'string[]',
+      description: <>Action names the plugin adds to the catalog, so administrators can grant them in roles and policies like built-in actions. Plugins cannot register reserved <code>iam:</code> or tenant action namespaces.</>,
+    },
+    resourceTypes: {
+      type: 'Record<string, ResourceTypeDefinition>',
+      description: 'Platform resource types the plugin brings, with their actions, attributes, and relations, validated like permissions.resourceTypes. A name declared twice is rejected at construction.',
+    },
+    endpoints: {
+      type: 'PluginEndpoint[]',
+      description: 'HTTP endpoints for the plugin feature. Each one is validated, authorized against its action, run inside a transaction with the verified principal, and audited.',
+    },
+    'hooks.beforeOperation': {
+      type: '(input) => Promise<void>',
+      description: 'Runs inside every operation transaction, after authorization and before the mutation. Use it to enforce extra preconditions, such as a change freeze; throwing aborts the operation.',
+    },
+    'hooks.afterOperation': {
+      type: '(input) => Promise<void>',
+      description: <>Runs inside every operation transaction after the mutation, before its audit record, with the <code>result</code>. Use it to keep plugin records consistent with IAM changes in the same transaction; throwing aborts the operation.</>,
+    },
+    resolveContext: {
+      type: '(principal) => Promise<Record<string, unknown>>',
+      description: 'Adds trusted, server-derived keys to the policy evaluation context, so policies can use plugin data in conditions. It overrides the application resolveContext but never server-owned keys. Never trust browser input here.',
+    },
+    validateConfig: {
+      type: '() => void',
+      description: 'Checks the plugin configuration once, at construction; throw to stop a misconfigured instance from starting.',
+    },
+    migrate: {
+      type: '(store: IamStore) => Promise<void>',
+      description: <>Prepares plugin data (for example, backfills or version records) from <code>iam.initialize()</code>, inside a transaction. Must be idempotent.</>,
+    },
+    afterAudit: {
+      type: '(event: AuditEvent) => Promise<void>',
+      description: 'Reacts to committed audit events, such as syncing an external system, from the audit dispatcher. Invoked at least once per event.',
+    },
+    purge: {
+      type: '(store: IamStore, tenantIds: string[]) => Promise<void>',
+      description: 'Deletes plugin-owned records when a retention purge removes tenants, inside the purge transaction, so no orphaned data outlives its tenant.',
+    },
+  }}
+/>
+
+### Endpoints
+
+Endpoints let a plugin expose its feature over the same HTTP handler and client SDK as the built-in API, with the
+same authorization, transactions, and audit trail. Each endpoint declares a `path`, the registered `action` it
+requires, a `validate` function, and a `handler`.
+
+```ts title="plugins/labels.ts"
+import { IamError, type IamPlugin } from 'better-iam/core';
+
+export const labels: IamPlugin = {
+  id: 'labels',
+  actions: ['labels:create'],
+  endpoints: [
+    {
+      method: 'POST',
+      path: 'create',
+      action: 'labels:create',
+      validate(value) {
+        const input = value as { tenantId?: unknown; name?: unknown } | null;
+        if (!input || typeof input.tenantId !== 'string' || typeof input.name !== 'string') {
+          throw new IamError('INVALID_INPUT', 'tenantId and name required');
+        }
+        return { tenantId: input.tenantId, name: input.name };
+      },
+      async handler({ store, tenantId }, input) {
+        return store.insert('labels', { id: crypto.randomUUID(), tenantId, name: String(input.name) });
+      },
+    },
+  ],
+};
+```
+
+The endpoint mounts at `POST /api/iam/plugins/labels/create`. Before the handler runs:
+
+1. the plugin's `validate` runs on the body (it must reject unknown or invalid fields, and may not change the
+   request's `tenantId`);
+2. the registered action is authorized for the caller on the tenant, with root override, tenant scope, ancestry
+   boundaries, and policies applied unchanged.
+
+The handler then receives `{ store, principal, tenantId, deliver }`: the transaction, the verified
+<Term id="principal">principal</Term>, the tenant, and `deliver`, which queues an email or SMS through the host's
+<Term id="outbox">outbox</Term> in the same transaction. The
+operation is audited like any other. Call plugin routes from the browser with the client SDK's `$request`, or from
+the server with `iam.callPlugin(credential, { pluginId, path, tenantId, input })`.
+
+Trusted plugins must not bypass scope checks by reading or writing another collection or tenant arbitrarily.
+
+### Hooks and context
+
+Hooks let a plugin take part in every IAM change, not only its own endpoints: refuse a change that breaks a rule of
+yours, or update plugin records in the same transaction. `resolveContext` feeds plugin data into policy conditions.
+This example blocks role changes during a change freeze, counts every operation, and exposes the tenant's plan to
+policies:
+
+```ts title="plugins/change-freeze.ts"
+import { IamError, type IamPlugin } from 'better-iam/core';
+
+export const changeFreeze: IamPlugin = {
+  id: 'change-freeze',
+  hooks: {
+    // Runs after authorization, inside the transaction; throwing rolls the operation back.
+    async beforeOperation({ tenantId, action }) {
+      if (action.startsWith('iam:roles:') && (await freezes.isActive(tenantId)))
+        throw new IamError('CHANGE_FREEZE', 'Role changes are frozen', 409);
+    },
+    async afterOperation({ action, resourceId, result }) {
+      metrics.count(action, { resourceId });
+    },
+  },
+  // Trusted, server-derived keys for policy conditions.
+  async resolveContext(principal) {
+    return { 'app.plan': await billing.planOf(principal.identity.tenantId) };
+  },
+};
+```
+
+Hook inputs carry `store` (the transaction), `principal`, `tenantId`, `action`, and `resourceId`;
+`afterOperation` adds `result`.
+
+### Lifecycle rules
+
+- **Migrations** should be idempotent and use the provided transaction. Version migration records explicitly in the
+  plugin's namespace.
+- **`afterAudit`** executes from the audit dispatcher after commit and must tolerate at-least-once invocation. It
+  shares the queue that [`iam.events.dispatch()`](/docs/operations/jobs#outbox-and-audit-hooks) drains.
+- **`purge`** runs inside the tenant purge transaction, before the server deletes the purged tenants' own records.
+- **Validation at construction.** Plugin ids must be unique, every endpoint action must be registered, and endpoints
+  need unique paths, `POST`, a validator, and a handler.
+
+## Reference plugin
+
+Read the reference plugin before writing your own: it shows validation, tenant scoping, and purge handling done
+the way the contracts expect. The `@better-iam/projects` package is a complete plugin built on these contracts. Registering
+`createProjectsPlugin()` adds the `projects:read` and `projects:write` actions and mounts `create`, `list`, `get`,
+`update`, `archive`, and `restore` endpoints for tenant-scoped project records. Its purge callback removes a purged
+tenant's project records in the same transaction as the tenant purge.
+
+```ts
+import { betterIam } from 'better-iam';
+import { createProjectsPlugin } from 'better-iam/projects';
+
+export const iam = betterIam({
+  // ...
+  plugins: [createProjectsPlugin()],
+});
+```
+
+## Next steps
+
+<Cards>
+  <Card title="Storage adapters" href="/docs/operations/storage">
+    The three reference adapters your own adapter should behave like.
+  </Card>
+  <Card title="Configuration reference" href="/docs/operations/deployment/configuration#extensions-and-protocols">
+    The `plugins` option and what is validated at construction.
+  </Card>
+  <Card title="Security model" href="/docs/operations/security#operational-responsibilities">
+    Why plugins and resource loaders count as trusted code.
+  </Card>
+</Cards>

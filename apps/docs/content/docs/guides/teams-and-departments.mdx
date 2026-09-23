@@ -1,0 +1,214 @@
+---
+title: Teams and departments
+description: Nested teams whose maintainers manage membership and take join requests, and the department tree with heads that policies and approvals follow.
+icon: UsersRound
+status: new
+packages: ['@better-iam/server', '@better-iam/client']
+sources:
+  - docs/teams-and-departments.md
+  - packages/server/src/teams.ts
+  - packages/server/src/departments.ts
+  - packages/server/src/api/teams.ts
+  - packages/server/src/api/departments.ts
+---
+
+A growing organization stops thinking in individual permissions. People work in teams (Platform, Site Reliability,
+the Payments squad) and sit in a reporting structure (Engineering, then Platform under it). Access should follow the
+team, the person who runs a team should be able to add a newcomer without filing a ticket with IT, and a policy should
+be able to say "anyone in Engineering". <Term id="group">Groups</Term> alone cannot do that: they are flat, and only
+administrators with authority over their <Term id="binding">bindings</Term> change them.
+
+Better IAM adds two structures inside a <Term id="tenant">tenant</Term>:
+
+- **Teams**: working units that nest, have **maintainers** who manage their membership, can take **join requests**,
+  and give their members access through roles bound to the team.
+- **Departments**: the reporting structure. Each person belongs to one department, a department can name a **head**,
+  and heads can become everyone's managers so manager approvals follow the org chart.
+
+## How a team grants access
+
+Every team owns a **backing group** (`team.groupId`, named `team:{slug}`). You give a team access by binding
+<Term id="role">roles</Term> to that group, exactly as you would for any group:
+
+```ts
+const platform = await iam.api.teams.create(admin, {
+  tenantId,
+  name: 'Platform',
+  joinPolicy: 'request',
+  maintainerIds: [bob.id],
+});
+const sre = await iam.api.teams.create(admin, {
+  tenantId,
+  name: 'Site Reliability',
+  slug: 'sre',
+  parentId: platform.id,
+});
+
+await iam.api.bindings.create(admin, {
+  tenantId,
+  roleId: deployer.id,
+  subjectType: 'group',
+  subjectId: platform.groupId,
+});
+```
+
+The teams module keeps the backing group in step with the team: it holds the team's live members **and the members of
+every team below it**. Alice, added to Site Reliability, therefore holds Deployer through Platform. Because access flows
+through an ordinary group, everything that reads groups reads teams: <Term id="sod">separation of duties</Term>,
+<Term id="invariant">invariants</Term>, access reviews, <Term id="certification">certifications</Term>, role mining,
+<Term id="relationship">relationships</Term>, and `principal.groups`.
+
+Only the teams API changes who is in a backing group. The groups API refuses with `TEAM_MANAGED`, access packages,
+invitations, and onboarding flows cannot name a backing group, and configuration as code keeps team groups out of
+its `groups` and `bindings` kinds.
+
+## Teams and departments as code
+
+[Configuration as code](/docs/reference/api/config) has a `teams` kind (matched by slug, with parent, department, join
+settings, maintainers and members by email, and the roles the team holds by name) and a `departments` kind (matched by
+name, with code, parent, head, cost center, and people by email). Listing a team's `maintainers` or `members` makes its
+permanent direct members match exactly; temporary memberships and join requests are left alone. Apply creates parents
+before children and, with `prune`, deletes children first.
+
+```json
+{
+  "version": 1,
+  "departments": [{ "name": "Engineering", "code": "ENG", "head": "alice@acme.test" }],
+  "teams": [
+    {
+      "name": "Platform",
+      "slug": "platform",
+      "department": "Engineering",
+      "maintainers": ["bob@acme.test"],
+      "members": ["alice@acme.test"],
+      "roles": ["Deployer"]
+    }
+  ]
+}
+```
+
+## Maintainers
+
+A team's members are `member`s or `maintainer`s. Maintainers of a team, or of any team above it, manage membership from
+their own session without an administrator permission: they add, update, and remove members (`teams.candidates` lists
+people they can add), and decide join requests. Their calls go through the same transaction as an administrator's, so
+separation-of-duties rules and enforced invariants still apply, and the audit trail records `via: team-maintainer`.
+
+```ts
+// Bob maintains Platform, so he also manages Site Reliability below it.
+await iam.api.teams.addMember(bobSession, { tenantId, teamId: sre.id, identityId: carol.id });
+```
+
+Administrators hold `iam:teams:update` and, as with `groups.addMember`, authority over what the team (and the teams
+above it) hold. Maintainers skip that authority check: making someone a maintainer delegates the team's access to them.
+Set `memberManagement: 'admins'` on a team whose membership only administrators should change, and remember when you
+bind a role to a team that its maintainers can hand that role to anyone they add.
+
+Members see their own team (`teams.get`, `teams.listMembers`) without `iam:teams:read`.
+
+## Team sync from your directory
+
+Most organizations already keep team rosters in their identity provider. Give a team `syncGroupIds` (up to ten
+ordinary groups, such as the groups Okta or Microsoft Entra push over [SCIM](/docs/reference/api/groups)) and its
+membership follows them: everyone in a source group is a member marked `source: 'sync'`, leaving the group removes
+them, and a temporary group membership makes a temporary team membership. Each SCIM push updates the team in the same
+transaction. People added by hand, and maintainers, stay as they are; synced members are changed through the source
+group.
+
+## Join requests
+
+A team with `joinPolicy: 'request'` takes join requests. `teams.listMine` shows a person their teams, their requests,
+and the teams they can ask to join; `teams.requestToJoin` sends the request, and the team's maintainers get a
+`team-join-request` email. A maintainer or administrator answers with `teams.approveRequest` (optionally for a limited
+time) or `teams.denyRequest`, and the requester gets a `team-join-decided` email. Requests lapse after fourteen days;
+nobody decides their own.
+
+## Departments
+
+```ts
+const engineering = await iam.api.departments.create(admin, {
+  tenantId,
+  name: 'Engineering',
+  code: 'ENG',
+  headId: alice.id,
+  costCenter: 'CC-100',
+});
+const platformDept = await iam.api.departments.create(admin, {
+  tenantId,
+  name: 'Platform',
+  parentId: engineering.id,
+  headId: bob.id,
+});
+await iam.api.departments.assign(admin, {
+  tenantId,
+  departmentId: platformDept.id,
+  identityIds: [carol.id, erin.id],
+});
+```
+
+A person belongs to one department at a time, so assigning moves them. Teams can be filed under a department
+(`departmentId`). Two operations connect the org chart to the rest of the system:
+
+- **`importFromAttribute`** places everyone whose string identity attribute (for example `department`, filled by SCIM
+  provisioning) names a department, by name or code, and can create the departments that are missing. Run it with
+  `dryRun: true` first.
+- **`syncManagers`** makes each person's department head their manager, and a head's the nearest head above, so
+  approvals routed to managers (manager approval on eligible bindings and access packages, manager-reviewed
+  certifications) follow the org chart.
+
+## In policies
+
+| Key                      | Type       | Value                                                                        |
+| ------------------------ | ---------- | ---------------------------------------------------------------------------- |
+| `principal.teams`        | list       | IDs of the person's teams and of every team above them                       |
+| `principal.departments`  | list       | The person's department ID and the IDs of every department above it         |
+| `principal.departmentId` | identifier | The person's own department; absent without one                             |
+
+```json
+{
+  "version": 1,
+  "statements": [
+    {
+      "effect": "allow",
+      "actions": ["documents:read"],
+      "resources": ["document/*"],
+      "conditions": { "ArrayContains": { "principal.departments": ["<engineering id>"] } }
+    },
+    {
+      "effect": "allow",
+      "actions": ["documents:write"],
+      "resources": ["document/*"],
+      "conditions": { "StringEquals": { "principal.departmentId": "${resource.departmentId}" } }
+    }
+  ]
+}
+```
+
+The keys are loaded only when a document names them, and describe people in their own organization: an assumed role
+sees empty lists.
+
+## Leaving
+
+Offboarding removes a person from every team (`teamsLeft`) and hands the departments they head to the successor
+(`departmentsReassigned`). Deleting an identity ends its memberships and clears the departments it headed.
+
+## In the console
+
+**Directory → Teams** lists your teams and the teams you can ask to join, shows every team as a tree, and opens a page
+per team with members, join requests, the roles the team holds (its own and inherited), and settings. Maintainers see
+the same page with the membership tools only. **Directory → Departments** shows the org chart, imports departments
+from attributes, and syncs managers. Member pages show a person's teams and department.
+
+## Next steps
+
+<Cards>
+  <Card title="Teams API" href="/docs/reference/api/teams">
+    Every method, permission, and error of the teams group.
+  </Card>
+  <Card title="Departments API" href="/docs/reference/api/departments">
+    The org chart, imports, and manager sync.
+  </Card>
+  <Card title="Conditions" href="/docs/guides/authorization/conditions">
+    The operators and context keys policies can test, including principal.teams and principal.departments.
+  </Card>
+</Cards>

@@ -1,0 +1,426 @@
+---
+title: Express, Hono, and Fastify
+description: Middleware that serves the IAM API, adds req.iam helpers, guards routes, and maps refusals to JSON or redirects, with a core for other Node frameworks.
+icon: Server
+packages:
+  - '@better-iam/middleware'
+sources:
+  - docs/node-frameworks.md
+  - packages/middleware/README.md
+  - packages/middleware/src/index.ts
+  - packages/middleware/src/express.ts
+  - packages/middleware/src/hono.ts
+  - packages/middleware/src/fastify.ts
+---
+
+`@better-iam/middleware` connects a `betterIam()` instance to the common Node server frameworks. You could call the
+core API from every route yourself. Each route would then read the <Term id="session">session</Term> from headers, turn refusals into the
+right status or redirect, check the `Origin` of cookie posts, and copy the cookies a sign-in issues onto the
+response. The adapters do those things once, the same way in Express, Hono, and Fastify:
+
+1. **Serve the IAM HTTP API.** Requests under the instance's `basePath` (`/api/iam`), plus any prefixes you add
+   with `serve`, go to the IAM server. Express and Fastify use `iam.nodeHandler`, so node-only protocol mounts such
+   as the OAuth provider work too.
+2. **Add per-request helpers** as `req.iam` (Express), `c.get('iam')` (Hono), or `request.iam` (Fastify): the
+   session, decisions, an in-process client, and sign-out.
+3. **Guard routes.** `requireSession({ stepUp? })` and `authorize(action, { resource?, tenantId?, stepUp? })` check
+   the session, then <Term id="step-up">step-up</Term>, then authorization.
+4. **Check where requests come from.** The same guards refuse cookie-authenticated `POST`, `PUT`, `PATCH`, and
+   `DELETE` requests sent by another site's page ([the CSRF check](#the-csrf-check)).
+5. **Map refusals.** API calls get the IAM JSON error envelope `{ error: { code, message } }` with the IAM status
+   (401, 403, 429) and `Cache-Control: no-store`. Page navigations (a `GET` with `Accept: text/html`) are
+   redirected to `loginPath?next=…` when signed out, or to `stepUpPath?next=…&reason=mfa|recent|impersonation`
+   when the session must step up, if those options are set.
+
+These adapters have no browser side and no hydration step of their own. If you render Vue on the server, pass
+`req.iam.client` and the session to the [Vue plugin](/docs/frameworks/vue#server-rendering-and-hydration); for
+React, pass the session to `IamProvider` as `initialSession`.
+
+NestJS, Next.js, Nuxt, and SvelteKit have their own integrations ([NestJS](/docs/frameworks/nestjs),
+[Next.js](/docs/frameworks/nextjs), [Nuxt](/docs/frameworks/nuxt), [SvelteKit](/docs/frameworks/sveltekit)).
+SvelteKit's and [React Router](/docs/frameworks/react-router)'s are built on this same core.
+
+## Install
+
+```npm
+npm i better-iam
+```
+
+The umbrella exposes the adapters as `better-iam/express`, `better-iam/hono`, and `better-iam/fastify`, and the
+framework-neutral core as `better-iam/middleware`. With scoped packages, install `@better-iam/middleware` and
+import from `@better-iam/middleware/express`, `/hono`, `/fastify`, or the root. Express 4 and 5 and Fastify 4 and
+5 are supported; the Hono adapter targets Hono 4.
+
+## Setup
+
+<Steps>
+<Step>
+
+### Type the request helpers
+
+<Tabs groupId="node-framework" persist items={['Express', 'Hono', 'Fastify']}>
+<Tab value="Express">
+
+```ts title="src/types.d.ts"
+import type { IamRequest } from 'better-iam/middleware';
+import type { iam } from './iam.js';
+
+declare global {
+  namespace Express {
+    interface Request {
+      iam: IamRequest<typeof iam>;
+    }
+  }
+}
+```
+
+</Tab>
+<Tab value="Hono">
+
+```ts title="src/app.ts"
+import { Hono } from 'hono';
+import type { IamVariables } from 'better-iam/hono';
+import type { iam } from './iam.js';
+
+const app = new Hono<{ Variables: IamVariables<typeof iam> }>(); // c.get('iam') is typed
+```
+
+</Tab>
+<Tab value="Fastify">
+
+```ts title="src/types.d.ts"
+import type { IamRequest } from 'better-iam/middleware';
+import type { iam } from './iam.js';
+
+declare module 'fastify' {
+  interface FastifyRequest {
+    iam: IamRequest<typeof iam>;
+  }
+}
+```
+
+</Tab>
+</Tabs>
+
+</Step>
+<Step>
+
+### Mount the adapter
+
+<Tabs groupId="node-framework" persist items={['Express', 'Hono', 'Fastify']}>
+<Tab value="Express">
+
+```ts title="src/server.ts"
+import express from 'express';
+import { createIamExpress } from 'better-iam/express';
+import { iam } from './iam.js';
+
+const iamExpress = createIamExpress(iam, { loginPath: '/login', stepUpPath: '/verify' });
+const app = express();
+app.use(iamExpress.middleware); // before express.json(): the IAM server reads the raw body
+app.use(express.json());
+```
+
+Mount the middleware before body parsers. If a parser runs first, the adapter re-serializes the parsed body for
+the IAM API (up to 2 MiB; larger bodies answer 413). That works for the JSON API, but node-only protocol mounts
+need the untouched stream. Mounting under a path (`app.use('/api/iam', iamExpress.middleware)`) works too,
+because the adapter restores the path Express strips.
+
+</Tab>
+<Tab value="Hono">
+
+```ts title="src/app.ts"
+import { createIamHono } from 'better-iam/hono';
+
+const iamHono = createIamHono(iam, { loginPath: '/login' });
+app.use(iamHono.middleware);
+```
+
+Hono calls the IAM server through its fetch handler (`iam.handler`), so it runs anywhere Hono does: Node, Bun, Deno,
+and Workers. Node-only protocol mounts (the OAuth provider) are not reachable through it; serve those from a Node
+adapter.
+
+</Tab>
+<Tab value="Fastify">
+
+```ts title="src/server.ts"
+import Fastify from 'fastify';
+import { createIamFastify } from 'better-iam/fastify';
+
+const iamFastify = createIamFastify(iam, { loginPath: '/login' });
+const app = Fastify();
+await app.register(iamFastify.plugin); // not encapsulated, like fastify-plugin
+```
+
+The plugin answers the IAM API in an `onRequest` hook, before Fastify parses the body, and hands the raw request to
+`iam.nodeHandler`. Its hook and the `request.iam` decorator apply to the whole app, not an encapsulated child.
+
+</Tab>
+</Tabs>
+
+</Step>
+<Step>
+
+### Guard routes
+
+<Tabs groupId="node-framework" persist items={['Express', 'Hono', 'Fastify']}>
+<Tab value="Express">
+
+```ts
+app.get('/me', iamExpress.requireSession(), async (req, res) => {
+  const session = await req.iam.getSession();
+  res.json({ email: session!.identity.email, canInvite: await req.iam.can('iam:identities:create') });
+});
+app.get(
+  '/projects/:id',
+  iamExpress.authorize('projects:read', {
+    resource: (req) => ({ type: 'project', id: req.params.id }),
+  }),
+  (req, res) => res.json(loadProject(req.params.id)),
+);
+```
+
+</Tab>
+<Tab value="Hono">
+
+```ts
+app.get('/me', iamHono.requireSession(), async (c) => c.json((await c.get('iam').getSession())!.identity));
+app.get('/admin', iamHono.authorize('iam:identities:read'), (c) => c.text('admin'));
+```
+
+</Tab>
+<Tab value="Fastify">
+
+```ts
+app.get('/me', { preHandler: iamFastify.requireSession() }, async (request) =>
+  (await request.iam.getSession())!.identity,
+);
+app.get('/admin', { preHandler: iamFastify.authorize('iam:identities:read') }, handler);
+```
+
+</Tab>
+</Tabs>
+
+</Step>
+<Step>
+
+### Answer refusals your routes throw
+
+Guards answer their own refusals. Install the error handler for refusals thrown later, by `req.iam.require(...)` or
+direct `iam.api.*` calls inside a route.
+
+<Tabs groupId="node-framework" persist items={['Express', 'Hono', 'Fastify']}>
+<Tab value="Express">
+
+```ts
+app.use(iamExpress.errorHandler); // last: refusals become JSON or a redirect; other errors go to next(error)
+```
+
+</Tab>
+<Tab value="Hono">
+
+```ts
+app.onError(iamHono.onError);
+```
+
+`onError` answers IAM refusals and `HTTPException`s. Any other error is logged and answered with a plain 500, as
+Hono's default handler does.
+
+</Tab>
+<Tab value="Fastify">
+
+```ts
+app.setErrorHandler(iamFastify.errorHandler); // refusals become JSON or a redirect; other errors are rethrown
+```
+
+</Tab>
+</Tabs>
+
+</Step>
+</Steps>
+
+## What each adapter returns
+
+`createIamExpress`, `createIamHono`, and `createIamFastify` take the instance (or a factory that returns it) and
+the options below, and return the same set of members, shaped for each framework:
+
+| Member | Express | Hono | Fastify | What it does |
+| --- | --- | --- | --- | --- |
+| Mount | `middleware` | `middleware` | `plugin` | Serves the IAM API under the `serve` prefixes and attaches the helpers to every other request |
+| `requireSession({ stepUp? })` | middleware | middleware | `preHandler` | Requires a session, and a step-up when given |
+| `authorize(action, { resource?, tenantId?, stepUp? })` | middleware | middleware | `preHandler` | Requires a session allowed to perform `action`. `resource` and `tenantId` are `(req, session) => ...`; the resource defaults to the tenant (`iam/{tenantId}`) and the tenant to the session's |
+| Error handling | `errorHandler` | `onError` | `errorHandler` | Turns IAM refusals thrown by routes into the JSON envelope or a redirect |
+| `helpers(...)` | `(req, res)` | `(c)` | `(request, reply)` | The per-request helpers, created on first use |
+| `resolve()` | yes | yes | yes | Resolves the instance (the adapter accepts the instance or a factory) |
+
+### Options
+
+<TypeTable
+  type={{
+    loginPath: {
+      type: 'string',
+      description: <>Where page navigations (a GET with <code>Accept: text/html</code>) go when signed out; <code>?next=</code> carries the path. Without it, they get the JSON 401 like API calls.</>,
+    },
+    stepUpPath: {
+      type: 'string',
+      description: <>Where page navigations go when the session must step up, with <code>?next=</code> and <code>?reason=</code>. Without it, they get the JSON 403.</>,
+    },
+    serve: {
+      type: 'string[]',
+      description: <>Path prefixes the IAM server answers. Add protocol mounts outside the base path, such as <code>/oauth</code> or <code>/.well-known</code>, so their requests reach <code>iam.nodeHandler</code> too (Express and Fastify).</>,
+      default: "[the instance's basePath]",
+    },
+    basePath: {
+      type: 'string',
+      description: <>Where the IAM HTTP API is served, used by the in-process client and as the default <code>serve</code> prefix.</>,
+      default: "the instance's basePath, else '/api/iam'",
+    },
+    trustedOrigins: {
+      type: 'string[]',
+      description: <>Origins besides the request's own and the IAM origin that may send cookie-authenticated unsafe requests to guarded routes, for example a separate front end.</>,
+    },
+    csrf: {
+      type: 'boolean',
+      description: <>Check the <code>Origin</code> of cookie-authenticated POST, PUT, PATCH, and DELETE requests in guards. Set it to false only when something else already checks origins.</>,
+      default: 'true',
+    },
+    now: {
+      type: '() => number',
+      description: <>The clock for step-up recency checks, for tests.</>,
+      default: 'Date.now',
+    },
+  }}
+/>
+
+## The CSRF check
+
+Guards also run a CSRF check. A `POST`, `PUT`, `PATCH`, or `DELETE` authenticated by the session cookie, with no
+`Authorization` header, must carry an `Origin` of the app itself, the IAM origin, or one of `trustedOrigins`; a
+`Sec-Fetch-Site: same-origin` request also passes. Otherwise it is refused with `UNTRUSTED_ORIGIN`, or
+`CSRF_REJECTED` when there is no `Origin`.
+
+Why it matters: session cookies are `SameSite=Lax`, which browsers still send with form posts from sibling
+subdomains, so without the check a page on another subdomain could make changes as the signed-in person. Bearer
+tokens skip it because browsers never attach them on their own. Routes without a guard that change state should
+call `checkRequestOrigin` themselves (see [the core](#other-frameworks)).
+
+## Per-request helpers
+
+Inside a route, `req.iam` (or `c.get('iam')`, `request.iam`) is how you ask about the current caller without
+passing headers around. The helpers are created once per request and memoize the session lookup.
+
+| Member | Returns / does |
+| --- | --- |
+| `getSession()` | The session, or `null` (memoized for the request) |
+| `requireSession({ stepUp? })` | The session, or throws `IamRequestError` (401, or 403 with a `reason`) |
+| `require(action, resource?, { tenantId? })` | Throws the server's refusal when not allowed |
+| `can(action, resource?, { tenantId? })` | An advisory boolean; checks made in the same tick share one `authorizeMany` call |
+| `authorize(checks, { tenantId? })` | `{ action, resource, allowed, reason }[]`; every check is denied (`UNAUTHENTICATED`) when signed out |
+| `listAccessible({ action, type, tenantId?, limit?, offset? })` | The managed resources the caller may act on |
+| `assertion({ tenantId, audience, ttlSeconds?, claims? })` | A signed <Term id="assertion">assertion</Term> for a downstream service |
+| `client` | A typed client calling the IAM handler in process; its `Set-Cookie` answers go on this response |
+| `credential()` | `{ headers }` for `iam.api.*` calls, including cookies set earlier in the request |
+| `signOut()` | Ends the session and clears its cookie; never throws for an already-dead session |
+
+The resource defaults to the tenant (`iam/{tenantId}`), and the tenant to the session's. Cookies the in-process
+client receives override the incoming ones for later calls in the same request, so `getSession()` after a sign-in
+sees the new session.
+
+### Sign in without client JavaScript
+
+```ts title="src/server.ts (Express)"
+import { safeRedirectPath } from 'better-iam/middleware';
+
+app.post('/login', async (req, res) => {
+  // The in-process client sets the session cookie on this response.
+  const result = await req.iam.client.auth.signIn({
+    tenantId, // your organization's id, for example from client.tenants.lookup({ slug })
+    email: req.body.email,
+    password: req.body.password,
+  });
+  if ('mfaRequired' in result) return res.redirect(303, `/verify?challenge=${result.challenge}`);
+  res.redirect(303, safeRedirectPath(String(req.query.next ?? '')));
+});
+app.post('/logout', async (req, res) => {
+  await req.iam.signOut();
+  res.redirect(303, '/');
+});
+```
+
+A plain HTML form posts `application/x-www-form-urlencoded`, so `req.body` needs
+`app.use(express.urlencoded({ extended: false }))`, registered after the IAM middleware like `express.json()`.
+`safeRedirectPath` (from `better-iam/middleware`) accepts only same-site paths and falls back to `/`, so a `?next=`
+parameter cannot become an open redirect. A failed sign-in rejects with the server's error (for example
+`INVALID_CREDENTIALS` or `RATE_LIMITED`). Express 5 passes that rejection to `errorHandler`, which answers with the
+JSON envelope; on Express 4, catch it and call `next(error)`, or render your form again with the code.
+
+## Other frameworks
+
+The package root exports the framework-neutral pieces the adapters are built from:
+
+| Export | What it does |
+| --- | --- |
+| `createRequestHelpers(resolveIam, { url, headers, setCookie }, { basePath?, now? })` | Builds the per-request helpers over any request and response; `setCookie` appends one `Set-Cookie` header to your response |
+| `enforceGuard(helpers, request, spec, origin?)` | Runs a guard: session, step-up, then authorization, with the origin check first when `origin` is given. Resolves with the session or throws the refusal |
+| `refusalResponse(error, request, { loginPath?, stepUpPath? })` | Decides how to answer a refusal: `{ redirect }` for page navigations, else `{ status, body }` with the JSON envelope |
+| `checkRequestOrigin(request, trustedOrigins)` | The CSRF rule above; returns the refusal or `null` |
+| `checkStepUp(session, requirement, now?)` | The step-up rule; returns `null` or `{ code, reason, message, status }` |
+| `safeRedirectPath(value, fallback?)` | A same-site path, or the fallback |
+| `IamRequestError`, `isIamRefusal(error)`, `isAuthenticationError(error)` | The refusal class the helpers throw (`code`, `status`, `reason`), and tests for IAM refusals and for "no usable session" errors |
+| `errorBody(error)`, `errorCode(error)`, `errorStatus(error)` | The JSON envelope string for a refusal, and safe readers for an error's `code` and `status` |
+| `underPath(pathname, prefix)`, `withQuery(target, params)` | Prefix matching on path-segment boundaries (`/admin` covers `/admin/users`, not `/administrator`), and appending query parameters |
+| `nodeHeaders(record)`, `parseCookieHeader(header)`, `setCookieSummary(header)` | Convert Node header records to `Headers`, split a `Cookie` header, and read a `Set-Cookie` header's name, value, and whether it deletes the cookie |
+| `tenantOf(session)` | The tenant a session acts in |
+
+```ts title="server.ts (a Web-standard fetch handler)"
+import { createRequestHelpers, enforceGuard, isIamRefusal, refusalResponse } from 'better-iam/middleware';
+import { iam } from './iam.js';
+
+export async function handle(request: Request): Promise<Response> {
+  const url = new URL(request.url);
+  if (url.pathname.startsWith('/api/iam/')) return iam.handler(request);
+
+  const cookies: string[] = [];
+  const helpers = createRequestHelpers(async () => iam, {
+    url,
+    headers: request.headers,
+    setCookie: (header) => cookies.push(header),
+  });
+  let response: Response;
+  try {
+    const session = await enforceGuard(helpers, request, { authorize: { action: 'projects:read' } }, {
+      method: request.method,
+      url,
+      headers: request.headers,
+      trustedOrigins: [iam.endpoint?.origin],
+    });
+    response = Response.json({ projects: await listProjects(session) });
+  } catch (error) {
+    if (!isIamRefusal(error)) throw error;
+    const answer = refusalResponse(error, { url, headers: request.headers, method: request.method }, { loginPath: '/login' });
+    response =
+      'redirect' in answer
+        ? new Response(null, { status: 303, headers: { location: answer.redirect } })
+        : new Response(answer.body, { status: answer.status, headers: { 'content-type': 'application/json' } });
+  }
+  for (const cookie of cookies) response.headers.append('set-cookie', cookie);
+  return response;
+}
+```
+
+[Protocol mounts](/docs/operations/deployment/protocol-mounts) covers serving OAuth, SAML, and SCIM endpoints
+beside the JSON API.
+
+## Next steps
+
+<Cards>
+  <Card title="Typed client" href="/docs/frameworks/client">
+    Call the API you mounted from the browser.
+  </Card>
+  <Card title="Protocol mounts" href="/docs/operations/deployment/protocol-mounts">
+    Serve OAuth, SAML, and SCIM next to the JSON API with `serve`.
+  </Card>
+  <Card title="Policies" href="/docs/guides/authorization/policies">
+    What `authorize` guards actually evaluate.
+  </Card>
+</Cards>

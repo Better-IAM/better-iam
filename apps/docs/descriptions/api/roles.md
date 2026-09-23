@@ -1,0 +1,217 @@
+# roles
+
+Roles are named sets of permissions for a job function, such as Editor or Approver, that bindings give to people
+and groups. You define what an editor may do once, [bind](/docs/reference/api/bindings#create) the role to everyone
+who edits, and change it in one place when the job changes: every holder sees the change at their next request. A
+role can build on other roles through inheritance, and it can also be taken on temporarily through a trust with
+`assume` instead of a binding. The guide is [roles and bindings](/docs/guides/authorization/roles).
+
+## How a role grants
+
+A role grants the union of three sources:
+
+- **Its own permissions.** Either a `permissions` list, which becomes one inline allow statement
+  (`RolePermissions`) over every resource of the tenant, or a full inline `document` when access depends on
+  conditions or specific resources. You pass one or the other, not both.
+- **Attached policies.** `policyIds` names stored, versioned [policies](/docs/reference/api/policies) that several
+  roles can share.
+- **Inherited roles.** `inherits` lists up to 20 roles whose grants this role includes, recursively. A role cannot
+  inherit itself, form a cycle, or inherit a protected role.
+
+Every role also records the [grant authority](/docs/guides/authorization/roles#grant-authorities) it was created
+under. That authority's ceiling bounds everything the role grants, whoever binds it, and inherited grants are
+bounded by the inheriting role's ceilings as well as their own, so inheriting a broader role never widens a
+delegated administrator's reach. Only the holder of that authority, or root, may edit or delete the role.
+
+The protected Owner role, created with every tenant, cannot be updated, deleted, inherited, or bound through this
+API; ownership changes go through [`identities.setOwner`](/docs/reference/api/identities#setowner).
+
+## create
+
+Creates a role from a permissions list, an inline policy document, attached policies, inherited roles, or a mix of
+them.
+
+- **Permission:** `iam:roles:create` on the tenant, plus an active grant authority.
+- **Audited as:** `iam:roles:create`.
+- **Errors:** `INVALID_INPUT` when both `permissions` and `document` are given, `permissions` is empty, more than 20
+  roles are inherited, or the name or description (at most 512 characters) is invalid; `INVALID_POLICY`,
+  `INVALID_ACTION`, or `INVALID_RESOURCE_TYPE` when the permissions or document do not validate against the
+  catalog; `NOT_FOUND` when an attached policy or inherited role is not in this tenant; `PROTECTED_RESOURCE` when
+  inheriting a protected role; `GRANT_AUTHORITY_REQUIRED` when you hold no active grant authority;
+  `LIMIT_EXCEEDED` when the tenant's plan limit for roles is reached.
+
+A new role grants nothing until it is bound. Create one role per job function in your product rather than one per
+person.
+
+```ts
+const editor = await iam.api.roles.create(credential, {
+  tenantId,
+  name: 'Editor',
+  description: 'Reads and writes documents',
+  permissions: ['documents:read', 'documents:write'],
+});
+
+// A manager does everything an editor does, plus exports.
+const manager = await iam.api.roles.create(credential, {
+  tenantId,
+  name: 'Manager',
+  permissions: ['reports:export'],
+  inherits: [editor.id],
+});
+```
+
+## update
+
+Changes a role's name, description, permissions or inline document, attached policies, or inherited roles.
+
+- **Permission:** `iam:roles:update` on the role, and the grant authority the role was created under (or root).
+- **Audited as:** `iam:roles:update`.
+- **Errors:** `PROTECTED_RESOURCE` for a protected role, or when inheriting one; `ACCESS_DENIED` when another
+  administrator's authority created the role; `GRANT_AUTHORITY_REQUIRED` when you hold no active grant authority;
+  `INVALID_INPUT` when both `permissions` and `document` are given or the inheritance would form a cycle;
+  `INVALID_POLICY`, `INVALID_ACTION`, or `INVALID_RESOURCE_TYPE`; `NOT_FOUND`; `INVARIANT_VIOLATION` when the change
+  would newly break an enforced [access invariant](/docs/reference/api/invariants).
+
+Only the fields you pass change. `permissions` replaces the inline document with a new permissions statement,
+`document: null` removes the inline document, `policyIds` replaces the attached set, and `inherits: []` clears
+inheritance. Everyone who holds the role, directly, through a group, or through a role that inherits it, sees the
+change at their next request, so preview it first with [`impact.preview`](/docs/reference/api/impact#preview).
+
+```ts
+await iam.api.roles.update(credential, {
+  tenantId,
+  roleId: editor.id,
+  permissions: ['documents:read', 'documents:write', 'documents:share'],
+});
+```
+
+## delete
+
+Deletes a role together with its bindings and their activations.
+
+- **Permission:** `iam:roles:delete` on the role, and the grant authority the role was created under (or root).
+- **Audited as:** `iam:roles:delete`.
+- **Errors:** `RESOURCE_IN_USE` (409) while another role inherits it or an
+  [access package](/docs/guides/privileged-access/access-packages) includes it; `PROTECTED_RESOURCE` for a
+  protected role; `ACCESS_DENIED` when another administrator's authority created the role; `NOT_FOUND`;
+  `INVARIANT_VIOLATION`.
+
+Everyone who held the role loses it at once. The in-use checks exist so that deleting a role never silently
+changes what another role or a package grants: change those first.
+
+## get
+
+Returns one role by id, with its attached policies, inline document, and inherited roles.
+
+- **Permission:** `iam:roles:read` on the role.
+- **Audited as:** `iam:roles:read`.
+- **Errors:** `NOT_FOUND` when the role is not in this tenant.
+
+## list
+
+Lists every role in the tenant, including the protected Owner role.
+
+- **Permission:** `iam:roles:read` on the tenant.
+- **Audited as:** `iam:roles:read`.
+
+## listBindings
+
+Lists who holds a role: its bindings, each with a summary of the person, service account, or group it names.
+
+- **Permission:** `iam:bindings:read` on the role.
+- **Audited as:** `iam:bindings:read`.
+- **Errors:** `NOT_FOUND` when the role is not in this tenant.
+
+Expired bindings are left out. Future-dated and eligible bindings are included, so check `startsAt` and `eligible`
+to tell who holds the role right now. Each entry has `subject` (id, name, email, and kind for an identity; id and
+name for a group). Group bindings are listed as the group, not expanded to members, and holders of roles that
+inherit this one are not included.
+
+## assume
+
+Exchanges your session for a short-lived role session in a target tenant, through a trust the platform root
+created.
+
+- **Permission:** `iam:roles:assume` on the target role (`iam/{roleId}`), evaluated in your own tenant, and a trust
+  that names you as its source identity.
+- **Audited as:** `iam:roles:assume` in your own tenant, and `role:assumed` in the target tenant (with the trust,
+  your tenant, the duration, the credential format, and the names of any session tags), so both sides can see it.
+- **Errors:** `ROLE_CHAINING_DISABLED` when you call it from a role session; `IMPERSONATION_RESTRICTED` from a "view
+  as" session; `NOT_FOUND` when the trust is not in the target tenant; `ACCESS_DENIED` when the trust is revoked,
+  names another source identity, requires MFA your session lacks, expects an external ID you did not match, or does
+  not admit the session tags or source identity you passed; `TENANT_INACTIVE` when the target tenant or an ancestor
+  is not active; `INVALID_INPUT` for a `durationSeconds` outside the allowed range or a malformed session name,
+  source identity, tag, or audience; `FEATURE_DISABLED` for `format: 'jwt'` when the deployment has no `sts.jwt`
+  signing keys; `INVALID_POLICY` or `INVALID_ACTION` for an invalid session `policy`.
+
+Use it for cross-tenant support or automation, or for one task that needs a role nobody should hold permanently.
+The platform root sets up each trust with [`trust.create`](/docs/reference/api/trust#create): exactly one source
+identity, one target role, and optionally MFA, an external ID, and a ceiling. The returned `token` is a credential
+for the target tenant whose permissions are exactly the role's, bounded by the trust's ceiling and by the optional
+session `policy`, which can only narrow them. Your own roles do not carry over, and neither do the limits of the
+credential you called with: an API key's scopes or a session token's `policy` only decide whether you may assume the
+role (checked again on every use), not what the role session may do. Your MFA state and sign-in time do carry over,
+and the address you called from is recorded so the target tenant's IP allowlist and network blocks apply to the
+role session too.
+
+The session lasts `durationSeconds`: 900 by default, at most the smaller of the deployment's
+`sts.maxRoleSessionSeconds` (3600 unless configured) and the trust's own limit, and never longer than the session
+you called from. A value outside that range is refused rather than shortened. A role session cannot assume another
+role.
+
+Optional inputs describe the session for policies and the audit log: `sessionName` (who or what is acting, such as
+a ticket number), `sourceIdentity` (the person behind an automated caller), and `tags` (key/value pairs that
+policies read as `principal.sessionTags.{key}`). A trust admits no tags and forbids a source identity unless it is
+configured to allow them, because both can satisfy policy conditions. `format: 'jwt'` issues the credential as a
+signed JWT for `audience` instead of an opaque token.
+
+```ts
+const { token, session } = await iam.api.roles.assume(credential, {
+  tenantId: customerTenantId,
+  trustId,
+  durationSeconds: 900,
+  policy: {
+    version: 1,
+    statements: [{ effect: 'allow', actions: ['documents:read'], resources: ['*'] }],
+  },
+});
+// Call the API as { token } in customerTenantId until session.expiresAt.
+```
+
+## listSessions
+
+Lists the live role sessions in the tenant, of one role or trust when given, newest first.
+
+- **Permission:** `iam:trust:read` on the role (`iam/{roleId}`), or on the tenant without `roleId`.
+- **Audited as:** `iam:trust:read`.
+- **Errors:** `NOT_FOUND` when `roleId` is not a role of this tenant; `INVALID_INPUT` for a `limit` outside 1 to 500.
+
+Each entry is a summary built for the target tenant's administrators: the session id, role, trust, the identity it
+acts as, the source tenant, session name, source identity, the web identity's provider and subject, MFA, format,
+creation and expiry times, and the recorded client address. Tokens, hashes, policies, and authority ids are never
+included. Expired sessions, sessions under a revoked trust, and sessions already below a revocation watermark are
+left out. `limit` defaults to 100. Use it to see who is currently working in the tenant through a trust before
+revoking with [`revokeSessions`](#revokesessions).
+
+## revokeSessions
+
+Ends every role session of a role issued before a point in time, whichever trust or provider issued it.
+
+- **Permission:** `iam:roles:revoke-sessions` on the role, with recent authentication.
+- **Audited as:** `iam:roles:revoke-sessions` and `role:sessions-revoked` (with the watermark and the number of
+  sessions deleted).
+- **Errors:** `INVALID_INPUT` when `before` is not a whole number of milliseconds, is negative, or lies in the future;
+  `NOT_FOUND` when the role is not in this tenant; `RECENT_AUTH_REQUIRED`; `ACCESS_DENIED`.
+
+This is the "revoke older sessions" lever for an incident: `before` defaults to now, which ends every role session
+issued so far, while new assumptions keep working. The role's `sessionsRevokedBefore` watermark only moves forward
+and is kept by [`update`](#update) and configuration sync, so a session created before it is refused at its next use
+(with `UNAUTHENTICATED`), and matching rows are deleted at once. It only removes access, so it can be delegated to
+the target tenant's administrators. Session JWTs that other services verify offline stay valid there until they
+expire. To end the sessions of one trust or one OIDC provider instead, use
+[`trust.revokeSessions`](/docs/reference/api/trust#revokesessions) or
+[`oidcProviders.revokeSessions`](/docs/reference/api/oidc-providers#revokesessions).
+
+```ts
+const { revoked, sessionsRevokedBefore } = await iam.api.roles.revokeSessions(credential, { tenantId, roleId });
+```

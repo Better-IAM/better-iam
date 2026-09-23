@@ -1,0 +1,254 @@
+---
+title: Sessions
+description: Database sessions with absolute and idle lifetimes, device metadata, recent authentication, sign-out everywhere, session caps, and sign-in records.
+icon: MonitorSmartphone
+packages: ['@better-iam/auth', '@better-iam/server']
+sources:
+  - docs/authentication.md
+  - docs/security.md
+  - packages/auth/src/service/sessions.ts
+  - packages/auth/src/service/base.ts
+  - packages/core/src/index.ts
+---
+
+After someone signs in, every later request has to prove it comes from them. That proof is a
+<Term id="session">session</Term>. In Better IAM a session is a database record, not a self-contained token such as
+a JWT. The bearer token (or cookie value) is a random secret returned once; only its hash is stored.
+
+Storing sessions costs a database read per request, and buys three things a self-contained token cannot offer:
+
+- **Instant revocation.** Signing out everywhere, disabling a person, or blocking a network takes effect on the
+  next request, not when a token expires.
+- **Context.** Each session records how and where it was established, for device lists and security alerts.
+- **Live policy.** Each use is re-checked against the current state of the identity, the tenant, and its policy.
+
+## Lifetimes
+
+Long sessions are convenient; short ones limit the damage of a stolen cookie or an unattended computer. Every user
+session balances the two with two clocks:
+
+- an **absolute lifetime**: the session ends this long after it was issued, however active it is;
+- an **idle timeout**: the session ends when nothing has used it for this long.
+
+| Option | Default | Range |
+| --- | --- | --- |
+| `authentication.sessionLifetimeMs` | 7 days | one minute to 30 days |
+| `authentication.sessionIdleTimeoutMs` | the shorter of 24 hours and the lifetime | one minute to the lifetime |
+
+A tenant's `sessionLifetimeMs` and `sessionIdleTimeoutMs` shorten these for its members but never extend them.
+Validating a session updates its `lastSeenAt` at most once a minute, or once per tenth of the idle timeout when that
+is shorter, so busy clients do not turn every request into a write; idle expiry is accurate to that interval and
+only ever earlier than configured.
+
+### Warning before an idle sign-out
+
+Being signed out in the middle of filling a form is frustrating. Warn people first: `auth.getSession` returns the
+signed-in identity, the session, and the limits in force, and calling it also counts as activity.
+
+```ts
+const { identity, session, limits } = await client.auth.getSession();
+// limits: { lifetimeMs, idleTimeoutMs, idleExpiresAt, now }
+```
+
+`idleExpiresAt` is when the session lapses if nothing touches it again (the call itself just did), and `now` is the
+server's clock so you can correct for skew. A client can warn before an idle sign-out and keep the session alive on
+request by calling `getSession` again. The console does exactly that: it shows a countdown two minutes ahead with
+"Stay signed in", and returns to the login page once the session has lapsed.
+
+## Revalidation on every use
+
+A session that was valid an hour ago may not be valid now: the person may have been disabled, or the organization
+may have started requiring MFA. So a session is checked again each time it is presented:
+
+- the session exists and has not passed its absolute lifetime or idle timeout;
+- the identity is an active person in an active tenant with an active ancestry;
+- the email is verified when `requireEmailVerification` is on (`EMAIL_UNVERIFIED`);
+- the session passed MFA if the person now requires it (`MFA_REQUIRED`);
+- for an impersonation session, the administrator's own session and identity are still live;
+- the recorded client address is inside the tenant's `allowedIpRanges` (`IP_NOT_ALLOWED`) and not blocked
+  (`IP_BLOCKED`), and, with `bindSessionsToIp`, the presenting address matches it
+  (`SESSION_NETWORK_MISMATCH`).
+
+Provisioning operations and authorization queries repeat these checks on a fresh read inside their own
+transaction, and there an identity past its scheduled `expiresAt` is refused as well. A lapsed or revoked session
+fails with `UNAUTHENTICATED` (401). The browser client's `onUnauthenticated` hook fires
+for exactly `UNAUTHENTICATED` and `SESSION_NETWORK_MISMATCH`, so you can send people to the login page in one
+place.
+
+## Device metadata
+
+People recognize their sessions by device ("Chrome on a MacBook, Berlin"), and security features need to know where
+a session came from. Each session records the sign-in `method` and the client it was established from:
+
+- `client.userAgent`, `client.ip`, and `client.label` (a short device name your application derives);
+- captured by the HTTP handler through `http.clientInfo(request)`, or by `iam.auth.withClient(info, fn)` for
+  sessions you create with direct `iam.api.auth.*` calls.
+
+Without `http.clientInfo`, the handler records the `User-Agent` header only. Values are trimmed and bounded (IP 64,
+user agent 512, label 128 characters). Client details are informational: nothing about the client is trusted for
+authorization, and an IP is recorded only when your `clientInfo` derives it from a proxy header you control. See
+[client details](/docs/guides/authentication/http#client-details).
+
+`iam.auth.withClient(info, fn)` runs `fn` so that every session it issues records `info`. Use it when your own
+server code signs people in without going through the HTTP handler:
+
+```ts title="Direct calls"
+const result = await iam.auth.withClient({ ip, userAgent, label: 'Kiosk 4' }, () =>
+  iam.api.auth.signIn({ tenantId, email, password }),
+);
+```
+
+## Listing and ending sessions
+
+A lost phone, a shared computer, or a suspicious sign-in all call for ending sessions. People manage their own from
+an account page:
+
+| Call | What it does |
+| --- | --- |
+| `auth.listSessions()` | Lists the person's live sessions with their device details; `current` marks the one making the call. |
+| `auth.revokeSession({ sessionId })` | Ends one of their sessions, such as the one on a lost phone. Needs recent authentication. |
+| `auth.revokeOtherSessions()` | "Sign out everywhere else": ends every other session and keeps this one. Needs recent authentication. |
+| `auth.signOut()` | Ends the current session. Through the HTTP handler it also clears the session cookie. |
+
+```ts
+const sessions = await client.auth.listSessions();
+const phone = sessions.find((session) => !session.current && session.client?.label === 'Pixel 8');
+if (phone) await client.auth.revokeSession({ sessionId: phone.id });
+```
+
+Administrators handle other people's sessions, for support and incident response:
+
+| Call | Needs | Effect |
+| --- | --- | --- |
+| `identities.listSessions` | `iam:identities:read` | One identity's live sessions, without token hashes (device lists, support). |
+| `identities.revokeSessions` | `iam:identities:update`, recent authentication | Ends every session of one identity without disabling it (incident response, a lost device); audited as `identity:revoke-sessions`. |
+| `tenants.revokeSessions` | `iam:tenants:update`, recent authentication | Ends every session in the tenant, including role sessions sourced from it and impersonation sessions opened through an ended session, and forgets the tenant's remembered devices. The caller's own session and devices are kept unless `includeSelf`. Audited as `tenant:revoke-sessions`. |
+
+Ending a session also ends the impersonation sessions an administrator opened through it. Revocation takes effect
+on the next request in every process, because nothing is cached.
+
+Some changes end every session of the person, including the one that made the change: a password change or reset,
+an email change, enrolling or disabling an authenticator (enrolling returns a fresh session), deleting a passkey,
+disabling the identity, and administrator revocation.
+
+## Concurrent session limits
+
+Some organizations want to stop account sharing, or simply limit how many devices hold a live session. A tenant's
+`maxSessions` (1 to 100) caps the concurrent user sessions per person. When a new session would exceed the cap,
+the oldest live sessions end to make room. Impersonation sessions do not count toward the cap.
+
+## Recent authentication
+
+A session can live for days, and anyone who sits down at an unlocked computer inherits it. Recent authentication
+limits what they can do with it. Sensitive operations require the session to have been established within
+`authentication.recentAuthenticationMs` (five minutes by default, one second to fifteen minutes). They include
+password, email, factor, device, session, and ownership changes, impersonation, and policy changes. When the session
+is older, the operation fails with `RECENT_AUTH_REQUIRED`.
+
+```ts
+import { IamClientError } from 'better-iam/client';
+
+try {
+  await client.auth.revokeOtherSessions();
+} catch (error) {
+  if (error instanceof IamClientError && error.code === 'RECENT_AUTH_REQUIRED') {
+    const result = await client.auth.reauthenticate({ password: await askForPassword() });
+    if ('mfaRequired' in result) {
+      // the account has a second factor: complete it, then retry
+    }
+    await client.auth.revokeOtherSessions();
+  } else throw error;
+}
+```
+
+`auth.reauthenticate({ password })` re-runs the password ceremony, and the second factor when the account has one,
+and issues a **fresh session** with a new `authenticatedAt`; through the HTTP handler it replaces the session
+cookie. The console prompts for it whenever an operation answers `RECENT_AUTH_REQUIRED`. Two kinds of credential
+never qualify, whatever their age:
+
+- impersonation sessions (`IMPERSONATION_RESTRICTED`), which also cannot re-authenticate;
+- temporary credentials such as assumed-role sessions, which carry their source's authentication time.
+
+## Sign-in records and alerts
+
+People rarely notice when someone else is guessing their password or has already signed in as them. Better IAM
+keeps the facts you need to tell them, the way a bank shows "last sign-in" on its home page.
+
+Every sign-in flow keeps a small sign-in record per person: when their last session was issued and from which
+client, and how many attempts since then named their account with a wrong password, authenticator or emailed code,
+or recovery code. Each failure is recorded as an `auth:signin:fail` audit event with `reason: 'password' | 'mfa' |
+'recovery-code'` and the client's IP and user agent, in a transaction of its own because the refused flow rolled
+back.
+
+A new session carries the record as `session.previousSignIn` (absent on a first sign-in), and the record restarts.
+That lets you greet people with "last sign-in on Tuesday from Chrome, 3 failed attempts since", the way a login
+banner does:
+
+```ts
+const { session } = await client.auth.getSession();
+const previous = session.previousSignIn; // { lastAt?, lastClient?, failedAttempts, lastFailedAt?, lastFailedClient? }
+```
+
+Unknown addresses, disabled accounts, and attempts the rate limiter refused are never counted, so the record cannot
+be used to enumerate accounts or to flood the audit log.
+
+Two optional emails build on it:
+
+- **New sign-in notices.** With `authentication.signInNotifications`, or a tenant's `notifyNewSignIn` (which
+  overrides the deployment), a session from a client (user agent and IP) that none of the person's live sessions or
+  remembered devices has used queues a `new-sign-in` email with the session ID, method, user agent, IP, and label.
+  Sessions without client details are never judged.
+- **Failed sign-in alerts.** With `authentication.failedSignInAlerts` set to a number (1 to 1,000; needs
+  `sendEmail`), the person receives one `sign-in-failures` email the moment the streak reaches that number, sent
+  only to a verified address, so they hear about a guessing attempt before their next sign-in.
+
+### The security trail
+
+An account page is more trustworthy when people can see what happened to their account.
+`auth.listSecurityEvents({ limit? })` gives people their own authentication trail without any administrative
+permission: the `auth:*` audit events recorded for their identity, newest first (50 by default, at most 200).
+It covers sign-ins, failed attempts, sign-outs, factor and password changes, and remembered devices. Each event
+carries its `metadata` (the client's `ip` and `userAgent`, the sign-in `method`, or a failure's `reason`) and names
+the administrator in `impersonatorId` when one acted through impersonation.
+
+| Event | Recorded when |
+| --- | --- |
+| `auth:identity:create` | The identity was created. |
+| `auth:session:create` | A session is issued (with `method`, `ip`, `userAgent`). |
+| `auth:session:revoke`, `auth:session:revoke-others` | A session is ended, or every other session. |
+| `auth:session:mismatch` | A bound session was presented from another network (both addresses in the metadata). |
+| `auth:signin:fail` | A wrong password, code, or recovery code for a real account. |
+| `auth:password:change`, `auth:password:reset` | The password changed. |
+| `auth:email:verify`, `auth:email:change`, `auth:phone:verify` | Contact details were verified or changed. |
+| `auth:mfa:enable`, `auth:mfa:disable`, `auth:mfa:recover`, `auth:mfa:recovery-codes` | The authenticator changed or a recovery code was used. |
+| `auth:passkey:create`, `auth:passkey:rename`, `auth:passkey:delete` | Passkeys changed. |
+| `auth:device:trust`, `auth:device:revoke` | A device was remembered or forgotten. |
+
+## Session kinds and fields
+
+Not every credential is a person's sign-in. Sessions come in four kinds, visible to policies as
+`principal.sessionKind`: `user` (sign-in and impersonation sessions), `api-key` (service-account keys), `role`
+(assumed roles), and `session-token` (temporary credentials). Code that branches on the kind must fail closed for
+kinds it does not know.
+
+The session a sign-in returns (`SafeSession`) never includes `tokenHash`. Its main fields:
+
+<TypeTable
+  type={{
+    id: { type: 'string', description: <>The session ID, used by <code>revokeSession</code>.</> },
+    identityId: { type: 'string', description: <>The identity the session belongs to.</> },
+    tenantId: { type: 'string', description: <>The tenant the session acts in.</> },
+    kind: { type: "'user' | 'role' | 'api-key' | 'session-token'", description: <>The credential kind.</> },
+    createdAt: { type: 'number', description: <>When it was issued (epoch milliseconds).</> },
+    expiresAt: { type: 'number', description: <>The absolute expiry.</> },
+    lastSeenAt: { type: 'number', description: <>When it was last used, for idle expiry.</> },
+    authenticatedAt: { type: 'number', description: <>When the person last proved who they are; drives recent authentication.</> },
+    mfa: { type: 'boolean', description: <>Whether the session passed MFA (<code>principal.mfa</code>).</> },
+    mfaAuthenticatedAt: { type: 'number', description: <>When a first-hand factor was verified (<code>principal.mfaTime</code>); absent for remembered-device and impersonation sessions.</> },
+    method: { type: 'AuthMethod', description: <>How it was established: <code>password</code>, <code>passwordless-email</code>, <code>passwordless-sms</code>, <code>passkey</code>, <code>federated</code>, or <code>impersonation</code> (<code>principal.authMethod</code>).</> },
+    client: { type: '{ ip?, userAgent?, label? }', description: <>The recorded client details.</> },
+    trustedDeviceId: { type: 'string', description: <>Set when a remembered device satisfied MFA.</> },
+    impersonatorId: { type: 'string', description: <>The administrator acting through an impersonation session.</> },
+    previousSignIn: { type: 'SignInRecord', description: <>The person's sign-in record when this session was issued.</> },
+  }}
+/>

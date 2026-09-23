@@ -1,0 +1,62 @@
+{
+  "name": "@better-iam/saml",
+  "version": "0.1.0",
+  "description": "Composable authentication, identity provisioning, and tenant-scoped access management.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Better IAM contributors",
+  "homepage": "https://github.com/Better-IAM/better-iam/tree/main/packages/saml#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Better-IAM/better-iam.git",
+    "directory": "packages/saml"
+  },
+  "bugs": {
+    "url": "https://github.com/Better-IAM/better-iam/issues"
+  },
+  "keywords": [
+    "iam",
+    "authentication",
+    "authorization",
+    "access-control",
+    "rbac",
+    "abac",
+    "multi-tenant",
+    "saml",
+    "sso"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsc -b"
+  },
+  "devDependencies": {
+    "selfsigned": "^5.2.0",
+    "xml-crypto": "^6.1.2",
+    "xml-encryption": "^3.1.0"
+  },
+  "dependencies": {
+    "@better-iam/core": "workspace:*",
+    "@better-iam/auth": "workspace:*",
+    "@node-saml/node-saml": "^5.1.0",
+    "@xmldom/xmldom": "^0.8.11"
+  }
+}

@@ -1,0 +1,599 @@
+---
+title: AI agents
+description: Treat AI agents as accounts with a responsible sponsor, a ceiling on what they may do, and short delegated sessions when they act for a person.
+icon: Bot
+status: new
+packages: ['@better-iam/server', '@better-iam/mcp', '@better-iam/a2a']
+sources:
+  - docs/agents.md
+  - packages/a2a/README.md
+  - packages/server/src/api/agents.ts
+  - packages/server/src/api/delegations.ts
+  - packages/mcp/src/index.ts
+---
+
+An AI agent that files tickets, schedules meetings, or edits documents needs credentials. Handing it a person's
+session means nobody can tell afterwards whether a person or the agent acted, and the agent can do everything the
+person can. Giving it an ordinary service account means nobody is answerable for it, and it keeps working long after
+the person who set it up has left. Better IAM treats agents as accounts of their own, with three safeguards:
+
+- **A sponsor.** Every agent has a person accountable for it. Its credentials work only while that sponsor is an
+  active member of the same organization. When the sponsor leaves, offboarding hands the agent to their successor, or
+  the agent stops until an administrator names a new sponsor. No agent outlives the person answerable for it.
+- **A ceiling.** The agent's `boundary` policy caps everything it does, whatever its roles say and whoever it acts
+  for.
+- **Delegation.** A person can let an agent act for them, within a scope and for a limited time. The agent then opens
+  short delegated sessions that act as the person, never with more than the person has.
+
+An agent is an identity of kind `agent`. Like a service account it holds API keys and never signs in, and like every
+identity it can have roles, groups, and policies.
+
+## Register an agent
+
+```ts
+const agent = await iam.api.agents.create(admin, {
+  tenantId,
+  name: 'Support triage',
+  purpose: 'Labels and routes incoming support tickets',
+  model: 'claude-sonnet-5',
+  provider: 'anthropic',
+  protocols: ['mcp'],
+  sponsorId: alice.id, // defaults to the caller when the caller is a person of the organization
+  boundary: {
+    version: 1,
+    statements: [{ effect: 'allow', actions: ['tickets:*'], resources: ['ticket/*'] }],
+  },
+});
+
+// Keys work as for service accounts: typed `biam_key_…` tokens, bounded by the issuer's authority.
+const { token } = await iam.api.credentials.create(admin, {
+  tenantId,
+  identityId: agent.id,
+  name: 'production',
+  scopes: ['tickets:read', 'tickets:update'],
+});
+```
+
+| Field | What it is for |
+| --- | --- |
+| `sponsorId` | The accountable person, an active user of the same organization. |
+| `model`, `provider` | What the agent runs on. Policies see them as `principal.agentModel` and `principal.agentProvider`; the provider is stored in lowercase. |
+| `purpose`, `url` | Shown to people deciding whether to let the agent act for them. |
+| `protocols` | An informational list, such as `mcp` and `a2a`. |
+| `boundary` | The ceiling over everything the agent does. Changes apply to live sessions at once. |
+| `delegable` | `false` refuses new delegations and stops existing ones from being used until it is turned back on. |
+| `maxDelegatedSessionSeconds` | The longest delegated session the agent may hold (60 to 43200; 3600 by default). |
+
+Managing agents needs `iam:agents:create`, `:read`, `:update`, and `:delete` (deleting also needs a recent sign-in),
+and the plan limit `agents` caps how many an organization may register. `agents.get` reports the agent's **standing**:
+`ok`, `suspended`, `expired`, `deleted`, `sponsor-missing`, or `sponsor-inactive`. Anything but `ok` means every
+credential of the agent is refused, and keys are only issued to an agent whose standing is `ok`. People choosing an
+agent to delegate to see `agents.catalog`: the active, delegable agents of their organization with their purpose,
+model, and sponsor.
+
+## The kill switch
+
+An agent that misbehaves must be stoppable by the person responsible for it, at once, without filing a ticket. A
+sponsor manages their agents from their own session, with no extra permission: `agents.listMine` lists them, and
+`agents.suspend` stops one immediately.
+
+```ts
+await iam.api.agents.suspend(aliceSession, { tenantId, agentId, reason: 'Looping on the wiki' });
+```
+
+When something goes wrong across the board, such as a compromised model provider or a runaway release, an
+administrator can stop every agent of the organization at once:
+
+```ts
+// Every agent running on one provider's models, for example during that provider's security incident:
+await iam.api.agents.suspendAll(admin, { tenantId, reason: 'Provider incident', provider: 'anthropic' });
+```
+
+`agents.suspendAll` needs `iam:agents:update` but no recent sign-in, so it works in an emergency. It suspends every
+active agent (or only those of one `sponsorId`, `provider`, or `model`), each exactly as `agents.suspend` would, and is
+audited as `agent:suspend-all` plus one `agent:suspend` per agent. Agents come back one at a time with `agents.resume`.
+The console's Agents page has a **Stop all agents now** button for it.
+
+A suspended agent's keys are refused, and its live delegated sessions and session tokens end immediately. Keys are
+kept, so `agents.resume` restores the agent as it was. A sponsor can resume only an agent they suspended themselves;
+lifting an administrator's suspension takes `iam:agents:update` and a recent sign-in. Deleting an agent ends its keys
+and sessions, revokes every delegation to it, and leaves a tombstone so audit records stay readable.
+
+## Letting an agent act for a person
+
+A **delegation** lets one agent act for one person. The delegated session's identity is the person, so decisions use
+the person's grants, with three ceilings on top:
+
+1. the delegation's **scope** (`scopes` as an action list, or a `policy` document);
+2. the agent's **boundary**;
+3. an optional scope-down `policy` the agent passes when it opens a session;
+
+and the limits of the agent key that opened the session (its scopes or session policy, and its issuer's authority), as
+for session tokens. So an agent can never do more than the person could, more than the person agreed to, or more than
+the agent and its key are allowed in general. Delegated sessions never count as a recent sign-in, never act as an owner or root administrator, cannot
+manage delegations or mint further credentials, and cannot obtain stateless assertions.
+
+<Tabs items={['Granted by the person', 'Requested by the agent']}>
+<Tab value="Granted by the person">
+
+The person grants it from their own, recently authenticated session:
+
+```ts
+const delegation = await iam.api.delegations.grant(aliceSession, {
+  tenantId,
+  agentId: agent.id,
+  scopes: ['tickets:read', 'tickets:update'],
+  expiresInSeconds: 30 * 86_400, // 5 minutes to 1 year; 30 days by default
+  maxSessionSeconds: 900, // optional cap on each delegated session
+});
+```
+
+</Tab>
+<Tab value="Requested by the agent">
+
+The agent asks with its own key, and the request waits up to seven days. When the deployment sends email
+(`authentication.sendEmail`) and the person has an address, they get a `delegation-request` email (point
+`links.delegation` in your email templates at your approval page). Requests are rate limited per agent.
+
+```ts
+const request = await iam.api.delegations.request(agentKey, {
+  tenantId,
+  subjectEmail: 'alice@acme.test',
+  scopes: ['calendar:read', 'calendar:write'],
+  reason: 'Schedule your interviews for next week',
+  expiresInSeconds: 7 * 86_400,
+});
+
+// Alice approves, possibly narrowing what was asked for (or calls delegations.deny):
+await iam.api.delegations.approve(aliceSession, {
+  tenantId,
+  delegationId: request.id,
+  scopes: ['calendar:read'],
+});
+```
+
+Approving needs a recent sign-in, like granting; denying does not. The agent polls `delegations.get` until the status
+changes.
+
+</Tab>
+</Tabs>
+
+One pending request or active delegation may link an agent and a person at a time. To act, the agent opens a
+short delegated session with its key:
+
+```ts
+const { token } = await iam.api.delegations.assume(agentKey, {
+  tenantId,
+  delegationId: delegation.id,
+  durationSeconds: 600,
+  sessionName: 'triage-run-42',
+});
+// token is a `biam_dlg_…` bearer credential that acts as Alice, with the agent recorded alongside.
+await iam.require({ token, tenantId, action: 'tickets:update', resource: { type: 'ticket', id: 'T-1' } });
+```
+
+A delegated session lasts from 60 seconds up to the agent's `maxDelegatedSessionSeconds` and the delegation's
+`maxSessionSeconds` (15 minutes or less by default), never past the delegation or the key that opened it, and at most 20 live
+sessions may exist per delegation. Every use re-validates the whole chain: the delegation, the person, the agent and
+its sponsor, and the agent's key. If any link breaks, the session is refused with `UNAUTHENTICATED`.
+
+The person, the agent's sponsor, the agent itself, or an administrator with `iam:delegations:revoke` can revoke a
+delegation, which ends its sessions at once. Offboarding or deleting the person revokes every delegation they gave.
+People see their delegations with `delegations.listMine`, agents see theirs the same way with their key, and
+administrators list them with `delegations.list`. Its permission, `iam:delegations:read`, also lets administrators
+read any delegation with `delegations.get` and `delegations.activity`.
+
+### Confirming sensitive actions one at a time
+
+Some actions are too consequential to hand over for a month: deleting a document, sharing it outside the company,
+sending money. A delegation can hold such actions back until the person confirms each call. Pass `confirm` (action
+patterns) when granting, requesting, or approving. A delegated session is then refused those actions until the person
+approves that action on that exact resource, and the approval opens it for a few minutes. It is a human-in-the-loop
+check in the spirit of OpenID CIBA: the agent asks, and the person answers from wherever they are.
+
+```ts
+await iam.api.delegations.grant(aliceSession, {
+  tenantId,
+  agentId: agent.id,
+  scopes: ['documents:*'],
+  confirm: ['documents:delete', 'documents:share'],
+});
+
+// The agent, with its delegated session, asks before deleting:
+const request = await iam.api.delegations.requestConfirmation(delegated, {
+  tenantId,
+  action: 'documents:delete',
+  resource: { type: 'document', id: 'q3-draft' },
+  reason: 'You asked me to clean up the drafts folder',
+  validSeconds: 120, // how long the approval stays usable: 30 to 3600; 300 by default
+});
+
+// Alice gets a `delegation-confirmation` email and answers from her own session:
+await iam.api.delegations.decideConfirmation(aliceSession, {
+  tenantId,
+  confirmationId: request.id,
+  approve: true,
+});
+// The agent polls delegations.getConfirmation, then retries the delete.
+```
+
+A request waits up to 30 minutes for a decision, and asking again for the same action and resource returns the pending
+request. Only actions that match `confirm` can be requested. An unconfirmed call is refused like any denied decision:
+callers see `ACCESS_DENIED`, and the recorded reason is `CONFIRMATION_REQUIRED`. So agents should read the delegation's
+`confirm` list (`delegations.get`) and ask first. `delegations.listConfirmations` lists the requests a person has to
+answer, or an agent's own.
+
+### Capping what an agent spends for you
+
+An agent that calls AI models on your behalf spends money on your behalf, and a loop can spend a lot of it overnight.
+A person can cap what an agent spends for them with `spend` on `grant`, `request`, or `approve`: `maxCostUsd`,
+`maxTokens`, and/or `maxRequests` per `minute`, `hour`, `day`, or `month` (at least one limit).
+
+```ts
+await iam.api.delegations.grant(aliceSession, {
+  tenantId,
+  agentId: agent.id,
+  scopes: ['inference:invoke', 'documents:read'],
+  spend: { period: 'day', maxCostUsd: 5 },
+});
+```
+
+Every [model call](/docs/guides/inference) made under the delegation, or under a hand-off below it, counts against the
+cap like a budget. Past it, calls are refused with `BUDGET_EXCEEDED` until the window resets, and the first refusal is
+audited as `inference:budget-exceeded` on `delegation:{id}`. The delegation's summary reports the cap with what the
+current window has used (`spend.usedCostUsd`, `usedTokens`, `usedRequests`, `resetsAt`), so a consent screen can show
+"$0.42 of $5 today". `approve` can change a requested cap or remove it with `spend: null`, and a hand-off may carry a
+tighter cap of its own. The agent's own budgets and the organization's budgets apply as well.
+
+### Handing work on to other agents
+
+Agents increasingly call other agents: an assistant asks a research agent for sources, a planner hands a step to a
+specialist. Sharing the assistant's own credential would hide who did what; asking the person for a second delegation
+every time would be tedious. When the person allows it, the agent acting for them can **hand part of its delegation
+on**. The other agent then acts for the same person, never with more than the handing agent had.
+
+```ts
+// Alice lets her assistant hand work on, only to the research agent, one level deep:
+const delegation = await iam.api.delegations.grant(aliceSession, {
+  tenantId,
+  agentId: assistant.id,
+  scopes: ['documents:*'],
+  handoff: { agents: [researcher.id], depth: 1 }, // omit agents for any delegable agent; depth 1 to 3
+});
+
+// The assistant, in its delegated session, hands a narrower part on:
+const handoff = await iam.api.delegations.handoff(
+  { token: assistantSession.token },
+  { tenantId, agentId: researcher.id, scopes: ['documents:read'], reason: 'Find sources for the report' },
+);
+
+// It passes handoff.id to the researcher (for example in an A2A message), which opens its own sessions for Alice:
+const research = await iam.api.delegations.assume(researcherKey, { tenantId, delegationId: handoff.id });
+```
+
+The person sets `handoff` when granting. An agent can ask for it in `delegations.request`, but hand-offs widen what
+happens in the person's name, so a requested hand-off counts only when the person states `handoff` themselves when
+approving. A plain approval, or `null`, leaves hand-offs out. A hand-off is a delegation of its own (`requestedBy: 'handoff'`, with `parentId`
+and the `chain` of agents above it),
+so the receiving agent acts with its own key and every action is attributed to it. Its use is bounded by its own
+scope and every delegation above it, by the ceiling of every agent in the chain, and by the limits of the session that
+handed it on (that session's scope-down policy, its key's scopes, and the key's issuer). The whole chain is checked on
+every use: if a delegation above ends, or an agent in the chain is suspended or loses its sponsor, the hand-off stops at
+once. Revoking a delegation revokes the hand-offs below it, and the person's `confirm` list travels down the chain.
+No agent may appear twice in a chain, a delegation holds at most 20 live hand-offs, and each lasts an hour by default
+(`expiresInSeconds`, never past the delegation above). A hand-off is also bound to the API key the handing agent acted
+with: it ends when that key is revoked or expires, so revoking a compromised agent's key stops everything it handed on.
+Opening a session under a delegation whose parent, agent, or key has ended fails with `DELEGATION_INACTIVE`. The
+handing agent's own budgets count the hand-off's model calls too.
+
+Hand-offs are audited as `delegation:handoff` and show in the person's `delegations.listMine`, where they can revoke
+each one; when an agent revokes a hand-off from its delegated session, `revokedBy` names the agent.
+
+`principal.delegationChain` lists the agents from the person's own delegate to the acting one, so a policy can keep an
+agent away from some data however the work reached it:
+
+```json title="Research agents never read HR documents, whoever hands them the work"
+{
+  "effect": "deny",
+  "actions": ["documents:read"],
+  "resources": ["document/hr-*"],
+  "conditions": { "ArrayContains": { "principal.delegationChain": ["<research agent id>"] } }
+}
+```
+
+### What did the agent do?
+
+People who let an agent act for them want to see what it did. `delegations.activity` shows the person everything that
+happened under a delegation, newest first: its lifecycle (grant, request, approval, sessions opened, confirmations,
+revocation) and every allowed or denied action of the agent's sessions acting for them, including everything done
+under hand-offs below it. `agents.activity` shows the
+sponsor, or an administrator with `iam:agents:read`, everything an agent did, with its own keys and for anyone it acted
+for.
+
+```ts
+const trail = await iam.api.delegations.activity(aliceSession, { tenantId, delegationId, limit: 50 });
+```
+
+## Policies for agents
+
+Decisions tell agents apart: `principal.kind` is `agent` for an agent's own key, `principal.delegated` is true while an
+agent acts for a person, and `principal.agentId`, `principal.agentSponsorId`, `principal.agentModel`,
+`principal.agentProvider` (lowercase), and `principal.delegationId` describe the agent involved. In a delegated session
+`principal.kind` is the person's (`user`), and `principal.mfa`, `principal.owner`, and `principal.rootAdmin` are
+always false, so test `principal.delegated` to single out agents acting for people.
+
+```json title="Keep agents out of billing and away from deletes"
+{
+  "version": 1,
+  "statements": [
+    {
+      "sid": "NoAgentsInBilling",
+      "effect": "deny",
+      "actions": ["billing:*"],
+      "resources": ["*"],
+      "conditions": { "Bool": { "principal.delegated": true } }
+    },
+    {
+      "sid": "AgentsNeverDelete",
+      "effect": "deny",
+      "actions": ["documents:delete"],
+      "resources": ["*"],
+      "conditions": { "StringEquals": { "principal.kind": "agent" } }
+    }
+  ]
+}
+```
+
+The agent keys other than `principal.delegated` are absent when no agent is involved, so guard deny statements that
+use them with `Exists`, as the [policy linter](/docs/guides/authorization/policies#lint) suggests (see
+[missing keys](/docs/guides/authorization/conditions#missing-keys)).
+
+## Audit
+
+Every event recorded for a delegated session names the person as the actor and carries `agentId` and `delegationId` in
+its `sessionContext`, covered by the [audit chain](/docs/guides/events/audit-chain). Agents record `agent:create`,
+`agent:suspend`, `agent:resume`, and `agent:sponsor-change`, and deleting one is recorded as `iam:agents:delete` and
+`identity:delete` with `kind: 'agent'`. Delegations record `delegation:grant`, `delegation:request`,
+`delegation:approve`, `delegation:deny`, `delegation:assume`, `delegation:revoke`, `delegation:confirmation-request`,
+`delegation:confirm`, and `delegation:reject`; delegations revoked because their person was offboarded or deleted write
+no separate `delegation:revoke`. `sts.getCallerIdentity` shows `agentId` and `delegationId` for delegated sessions.
+
+[Access analysis](/docs/reference/api/analysis) reports the risky cases: agents without an active sponsor
+(`agent-without-sponsor`, high), agents with full administrator access (`agent-admin`, high), delegable agents without
+a ceiling (`unbounded-agent`, low), delegations that allow every action (`broad-delegation`, medium), active
+delegations unused for the dormant window (`unused-delegation`, low), and delegations that let the agent hand work on
+to any agent (`open-handoff`, medium when hand-offs may go more than one level deep, otherwise low). It also flags
+agents refused 20 or more times in the last day, with their own keys or acting for people (`agent-denials`, medium):
+a sign of an agent stuck in a loop or following instructions injected into something it read. Check what it did with
+`agents.activity` and [suspend](#the-kill-switch) it if in doubt.
+
+The framework integrations pass delegated sessions through like any other credential. In `@better-iam/next`,
+`apiRoute` principals carry `session.kind: 'delegated'` with `session.agentId` and `session.delegationId`, and an
+agent's own key shows `identity.kind: 'agent'`.
+
+## Consent screens in React
+
+People need a place to see which agents act for them, answer requests, and confirm held-back actions.
+`@better-iam/react` has the hooks for building it into your own product:
+
+- `useDelegations`: the agents acting or asking to act for the signed-in person, with `grant`, `approve`, `deny`, and
+  `revoke`;
+- `useConfirmations`: actions waiting for the person's confirmation, with `approve` and `reject`;
+- `useAgentCatalog`: the agents a person may delegate to;
+- `useModels`: the AI models the caller may use.
+
+```tsx
+function AgentInbox({ tenantId }: { tenantId: string }) {
+  const { requests, approve, deny } = useDelegations({ tenantId });
+  const { pending, approve: confirm, reject } = useConfirmations({ tenantId });
+  return (
+    <>
+      {requests.map((request) => (
+        <Request key={request.id} request={request} onApprove={() => approve(request.id)} onDeny={() => deny(request.id)} />
+      ))}
+      {pending.map((item) => (
+        <Confirm key={item.id} item={item} onApprove={() => confirm(item.id)} onReject={() => reject(item.id)} />
+      ))}
+    </>
+  );
+}
+```
+
+## Protecting MCP servers
+
+Agents reach tools through the Model Context Protocol. `@better-iam/mcp` (also `better-iam/mcp`) puts tool-level
+authorization in front of any MCP server that speaks Streamable HTTP. The gate:
+
+- authenticates the caller and answers unauthenticated requests with a `WWW-Authenticate` challenge. When you give it
+  `metadata`, the challenge points at the server's protected resource metadata (RFC 9728), which the gate then serves;
+- refuses `tools/call` requests the caller may not make, as an MCP tool error so the model sees why;
+- removes the tools the caller may not use from `tools/list` answers, in JSON and in event streams. A tool whose
+  `resource` is a function and that has no `listAs` is always listed, because there are no arguments to decide on yet.
+
+```ts
+import { createMcpGate } from 'better-iam/mcp';
+
+const gate = createMcpGate({
+  iam,
+  tenantId: acmeTenantId, // the organization that runs this server; decisions are made there
+  tools: {
+    search_tickets: { action: 'tickets:read', resource: { type: 'ticket', id: 'index' } },
+    close_ticket: {
+      action: 'tickets:update',
+      resource: (args) => ({ type: 'ticket', id: String(args.id) }),
+      listAs: { type: 'ticket', id: 'any' },
+      scopes: ['tickets.write'], // for OAuth callers
+    },
+    ping: { public: true },
+  },
+  unlisted: 'deny', // tools without a rule are hidden and refused
+  oauth: resourceGuard.verifier, // optional: also accept OAuth access tokens from @better-iam/oauth
+  metadata: {
+    resource: 'https://mcp.acme.test/mcp',
+    authorizationServers: ['https://iam.acme.test/oauth'],
+  },
+});
+
+export default {
+  fetch: (request: Request) => gate(request, (forwarded, caller) => mcpServer.handle(forwarded, caller)),
+};
+```
+
+`tenantId` is required and names the organization that runs the server: every decision is made in that organization,
+so an agent from another organization cannot grant itself access by writing policies in its own. A function
+`(caller) => string | undefined` picks the organization per caller, and `undefined` refuses the caller. OAuth access
+tokens issued for another organization are refused.
+
+Better IAM credentials (a person's session, a service account or agent key, or a delegated session) are decided by the
+policy engine, `action` on `resource`. OAuth access tokens are decided by the tool's `scopes`; see
+[MCP authorization](/docs/federation/mcp-authorization) for issuing them. Unless a tool is `public`, one without
+`scopes` is refused to OAuth callers and one without `action` to Better IAM credentials. Batched tool requests are
+answered with a JSON-RPC 400. The second argument of `next` tells the server who called.
+
+When an agent acting for a person calls a tool whose action the person
+[confirms one call at a time](#confirming-sensitive-actions-one-at-a-time), the gate files the confirmation request
+itself and answers with a tool error telling the model to call again after the approval (the request ID is in
+`_meta['better-iam/confirmationId']`). Agents built on any MCP client get the human-in-the-loop flow without extra
+code; `confirmations: false` turns it off. `createMcpAuthorizer` offers the same decisions (`authenticate`, `canCall`,
+`visibleTools`) for tool handlers written directly against an MCP SDK.
+
+## Agent-to-agent (A2A)
+
+In the [Agent2Agent protocol](https://a2a-protocol.org), agents find each other through an **agent card**, a JSON
+document at `/.well-known/agent-card.json` that names the agent, its skills, and where to reach it. Anyone can publish
+a card that claims anything, so an agent deciding whether to hand work to another needs to know two things: is this
+card really from the organization it names, and is there an accountable person behind the agent? `@better-iam/a2a`
+answers both, and protects your own A2A servers the way the MCP gate protects tool servers.
+
+### Attested agent cards
+
+With the `a2a` server option, Better IAM signs an agent's card and vouches for it: the organization it belongs to, that
+a person sponsors it, whether people can delegate to it, and its model.
+
+```ts title="iam.ts"
+export const iam = betterIam({
+  // ...
+  a2a: {
+    signingKeys: [cardSigningJwk], // Ed25519 or ES256 private JWKs, each with a kid
+    jwksUrl: 'https://iam.example.com/a2a/jwks.json', // where you serve iam.a2a.jwksResponse()
+    cardLifetimeSeconds: 3600, // 300 to 604800
+  },
+});
+```
+
+`agents.signCard({ tenantId, agentId, card })` signs a card. The agent can call it with its own key (an unscoped one;
+a key with scopes is refused), and so can its sponsor, or an administrator with `iam:agents:update`. The agent must be
+in good standing and have a registered `url`, and the card's `url` (and every `additionalInterfaces[].url` and
+`supportedInterfaces[].url`) must be on that origin. Better IAM sets `provider` to the organization's name and the
+agent's registered origin, ignoring whatever the card said, adds the attestation extension
+`urn:better-iam:a2a:attestation:v1`
+(the agent, its organization, that it is sponsored, whether it is delegable, its model, provider, and protocols, and
+when the attestation was issued and expires), and signs the canonical card (RFC 8785) as a detached JWS. Each signature
+is audited as `agent:card-sign`.
+
+`createCardAttestor` keeps a served card signed: it signs on first use, signs again when less than a fifth of the
+attestation's lifetime is left, and keeps serving the previous card if signing fails while that card is still valid.
+
+```ts
+import { createCardAttestor } from '@better-iam/a2a';
+
+const card = createCardAttestor({
+  card: { name: 'Triage', url: 'https://triage.example.com/a2a', skills: [/* ... */] },
+  sign: (card) => iam.api.agents.signCard({ token: process.env.AGENT_KEY }, { tenantId, agentId, card }),
+});
+```
+
+### The agent directory
+
+Before an agent can hand work to a helper, it has to find one. Every card an agent has signed is also its entry in the
+organization's directory: `agents.directory` lists the current attested cards of the tenant's agents in good standing,
+optionally only those offering a `skill` (by skill ID or tag) or speaking a `protocol`. Any credential of the tenant can
+read it: a person, an agent's key, or an agent acting for someone and looking for a helper. Entries leave the directory
+when their attestation expires or the agent is suspended or deleted, and each entry's `card` is the signed card itself,
+ready for `verifyAgentCard`.
+
+```ts
+const [translator] = await iam.api.agents.directory(delegatedSession, { tenantId, skill: 'translate' });
+// { agentId, name, card, attestation, expiresAt }
+```
+
+### Verifying other agents
+
+Before delegating work, an agent checks the other side's card:
+
+```ts
+import { discoverAgent } from '@better-iam/a2a';
+
+const { card, attestation } = await discoverAgent('https://triage.example.com', {
+  // Each trusted Better IAM deployment (its issuer: base URL plus API path), with where its card keys are published:
+  trustedIssuers: { 'https://iam.example.com/api/iam': 'https://iam.example.com/a2a/jwks.json' },
+  tenantId: 'acme', // optional: only agents of this organization
+});
+```
+
+A deployment's issuer is its base URL plus the API path (`https://iam.example.com/api/iam` for
+`baseURL: 'https://iam.example.com'` and the default `basePath`), unless it sets `a2a.issuer`. `trustedIssuers` binds
+each deployment's keys to the issuer a card names, so a key trusted for one deployment can
+never vouch for a card claiming to come from another; use it whenever you trust more than one deployment. (`keys` and
+`trustedJwksUrls` are the simpler forms.) Key sets are fetched again, at most every 30 seconds, when a signature names
+a key that is not known yet, so key rotations need no restart.
+
+`discoverAgent` fetches the card without following redirects, with a size limit and a timeout, and requires its `url`
+to be on the origin it came from. `verifyAgentCard(card, options)` accepts only cards signed by a trusted key with
+exactly one current attestation, and checks `issuers`, `tenantId`, and `origin` when you pass them. Every failure
+throws `AgentCardError` with a `reason`.
+
+### Protecting an A2A server
+
+`createA2aGate` sits in front of an A2A JSON-RPC server:
+
+```ts
+import { createA2aGate } from '@better-iam/a2a';
+
+const gate = createA2aGate({
+  iam,
+  tenantId: acmeTenantId, // the organization that runs this server, as for the MCP gate
+  card,
+  message: { action: 'triage:use', resource: { type: 'agent', id: 'triage' } },
+  skills: {
+    summarize: { action: 'triage:use', scopes: ['triage'] },
+    escalate: { action: 'tickets:escalate', resource: { type: 'queue', id: 'support' } },
+  },
+  taskAdminAction: 'triage:operate',
+});
+
+export default { fetch: (request: Request) => gate(request, (forwarded, caller) => a2aHandler(forwarded, caller)) };
+```
+
+- The card is served without authentication; everything else needs a Better IAM credential (a person's session, an
+  agent key, or a delegated session) or, with `oauth`, an access token decided by each rule's `scopes`.
+- `message/send` and `message/stream` are decided by the skill the message names (`metadata.skillId`), or by the
+  `message` rule. A refusal is JSON-RPC error `-32050` with HTTP 403. Skills without a rule are refused unless
+  `unlistedSkills: 'message'`, and a request naming two different skills is refused as ambiguous.
+- Tasks are private to the caller who started them: anyone else gets "task not found" (`-32001`) when reading,
+  cancelling, or continuing one, or naming it in `referenceTaskIds`, unless they are allowed `taskAdminAction`.
+  Conversations (`contextId`) are private too: a context counts as the caller's only once the server's answers named
+  it for them, and any other is refused (`-32602`). Pass `tasks` to share task and conversation ownership between
+  server instances.
+- The authenticated extended card lists only the skills the caller may use.
+- An agent acting for a person whose delegation [holds the action back](#confirming-sensitive-actions-one-at-a-time)
+  gets `-32051` with `error.data.confirmationId`; the person has been asked, and the retry passes once they approve.
+- Only `POST` is accepted (405 otherwise, unless `otherHttpMethods: 'allow'`); other JSON-RPC methods (unless
+  `otherMethods: 'allow'`) and batches are refused; unexpected errors answer `-32603` with HTTP 500 after your
+  `onError`.
+
+`createA2aAuthorizer` offers the same decisions for servers written directly with an A2A SDK.
+
+## Next steps
+
+<Cards>
+  <Card title="Model access and budgets" href="/docs/guides/inference">
+    Which models an agent may call, what it may spend, and a gateway that keeps provider keys away from it.
+  </Card>
+  <Card title="Agents API" href="/docs/reference/api/agents">
+    Every agents method, with permissions and errors.
+  </Card>
+  <Card title="Delegations API" href="/docs/reference/api/delegations">
+    Granting, requesting, assuming, and revoking delegations.
+  </Card>
+</Cards>

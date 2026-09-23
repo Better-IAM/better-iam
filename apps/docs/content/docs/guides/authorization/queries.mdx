@@ -1,0 +1,241 @@
+---
+title: Batches and reverse queries
+description: Check many actions at once with authorizeMany, list the resources a caller may act on with listAccessible, and render UI from advisory decisions.
+icon: ListFilter
+packages: ['@better-iam/server', '@better-iam/client', '@better-iam/react', '@better-iam/vue']
+sources:
+  - docs/policies.md
+  - packages/server/src/operations.ts
+  - packages/server/src/decisions.ts
+  - packages/server/src/api/resources.ts
+  - packages/client/src/index.ts
+  - packages/react/src/index.tsx
+  - packages/vue/src/index.ts
+---
+
+Rendering a page usually needs many decisions: which buttons to show on a document, which menu entries to offer,
+which projects to list. Asking one at a time is slow, and listing resources one ID at a time is impossible when
+you do not know the IDs yet. Two calls cover these cases:
+
+- `iam.authorizeMany` answers up to fifty checks in one round trip.
+- `iam.listAccessible` answers "which <Term id="resource">resources</Term> of this type may I act on?" for managed
+  resource types. Asking which resources a person can reach, rather than whether they can reach one, is called a
+  <Term id="reverse-query">reverse query</Term>.
+
+Both are <Term id="advisory">advisory</Term>: like `iam.authorize`, they tell you what the caller could do right
+now, to decide what to render. They do not protect anything by themselves, because access can change between
+rendering a button and clicking it. The server must still call `iam.require` (or `authorize`) immediately before
+performing each protected operation.
+
+## Check many actions at once
+
+A document toolbar might need to know whether the person may edit, share, and delete. Three separate
+`authorize` calls would work, but each is a round trip and each could see a slightly different configuration.
+
+`iam.authorizeMany({ ...credential, tenantId, checks })` evaluates 1 to 50 checks for one tenant in a single
+transaction, so every answer reflects the same view of the configuration. Each check names an
+<Term id="action">action</Term> and a resource. It is intended for rendering menus and lists.
+
+```ts title="Server: which document actions to offer"
+const resource = { type: 'document', id: documentId };
+const { results } = await iam.authorizeMany({
+  headers: request.headers,
+  tenantId,
+  checks: [
+    { action: 'documents:write', resource },
+    { action: 'documents:share', resource },
+    { action: 'documents:delete', resource },
+  ],
+});
+// results: [{ action, resource, allowed, reason }, ...] in the order of the checks
+const can = Object.fromEntries(results.map((result) => [result.action, result.allowed]));
+```
+
+Each check is evaluated and recorded exactly like `iam.authorize`: denials are audited and a denied check reports
+`reason: 'ACCESS_DENIED'`. Fewer than one or more than fifty checks fail with `INVALID_INPUT`.
+
+Use `authorizeMany` for application-owned resource types too: they are not enumerable, so check the IDs your
+product already loaded.
+
+## List accessible resources
+
+A "My projects" page cannot check projects one by one, because it does not know which project IDs to check. It
+needs the opposite question: of all projects, which may this person open? Conditions, group bindings, and shared
+folders all affect the answer, so filtering in your own database would duplicate your policies.
+
+`iam.listAccessible({ ...credential, tenantId, action, type })` answers it. It returns the registered resources of
+one managed type that the caller may perform the action on:
+
+```ts title="Server: the projects a person can open"
+const { resources, total } = await iam.listAccessible({
+  headers: request.headers,
+  tenantId,
+  action: 'projects:read',
+  type: 'project',
+  limit: 25,
+  offset: 0,
+});
+// resources: [{ type: 'project', resourceId: 'apollo', attributes, ownerId, parentId, ... }]
+// total: how many projects are accessible in all
+```
+
+- `limit` (default 100, at most 1000) and `offset` page over the accessible set, ordered by type and ID, and
+  `total` counts all of it.
+- Everything a normal decision uses applies: conditions on attributes and owners, [relationships](/docs/guides/authorization/relationships),
+  boundaries, access windows, and activations.
+- Only managed types can be listed. An application-owned type fails with `INVALID_RESOURCE_TYPE`, and an action
+  outside the catalog with `INVALID_ACTION`.
+- In an impersonation session, only resources both the member and the impersonating administrator can reach are
+  returned.
+
+The result is advisory. List pages no longer need to know resource IDs up front, but opening a project still goes
+through `iam.require`.
+
+### How batch evaluation works
+
+A single decision loads the caller's state from storage: root override, tenant status, boundaries (ceilings on
+what the caller can reach), grants through every binding and group, the evaluation context, and the caller's
+relationship tuples.
+`listAccessible` prepares that state once and evaluates every registration of the type against it, so grants
+and boundaries are loaded once no matter how many resources the type has. The review calls
+`policies.effectiveActions` and `policies.whoCan` work the same way, preparing once per identity. `authorizeMany`
+evaluates each check in turn inside its one transaction.
+
+## Register resources in bulk
+
+Lists only show what is registered, so adopting `listAccessible` for an existing product usually starts with a
+backfill. `resources.registerMany` registers up to 100 managed resources in one transaction, which also suits
+imports:
+
+```ts
+await iam.api.resources.registerMany(credential, {
+  tenantId,
+  resources: [
+    { type: 'project', id: 'apollo', ownerId: alice.id },
+    { type: 'project', id: 'gemini', attributes: { archived: true } },
+    { type: 'task', id: 'apollo-1', parentId: 'apollo' },
+  ],
+});
+```
+
+Every item is authorized as `iam:resources:create` on `iam/{type}/{id}` before anything is written. A denied item
+rejects the whole batch with `ACCESS_DENIED` and records only its denial. Items are registered in order, so a
+parent can precede its children in the same batch.
+
+## Render UI from decisions
+
+Hiding a button a person cannot use is kinder than letting them click and see an error. The browser client
+exposes the same calls as `client.authorize`, `client.authorizeMany`, and `client.listAccessible`, with the
+session cookie as the credential, and the framework packages wrap them in hooks that re-run when the signed-in
+person changes:
+
+<Tabs items={['React', 'Vue']} groupId="ui-framework" persist>
+<Tab value="React">
+
+```tsx title="components/document-toolbar.tsx"
+import { Can, useAccessible, useAuthorize } from '@better-iam/react';
+
+export function DocumentToolbar({ tenantId, documentId }: { tenantId: string; documentId: string }) {
+  const resource = { type: 'document', id: documentId };
+  const { status, allowed } = useAuthorize({
+    tenantId,
+    checks: [
+      { action: 'documents:write', resource },
+      { action: 'documents:delete', resource },
+    ],
+  });
+  if (status !== 'ready') return null;
+  return (
+    <div>
+      {allowed('documents:write', resource) && <button type="button">Edit</button>}
+      {allowed('documents:delete', resource) && <button type="button">Delete</button>}
+      {/* Without a resource, the check is on the tenant itself (iam/{tenantId}). */}
+      <Can tenantId={tenantId} action="iam:identities:create" fallback={null}>
+        <button type="button">Invite</button>
+      </Can>
+    </div>
+  );
+}
+
+export function ProjectList({ tenantId }: { tenantId: string }) {
+  const { status, resources, total } = useAccessible({ tenantId, action: 'projects:read', type: 'project', limit: 20 });
+  if (status !== 'ready') return <p>Loading…</p>;
+  return (
+    <ul aria-label={`${total} projects`}>
+      {resources.map((project) => (
+        <li key={project.resourceId}>{project.resourceId}</li>
+      ))}
+    </ul>
+  );
+}
+```
+
+</Tab>
+<Tab value="Vue">
+
+```vue title="components/DocumentToolbar.vue"
+<script setup lang="ts">
+import { computed } from 'vue';
+import { useAccessible, useAuthorize, useCan } from '@better-iam/vue';
+
+const props = defineProps<{ tenantId: string; documentId: string }>();
+const resource = computed(() => ({ type: 'document', id: props.documentId }));
+
+const { allowed } = useAuthorize(() => ({
+  tenantId: props.tenantId,
+  checks: [{ action: 'documents:delete', resource: resource.value }],
+}));
+const { allowed: canInvite } = useCan(() => ({ tenantId: props.tenantId, action: 'iam:identities:create' }));
+const { resources } = useAccessible(() => ({ tenantId: props.tenantId, action: 'projects:read', type: 'project' }));
+</script>
+
+<template>
+  <button v-if="allowed('documents:delete', resource)" type="button">Delete</button>
+  <button v-if="canInvite" type="button">Invite</button>
+  <ul>
+    <li v-for="project in resources" :key="project.resourceId">{{ project.resourceId }}</li>
+  </ul>
+</template>
+```
+
+</Tab>
+</Tabs>
+
+The helpers in the example:
+
+- `useAuthorize` sends all its checks in one `authorizeMany` call and re-runs when the checks or the signed-in
+  identity change. Its `allowed(action, resource)` is false until results arrive, and every check reads as denied
+  when nobody is signed in.
+- `Can` (React) and `useCan` (Vue) wrap a single check. `Can` renders its children when the check is allowed,
+  its `fallback` when it is not, and its `loading` content while it waits. Without a `resource`, the check is on
+  the tenant itself.
+- `useAccessible` wraps `listAccessible` the same way and returns the page of `resources` and the `total`, for
+  list pages.
+
+SvelteKit, Next.js, and the other integrations offer the same helpers; see [Frameworks](/docs/frameworks).
+
+## Choose the right call
+
+| You need to | Use |
+| --- | --- |
+| Enforce access before a mutation or a read | `iam.require` |
+| Branch on one decision on the server | `iam.authorize` |
+| Show or hide several buttons or menu entries | `authorizeMany`, `useAuthorize`, `Can`, `useCan` |
+| List the managed resources a person may open | `listAccessible`, `useAccessible` |
+| Filter application-owned rows you already loaded | `authorizeMany` with their IDs, up to fifty per call |
+| Tell a refused person how they could get access | `accessPaths.find`; see [Self-service access paths](/docs/guides/governance/access-paths) |
+| Show an administrator who can reach something | `policies.whoCan`; see [Access reviews](/docs/guides/authorization/reviews) |
+
+## Next steps
+
+<Cards>
+  <Card title="React" href="/docs/frameworks/react">
+    `useAuthorize`, `Can`, and `useAccessible` in detail.
+  </Card>
+  <Card title="Vue" href="/docs/frameworks/vue">
+    `useAuthorize`, `useCan`, and `useAccessible` for Vue and Nuxt.
+  </Card>
+  <Card title="Typed client" href="/docs/frameworks/client">
+    `client.authorizeMany` and `client.listAccessible` from any browser code.
+  </Card>
+</Cards>

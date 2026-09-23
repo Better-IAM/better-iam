@@ -1,0 +1,292 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Better IAM example</title>
+    <link rel="stylesheet" href="/style.css" />
+    <script src="/app.js" type="module"></script>
+  </head>
+  <body>
+    <main>
+      <header>
+        <p class="eyebrow">Better IAM · working example</p>
+        <h1>Your product. Your identity platform.</h1>
+        <p>Sign in to a tenant, create an organization, and provision access to documents.</p>
+        <p id="configuration">Loading configuration…</p>
+      </header>
+      <!--INTERACTION-->
+      <div class="grid">
+        <section>
+          <h2>Sign in</h2>
+          <form id="signin">
+            <label>Tenant ID<input name="tenantId" required data-tenant /></label
+            ><label>Email<input name="email" type="email" autocomplete="username" required /></label
+            ><label
+              >Password<input
+                name="password"
+                type="password"
+                autocomplete="current-password"
+                required /></label
+            ><button>Sign in</button>
+          </form>
+          <button id="session">Current session</button><button id="signout">Sign out</button>
+        </section>
+        <section>
+          <h2>Multi-factor authentication</h2>
+          <p>The root administrator must enroll MFA before provisioning organizations.</p>
+          <button id="enroll">Start authenticator enrollment</button>
+          <p id="mfa-secret"></p>
+          <form id="mfa">
+            <label
+              >Authenticator or recovery code<input
+                name="code"
+                autocomplete="one-time-code"
+                required /></label
+            ><label class="check"
+              ><input name="recovery" type="checkbox" />Use a recovery code</label
+            ><button>Verify second factor</button>
+          </form>
+          <p id="recovery-codes"></p>
+        </section>
+        <section>
+          <h2>Find your organization</h2>
+          <p>
+            Organizations can carry a sign-in alias, like an AWS account alias, so people never need
+            a tenant ID.
+          </p>
+          <form id="lookup">
+            <label>Organization alias<input name="slug" required /></label
+            ><button>Find organization</button>
+          </form>
+        </section>
+        <section>
+          <h2>Create an organization</h2>
+          <form id="organization">
+            <label>Parent tenant ID<input name="parentId" required /></label
+            ><label
+              >Type<select name="type">
+                <option value="organization">Organization</option>
+                <option value="project">Project</option>
+              </select></label
+            ><label>Organization name<input name="name" required /></label
+            ><label>Sign-in alias (optional)<input name="slug" pattern="[a-z0-9-]{1,63}" /></label
+            ><label>Owner email<input name="ownerEmail" type="email" required /></label
+            ><button>Send owner invitation</button>
+          </form>
+        </section>
+        <section>
+          <h2>Invite a member</h2>
+          <p>
+            Owners invite people into their organization. Roles are granted when the invitation is
+            accepted, under the inviter's authority.
+          </p>
+          <form id="invite">
+            <label>Tenant ID<input name="tenantId" required data-tenant /></label
+            ><label>Email<input name="email" type="email" required /></label
+            ><label>Name (optional)<input name="name" /></label
+            ><label>Role IDs (comma separated, optional)<input name="roleIds" /></label
+            ><button>Send member invitation</button>
+          </form>
+          <form id="member-invitation">
+            <label>Tenant ID<input name="tenantId" required data-tenant /></label
+            ><label>Invitation token<input name="token" required autocomplete="off" /></label
+            ><label>Your name<input name="name" required /></label
+            ><label
+              >New account password<input
+                name="password"
+                type="password"
+                minlength="12"
+                autocomplete="new-password"
+                required /></label
+            ><button>Accept member invitation</button>
+          </form>
+        </section>
+        <section>
+          <h2>Custom roles</h2>
+          <p>
+            Create a role directly from permissions. Use the policy form below when access should
+            depend on conditions.
+          </p>
+          <form id="role">
+            <label>Tenant ID<input name="tenantId" required data-tenant /></label
+            ><label>Role name<input name="name" value="Editor" required /></label
+            ><label
+              >Permissions (comma separated)<input
+                name="permissions"
+                value="documents:read, documents:write, workspaces:read"
+                required /></label
+            ><button>Create role</button>
+          </form>
+          <button id="roles">List roles</button><button id="actions">List actions</button>
+        </section>
+        <section>
+          <h2>Resource types</h2>
+          <p>
+            Platform types come from configuration. Tenants can define their own managed types with
+            namespaced actions and typed attributes.
+          </p>
+          <form id="resource-type">
+            <label>Tenant ID<input name="tenantId" required data-tenant /></label
+            ><label>Type name<input name="name" value="invoice" required /></label
+            ><label
+              >Action verbs (comma separated)<input
+                name="actions"
+                value="read, approve"
+                required /></label
+            ><label>Attributes (JSON)<input name="attributes" value='{"amount":"number"}' /></label
+            ><button>Register resource type</button>
+          </form>
+          <button id="resource-types">List resource types</button>
+        </section>
+        <section>
+          <h2>Workspaces (IAM-managed resources)</h2>
+          <p>
+            The application registers each workspace with IAM, renders the list from advisory batch
+            decisions, and enforces on every read.
+          </p>
+          <form id="workspace">
+            <label>Tenant ID<input name="tenantId" required data-tenant /></label
+            ><label
+              >Workspace ID<input
+                name="id"
+                value="engineering"
+                pattern="[a-z0-9-]{1,64}"
+                required /></label
+            ><button>Create workspace</button>
+          </form>
+          <button id="workspaces">List workspaces with my permissions</button>
+          <div id="workspace-list"></div>
+        </section>
+        <section>
+          <h2>Linked accounts</h2>
+          <p>
+            One person can hold identities in several organizations. Links power an account
+            switcher; switching still requires the target credential.
+          </p>
+          <button id="links">List linked accounts</button>
+        </section>
+        <section>
+          <h2>Accept an owner invitation</h2>
+          <form id="invitation">
+            <label>New tenant ID<input name="tenantId" required /></label
+            ><label>Invitation token<input name="token" required autocomplete="off" /></label
+            ><label>Owner name<input name="name" required /></label
+            ><label
+              >New account password<input
+                name="password"
+                type="password"
+                minlength="12"
+                autocomplete="new-password"
+                required /></label
+            ><button>Create owner account</button>
+          </form>
+        </section>
+        <section>
+          <h2>Create a user account</h2>
+          <form id="signup">
+            <label>Organization tenant ID<input name="tenantId" required data-tenant /></label
+            ><label>Name<input name="name" required /></label
+            ><label>Email<input name="email" type="email" required /></label
+            ><label
+              >Password<input
+                name="password"
+                type="password"
+                minlength="12"
+                autocomplete="new-password"
+                required /></label
+            ><button>Register</button>
+          </form>
+          <form id="verification">
+            <label>Tenant ID<input name="tenantId" required data-tenant /></label
+            ><label
+              >Email verification token<input name="token" required autocomplete="off" /></label
+            ><button>Verify email</button>
+          </form>
+        </section>
+        <section>
+          <h2>Account recovery</h2>
+          <form id="recovery-request">
+            <label>Tenant ID<input name="tenantId" required data-tenant /></label
+            ><label>Email<input name="email" type="email" required /></label
+            ><button>Send password reset</button>
+          </form>
+          <form id="password-reset">
+            <label>Tenant ID<input name="tenantId" required data-tenant /></label
+            ><label>Reset token<input name="token" required autocomplete="off" /></label
+            ><label
+              >New password<input name="password" type="password" minlength="12" required /></label
+            ><button>Reset password</button>
+          </form>
+          <p>Recovery revokes sessions and preserves MFA.</p>
+        </section>
+        <section>
+          <h2>Provision document access</h2>
+          <p>
+            As an owner, create a policy and role, then attach it to a user identity. New users
+            start without document permissions.
+          </p>
+          <form id="policy">
+            <label>Tenant ID<input name="tenantId" required data-tenant /></label
+            ><label>Recipient identity ID<input name="identityId" required /></label
+            ><label>Role name<input name="name" value="Document reader" required /></label
+            ><label
+              >Policy document<textarea name="document" rows="8">
+{"version":1,"statements":[{"effect":"allow","actions":["documents:read"],"resources":["document/*"]}]}</textarea
+              ></label
+            ><button>Create policy, role, and binding</button>
+          </form>
+          <button id="identities">List tenant identities</button>
+        </section>
+        <section>
+          <h2>Protected documents</h2>
+          <form id="document">
+            <label>Tenant ID<input name="tenantId" required data-tenant /></label
+            ><label
+              >Document title<input
+                name="title"
+                value="Welcome to your organization"
+                required /></label
+            ><button>Create document</button>
+          </form>
+          <button id="documents">Read allowed documents</button>
+          <div id="document-list"></div>
+        </section>
+        <section>
+          <h2>OAuth and OpenID Connect</h2>
+          <p id="oidc-status">Optional provider requires OIDC_KEY_FILE.</p>
+          <form id="oauth-client">
+            <label>Tenant ID<input name="tenantId" required data-tenant /></label
+            ><label
+              >Client ID<input name="clientId" value="example-browser-client" required /></label
+            ><button>Register public OAuth client</button>
+          </form>
+          <button id="oidc-start">Sign in through OAuth with PKCE</button>
+          <p>The flow uses the application's login and consent screens.</p>
+        </section>
+        <section>
+          <h2>SCIM provisioning</h2>
+          <form id="scim">
+            <label>Tenant ID<input name="tenantId" required data-tenant /></label
+            ><label>Connection name<input name="name" value="Example directory" required /></label
+            ><button>Create one-hour SCIM credential</button>
+          </form>
+          <p>
+            The returned URL and bearer token provision Users and Groups within one tenant. Group
+            provisioning alone grants no roles.
+          </p>
+        </section>
+      </div>
+      <section id="inbox-section" hidden>
+        <h2>Local delivery inbox</h2>
+        <p>Development only. Messages remain in this process's memory for up to fifteen minutes.</p>
+        <button id="inbox">Refresh inbox</button>
+        <div id="inbox-list"></div>
+      </section>
+      <section>
+        <h2>Result</h2>
+        <pre id="result" role="status" aria-live="polite">Ready.</pre>
+      </section>
+    </main>
+  </body>
+</html>

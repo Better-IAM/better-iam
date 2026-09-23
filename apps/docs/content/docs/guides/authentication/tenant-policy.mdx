@@ -1,0 +1,283 @@
+---
+title: Tenant authentication policy
+description: Per-organization sign-in rules - required MFA, allowed methods, password rules, session limits, remembered devices, IP allowlists, session binding, and network blocks.
+icon: SlidersHorizontal
+packages: ['@better-iam/server', '@better-iam/auth', '@better-iam/core']
+sources:
+  - docs/authentication.md
+  - docs/security.md
+  - packages/core/src/index.ts
+  - packages/server/src/tenant-policy.ts
+  - packages/server/src/api/tenants.ts
+  - packages/server/src/api/security.ts
+---
+
+Different customers need different sign-in rules. A bank may insist on MFA, passkeys only, and office networks;
+a small team may want nothing beyond the defaults. The **tenant authentication policy** lets each organization (a
+<Term id="tenant">tenant</Term>) set its own rules without you shipping per-customer configuration.
+
+The policy can only **tighten** what the deployment allows. You decide in `authentication` which methods exist
+and how long sessions may last at most; a tenant can require more and allow less, never the reverse.
+
+## Set a policy
+
+`tenants.setAuthPolicy` replaces a tenant's whole policy. Call it from an organization's security settings page.
+Organization owners can call it for their own tenant; it needs `iam:tenants:update` and recent authentication. Pass
+`null` to clear the policy. The current policy is on the tenant record (`tenants.get` returns it as `authPolicy`),
+so read it first when you change a single field.
+
+```ts
+await iam.api.tenants.setAuthPolicy(ownerCredential, {
+  tenantId,
+  authPolicy: {
+    requireMfa: true,
+    allowedMethods: ['passkey', 'password'],
+    sessionIdleTimeoutMs: 30 * 60_000,
+    maxSessions: 5,
+    minPasswordLength: 14,
+    passwordHistory: 5,
+    trustedDeviceDays: 7,
+    notifyNewSignIn: true,
+  },
+});
+```
+
+Every field is optional, unknown fields are refused, and each value is range-checked (`INVALID_INPUT`). A deleted
+tenant cannot be changed (`INVALID_TRANSITION`). Each change is audited as `tenant:auth-policy` with the new
+policy.
+
+To apply a policy to every organization from the start, for example as part of a SaaS plan, set
+`tenantDefaults.authPolicy` in the server options. It is validated at construction and stamped on every tenant that
+`tenants.create` creates:
+
+```ts title="iam.ts"
+tenantDefaults: {
+  authPolicy: { requireMfaForOwners: true, mfaEmailCodes: true },
+},
+```
+
+## Policy fields
+
+<TypeTable
+  type={{
+    requireMfa: {
+      type: 'boolean',
+      description: <>Every person must complete MFA. People without a factor enroll on their next sign-in, and existing sessions that did not pass MFA stop working at their next use.</>,
+    },
+    requireMfaForOwners: {
+      type: 'boolean',
+      description: <>Only owners must complete MFA. The usual first step before requiring it for everyone, because it protects the people who can change the policy.</>,
+    },
+    allowedMethods: {
+      type: "('password' | 'passwordless-email' | 'passwordless-sms' | 'passkey' | 'federated')[]",
+      description: <>The sign-in methods the tenant accepts; at least one. Unset accepts every method the deployment enables. Other methods are refused with <code>METHOD_NOT_ALLOWED</code> before any credential is examined.</>,
+    },
+    sessionLifetimeMs: {
+      type: 'number',
+      description: <>A shorter absolute session lifetime, from one minute to 30 days. Capped by the deployment's <code>sessionLifetimeMs</code>.</>,
+    },
+    sessionIdleTimeoutMs: {
+      type: 'number',
+      description: <>A shorter idle timeout, from one minute to 30 days, and not above <code>sessionLifetimeMs</code>. Capped by the deployment's idle timeout and by the lifetime.</>,
+    },
+    maxSessions: {
+      type: 'number',
+      description: <>Concurrent user sessions per person, 1 to 100. Issuing one more ends the oldest.</>,
+    },
+    maxAttempts: {
+      type: 'number',
+      description: <>Authentication attempts per rate-limit window for this tenant's flows, 1 to 100,000. Never raises the deployment's limits.</>,
+    },
+    minPasswordLength: {
+      type: 'number',
+      description: <>Minimum password length, 12 to 128. The deployment minimum is always 12.</>,
+    },
+    passwordMinClasses: {
+      type: 'number',
+      description: <>How many character classes (lowercase, uppercase, digits, symbols) a new password must mix, 2 to 4.</>,
+    },
+    passwordRejectPersonalInfo: {
+      type: 'boolean',
+      description: <>Refuse passwords containing the person's email local part or any word of their name that is four or more characters long.</>,
+    },
+    passwordHistory: {
+      type: 'number',
+      description: <>Refuse reuse of this many most recent passwords, counting the current one, 1 to 24 (<code>PASSWORD_REUSED</code>).</>,
+    },
+    passwordMaxAgeDays: {
+      type: 'number',
+      description: <>Passwords older than this many days stop signing in until reset (<code>PASSWORD_EXPIRED</code>), 1 to 3,650.</>,
+    },
+    trustedDeviceDays: {
+      type: 'number',
+      description: <>How long "remember this device" may skip MFA, 0 to 365 days. <code>0</code> turns it off for the tenant. Never longer than the deployment allows.</>,
+    },
+    mfaEmailCodes: {
+      type: 'boolean',
+      description: <>Offer one-time codes by email to people without an authenticator. Overrides the deployment default. Root administrators always need an authenticator.</>,
+    },
+    allowImpersonation: {
+      type: 'boolean',
+      default: 'false',
+      description: <>Let administrators holding <code>iam:identities:impersonate</code> open "view as" sessions for members.</>,
+    },
+    allowedIpRanges: {
+      type: 'string[]',
+      description: <>IPv4 or IPv6 addresses or CIDR blocks that sessions may be issued from and used from; at least one. Needs recorded client IPs.</>,
+    },
+    notifyNewSignIn: {
+      type: 'boolean',
+      description: <>Email people when a session starts from a client none of their live sessions or remembered devices has used. Overrides the deployment's <code>signInNotifications</code>.</>,
+    },
+    bindSessionsToIp: {
+      type: 'boolean',
+      description: <>A session works only from the IP address it was issued from. Elsewhere it is refused with <code>SESSION_NETWORK_MISMATCH</code>. Needs recorded client IPs.</>,
+    },
+  }}
+/>
+
+## How the policy is enforced
+
+The authentication service consults the policy at three points:
+
+1. **When a sign-in starts:** the method must be allowed, and the tenant's `maxAttempts` caps the rate limit.
+2. **When a session is issued:** MFA requirements, the IP allowlist, the session lifetime, `maxSessions`, and new
+   sign-in notices apply.
+3. **Every time a session is used:** the idle timeout, the MFA requirement, the IP allowlist, and IP binding are
+   checked again.
+
+Because of the third point, existing sessions follow a new policy on their next use. Requiring MFA locks out
+sessions that did not complete it right away, and a person cannot disable their authenticator while the tenant
+requires MFA.
+
+The policy only ever tightens:
+
+- Session lifetimes and attempt limits take the smaller of the tenant's and the deployment's values.
+- `requireMfa` **adds to** the deployment's `authentication.requireMfa(tenant, identity)` callback; it never
+  replaces it.
+- Root administrators always need MFA, whatever the policy says.
+
+## Requiring MFA
+
+The problem MFA solves is a stolen or guessed password. Two switches cover the common rollouts:
+
+- `requireMfaForOwners: true` protects the owners first, the people who can change the policy and grant access.
+- `requireMfa: true` then covers everyone. People without a factor are asked to enroll an authenticator on their
+  next sign-in, and sessions that did not pass MFA stop working immediately.
+
+To avoid forcing every member to install an authenticator app, add `mfaEmailCodes: true`: people with nothing
+enrolled can then answer the challenge with a code sent to their verified email address. See
+[multi-factor authentication](/docs/guides/authentication/mfa).
+
+## Restricting sign-in methods
+
+`allowedMethods` lets an organization accept only the methods it trusts, for example `['federated']` to force
+everyone through the company's identity provider, or `['passkey']` for phishing-resistant sign-in only. The check
+runs before any credential is examined, so a rejected method never reveals whether a password was right.
+
+Impersonation is an administrative action, not a sign-in method, so it is not listed; the policy's
+`allowImpersonation` controls it. `domains.discover` reports a tenant's `allowedMethods` and MFA requirement, so a
+login page can show the right buttons as soon as someone types their work email.
+
+## Password rules
+
+Deployment-wide screening (common passwords, a breach corpus, a custom check) applies to everyone; see
+[password screening](/docs/guides/authentication/sign-in-methods#password-screening). A tenant adds its own rules on
+top, and every rule applies wherever a password is set: creation, invitations, bulk onboarding, reset, and change.
+
+- **Length and variety.** `minPasswordLength` (12 to 128) and `passwordMinClasses` (2 to 4 of lowercase,
+  uppercase, digits, and symbols). Failures return `WEAK_PASSWORD`.
+- **No personal information.** `passwordRejectPersonalInfo` refuses a password that contains the email local part
+  or a name word of four or more characters (`WEAK_PASSWORD`).
+- **History.** `passwordHistory` refuses the last 1 to 24 passwords, counting the current one
+  (`PASSWORD_REUSED`). A new password is compared with Argon2 against the current hash and as many earlier ones as
+  the setting asks for. Up to 24 earlier hashes are retained, and they are deleted with the identity.
+- **Maximum age.** `passwordMaxAgeDays` expires a password that many days after it was set (or after the
+  identity was created, for older records). An expired password is refused with `PASSWORD_EXPIRED` only after it
+  has been verified, so expiry never reveals whether a guess was right. The person recovers through
+  [password reset](/docs/guides/authentication/recovery#password-reset).
+
+## Sessions and devices
+
+Shorter sessions limit how long a stolen cookie or an unattended laptop stays useful.
+
+- `sessionLifetimeMs` and `sessionIdleTimeoutMs` shorten the deployment's absolute lifetime and idle timeout.
+- `maxSessions` caps how many sessions one person may hold at once; the oldest ends when a new one is issued.
+- `trustedDeviceDays` shortens, or with `0` disables, "remember this device".
+- `notifyNewSignIn` emails people about sessions from clients they have not used before.
+
+See [sessions](/docs/guides/authentication/sessions).
+
+## Network restrictions
+
+Some organizations must keep access inside their own networks, and every organization needs a way to shut out an
+attacker's address during an incident. Three tools cover this. All of them judge the client IP that Better IAM
+recorded, so they need `http.clientInfo` configured behind a proxy you control; a sign-in or request without a
+recorded IP (direct API use, or the handler without `clientInfo`) is not judged. See
+[client details](/docs/guides/authentication/http#client-details).
+
+### IP allowlist
+
+`allowedIpRanges` lists the networks (IPv4 or IPv6 addresses, or CIDR blocks) the tenant's people may sign in from.
+
+```ts
+authPolicy: { allowedIpRanges: ['203.0.113.0/24', '2001:db8::/32'] },
+```
+
+- Issuing a session, including an impersonation session, from outside every range fails with `IP_NOT_ALLOWED`.
+- A session whose recorded IP falls outside the ranges stops working at its next use, so tightening the list cuts
+  off existing sessions.
+- An assumed-role session is judged against the allowlist of the organization it acts in.
+- For your own organization, the list must include the address your session was issued from and the address the
+  request comes from; otherwise the change is refused (`INVALID_INPUT`) so you cannot lock yourself out.
+- Refusals show up as `denied` spans with code `IP_NOT_ALLOWED`.
+
+### Binding sessions to their network
+
+`bindSessionsToIp: true` makes a stolen session cookie useless from anywhere else. A user session is then accepted
+only from the address it was issued from.
+
+- A use from another address is refused with `SESSION_NETWORK_MISMATCH` (401) and recorded in the person's trail
+  as `auth:session:mismatch`, with both addresses in the metadata.
+- The person simply signs in again from the new network, while the old session keeps working from the old one.
+- Sessions and requests without a recorded address are not judged.
+- The browser client's `onUnauthenticated` hook fires for this code, so people land on the login page.
+
+### Network blocks
+
+Network blocks are the incident-response counterpart of the allowlist: when an address keeps guessing passwords,
+block it. Unlike the other fields on this page, blocks are managed with the `security` group rather than the
+policy.
+
+```ts
+const block = await iam.api.security.blockNetwork(adminCredential, {
+  tenantId,
+  network: '198.51.100.23', // an address or a CIDR block
+  reason: 'Password spraying against several members',
+  durationMs: 24 * 60 * 60_000, // optional: one minute to a year; omit to block until lifted
+});
+```
+
+- `security.blockNetwork` refuses every authentication flow and every live session whose recorded IP falls in
+  the network, and every API key or assumed-role token presented from it, with `IP_BLOCKED`. It needs
+  `iam:security:manage` and recent authentication, and is audited as `security:network-block`.
+- The check runs **before** rate limits and credentials, so a blocked address cannot count against anyone's
+  attempts.
+- Blocking a network that contains your own address is refused, so nobody locks themselves out. Blocking the same
+  network again renews the block.
+- `security.unblockNetwork({ tenantId, blockId })` lifts a block early (audited as `security:network-unblock`).
+- `security.listBlocks({ tenantId })` shows the tenant's blocks, newest first, each with `active` telling whether
+  it has lapsed. It needs `iam:security:read`.
+- An organization's blocks apply to itself. Root administrators can set `platform: true` on the root tenant to
+  block a network for every tenant.
+- Each process reuses a tenant's block list for five seconds, so a change reaches other processes within that
+  time. Lapsed blocks are deleted by the retention worker.
+
+The console's administration panel can block a source address platform-wide for a day in one click from its
+sign-in failures page, and organization owners manage their own blocks on the settings page.
+
+## Impersonation
+
+`allowImpersonation` is off by default. Turning it on lets administrators who hold `iam:identities:impersonate`
+open restricted, fully audited "view as" sessions for members. See
+[impersonation](/docs/guides/authentication/impersonation).

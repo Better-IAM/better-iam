@@ -1,0 +1,302 @@
+---
+title: Vue
+description: The @better-iam/vue plugin, composables, and IamCan component, with server-rendered sessions and hydrated decisions for Vue 3.3 and later.
+icon: Leaf
+packages:
+  - '@better-iam/vue'
+sources:
+  - packages/vue/src/index.ts
+  - packages/vue/README.md
+  - docs/nuxt.md
+---
+
+`@better-iam/vue` connects Vue 3.3+ applications to the [typed client](/docs/frameworks/client). Components could
+call the client themselves, but each would then load the <Term id="session">session</Term> separately, track its own loading state, and
+keep showing buttons after a sign-out elsewhere on the page. The plugin keeps one reactive session for the app,
+exposes decisions as refs that follow reactive inputs, and carries server-rendered results to the browser.
+
+What it covers, and what it leaves to your server:
+
+- **Hydration.** Server-rendered sessions and permission results travel to the browser, so the first render
+  matches the HTML without a request ([how](#server-rendering-and-hydration)). This is the main job it does for
+  server-rendered apps.
+- **Sessions on the server and guards.** The composables never enforce anything. Guard pages and mutations on
+  the server, for example with [Nuxt](/docs/frameworks/nuxt) server utilities or the
+  [Express adapter](/docs/frameworks/node).
+- **Cross-site checks.** The client sends the `X-Better-IAM` header the IAM API requires; your own routes are
+  checked by the server integration.
+
+| Export | What it does | Use it to |
+| --- | --- | --- |
+| [`createIam(options)`](#the-plugin) | The Vue plugin: one client and one session store for the app | `app.use(createIam({ client }))` once |
+| `useSession()` | Computed `status`, `session`, `error`, `isAuthenticated`, with `refresh`, `signOut`, `setSession` | Show who is signed in, sign out, apply a sign-in |
+| `useIamClient()` | The client passed to `createIam` | Call any API method from a component |
+| `useAuthorize(input)` | Several advisory decisions in one `authorizeMany` call, with `allowed(action, resource?)` | Decide which buttons and menu items to render |
+| `useCan(input)` | One decision as a `ComputedRef<boolean>` | A single `v-if` |
+| `useAccessible(input)` | The managed resources of a type the person may act on | Render a list of what someone can open |
+| `useAgreements(input)` | The person's terms of use, the pending ones, and `accept` | Block the app until required terms are accepted |
+| `useAccessPaths(input)` | Whether an action is allowed and, if not, what the person can do about it | Build a "request access" screen |
+| [`IamCan`](#iamcan) | A component with `default`, `fallback`, and `loading` slots | Gate part of a template on one permission |
+| [`createHydration(state?)`](#server-rendering-and-hydration) | A plain-object store that carries query results from server rendering to the browser | Custom SSR setups |
+| `createSessionStore`, `isUnauthenticated` | The framework-agnostic session store and its error test | Use the store outside Vue |
+
+Everything it returns is <Term id="advisory">advisory</Term> UI state: it decides what to render, and the server still enforces every
+operation. Nuxt applications use [`@better-iam/nuxt`](/docs/frameworks/nuxt), which installs this plugin for you,
+with the session loaded on the server.
+
+## Install
+
+```npm
+npm i @better-iam/vue @better-iam/client
+```
+
+With the umbrella package, import from `better-iam/vue` and `better-iam/client`.
+
+## Setup
+
+<Steps>
+<Step>
+
+### Install the plugin
+
+Import the server instance as a type and install the plugin once.
+
+```ts title="src/main.ts"
+import { createApp } from 'vue';
+import { createIamClient } from '@better-iam/client';
+import { createIam } from '@better-iam/vue';
+import type { iam } from '../server/iam.js';
+import App from './App.vue';
+
+export const client = createIamClient<typeof iam>({ baseURL: 'https://app.example.com' });
+createApp(App).use(createIam({ client })).mount('#app');
+```
+
+</Step>
+<Step>
+
+### Use the composables
+
+Inputs are getters here, so the queries re-run when the component's props change.
+
+```vue title="src/components/Workspace.vue"
+<script setup lang="ts">
+import { useAccessible, useAuthorize, useSession } from '@better-iam/vue';
+import type { client } from '../main';
+
+const props = defineProps<{ tenantId: string; projectId: string }>();
+const { status, session, signOut } = useSession<typeof client>();
+const { allowed } = useAuthorize(() => ({
+  tenantId: props.tenantId,
+  checks: [{ action: 'projects:manage', resource: { type: 'project', id: props.projectId } }],
+}));
+const { resources } = useAccessible(() => ({
+  tenantId: props.tenantId,
+  action: 'projects:read',
+  type: 'project',
+}));
+</script>
+
+<template>
+  <p v-if="status === 'loading'">Loading…</p>
+  <template v-else-if="session">
+    {{ session.identity.name }} <button @click="signOut">Sign out</button>
+    <ul>
+      <li v-for="project in resources" :key="project.id">{{ project.resourceId }}</li>
+    </ul>
+    <button v-if="allowed('projects:manage', { type: 'project', id: projectId })">Manage</button>
+    <IamCan :tenant-id="tenantId" action="iam:identities:create">
+      <a href="/invite">Invite a member</a>
+      <template #fallback>Ask an administrator to invite people.</template>
+    </IamCan>
+  </template>
+</template>
+```
+
+</Step>
+</Steps>
+
+Composables used without the plugin throw `Better IAM composables need app.use(createIam({ client }))`.
+
+## The plugin
+
+`createIam(options)` builds the plugin. Call it once per app (once per request when rendering on the server) and
+pass the result to `app.use`.
+
+<TypeTable
+  type={{
+    client: {
+      type: 'IamClient',
+      description: <>The typed client (or, during server rendering, a client that reaches the server in process).</>,
+      required: true,
+    },
+    initialSession: {
+      type: 'Session | null',
+      description: <>A session rendered on the server. <code>null</code> means known signed-out. Omit it to load the session when the plugin is installed in a browser.</>,
+    },
+    refreshOnFocus: {
+      type: 'boolean',
+      description: <>Reload the session when the window regains focus or the tab becomes visible.</>,
+      default: 'true',
+    },
+    refreshIntervalMs: {
+      type: 'number',
+      description: <>Reload the session on a fixed interval, in milliseconds.</>,
+      default: 'off',
+    },
+    hydration: {
+      type: 'IamHydration',
+      description: <>The store that carries query results from server rendering to the browser. See <a href="#server-rendering-and-hydration">Server rendering</a>.</>,
+    },
+    registerComponents: {
+      type: 'boolean',
+      description: <>Register <code>IamCan</code> globally on install.</>,
+      default: 'true',
+    },
+    server: {
+      type: 'boolean',
+      description: <>Force server behavior: no listeners, no session load on install, and queries awaited with <code>onServerPrefetch</code>.</>,
+      default: 'true when window is undefined',
+    },
+  }}
+/>
+
+`createIam` returns `{ client, store, install, dispose }`. `store` is the framework-agnostic
+[session store](/docs/frameworks/client#session-store), and `dispose()` removes the focus, visibility, and
+interval listeners the plugin installed.
+
+## Composables
+
+Each composable reads the plugin's session and client, so any component can ask for what it needs without passing
+them down.
+
+| Composable | Returns |
+| --- | --- |
+| `useSession<typeof client>()` | Computed `status` (`loading`, `authenticated`, `unauthenticated`, `error`), `session`, `error`, `isAuthenticated`, plus `refresh()` (reload from the server), `signOut()` (sign out, then clear locally), and `setSession(session)` (apply a sign-in response) |
+| `useIamClient<T>()` | The client passed to `createIam`, typed as you declare it |
+| `useAuthorize(input)` | `status` (`idle`, `loading`, `ready`, `error`), `results`, `error`, `allowed(action, resource?)` (false until results arrive), `refresh()` |
+| `useCan(input)` | `allowed` (a `ComputedRef<boolean>`, false while loading or signed out), `status`, `refresh()` |
+| `useAccessible(input)` | `status`, `resources`, `total`, `error`, `refresh()`; the [reverse query](/docs/guides/authorization/queries) for managed types |
+| `useAgreements(input)` | `status`, `agreements`, `pending` (required and not yet accepted in their current version), `error`, `accept(agreement)`, `refresh()` |
+| `useAccessPaths(input)` | `status`, `allowed`, `reason`, `paths` (what the person could do alone to be allowed), `error`, `refresh()` |
+
+- **Inputs.** `useAuthorize` takes `{ tenantId, checks, enabled? }`, `useCan` takes
+  `{ tenantId, action, resource?, enabled? }`, and `useAccessible` takes
+  `{ tenantId, action, type, limit?, offset?, enabled? }`. Each accepts a plain object, a ref, or a getter such
+  as `() => ({ tenantId: props.tenantId, ... })`.
+- **When they re-run.** A query re-runs when its input or the signed-in identity changes. A session refresh
+  for the same identity does not re-run it.
+- **Signed out.** Every check resolves to denied with `reason: 'UNAUTHENTICATED'`, and reverse queries settle to
+  an empty list, without a request.
+- **Transport errors.** When the session store reports a transport `error`, queries keep their last results;
+  the next successful session refresh runs them again.
+- **Default resource.** Without a resource, `allowed()`, `useCan`, and `IamCan` check the tenant itself
+  (`iam/{tenantId}`).
+
+`useAgreements({ tenantId })` and `useAccessPaths({ tenantId, action, resource })` return the same data as the
+[React hooks](/docs/frameworks/react#self-service-hooks). The first gives the person's terms of use with
+`pending` and `accept`. The second gives the self-service `paths` (`mfa`, `accept-agreements`, `activate`,
+`request-package`) the server verified would allow a denied action. Both are prefetched during server rendering
+like the other queries.
+
+## IamCan
+
+`IamCan` gates part of a template on one permission without any script code.
+
+```vue
+<IamCan :tenant-id="tenantId" action="projects:delete" :resource="{ type: 'project', id }">
+  <button>Delete</button>
+  <template #fallback>Read only</template>
+  <template #loading>…</template>
+</IamCan>
+```
+
+`IamCan` takes `tenant-id` and `action` (both required) and an optional `resource`. It renders the `loading` slot
+while the decision is pending, the default slot when allowed, and the `fallback` slot otherwise. The plugin
+registers it globally unless `registerComponents: false`; you can also import it from `@better-iam/vue`.
+
+## Server rendering and hydration
+
+Why this matters: a server-rendered page arrives as HTML, and the browser then "hydrates" it by running the same
+components. Suppose a permission check ran on the server but starts over in the browser. The browser's first
+render has no answer yet, so a "Manage" button the server rendered disappears, Vue warns about a hydration
+mismatch, and the button comes back when the request finishes. Handing the server's answers to the browser avoids
+the flicker, the warning, and the duplicate requests.
+
+On the server (`server: true`, or whenever `window` is undefined), the plugin installs no listeners and does not
+load the session itself: pass the session you already have as `initialSession`. Queries in rendered components
+are awaited through `onServerPrefetch`. Each result is written to `hydration` under a key made of the query, the
+signed-in identity, and the input. In the browser, each hydrated result is used once instead of a fetch, so the
+first paint shows the same buttons the server rendered. After that, queries fetch normally.
+
+`createHydration(state?)` is a plain-object `IamHydration` (`get`, `set`, `delete`, plus `state`). Serialize
+`hydration.state` into the page on the server and pass the parsed object back on the client. Nuxt does all of
+this for you through its payload. For a custom setup, the server needs a client that reaches the IAM server in
+process, such as `req.iam.client` from the [Express adapter](/docs/frameworks/node), because the HTTP API refuses
+cookie requests without an `Origin`.
+
+<Tabs items={['Server', 'Browser']}>
+<Tab value="Server">
+
+```ts title="server/render.ts"
+import { createSSRApp } from 'vue';
+import { renderToString } from 'vue/server-renderer';
+import { createHydration, createIam } from '@better-iam/vue';
+import App from '../src/App.vue';
+
+app.get('*', async (req, res) => {
+  const session = await req.iam.getSession(); // the Express adapter's per-request helpers
+  const hydration = createHydration();
+  const vue = createSSRApp(App).use(
+    createIam({ client: req.iam.client, initialSession: session, hydration, server: true }),
+  );
+  const html = await renderToString(vue);
+  // Escape '<' in the serialized state before inlining it (for example with a serializer such as devalue).
+  const state = serialize({ session, hydration: hydration.state });
+  res.send(`<div id="app">${html}</div><script>window.__IAM__ = ${state}</script>`);
+});
+```
+
+</Tab>
+<Tab value="Browser">
+
+```ts title="src/entry-client.ts"
+import { createSSRApp } from 'vue';
+import { createIamClient } from '@better-iam/client';
+import { createHydration, createIam } from '@better-iam/vue';
+import type { iam } from '../server/iam.js';
+import App from './App.vue';
+
+const state = (window as unknown as { __IAM__: { session: never; hydration: Record<string, unknown> } })
+  .__IAM__;
+createSSRApp(App)
+  .use(
+    createIam({
+      client: createIamClient<typeof iam>(),
+      initialSession: state.session,
+      hydration: createHydration(state.hydration),
+    }),
+  )
+  .mount('#app');
+```
+
+</Tab>
+</Tabs>
+
+`createSessionStore` and `isUnauthenticated` are re-exported from `@better-iam/client/session`, shared with
+`@better-iam/react`, together with the `SessionClient`, `SessionOf`, `SessionSnapshot`, `SessionStatus`, and
+`SessionStore` types.
+
+## Next steps
+
+<Cards>
+  <Card title="Nuxt" href="/docs/frameworks/nuxt">
+    The module that installs this plugin with server-rendered sessions and page guards.
+  </Card>
+  <Card title="Express, Hono, Fastify" href="/docs/frameworks/node">
+    Server guards and the in-process client for a custom server-rendering setup.
+  </Card>
+  <Card title="Typed client" href="/docs/frameworks/client">
+    Every API method, error codes, and passkey helpers.
+  </Card>
+</Cards>

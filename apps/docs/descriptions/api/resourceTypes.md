@@ -1,0 +1,100 @@
+# resourceTypes
+
+Resource types let a tenant describe its own kinds of resources at runtime, with their actions, typed attributes,
+relations, and parent. Platform types come from your configuration (`permissions.resourceTypes`) and plugins; this
+group lists them all and, when the deployment sets `permissions.mode: 'tenant-defined'`, lets tenant administrators
+add types of their own without a redeploy. That suits products where each customer models different objects, such as
+a workflow tool where one organization tracks "contracts" and another "incidents". The
+[catalog guide](/docs/guides/authorization/catalog#tenant-defined-catalogs) explains the model.
+
+## What a tenant-defined type declares
+
+A tenant-defined type is always **managed**: its resources are registered through
+[`resources.register`](/docs/reference/api/resources#register) and authorization reads them without an application
+callback. It declares:
+
+- `name`: lowercase letters, digits, and hyphens, starting with a letter, at most 64 characters. It cannot be a
+  reserved name (`iam`, `role`, `tenant`, `identity`, `session`, `oauth-client`, `scim`, `saml`, `ssf`), a platform
+  type, or the namespace of any platform action (for example `documents` when `documents:read` exists).
+- `actions`: verbs. Each becomes the action `{name}:{verb}`, such as `contract:approve`. Verbs start with a letter and
+  use letters, digits, `_`, or `-`.
+- `attributes`: at most 64 typed attributes (`string`, `number`, or `boolean`) that registered resources may carry and
+  policies read as `resource.{name}`.
+- `relations`: at most 32 lowercase relation names that [relationship tuples](/docs/reference/api/relationships) may
+  use on resources of the type.
+- `parent` (optional): an existing managed type. Resources of the type must then be registered under a parent
+  resource, and policies can read the caller's relations on that parent.
+
+Defining a type or action grants nothing. Access still comes from roles and policies that name the new actions. Types
+can also be managed as code with [configuration sync](/docs/guides/privileged-access/config-as-code).
+
+## delete
+
+Deletes a tenant-defined resource type and its actions.
+
+- **Permission:** `iam:resource-types:delete` on the tenant.
+- **Audited as:** `iam:resource-types:delete`.
+- **Errors:** `NOT_FOUND` when no tenant-defined type has that name (platform types cannot be deleted);
+  `RESOURCE_IN_USE` while resources of the type are registered, relationship tuples reference it, another type names it
+  as its parent, or a stored policy or inline role document still names one of its actions.
+
+The in-use checks keep deletion from silently changing access: remove the resources, relationships, child types, and
+policy references first.
+
+## get
+
+Returns one resource type, platform or tenant-defined, with its actions, attributes, relations, and parent.
+
+- **Permission:** `iam:resource-types:read` on the tenant.
+- **Audited as:** `iam:resource-types:read`.
+- **Errors:** `NOT_FOUND` when the name is unknown to this tenant.
+
+`source` is `platform` or `tenant`, and `managed` says whether resources of the type are registered with IAM or
+resolved by the application.
+
+## list
+
+Lists every resource type the tenant can use: platform types first, then the tenant's own.
+
+- **Permission:** `iam:resource-types:read` on the tenant.
+- **Audited as:** `iam:resource-types:read`.
+
+Use it to build policy editors and resource pickers. Platform types include application-owned ones (`managed: false`),
+which exist for validation and documentation but are not registered through the API.
+
+## register
+
+Defines a new resource type for the tenant, and registers its actions in the same transaction.
+
+- **Permission:** `iam:resource-types:create` on the tenant.
+- **Audited as:** `iam:resource-types:create`.
+- **Errors:** `CATALOG_LOCKED` (403) when the deployment does not allow tenant-defined types;
+  `INVALID_RESOURCE_TYPE` for an invalid or reserved name, or a `parent` that is not an existing managed type;
+  `CONFLICT` when the tenant already has a type with that name; `INVALID_INPUT` for invalid attributes or relations;
+  `INVALID_ACTION` for an invalid verb.
+
+```ts
+await iam.api.resourceTypes.register(credential, {
+  tenantId,
+  name: 'contract',
+  description: 'Customer contracts',
+  actions: ['read', 'approve'], // registers contract:read and contract:approve
+  attributes: { value: 'number', region: 'string' },
+  relations: ['owner', 'reviewer'],
+});
+```
+
+## update
+
+Changes a tenant-defined type's description, attribute schema, or relations, and adds action verbs.
+
+- **Permission:** `iam:resource-types:update` on the tenant.
+- **Audited as:** `iam:resource-types:update`.
+- **Errors:** `NOT_FOUND` when no tenant-defined type has that name; `INVALID_INPUT` when a registered resource would
+  no longer match the new attribute schema; `RESOURCE_IN_USE` when a relation you drop is still held by a relationship
+  tuple; `CATALOG_LOCKED` when adding verbs while tenant-defined actions are disabled.
+
+`attributes` and `relations` replace the whole list. `actions` only adds: verbs already registered are kept and
+repeated ones are skipped. To remove a verb, use [`actions.unregister`](/docs/reference/api/actions#unregister). The
+name and parent cannot change. The schema check exists because conditions on an attribute would otherwise silently
+stop matching resources that no longer fit it.

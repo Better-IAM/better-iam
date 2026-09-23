@@ -1,0 +1,211 @@
+---
+title: Verification and recovery
+description: Email verification, password reset and change, email and phone changes, lost second factors, and clearing lockouts.
+icon: LifeBuoy
+packages: ['@better-iam/auth', '@better-iam/server']
+sources:
+  - docs/authentication.md
+  - docs/security.md
+  - packages/auth/src/service/account.ts
+  - packages/server/src/api/identities.ts
+---
+
+People forget passwords, change addresses, and lose phones. These flows let them recover without an
+administrator, and let administrators help when they must, without ever revealing whether an account exists.
+
+Each flow proves that the person controls an address by sending a single-use token or code there, through the
+<Term id="outbox">delivery outbox</Term>. So each needs the matching callback (`sendEmail`, or `sendSms` for phone
+codes) and fails with `FEATURE_DISABLED` without it. Each flow has a start call that sends the message and a
+completion call that redeems it:
+
+| Flow | Starts with | Completes with | Token lifetime | Template |
+| --- | --- | --- | --- | --- |
+| Email verification | `auth.requestEmailVerification` | `auth.verifyEmail` | 24 hours | `verify-email` |
+| Password reset | `auth.requestPasswordReset` | `auth.resetPassword` | 10 minutes | `password-reset` |
+| Email change | `auth.requestEmailChange` | `auth.confirmEmailChange` | 10 minutes | `email-change` |
+| Phone verification | `auth.startPhoneVerification` | `auth.confirmPhoneVerification` | 5 minutes | `phone-verify` (SMS) |
+
+## Email verification
+
+An email address typed at sign-up could belong to anyone. Before you send password resets, security alerts, or
+one-time codes there, you want proof that the person actually receives mail at it. A person's email is verified
+when they accept an invitation, finish an emailed passwordless sign-in, confirm an email change, or follow a
+verification link.
+
+- `auth.requestEmailVerification` sends a verification link. It is public and always answers
+  `{ success: true }`, whether or not the address exists, and it sends only to an active person whose address is
+  not yet verified.
+- `auth.verifyEmail` redeems the token from the link, on the page it opens, and marks the address verified
+  (audited as `auth:email:verify`). The link is valid for 24 hours.
+
+```ts
+await client.auth.requestEmailVerification({ tenantId, email: 'bob@example.com' });
+
+// Later, on the page the link opens:
+await client.auth.verifyEmail({ tenantId, token });
+```
+
+With `authentication.requireEmailVerification` on (it defaults to the value of `signUpEnabled`), an unverified
+person cannot sign in and existing sessions stop working: both fail with `EMAIL_UNVERIFIED`. Some features also
+depend on a verified address: password reset emails, emailed MFA codes, and failed sign-in alerts are only sent to
+verified addresses.
+
+## Password reset
+
+A forgotten password should not need a support ticket. Password reset proves control of the verified email address
+instead, then lets the person choose a new password.
+
+<Steps>
+<Step>
+
+### Request a reset
+
+`auth.requestPasswordReset` sends a reset link. Call it from your "forgot password" form.
+
+```ts
+await client.auth.requestPasswordReset({ tenantId, email: 'alice@example.com' });
+```
+
+The call always succeeds, so it cannot be used to discover accounts. A `password-reset` email is sent only when the
+address belongs to an active person in that tenant whose email is verified.
+
+</Step>
+<Step>
+
+### Set the new password
+
+On the page the email links to (your `links.passwordReset` builder decides the URL), `auth.resetPassword` redeems
+the token and sets the new password:
+
+```ts
+await client.auth.resetPassword({ tenantId, token, password: newPassword });
+```
+
+The token is single-use and valid for ten minutes. Every password rule applies: the deployment screen and the
+tenant's length, character class, personal information, and history rules (`WEAK_PASSWORD`,
+`BREACHED_PASSWORD`, `PASSWORD_REUSED`).
+
+</Step>
+</Steps>
+
+A reset ends every session of the person, forgets their remembered devices, and cancels other pending challenges.
+It never signs them in and never removes MFA: the person signs in with the new password and then their second
+factor. The reset is audited as `auth:password:reset`.
+
+A reset is also the way back from an expired password. When a tenant sets `passwordMaxAgeDays`, a correct but
+expired password is refused with `PASSWORD_EXPIRED`, only after it has been verified, so expiry never reveals whether
+a guess was right.
+
+### Resetting on someone's behalf
+
+Sometimes a person cannot start the reset themselves, for example because their address was never verified or they
+were created without a password. `identities.requestPasswordReset` lets an administrator queue the reset email for a
+member, whether their address is verified or not:
+
+```ts
+const { queued, email } = await iam.api.identities.requestPasswordReset(adminCredential, {
+  tenantId,
+  identityId,
+});
+```
+
+This needs `iam:identities:update` and recent authentication and is audited as `identity:password-reset`. Only an
+owner of the same tenant, or a root administrator, can trigger a reset for an owner; only a root administrator can
+for a root administrator. Refusals are audited as denials.
+
+## Password change
+
+People change a password they still know when they suspect it leaked, or simply to rotate it. `auth.changePassword`
+takes the current password and the new one:
+
+```ts
+await client.auth.changePassword({ currentPassword, password: newPassword });
+```
+
+- It needs recent authentication (`RECENT_AUTH_REQUIRED`); see
+  [recent authentication](/docs/guides/authentication/sessions#recent-authentication).
+- A wrong current password fails with `INVALID_CREDENTIALS` and is recorded as a failed attempt, like one at
+  sign-in: someone holding a session may be guessing it.
+- On success, every session of the person ends, **including the one that made the change**, and remembered
+  devices are forgotten. Send people back to sign in with the new password. Audited as `auth:password:change`.
+
+## Email change
+
+People change jobs, domains, and providers, and their sign-in address has to follow. Because the address is also
+where resets go, a change must prove the new address before it takes effect. It happens in two steps:
+
+1. `auth.requestEmailChange` sends a confirmation link to the new address. It needs a signed-in, recently
+   authenticated session.
+2. `auth.confirmEmailChange` redeems the token from that link and switches the account to the new address.
+
+```ts
+// Signed in, with recent authentication:
+await client.auth.requestEmailChange({ email: 'alice@new.example' });
+
+// On the page the confirmation email links to:
+await client.auth.confirmEmailChange({ tenantId, token });
+```
+
+- The `email-change` message goes to the **new** address and is valid for ten minutes.
+- The token is bound to the session that asked for it. If that session has ended, confirmation fails with
+  `UNAUTHENTICATED`.
+- An address already used by another identity in the tenant fails with `IDENTITY_EXISTS`.
+- On confirmation the new address is verified, every session ends, and remembered devices are forgotten. Audited
+  as `auth:email:change`.
+
+Administrators change a member's address with `identities.update({ email })`. That needs recent authentication,
+leaves the new address **unverified**, revokes the person's sessions, and is audited as `identity:email-change`.
+The same owner and root protections as for password resets apply.
+
+## Phone numbers
+
+A verified phone number enables SMS sign-in codes (when `passwordlessSms` is on). Verification proves the number
+belongs to the person before codes are sent there. They add one from a signed-in, recently authenticated session:
+`auth.startPhoneVerification` texts a code to the number, and `auth.confirmPhoneVerification` checks the code and
+marks the number verified.
+
+```ts
+await client.auth.startPhoneVerification({ phone: '+15551234567' }); // E.164
+await client.auth.confirmPhoneVerification({ phone: '+15551234567', code: '482913' });
+```
+
+The six-digit code is sent by SMS with the `phone-verify` template, is valid for five minutes, and is bound to the
+session that asked for it. A number already verified by another identity in the tenant fails with `PHONE_EXISTS`.
+Verification is audited as `auth:phone:verify`.
+
+## A lost second factor
+
+When a person loses their authenticator, they sign in with their password and answer the challenge with one of
+their ten single-use **recovery codes** (`auth.recoverMfa`). Once signed in, they can enroll a new authenticator or
+regenerate their codes; see [recovery codes](/docs/guides/authentication/mfa#recovery-codes). A registered passkey
+can also answer the challenge. Resetting a password does not remove MFA, so a stolen mailbox alone is not enough to
+take over an account that has a second factor.
+
+## Lockouts
+
+Rate limits that stop an attacker also stop a person who mistyped their password too often. Sign-in, recovery, and
+MFA flows share persisted rate limits (`authentication.rateLimits`, tightened per tenant with `maxAttempts`).
+Recovery requests and code checks use the stricter sensitive tier. A refused attempt fails with `RATE_LIMITED`
+(429). The error carries `retryAfterMs`, the HTTP response adds a `Retry-After` header, and
+`IamClientError.retryAfterMs` exposes it to browser code. See
+[rate limits](/docs/guides/authentication/http#rate-limits).
+
+The counters reset by themselves when the window passes. When someone cannot wait, `identities.unlock` lets an
+administrator clear that person's counters right away:
+
+```ts
+const { supported, cleared } = await iam.api.identities.unlock(adminCredential, { tenantId, identityId });
+```
+
+`identities.unlock` needs `iam:identities:update` and recent authentication and is audited as `identity:unlock`.
+It clears the counters behind the person's sign-in, recovery, and MFA flows, keyed by their email, phone, and ID.
+It never clears a network's per-IP counter. A custom limiter opts in by implementing `reset`; without it the call
+reports `supported: false`.
+
+## Recovering root access
+
+When every root administrator is locked out, a deployment operator creates a new root administrator with
+`iam.recoverRoot`, usually through the [`recover-root` CLI command](/docs/reference/cli#recover-root). It needs an
+email address the root tenant does not use yet (`IDENTITY_EXISTS` otherwise), and the new administrator enrolls
+MFA on first sign-in like the first one did. See
+[root administration](/docs/guides/concepts/tenants-and-identities#root-administration).

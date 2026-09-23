@@ -1,0 +1,2544 @@
+{
+ "version": "0.1.0",
+ "commands": [
+  {
+   "name": "init",
+   "group": "Setup",
+   "summary": "Write a starter configuration file for SQLite, PostgreSQL, or libSQL",
+   "usage": "better-iam init [--config better-iam.config.mjs] [--database sqlite|postgres|libsql] [--typescript]",
+   "target": "none",
+   "args": [],
+   "flags": [
+    {
+     "flag": "--config",
+     "value": "PATH",
+     "optional": true,
+     "description": "Where to write the configuration"
+    },
+    {
+     "flag": "--database",
+     "value": "sqlite|postgres|libsql",
+     "optional": true,
+     "description": "Database adapter to configure",
+     "default": "sqlite",
+     "choices": [
+      "sqlite",
+      "postgres",
+      "libsql"
+     ]
+    },
+    {
+     "flag": "--typescript",
+     "optional": true,
+     "description": "Write a typed better-iam.config.ts"
+    }
+   ],
+   "examples": [
+    "better-iam init",
+    "better-iam init --database postgres --typescript"
+   ],
+   "description": "init writes a starter better-iam.config.mjs (or better-iam.config.ts with --typescript): a configuration factory for the chosen database that reads the secret and URLs from the environment, CLI flag defaults, and an empty list of project commands. It never overwrites an existing file."
+  },
+  {
+   "name": "migrate",
+   "group": "Setup",
+   "summary": "Create or upgrade the database schema and apply plugin migrations",
+   "usage": "better-iam migrate --config better-iam.config.mjs",
+   "target": "config",
+   "args": [],
+   "flags": [
+    {
+     "flag": "--config",
+     "value": "PATH",
+     "optional": true,
+     "description": "Configuration module; default: the nearest better-iam.config.mjs, .js, or .ts",
+     "env": "BETTER_IAM_CONFIG"
+    }
+   ],
+   "examples": [],
+   "description": "migrate creates or upgrades the database schema and applies plugin migrations. Run it on every deploy before the application starts."
+  },
+  {
+   "name": "bootstrap",
+   "group": "Setup",
+   "summary": "Create the root administrator from environment variables",
+   "usage": "better-iam bootstrap --config better-iam.config.mjs",
+   "target": "config",
+   "args": [],
+   "flags": [
+    {
+     "flag": "--config",
+     "value": "PATH",
+     "optional": true,
+     "description": "Configuration module; default: the nearest better-iam.config.mjs, .js, or .ts",
+     "env": "BETTER_IAM_CONFIG"
+    },
+    {
+     "flag": "--format",
+     "value": "FORMAT",
+     "optional": true,
+     "description": "Output as json (indented, default), compact (one line), or table",
+     "choices": [
+      "json",
+      "compact",
+      "table"
+     ]
+    },
+    {
+     "flag": "--query",
+     "value": "PATH",
+     "optional": true,
+     "description": "Print only part of the result, e.g. summary.create or findings[].kind (strings print raw)"
+    }
+   ],
+   "examples": [],
+   "description": "bootstrap creates the root administrator from BETTER_IAM_ROOT_EMAIL, BETTER_IAM_ROOT_NAME, and BETTER_IAM_ROOT_PASSWORD (secrets are never accepted in command-line arguments). The root must enroll MFA before use."
+  },
+  {
+   "name": "recover-root",
+   "group": "Setup",
+   "summary": "Create a new root administrator when every root credential is lost",
+   "usage": "better-iam recover-root --config better-iam.config.mjs",
+   "target": "config",
+   "args": [],
+   "flags": [
+    {
+     "flag": "--config",
+     "value": "PATH",
+     "optional": true,
+     "description": "Configuration module; default: the nearest better-iam.config.mjs, .js, or .ts",
+     "env": "BETTER_IAM_CONFIG"
+    },
+    {
+     "flag": "--format",
+     "value": "FORMAT",
+     "optional": true,
+     "description": "Output as json (indented, default), compact (one line), or table",
+     "choices": [
+      "json",
+      "compact",
+      "table"
+     ]
+    },
+    {
+     "flag": "--query",
+     "value": "PATH",
+     "optional": true,
+     "description": "Print only part of the result, e.g. summary.create or findings[].kind (strings print raw)"
+    }
+   ],
+   "examples": [],
+   "description": "recover-root creates a new root administrator from the same environment variables as bootstrap, for when every root credential is lost; the action is audited as root:recover."
+  },
+  {
+   "name": "doctor",
+   "group": "Setup",
+   "summary": "Check the database, schema, secrets, transports, and scheduled jobs",
+   "usage": "better-iam doctor --config better-iam.config.mjs [--strict] [--retention-days N]",
+   "target": "config",
+   "args": [],
+   "flags": [
+    {
+     "flag": "--strict",
+     "optional": true,
+     "description": "Exit non-zero when any error or warning is found"
+    },
+    {
+     "flag": "--retention-days",
+     "value": "N",
+     "optional": true,
+     "description": "Delivery retention your sweep uses, to judge its backlog the same way"
+    },
+    {
+     "flag": "--config",
+     "value": "PATH",
+     "optional": true,
+     "description": "Configuration module; default: the nearest better-iam.config.mjs, .js, or .ts",
+     "env": "BETTER_IAM_CONFIG"
+    },
+    {
+     "flag": "--format",
+     "value": "FORMAT",
+     "optional": true,
+     "description": "Output as json (indented, default), compact (one line), or table",
+     "choices": [
+      "json",
+      "compact",
+      "table"
+     ]
+    },
+    {
+     "flag": "--query",
+     "value": "PATH",
+     "optional": true,
+     "description": "Print only part of the result, e.g. summary.create or findings[].kind (strings print raw)"
+    }
+   ],
+   "examples": [],
+   "description": "doctor connects to the database and lists findings (schema behind, not bootstrapped, weak secret, risky durability, missing email transport, jobs that are not running); --strict exits non-zero when any error or warning is found; pass the --retention-days your sweep uses so its backlog is judged the same way."
+  },
+  {
+   "name": "secret",
+   "group": "Setup",
+   "summary": "Print a new random secret for BETTER_IAM_SECRET",
+   "usage": "better-iam secret [--bytes N] [--env]",
+   "target": "none",
+   "args": [],
+   "flags": [
+    {
+     "flag": "--bytes",
+     "value": "N",
+     "optional": true,
+     "description": "Random bytes (the secret is their base64url form)",
+     "default": 48
+    },
+    {
+     "flag": "--env",
+     "optional": true,
+     "description": "Print BETTER_IAM_SECRET=value"
+    }
+   ],
+   "examples": [
+    "better-iam secret --env >> .env"
+   ],
+   "description": "secret prints a new random value for BETTER_IAM_SECRET (64 URL-safe characters by default) from the operating system random generator; --env prints it as a BETTER_IAM_SECRET= line for a .env file. It reads no configuration and stores nothing."
+  },
+  {
+   "name": "outbox",
+   "group": "Operations",
+   "summary": "Deliver pending emails, SMS, and webhooks from the outbox",
+   "usage": "better-iam outbox --config better-iam.config.mjs",
+   "target": "config",
+   "args": [],
+   "flags": [
+    {
+     "flag": "--config",
+     "value": "PATH",
+     "optional": true,
+     "description": "Configuration module; default: the nearest better-iam.config.mjs, .js, or .ts",
+     "env": "BETTER_IAM_CONFIG"
+    },
+    {
+     "flag": "--format",
+     "value": "FORMAT",
+     "optional": true,
+     "description": "Output as json (indented, default), compact (one line), or table",
+     "choices": [
+      "json",
+      "compact",
+      "table"
+     ]
+    },
+    {
+     "flag": "--query",
+     "value": "PATH",
+     "optional": true,
+     "description": "Print only part of the result, e.g. summary.create or findings[].kind (strings print raw)"
+    }
+   ],
+   "examples": [],
+   "description": "outbox delivers pending transactional messages from the encrypted delivery outbox and then dispatches audit hooks (webhooks); a deployment operation for a scheduler."
+  },
+  {
+   "name": "purge",
+   "group": "Operations",
+   "summary": "Remove deleted tenants past retention and expired grants",
+   "usage": "better-iam purge --config better-iam.config.mjs [--retention-days N]",
+   "target": "config",
+   "args": [],
+   "flags": [
+    {
+     "flag": "--retention-days",
+     "value": "N",
+     "optional": true,
+     "description": "Keep deleted tenants this many days",
+     "default": 30
+    },
+    {
+     "flag": "--config",
+     "value": "PATH",
+     "optional": true,
+     "description": "Configuration module; default: the nearest better-iam.config.mjs, .js, or .ts",
+     "env": "BETTER_IAM_CONFIG"
+    },
+    {
+     "flag": "--format",
+     "value": "FORMAT",
+     "optional": true,
+     "description": "Output as json (indented, default), compact (one line), or table",
+     "choices": [
+      "json",
+      "compact",
+      "table"
+     ]
+    },
+    {
+     "flag": "--query",
+     "value": "PATH",
+     "optional": true,
+     "description": "Print only part of the result, e.g. summary.create or findings[].kind (strings print raw)"
+    }
+   ],
+   "examples": [],
+   "description": "Purge removes tenants deleted more than N days ago (default 30) including their data, and records the action in the audit log. Audit records remain."
+  },
+  {
+   "name": "sweep",
+   "group": "Operations",
+   "summary": "Delete expired sessions, protocol artifacts, and old deliveries",
+   "usage": "better-iam sweep --config better-iam.config.mjs [--limit N] [--retention-days N]",
+   "target": "config",
+   "args": [],
+   "flags": [
+    {
+     "flag": "--limit",
+     "value": "N",
+     "optional": true,
+     "description": "Most records deleted per run",
+     "default": 10000
+    },
+    {
+     "flag": "--retention-days",
+     "value": "N",
+     "optional": true,
+     "description": "Keep delivered and failed deliveries this many days",
+     "default": 30
+    },
+    {
+     "flag": "--config",
+     "value": "PATH",
+     "optional": true,
+     "description": "Configuration module; default: the nearest better-iam.config.mjs, .js, or .ts",
+     "env": "BETTER_IAM_CONFIG"
+    },
+    {
+     "flag": "--format",
+     "value": "FORMAT",
+     "optional": true,
+     "description": "Output as json (indented, default), compact (one line), or table",
+     "choices": [
+      "json",
+      "compact",
+      "table"
+     ]
+    },
+    {
+     "flag": "--query",
+     "value": "PATH",
+     "optional": true,
+     "description": "Print only part of the result, e.g. summary.create or findings[].kind (strings print raw)"
+    }
+   ],
+   "examples": [],
+   "description": "sweep deletes expired sessions, devices, relationship tuples, OAuth and SAML artifacts, and deliveries older than --retention-days (30) in short batches, at most --limit (10000) records per run; schedule it beside purge."
+  },
+  {
+   "name": "digest",
+   "group": "Operations",
+   "summary": "Email each organization owner its access report",
+   "usage": "better-iam digest --config better-iam.config.mjs [--tenant TENANT_ID] [--within-days N] [--unused-days N]",
+   "target": "config",
+   "args": [],
+   "flags": [
+    {
+     "flag": "--tenant",
+     "value": "TENANT_ID",
+     "optional": true,
+     "description": "Only this organization (default: every active one)"
+    },
+    {
+     "flag": "--within-days",
+     "value": "N",
+     "optional": true,
+     "description": "Report access ending within this many days",
+     "default": 30
+    },
+    {
+     "flag": "--unused-days",
+     "value": "N",
+     "optional": true,
+     "description": "Report keys unused for this many days",
+     "default": 30
+    },
+    {
+     "flag": "--config",
+     "value": "PATH",
+     "optional": true,
+     "description": "Configuration module; default: the nearest better-iam.config.mjs, .js, or .ts",
+     "env": "BETTER_IAM_CONFIG"
+    },
+    {
+     "flag": "--format",
+     "value": "FORMAT",
+     "optional": true,
+     "description": "Output as json (indented, default), compact (one line), or table",
+     "choices": [
+      "json",
+      "compact",
+      "table"
+     ]
+    },
+    {
+     "flag": "--query",
+     "value": "PATH",
+     "optional": true,
+     "description": "Print only part of the result, e.g. summary.create or findings[].kind (strings print raw)"
+    }
+   ],
+   "examples": [],
+   "description": "digest emails the access report to the owners of every active organization (or one --tenant) that has something to report, at most once a day per organization; a deployment operation for cron, like purge."
+  },
+  {
+   "name": "remind",
+   "group": "Operations",
+   "summary": "Email people whose access ends soon",
+   "usage": "better-iam remind --config better-iam.config.mjs [--tenant TENANT_ID] [--within-days N]",
+   "target": "config",
+   "args": [],
+   "flags": [
+    {
+     "flag": "--tenant",
+     "value": "TENANT_ID",
+     "optional": true,
+     "description": "Only this organization (default: every active one)"
+    },
+    {
+     "flag": "--within-days",
+     "value": "N",
+     "optional": true,
+     "description": "Remind about access ending within this many days",
+     "default": 7
+    },
+    {
+     "flag": "--config",
+     "value": "PATH",
+     "optional": true,
+     "description": "Configuration module; default: the nearest better-iam.config.mjs, .js, or .ts",
+     "env": "BETTER_IAM_CONFIG"
+    },
+    {
+     "flag": "--format",
+     "value": "FORMAT",
+     "optional": true,
+     "description": "Output as json (indented, default), compact (one line), or table",
+     "choices": [
+      "json",
+      "compact",
+      "table"
+     ]
+    },
+    {
+     "flag": "--query",
+     "value": "PATH",
+     "optional": true,
+     "description": "Print only part of the result, e.g. summary.create or findings[].kind (strings print raw)"
+    }
+   ],
+   "examples": [],
+   "description": "remind emails each person whose account, role bindings, group memberships, or packages end within --within-days (7), once per item and end date; a deployment operation like digest."
+  },
+  {
+   "name": "reconcile",
+   "group": "Operations",
+   "summary": "Apply access-package rules (birthright access)",
+   "usage": "better-iam reconcile --config better-iam.config.mjs [--tenant TENANT_ID [--package PACKAGE_ID [--confirm]]] [--limit N] [--fail-on-attention]",
+   "target": "config",
+   "args": [],
+   "flags": [
+    {
+     "flag": "--tenant",
+     "value": "TENANT_ID",
+     "optional": true,
+     "description": "Only this organization (default: every active one)"
+    },
+    {
+     "flag": "--package",
+     "value": "PACKAGE_ID",
+     "optional": true,
+     "description": "Only this package (needs --tenant)"
+    },
+    {
+     "flag": "--confirm",
+     "optional": true,
+     "description": "Apply a held-back large change (needs --package)"
+    },
+    {
+     "flag": "--limit",
+     "value": "N",
+     "optional": true,
+     "description": "Most changes per organization and run",
+     "default": 1000
+    },
+    {
+     "flag": "--fail-on-attention",
+     "optional": true,
+     "description": "Exit non-zero when a change failed, was held back, or a rule is suspended"
+    },
+    {
+     "flag": "--config",
+     "value": "PATH",
+     "optional": true,
+     "description": "Configuration module; default: the nearest better-iam.config.mjs, .js, or .ts",
+     "env": "BETTER_IAM_CONFIG"
+    },
+    {
+     "flag": "--format",
+     "value": "FORMAT",
+     "optional": true,
+     "description": "Output as json (indented, default), compact (one line), or table",
+     "choices": [
+      "json",
+      "compact",
+      "table"
+     ]
+    },
+    {
+     "flag": "--query",
+     "value": "PATH",
+     "optional": true,
+     "description": "Print only part of the result, e.g. summary.create or findings[].kind (strings print raw)"
+    }
+   ],
+   "examples": [],
+   "description": "reconcile applies access-package rules (birthright access): identities that match a package's autoAssign rule receive it and automatic holders that stopped matching lose it, at most --limit (1000) changes per organization and run, under each rule owner's grant authority; a deployment operation for cron (run it after purge). Unusually large changes are held back until confirmed with --tenant ID --package ID --confirm; --fail-on-attention exits non-zero when a change failed, was held back, or a rule is suspended."
+  },
+  {
+   "name": "close-certifications",
+   "group": "Operations",
+   "summary": "Close and apply overdue auto-closing certification campaigns",
+   "usage": "better-iam close-certifications --config better-iam.config.mjs [--tenant TENANT_ID]",
+   "target": "config",
+   "args": [],
+   "flags": [
+    {
+     "flag": "--tenant",
+     "value": "TENANT_ID",
+     "optional": true,
+     "description": "Only this organization (default: every active one)"
+    },
+    {
+     "flag": "--config",
+     "value": "PATH",
+     "optional": true,
+     "description": "Configuration module; default: the nearest better-iam.config.mjs, .js, or .ts",
+     "env": "BETTER_IAM_CONFIG"
+    },
+    {
+     "flag": "--format",
+     "value": "FORMAT",
+     "optional": true,
+     "description": "Output as json (indented, default), compact (one line), or table",
+     "choices": [
+      "json",
+      "compact",
+      "table"
+     ]
+    },
+    {
+     "flag": "--query",
+     "value": "PATH",
+     "optional": true,
+     "description": "Print only part of the result, e.g. summary.create or findings[].kind (strings print raw)"
+    }
+   ],
+   "examples": [],
+   "description": "close-certifications closes every access-certification campaign created with autoClose whose due date has passed (or only one --tenant's), applying its decisions under the creator's authority; a deployment operation for cron."
+  },
+  {
+   "name": "monitor-invariants",
+   "group": "Operations",
+   "summary": "Evaluate every organization's invariants and audit status changes",
+   "usage": "better-iam monitor-invariants --config better-iam.config.mjs [--tenant TENANT_ID]",
+   "target": "config",
+   "args": [],
+   "flags": [
+    {
+     "flag": "--tenant",
+     "value": "TENANT_ID",
+     "optional": true,
+     "description": "Only this organization (default: every active one)"
+    },
+    {
+     "flag": "--config",
+     "value": "PATH",
+     "optional": true,
+     "description": "Configuration module; default: the nearest better-iam.config.mjs, .js, or .ts",
+     "env": "BETTER_IAM_CONFIG"
+    },
+    {
+     "flag": "--format",
+     "value": "FORMAT",
+     "optional": true,
+     "description": "Output as json (indented, default), compact (one line), or table",
+     "choices": [
+      "json",
+      "compact",
+      "table"
+     ]
+    },
+    {
+     "flag": "--query",
+     "value": "PATH",
+     "optional": true,
+     "description": "Print only part of the result, e.g. summary.create or findings[].kind (strings print raw)"
+    }
+   ],
+   "examples": [],
+   "description": "monitor-invariants evaluates every organization's invariants (or one --tenant's) and records invariant:broken / invariant:restored audit events when their status changes, so webhooks can alert; a deployment operation for cron."
+  },
+  {
+   "name": "rotate-secrets",
+   "group": "Operations",
+   "summary": "Re-seal stored secrets with the current deployment secret",
+   "usage": "better-iam rotate-secrets --config better-iam.config.mjs [--dry-run]",
+   "target": "config",
+   "args": [],
+   "flags": [
+    {
+     "flag": "--dry-run",
+     "optional": true,
+     "description": "Only count what would be re-sealed"
+    },
+    {
+     "flag": "--config",
+     "value": "PATH",
+     "optional": true,
+     "description": "Configuration module; default: the nearest better-iam.config.mjs, .js, or .ts",
+     "env": "BETTER_IAM_CONFIG"
+    },
+    {
+     "flag": "--format",
+     "value": "FORMAT",
+     "optional": true,
+     "description": "Output as json (indented, default), compact (one line), or table",
+     "choices": [
+      "json",
+      "compact",
+      "table"
+     ]
+    },
+    {
+     "flag": "--query",
+     "value": "PATH",
+     "optional": true,
+     "description": "Print only part of the result, e.g. summary.create or findings[].kind (strings print raw)"
+    }
+   ],
+   "examples": [],
+   "description": "rotate-secrets re-seals authenticator secrets, webhook secrets, and pending deliveries sealed with previousSecrets using the current secret; --dry-run only counts them."
+  },
+  {
+   "name": "billing-close",
+   "group": "Operations",
+   "summary": "Issue billing statements for a month that has ended",
+   "usage": "better-iam billing-close --config better-iam.config.mjs [--period YYYY-MM] [--tenant TENANT_ID] [--draft]",
+   "target": "config",
+   "args": [],
+   "flags": [
+    {
+     "flag": "--period",
+     "value": "YYYY-MM",
+     "optional": true,
+     "description": "The billing month"
+    },
+    {
+     "flag": "--tenant",
+     "value": "TENANT_ID",
+     "optional": true,
+     "description": "Only the billing account that pays for this tenant"
+    },
+    {
+     "flag": "--draft",
+     "optional": true,
+     "description": "Keep the invoices as drafts to review and finalize"
+    },
+    {
+     "flag": "--config",
+     "value": "PATH",
+     "optional": true,
+     "description": "Configuration module; default: the nearest better-iam.config.mjs, .js, or .ts",
+     "env": "BETTER_IAM_CONFIG"
+    },
+    {
+     "flag": "--format",
+     "value": "FORMAT",
+     "optional": true,
+     "description": "Output as json (indented, default), compact (one line), or table",
+     "choices": [
+      "json",
+      "compact",
+      "table"
+     ]
+    },
+    {
+     "flag": "--query",
+     "value": "PATH",
+     "optional": true,
+     "description": "Print only part of the result, e.g. summary.create or findings[].kind (strings print raw)"
+    }
+   ],
+   "examples": [
+    "better-iam billing-close",
+    "better-iam billing-close --period 2026-08",
+    "better-iam billing-close --draft"
+   ],
+   "description": "billing-close invoices every billing account with something to bill in --period (default: last month): usage, subscription fees and seats, and pending invoice items. It skips accounts already invoiced, applies coupons and credit, emails the invoices, and deletes raw usage events past their retention; a deployment operation for a daily scheduler. With --draft (or billing.autoFinalize: false) invoices stay drafts, refreshed on each run, until finalized."
+  },
+  {
+   "name": "billing-reminders",
+   "group": "Operations",
+   "summary": "Remind billing contacts of unpaid invoices",
+   "usage": "better-iam billing-reminders --config better-iam.config.mjs",
+   "target": "config",
+   "args": [],
+   "flags": [
+    {
+     "flag": "--config",
+     "value": "PATH",
+     "optional": true,
+     "description": "Configuration module; default: the nearest better-iam.config.mjs, .js, or .ts",
+     "env": "BETTER_IAM_CONFIG"
+    },
+    {
+     "flag": "--format",
+     "value": "FORMAT",
+     "optional": true,
+     "description": "Output as json (indented, default), compact (one line), or table",
+     "choices": [
+      "json",
+      "compact",
+      "table"
+     ]
+    },
+    {
+     "flag": "--query",
+     "value": "PATH",
+     "optional": true,
+     "description": "Print only part of the result, e.g. summary.create or findings[].kind (strings print raw)"
+    }
+   ],
+   "examples": [],
+   "description": "billing-reminders emails the billing contacts of every finalized invoice with an amount due as payment-reminder at the steps of billing.paymentReminderDays (default 3 days before the due date, on it, and 7 and 14 days after), once per step; each is audited as billing:payment-reminder. Run it daily."
+  },
+  {
+   "name": "billing-alerts",
+   "group": "Operations",
+   "summary": "Send spend-budget alerts",
+   "usage": "better-iam billing-alerts --config better-iam.config.mjs [--tenant TENANT_ID]",
+   "target": "config",
+   "args": [],
+   "flags": [
+    {
+     "flag": "--tenant",
+     "value": "TENANT_ID",
+     "optional": true,
+     "description": "Only budgets this tenant owns (default: every budget)"
+    },
+    {
+     "flag": "--config",
+     "value": "PATH",
+     "optional": true,
+     "description": "Configuration module; default: the nearest better-iam.config.mjs, .js, or .ts",
+     "env": "BETTER_IAM_CONFIG"
+    },
+    {
+     "flag": "--format",
+     "value": "FORMAT",
+     "optional": true,
+     "description": "Output as json (indented, default), compact (one line), or table",
+     "choices": [
+      "json",
+      "compact",
+      "table"
+     ]
+    },
+    {
+     "flag": "--query",
+     "value": "PATH",
+     "optional": true,
+     "description": "Print only part of the result, e.g. summary.create or findings[].kind (strings print raw)"
+    }
+   ],
+   "examples": [],
+   "description": "billing-alerts checks every spend budget (or those one --tenant owns) and alerts, once per threshold and window, on thresholds reached and projections past the budget: audited as billing:budget-alert and emailed as spend-alert when mail is configured. Run it hourly."
+  },
+  {
+   "name": "billing-anomalies",
+   "group": "Operations",
+   "summary": "Alert on spend spikes from yesterday",
+   "usage": "better-iam billing-anomalies --config better-iam.config.mjs [--tenant TENANT_ID] [--day YYYY-MM-DD] [--factor N] [--minimum N]",
+   "target": "config",
+   "args": [],
+   "flags": [
+    {
+     "flag": "--tenant",
+     "value": "TENANT_ID",
+     "optional": true,
+     "description": "Only the billing account that pays for this tenant"
+    },
+    {
+     "flag": "--day",
+     "value": "YYYY-MM-DD",
+     "optional": true,
+     "description": "The day to check"
+    },
+    {
+     "flag": "--factor",
+     "value": "N",
+     "optional": true,
+     "description": "Times the usual daily spend that counts as a spike",
+     "default": 3
+    },
+    {
+     "flag": "--minimum",
+     "value": "N",
+     "optional": true,
+     "description": "Smallest spend and increase worth reporting, in currency units",
+     "default": 10
+    },
+    {
+     "flag": "--config",
+     "value": "PATH",
+     "optional": true,
+     "description": "Configuration module; default: the nearest better-iam.config.mjs, .js, or .ts",
+     "env": "BETTER_IAM_CONFIG"
+    },
+    {
+     "flag": "--format",
+     "value": "FORMAT",
+     "optional": true,
+     "description": "Output as json (indented, default), compact (one line), or table",
+     "choices": [
+      "json",
+      "compact",
+      "table"
+     ]
+    },
+    {
+     "flag": "--query",
+     "value": "PATH",
+     "optional": true,
+     "description": "Print only part of the result, e.g. summary.create or findings[].kind (strings print raw)"
+    }
+   ],
+   "examples": [],
+   "description": "billing-anomalies checks every billing account (or the one paying for --tenant) for people, teams and meters whose spend on --day (default yesterday) is --factor (3) times their average over the 14 days before and --minimum (10) currency units more; each is audited as billing:anomaly once and emailed as spend-anomaly when mail is configured. Run it daily."
+  },
+  {
+   "name": "billing-seats",
+   "group": "Operations",
+   "summary": "Record one seat per active person for today",
+   "usage": "better-iam billing-seats --config better-iam.config.mjs [--meter KEY] [--tenant TENANT_ID] [--include-service-accounts]",
+   "target": "config",
+   "args": [],
+   "flags": [
+    {
+     "flag": "--meter",
+     "value": "KEY",
+     "optional": true,
+     "description": "The meter seats are recorded on",
+     "default": "seats"
+    },
+    {
+     "flag": "--tenant",
+     "value": "TENANT_ID",
+     "optional": true,
+     "description": "Only this tenant and the tenants below it"
+    },
+    {
+     "flag": "--include-service-accounts",
+     "optional": true,
+     "description": "Count service accounts and agents as seats too"
+    },
+    {
+     "flag": "--config",
+     "value": "PATH",
+     "optional": true,
+     "description": "Configuration module; default: the nearest better-iam.config.mjs, .js, or .ts",
+     "env": "BETTER_IAM_CONFIG"
+    },
+    {
+     "flag": "--format",
+     "value": "FORMAT",
+     "optional": true,
+     "description": "Output as json (indented, default), compact (one line), or table",
+     "choices": [
+      "json",
+      "compact",
+      "table"
+     ]
+    },
+    {
+     "flag": "--query",
+     "value": "PATH",
+     "optional": true,
+     "description": "Print only part of the result, e.g. summary.create or findings[].kind (strings print raw)"
+    }
+   ],
+   "examples": [],
+   "description": "billing-seats records one unit of --meter (default seats) for every active person of every tenant the meter reaches, once per day; a sum meter then counts seat-days and a unique meter active seats per month. Run it daily."
+  },
+  {
+   "name": "spend",
+   "group": "Access",
+   "summary": "Print a tenant's spend for a month",
+   "usage": "better-iam spend --config better-iam.config.mjs --tenant TENANT_ID [--period YYYY-MM] [--group-by meter|identity|agent|team|department|tenant|day] [--team TEAM_ID] [--department DEPARTMENT_ID] [--identity IDENTITY_ID] [--meter KEY] [--url URL] [--profile NAME]",
+   "target": "token",
+   "args": [],
+   "flags": [
+    {
+     "flag": "--tenant",
+     "value": "TENANT_ID",
+     "optional": false,
+     "description": "The tenant to act in",
+     "env": "BETTER_IAM_TENANT"
+    },
+    {
+     "flag": "--period",
+     "value": "YYYY-MM",
+     "optional": true,
+     "description": "The billing month"
+    },
+    {
+     "flag": "--group-by",
+     "value": "meter|identity|agent|team|department|tenant|day",
+     "optional": true,
+     "description": "How rows are grouped",
+     "default": "meter",
+     "choices": [
+      "meter",
+      "identity",
+      "agent",
+      "team",
+      "department",
+      "tenant",
+      "day"
+     ]
+    },
+    {
+     "flag": "--team",
+     "value": "TEAM_ID",
+     "optional": true,
+     "description": "Only this team (with its sub-teams)"
+    },
+    {
+     "flag": "--department",
+     "value": "DEPARTMENT_ID",
+     "optional": true,
+     "description": "Only this department (with those below it)"
+    },
+    {
+     "flag": "--identity",
+     "value": "IDENTITY_ID",
+     "optional": true,
+     "description": "Only this person or account"
+    },
+    {
+     "flag": "--meter",
+     "value": "KEY",
+     "optional": true,
+     "description": "Only this meter"
+    },
+    {
+     "flag": "--config",
+     "value": "PATH",
+     "optional": true,
+     "description": "Configuration module; default: the nearest better-iam.config.mjs, .js, or .ts",
+     "env": "BETTER_IAM_CONFIG"
+    },
+    {
+     "flag": "--url",
+     "value": "URL",
+     "optional": true,
+     "description": "Call a running IAM server (https://host or https://host/api/iam) instead of loading the configuration",
+     "env": "BETTER_IAM_URL"
+    },
+    {
+     "flag": "--profile",
+     "value": "NAME",
+     "optional": true,
+     "description": "Saved session to act as (see login); ignored while BETTER_IAM_TOKEN is set",
+     "env": "BETTER_IAM_PROFILE"
+    },
+    {
+     "flag": "--format",
+     "value": "FORMAT",
+     "optional": true,
+     "description": "Output as json (indented, default), compact (one line), or table",
+     "choices": [
+      "json",
+      "compact",
+      "table"
+     ]
+    },
+    {
+     "flag": "--query",
+     "value": "PATH",
+     "optional": true,
+     "description": "Print only part of the result, e.g. summary.create or findings[].kind (strings print raw)"
+    }
+   ],
+   "examples": [
+    "better-iam spend --tenant acme-id --group-by team",
+    "better-iam spend --period 2026-08"
+   ],
+   "description": "spend prints the spend of the tenant and the tenants below it as BETTER_IAM_TOKEN (iam:billing:read), grouped by --group-by (default meter) and optionally narrowed to a --team, --department, --identity or --meter; the current month also carries a linear forecast."
+  },
+  {
+   "name": "audit-verify",
+   "group": "Audit",
+   "summary": "Recompute and check a tenant's audit hash chain",
+   "usage": "better-iam audit-verify --config better-iam.config.mjs --tenant TENANT_ID",
+   "target": "config",
+   "args": [],
+   "flags": [
+    {
+     "flag": "--tenant",
+     "value": "TENANT_ID",
+     "optional": false,
+     "description": "The tenant whose audit chain to read"
+    },
+    {
+     "flag": "--config",
+     "value": "PATH",
+     "optional": true,
+     "description": "Configuration module; default: the nearest better-iam.config.mjs, .js, or .ts",
+     "env": "BETTER_IAM_CONFIG"
+    },
+    {
+     "flag": "--format",
+     "value": "FORMAT",
+     "optional": true,
+     "description": "Output as json (indented, default), compact (one line), or table",
+     "choices": [
+      "json",
+      "compact",
+      "table"
+     ]
+    },
+    {
+     "flag": "--query",
+     "value": "PATH",
+     "optional": true,
+     "description": "Print only part of the result, e.g. summary.create or findings[].kind (strings print raw)"
+    }
+   ],
+   "examples": [],
+   "description": "audit-verify recomputes a tenant's audit hash chain from storage and exits non-zero (AUDIT_CHAIN_BROKEN) when it does not verify; it records nothing."
+  },
+  {
+   "name": "audit-export",
+   "group": "Audit",
+   "summary": "Write a tenant's audit chain as JSON Lines",
+   "usage": "better-iam audit-export --config better-iam.config.mjs --tenant TENANT_ID --output PATH",
+   "target": "config",
+   "args": [],
+   "flags": [
+    {
+     "flag": "--tenant",
+     "value": "TENANT_ID",
+     "optional": false,
+     "description": "The tenant whose audit chain to read"
+    },
+    {
+     "flag": "--output",
+     "value": "PATH",
+     "optional": false,
+     "description": "The .jsonl file to create (it must not exist)"
+    },
+    {
+     "flag": "--config",
+     "value": "PATH",
+     "optional": true,
+     "description": "Configuration module; default: the nearest better-iam.config.mjs, .js, or .ts",
+     "env": "BETTER_IAM_CONFIG"
+    },
+    {
+     "flag": "--format",
+     "value": "FORMAT",
+     "optional": true,
+     "description": "Output as json (indented, default), compact (one line), or table",
+     "choices": [
+      "json",
+      "compact",
+      "table"
+     ]
+    },
+    {
+     "flag": "--query",
+     "value": "PATH",
+     "optional": true,
+     "description": "Print only part of the result, e.g. summary.create or findings[].kind (strings print raw)"
+    }
+   ],
+   "examples": [],
+   "description": "audit-export writes a tenant's audit chain as JSON Lines for archiving (never overwriting a file); it records nothing."
+  },
+  {
+   "name": "audit-prune",
+   "group": "Audit",
+   "summary": "Delete a tenant's archived audit events past retention",
+   "usage": "better-iam audit-prune --config better-iam.config.mjs --tenant TENANT_ID [--retention-days N]",
+   "target": "config",
+   "args": [],
+   "flags": [
+    {
+     "flag": "--tenant",
+     "value": "TENANT_ID",
+     "optional": false,
+     "description": "The tenant whose audit chain to read"
+    },
+    {
+     "flag": "--retention-days",
+     "value": "N",
+     "optional": true,
+     "description": "Keep events newer than this many days",
+     "default": 365
+    },
+    {
+     "flag": "--config",
+     "value": "PATH",
+     "optional": true,
+     "description": "Configuration module; default: the nearest better-iam.config.mjs, .js, or .ts",
+     "env": "BETTER_IAM_CONFIG"
+    },
+    {
+     "flag": "--format",
+     "value": "FORMAT",
+     "optional": true,
+     "description": "Output as json (indented, default), compact (one line), or table",
+     "choices": [
+      "json",
+      "compact",
+      "table"
+     ]
+    },
+    {
+     "flag": "--query",
+     "value": "PATH",
+     "optional": true,
+     "description": "Print only part of the result, e.g. summary.create or findings[].kind (strings print raw)"
+    }
+   ],
+   "examples": [],
+   "description": "audit-prune deletes a tenant's events older than --retention-days (365) after you archived them and appends an audit:prune checkpoint so the remaining chain still verifies. With an auditArchive configured, it only deletes events the archive already holds."
+  },
+  {
+   "name": "audit-archive",
+   "group": "Audit",
+   "summary": "Copy new audit events to the configured archive",
+   "usage": "better-iam audit-archive --config better-iam.config.mjs [--tenant TENANT_ID] [--limit N]",
+   "target": "config",
+   "args": [],
+   "flags": [
+    {
+     "flag": "--tenant",
+     "value": "TENANT_ID",
+     "optional": true,
+     "description": "Only this tenant (default: all)"
+    },
+    {
+     "flag": "--limit",
+     "value": "N",
+     "optional": true,
+     "description": "Most events archived per tenant and run"
+    },
+    {
+     "flag": "--config",
+     "value": "PATH",
+     "optional": true,
+     "description": "Configuration module; default: the nearest better-iam.config.mjs, .js, or .ts",
+     "env": "BETTER_IAM_CONFIG"
+    },
+    {
+     "flag": "--format",
+     "value": "FORMAT",
+     "optional": true,
+     "description": "Output as json (indented, default), compact (one line), or table",
+     "choices": [
+      "json",
+      "compact",
+      "table"
+     ]
+    },
+    {
+     "flag": "--query",
+     "value": "PATH",
+     "optional": true,
+     "description": "Print only part of the result, e.g. summary.create or findings[].kind (strings print raw)"
+    }
+   ],
+   "examples": [],
+   "description": "audit-archive copies new audit events, verified and in chain order, to the configured auditArchive; with an archive configured, audit-prune only deletes events it already holds."
+  },
+  {
+   "name": "audit-verify-archive",
+   "group": "Audit",
+   "summary": "Verify an archived audit chain from its files alone",
+   "usage": "better-iam audit-verify-archive --directory /var/lib/better-iam/audit --tenant TENANT_ID",
+   "target": "none",
+   "args": [],
+   "flags": [
+    {
+     "flag": "--directory",
+     "value": "PATH",
+     "optional": false,
+     "description": "The archive directory (createJsonlAuditArchive)"
+    },
+    {
+     "flag": "--tenant",
+     "value": "TENANT_ID",
+     "optional": false,
+     "description": "The tenant whose archive to verify"
+    },
+    {
+     "flag": "--format",
+     "value": "FORMAT",
+     "optional": true,
+     "description": "Output as json (indented, default), compact (one line), or table",
+     "choices": [
+      "json",
+      "compact",
+      "table"
+     ]
+    },
+    {
+     "flag": "--query",
+     "value": "PATH",
+     "optional": true,
+     "description": "Print only part of the result, e.g. summary.create or findings[].kind (strings print raw)"
+    }
+   ],
+   "examples": [],
+   "description": "audit-verify-archive verifies one tenant's archived chain from createJsonlAuditArchive files alone, without the database: every sequence present once, hashes recomputed, links intact."
+  },
+  {
+   "name": "store-export",
+   "group": "Storage",
+   "summary": "Write every record of the database as a JSON Lines snapshot",
+   "usage": "better-iam store-export --config better-iam.config.mjs --output PATH",
+   "target": "config",
+   "args": [],
+   "flags": [
+    {
+     "flag": "--output",
+     "value": "PATH",
+     "optional": false,
+     "description": "The snapshot file to create (mode 0600; it must not exist)"
+    },
+    {
+     "flag": "--config",
+     "value": "PATH",
+     "optional": true,
+     "description": "Configuration module; default: the nearest better-iam.config.mjs, .js, or .ts",
+     "env": "BETTER_IAM_CONFIG"
+    },
+    {
+     "flag": "--format",
+     "value": "FORMAT",
+     "optional": true,
+     "description": "Output as json (indented, default), compact (one line), or table",
+     "choices": [
+      "json",
+      "compact",
+      "table"
+     ]
+    },
+    {
+     "flag": "--query",
+     "value": "PATH",
+     "optional": true,
+     "description": "Print only part of the result, e.g. summary.create or findings[].kind (strings print raw)"
+    }
+   ],
+   "examples": [],
+   "description": "store-export writes every record of the database as a JSON Lines snapshot (one consistent transaction; the file holds credential hashes and encrypted secrets, so protect it like the database). It never overwrites a file."
+  },
+  {
+   "name": "store-import",
+   "group": "Storage",
+   "summary": "Load a snapshot into an empty database",
+   "usage": "better-iam store-import --config better-iam.config.mjs --input PATH",
+   "target": "config",
+   "args": [],
+   "flags": [
+    {
+     "flag": "--input",
+     "value": "PATH",
+     "optional": false,
+     "description": "The snapshot to load"
+    },
+    {
+     "flag": "--config",
+     "value": "PATH",
+     "optional": true,
+     "description": "Configuration module; default: the nearest better-iam.config.mjs, .js, or .ts",
+     "env": "BETTER_IAM_CONFIG"
+    },
+    {
+     "flag": "--format",
+     "value": "FORMAT",
+     "optional": true,
+     "description": "Output as json (indented, default), compact (one line), or table",
+     "choices": [
+      "json",
+      "compact",
+      "table"
+     ]
+    },
+    {
+     "flag": "--query",
+     "value": "PATH",
+     "optional": true,
+     "description": "Print only part of the result, e.g. summary.create or findings[].kind (strings print raw)"
+    }
+   ],
+   "examples": [],
+   "description": "store-import loads a snapshot into an empty database in one transaction; it migrates the target first and changes nothing on failure. Run migrate afterwards to apply plugin migrations."
+  },
+  {
+   "name": "store-copy",
+   "group": "Storage",
+   "summary": "Copy the database into the empty database of another configuration",
+   "usage": "better-iam store-copy --config better-iam.config.mjs --target-config PATH",
+   "target": "config",
+   "args": [],
+   "flags": [
+    {
+     "flag": "--target-config",
+     "value": "PATH",
+     "optional": false,
+     "description": "Configuration of the empty target database"
+    },
+    {
+     "flag": "--config",
+     "value": "PATH",
+     "optional": true,
+     "description": "Configuration module; default: the nearest better-iam.config.mjs, .js, or .ts",
+     "env": "BETTER_IAM_CONFIG"
+    },
+    {
+     "flag": "--format",
+     "value": "FORMAT",
+     "optional": true,
+     "description": "Output as json (indented, default), compact (one line), or table",
+     "choices": [
+      "json",
+      "compact",
+      "table"
+     ]
+    },
+    {
+     "flag": "--query",
+     "value": "PATH",
+     "optional": true,
+     "description": "Print only part of the result, e.g. summary.create or findings[].kind (strings print raw)"
+    }
+   ],
+   "examples": [
+    "better-iam store-copy --config sqlite.config.mjs --target-config postgres.config.mjs"
+   ],
+   "description": "store-copy copies the configured database into the empty database of --target-config (for example SQLite to PostgreSQL); it migrates the target first and changes nothing on failure."
+  },
+  {
+   "name": "config-export",
+   "group": "Access",
+   "summary": "Print or save a tenant's configuration as code",
+   "usage": "better-iam config-export --config better-iam.config.mjs --tenant TENANT_ID [--output PATH] [--url URL] [--profile NAME]",
+   "target": "token",
+   "args": [],
+   "flags": [
+    {
+     "flag": "--tenant",
+     "value": "TENANT_ID",
+     "optional": false,
+     "description": "The tenant to act in",
+     "env": "BETTER_IAM_TENANT"
+    },
+    {
+     "flag": "--output",
+     "value": "PATH",
+     "optional": true,
+     "description": "Write to this file instead (.json, or .ts/.mjs for a module); never overwrites"
+    },
+    {
+     "flag": "--config",
+     "value": "PATH",
+     "optional": true,
+     "description": "Configuration module; default: the nearest better-iam.config.mjs, .js, or .ts",
+     "env": "BETTER_IAM_CONFIG"
+    },
+    {
+     "flag": "--url",
+     "value": "URL",
+     "optional": true,
+     "description": "Call a running IAM server (https://host or https://host/api/iam) instead of loading the configuration",
+     "env": "BETTER_IAM_URL"
+    },
+    {
+     "flag": "--profile",
+     "value": "NAME",
+     "optional": true,
+     "description": "Saved session to act as (see login); ignored while BETTER_IAM_TOKEN is set",
+     "env": "BETTER_IAM_PROFILE"
+    },
+    {
+     "flag": "--format",
+     "value": "FORMAT",
+     "optional": true,
+     "description": "Output as json (indented, default), compact (one line), or table",
+     "choices": [
+      "json",
+      "compact",
+      "table"
+     ]
+    },
+    {
+     "flag": "--query",
+     "value": "PATH",
+     "optional": true,
+     "description": "Print only part of the result, e.g. summary.create or findings[].kind (strings print raw)"
+    }
+   ],
+   "examples": [
+    "better-iam config-export --tenant ten_123 --output iam/tenant.config.ts"
+   ],
+   "description": "config-export writes a tenant's roles, policies, groups, resource types, group bindings, packages, invariants, and agreements as JSON (or as a typed module when --output ends in .ts or .mjs). The config commands act as the session or API key in BETTER_IAM_TOKEN (or the session saved by login) and are authorized and audited like console operations."
+  },
+  {
+   "name": "config-plan",
+   "group": "Access",
+   "summary": "Show what applying a configuration would change",
+   "usage": "better-iam config-plan --config better-iam.config.mjs --tenant TENANT_ID --input PATH [--prune] [--fail-on-drift] [--url URL] [--profile NAME]",
+   "target": "token",
+   "args": [],
+   "flags": [
+    {
+     "flag": "--tenant",
+     "value": "TENANT_ID",
+     "optional": false,
+     "description": "The tenant to act in",
+     "env": "BETTER_IAM_TENANT"
+    },
+    {
+     "flag": "--input",
+     "value": "PATH",
+     "optional": false,
+     "description": "Desired configuration: .json, or a .mjs/.js/.ts module exporting it (or a factory)"
+    },
+    {
+     "flag": "--prune",
+     "optional": true,
+     "description": "Also delete items the file omits"
+    },
+    {
+     "flag": "--fail-on-drift",
+     "optional": true,
+     "description": "Exit non-zero when anything would change (CI)"
+    },
+    {
+     "flag": "--config",
+     "value": "PATH",
+     "optional": true,
+     "description": "Configuration module; default: the nearest better-iam.config.mjs, .js, or .ts",
+     "env": "BETTER_IAM_CONFIG"
+    },
+    {
+     "flag": "--url",
+     "value": "URL",
+     "optional": true,
+     "description": "Call a running IAM server (https://host or https://host/api/iam) instead of loading the configuration",
+     "env": "BETTER_IAM_URL"
+    },
+    {
+     "flag": "--profile",
+     "value": "NAME",
+     "optional": true,
+     "description": "Saved session to act as (see login); ignored while BETTER_IAM_TOKEN is set",
+     "env": "BETTER_IAM_PROFILE"
+    },
+    {
+     "flag": "--format",
+     "value": "FORMAT",
+     "optional": true,
+     "description": "Output as json (indented, default), compact (one line), or table",
+     "choices": [
+      "json",
+      "compact",
+      "table"
+     ]
+    },
+    {
+     "flag": "--query",
+     "value": "PATH",
+     "optional": true,
+     "description": "Print only part of the result, e.g. summary.create or findings[].kind (strings print raw)"
+    }
+   ],
+   "examples": [
+    "better-iam config-plan --tenant ten_123 --input iam/tenant.config.ts --fail-on-drift"
+   ],
+   "description": "config-plan shows what config-apply would change (--prune also plans deleting items the file omits); --fail-on-drift exits non-zero when anything would change, for CI. The input can be JSON or a JavaScript/TypeScript module whose default export is the configuration or a factory receiving { tenantId, env }."
+  },
+  {
+   "name": "config-apply",
+   "group": "Access",
+   "summary": "Apply a configuration to a tenant in one transaction",
+   "usage": "better-iam config-apply --config better-iam.config.mjs --tenant TENANT_ID --input PATH [--prune] [--url URL] [--profile NAME]",
+   "target": "token",
+   "args": [],
+   "flags": [
+    {
+     "flag": "--tenant",
+     "value": "TENANT_ID",
+     "optional": false,
+     "description": "The tenant to act in",
+     "env": "BETTER_IAM_TENANT"
+    },
+    {
+     "flag": "--input",
+     "value": "PATH",
+     "optional": false,
+     "description": "Desired configuration: .json, or a .mjs/.js/.ts module exporting it (or a factory)"
+    },
+    {
+     "flag": "--prune",
+     "optional": true,
+     "description": "Also delete items the file omits"
+    },
+    {
+     "flag": "--config",
+     "value": "PATH",
+     "optional": true,
+     "description": "Configuration module; default: the nearest better-iam.config.mjs, .js, or .ts",
+     "env": "BETTER_IAM_CONFIG"
+    },
+    {
+     "flag": "--url",
+     "value": "URL",
+     "optional": true,
+     "description": "Call a running IAM server (https://host or https://host/api/iam) instead of loading the configuration",
+     "env": "BETTER_IAM_URL"
+    },
+    {
+     "flag": "--profile",
+     "value": "NAME",
+     "optional": true,
+     "description": "Saved session to act as (see login); ignored while BETTER_IAM_TOKEN is set",
+     "env": "BETTER_IAM_PROFILE"
+    },
+    {
+     "flag": "--format",
+     "value": "FORMAT",
+     "optional": true,
+     "description": "Output as json (indented, default), compact (one line), or table",
+     "choices": [
+      "json",
+      "compact",
+      "table"
+     ]
+    },
+    {
+     "flag": "--query",
+     "value": "PATH",
+     "optional": true,
+     "description": "Print only part of the result, e.g. summary.create or findings[].kind (strings print raw)"
+    }
+   ],
+   "examples": [
+    "better-iam config-apply --tenant ten_123 --input iam/tenant.config.ts --prune"
+   ],
+   "description": "config-apply applies a configuration in one transaction (--prune also deletes items the file omits), authorized and audited like console operations."
+  },
+  {
+   "name": "config-validate",
+   "group": "Access",
+   "summary": "Check a configuration file offline, without a database or token",
+   "usage": "better-iam config-validate --input PATH [--tenant TENANT_ID] [--strict]",
+   "target": "none",
+   "args": [],
+   "flags": [
+    {
+     "flag": "--input",
+     "value": "PATH",
+     "optional": false,
+     "description": "Desired configuration: .json, or a .mjs/.js/.ts module exporting it (or a factory)"
+    },
+    {
+     "flag": "--tenant",
+     "value": "TENANT_ID",
+     "optional": true,
+     "description": "Passed to a configuration factory as tenantId"
+    },
+    {
+     "flag": "--strict",
+     "optional": true,
+     "description": "Exit non-zero when a reference is not defined in the file"
+    },
+    {
+     "flag": "--format",
+     "value": "FORMAT",
+     "optional": true,
+     "description": "Output as json (indented, default), compact (one line), or table",
+     "choices": [
+      "json",
+      "compact",
+      "table"
+     ]
+    },
+    {
+     "flag": "--query",
+     "value": "PATH",
+     "optional": true,
+     "description": "Print only part of the result, e.g. summary.create or findings[].kind (strings print raw)"
+    }
+   ],
+   "examples": [],
+   "description": "config-validate checks a configuration file offline: its shape, and names it refers to that the file does not define (those must already exist in the tenant, or planning fails). --strict exits non-zero on such warnings. It needs no configuration, database, or token, so it fits pre-commit hooks and CI."
+  },
+  {
+   "name": "analyze",
+   "group": "Access",
+   "summary": "Print a tenant's access-analysis findings",
+   "usage": "better-iam analyze --config better-iam.config.mjs --tenant TENANT_ID [--dormant-days N] [--fail-on high|medium|low] [--url URL] [--profile NAME]",
+   "target": "token",
+   "args": [],
+   "flags": [
+    {
+     "flag": "--tenant",
+     "value": "TENANT_ID",
+     "optional": false,
+     "description": "The tenant to act in",
+     "env": "BETTER_IAM_TENANT"
+    },
+    {
+     "flag": "--dormant-days",
+     "value": "N",
+     "optional": true,
+     "description": "Days without sign-in after which an identity counts as dormant"
+    },
+    {
+     "flag": "--fail-on",
+     "value": "high|medium|low",
+     "optional": true,
+     "description": "Exit non-zero on a finding of this severity or higher",
+     "choices": [
+      "high",
+      "medium",
+      "low"
+     ]
+    },
+    {
+     "flag": "--config",
+     "value": "PATH",
+     "optional": true,
+     "description": "Configuration module; default: the nearest better-iam.config.mjs, .js, or .ts",
+     "env": "BETTER_IAM_CONFIG"
+    },
+    {
+     "flag": "--url",
+     "value": "URL",
+     "optional": true,
+     "description": "Call a running IAM server (https://host or https://host/api/iam) instead of loading the configuration",
+     "env": "BETTER_IAM_URL"
+    },
+    {
+     "flag": "--profile",
+     "value": "NAME",
+     "optional": true,
+     "description": "Saved session to act as (see login); ignored while BETTER_IAM_TOKEN is set",
+     "env": "BETTER_IAM_PROFILE"
+    },
+    {
+     "flag": "--format",
+     "value": "FORMAT",
+     "optional": true,
+     "description": "Output as json (indented, default), compact (one line), or table",
+     "choices": [
+      "json",
+      "compact",
+      "table"
+     ]
+    },
+    {
+     "flag": "--query",
+     "value": "PATH",
+     "optional": true,
+     "description": "Print only part of the result, e.g. summary.create or findings[].kind (strings print raw)"
+    }
+   ],
+   "examples": [
+    "better-iam analyze --tenant ten_123 --fail-on high --format table"
+   ],
+   "description": "analyze prints the tenant's access-analysis findings (as BETTER_IAM_TOKEN, which needs iam:analysis:read); with --fail-on it exits non-zero when an unsuppressed finding of that severity or higher exists, for CI and cron."
+  },
+  {
+   "name": "report",
+   "group": "Access",
+   "summary": "Print a tenant's access report",
+   "usage": "better-iam report --config better-iam.config.mjs --tenant TENANT_ID [--within-days N] [--unused-days N] [--url URL] [--profile NAME]",
+   "target": "token",
+   "args": [],
+   "flags": [
+    {
+     "flag": "--tenant",
+     "value": "TENANT_ID",
+     "optional": false,
+     "description": "The tenant to act in",
+     "env": "BETTER_IAM_TENANT"
+    },
+    {
+     "flag": "--within-days",
+     "value": "N",
+     "optional": true,
+     "description": "Access ending within this many days",
+     "default": 30
+    },
+    {
+     "flag": "--unused-days",
+     "value": "N",
+     "optional": true,
+     "description": "Keys unused for this many days",
+     "default": 30
+    },
+    {
+     "flag": "--config",
+     "value": "PATH",
+     "optional": true,
+     "description": "Configuration module; default: the nearest better-iam.config.mjs, .js, or .ts",
+     "env": "BETTER_IAM_CONFIG"
+    },
+    {
+     "flag": "--url",
+     "value": "URL",
+     "optional": true,
+     "description": "Call a running IAM server (https://host or https://host/api/iam) instead of loading the configuration",
+     "env": "BETTER_IAM_URL"
+    },
+    {
+     "flag": "--profile",
+     "value": "NAME",
+     "optional": true,
+     "description": "Saved session to act as (see login); ignored while BETTER_IAM_TOKEN is set",
+     "env": "BETTER_IAM_PROFILE"
+    },
+    {
+     "flag": "--format",
+     "value": "FORMAT",
+     "optional": true,
+     "description": "Output as json (indented, default), compact (one line), or table",
+     "choices": [
+      "json",
+      "compact",
+      "table"
+     ]
+    },
+    {
+     "flag": "--query",
+     "value": "PATH",
+     "optional": true,
+     "description": "Print only part of the result, e.g. summary.create or findings[].kind (strings print raw)"
+    }
+   ],
+   "examples": [],
+   "description": "report prints the tenant's access report as BETTER_IAM_TOKEN: identities and bindings ending within --within-days (30), keys unused for --unused-days (30) or ending soon, live activations, and pending activation requests."
+  },
+  {
+   "name": "mine-roles",
+   "group": "Access",
+   "summary": "Suggest roles from how access is actually held",
+   "usage": "better-iam mine-roles --config better-iam.config.mjs --tenant TENANT_ID [--peer-by manager|attribute:NAME] [--url URL] [--profile NAME]",
+   "target": "token",
+   "args": [],
+   "flags": [
+    {
+     "flag": "--tenant",
+     "value": "TENANT_ID",
+     "optional": false,
+     "description": "The tenant to act in",
+     "env": "BETTER_IAM_TENANT"
+    },
+    {
+     "flag": "--peer-by",
+     "value": "manager|attribute:NAME",
+     "optional": true,
+     "description": "How peers are grouped for outliers"
+    },
+    {
+     "flag": "--config",
+     "value": "PATH",
+     "optional": true,
+     "description": "Configuration module; default: the nearest better-iam.config.mjs, .js, or .ts",
+     "env": "BETTER_IAM_CONFIG"
+    },
+    {
+     "flag": "--url",
+     "value": "URL",
+     "optional": true,
+     "description": "Call a running IAM server (https://host or https://host/api/iam) instead of loading the configuration",
+     "env": "BETTER_IAM_URL"
+    },
+    {
+     "flag": "--profile",
+     "value": "NAME",
+     "optional": true,
+     "description": "Saved session to act as (see login); ignored while BETTER_IAM_TOKEN is set",
+     "env": "BETTER_IAM_PROFILE"
+    },
+    {
+     "flag": "--format",
+     "value": "FORMAT",
+     "optional": true,
+     "description": "Output as json (indented, default), compact (one line), or table",
+     "choices": [
+      "json",
+      "compact",
+      "table"
+     ]
+    },
+    {
+     "flag": "--query",
+     "value": "PATH",
+     "optional": true,
+     "description": "Print only part of the result, e.g. summary.create or findings[].kind (strings print raw)"
+    }
+   ],
+   "examples": [],
+   "description": "mine-roles prints role-mining suggestions (role bundles, roles to bind to a group, redundant direct bindings, duplicate roles) and peer outliers grouped by --peer-by (default manager) as BETTER_IAM_TOKEN, which needs iam:analysis:read."
+  },
+  {
+   "name": "check-invariants",
+   "group": "Access",
+   "summary": "Evaluate a tenant's access invariants",
+   "usage": "better-iam check-invariants --config better-iam.config.mjs --tenant TENANT_ID [--fail-on-broken] [--url URL] [--profile NAME]",
+   "target": "token",
+   "args": [],
+   "flags": [
+    {
+     "flag": "--tenant",
+     "value": "TENANT_ID",
+     "optional": false,
+     "description": "The tenant to act in",
+     "env": "BETTER_IAM_TENANT"
+    },
+    {
+     "flag": "--fail-on-broken",
+     "optional": true,
+     "description": "Exit non-zero when an invariant is broken or unevaluable"
+    },
+    {
+     "flag": "--config",
+     "value": "PATH",
+     "optional": true,
+     "description": "Configuration module; default: the nearest better-iam.config.mjs, .js, or .ts",
+     "env": "BETTER_IAM_CONFIG"
+    },
+    {
+     "flag": "--url",
+     "value": "URL",
+     "optional": true,
+     "description": "Call a running IAM server (https://host or https://host/api/iam) instead of loading the configuration",
+     "env": "BETTER_IAM_URL"
+    },
+    {
+     "flag": "--profile",
+     "value": "NAME",
+     "optional": true,
+     "description": "Saved session to act as (see login); ignored while BETTER_IAM_TOKEN is set",
+     "env": "BETTER_IAM_PROFILE"
+    },
+    {
+     "flag": "--format",
+     "value": "FORMAT",
+     "optional": true,
+     "description": "Output as json (indented, default), compact (one line), or table",
+     "choices": [
+      "json",
+      "compact",
+      "table"
+     ]
+    },
+    {
+     "flag": "--query",
+     "value": "PATH",
+     "optional": true,
+     "description": "Print only part of the result, e.g. summary.create or findings[].kind (strings print raw)"
+    }
+   ],
+   "examples": [],
+   "description": "check-invariants evaluates the tenant's access invariants as BETTER_IAM_TOKEN (iam:invariants:read); --fail-on-broken exits non-zero when one is broken or cannot be evaluated, for CI after config-apply."
+  },
+  {
+   "name": "whoami",
+   "group": "Access",
+   "summary": "Print who the current token acts as",
+   "usage": "better-iam whoami --config better-iam.config.mjs [--url URL] [--profile NAME]",
+   "target": "token",
+   "args": [],
+   "flags": [
+    {
+     "flag": "--config",
+     "value": "PATH",
+     "optional": true,
+     "description": "Configuration module; default: the nearest better-iam.config.mjs, .js, or .ts",
+     "env": "BETTER_IAM_CONFIG"
+    },
+    {
+     "flag": "--url",
+     "value": "URL",
+     "optional": true,
+     "description": "Call a running IAM server (https://host or https://host/api/iam) instead of loading the configuration",
+     "env": "BETTER_IAM_URL"
+    },
+    {
+     "flag": "--profile",
+     "value": "NAME",
+     "optional": true,
+     "description": "Saved session to act as (see login); ignored while BETTER_IAM_TOKEN is set",
+     "env": "BETTER_IAM_PROFILE"
+    },
+    {
+     "flag": "--format",
+     "value": "FORMAT",
+     "optional": true,
+     "description": "Output as json (indented, default), compact (one line), or table",
+     "choices": [
+      "json",
+      "compact",
+      "table"
+     ]
+    },
+    {
+     "flag": "--query",
+     "value": "PATH",
+     "optional": true,
+     "description": "Print only part of the result, e.g. summary.create or findings[].kind (strings print raw)"
+    }
+   ],
+   "examples": [],
+   "description": "whoami prints who BETTER_IAM_TOKEN acts as (sts.getCallerIdentity): identity, tenant, session kind and id, format, MFA, expiry, and any role, trust, session name, or web identity; it needs no permission and records nothing, so it also checks that a session, API key, role session, or session token (opaque or JWT) is still valid. Without BETTER_IAM_TOKEN it reports the session saved by login."
+  },
+  {
+   "name": "can",
+   "group": "Access",
+   "summary": "Check whether the current token may perform an action",
+   "usage": "better-iam can --config better-iam.config.mjs ACTION RESOURCE --tenant TENANT_ID [--url URL] [--profile NAME]",
+   "target": "token",
+   "args": [
+    {
+     "name": "action",
+     "description": "The action, for example projects:read",
+     "required": true
+    },
+    {
+     "name": "resource",
+     "description": "type/id or type:id, for example project/p1",
+     "required": true
+    }
+   ],
+   "flags": [
+    {
+     "flag": "--tenant",
+     "value": "TENANT_ID",
+     "optional": false,
+     "description": "The tenant to act in",
+     "env": "BETTER_IAM_TENANT"
+    },
+    {
+     "flag": "--config",
+     "value": "PATH",
+     "optional": true,
+     "description": "Configuration module; default: the nearest better-iam.config.mjs, .js, or .ts",
+     "env": "BETTER_IAM_CONFIG"
+    },
+    {
+     "flag": "--url",
+     "value": "URL",
+     "optional": true,
+     "description": "Call a running IAM server (https://host or https://host/api/iam) instead of loading the configuration",
+     "env": "BETTER_IAM_URL"
+    },
+    {
+     "flag": "--profile",
+     "value": "NAME",
+     "optional": true,
+     "description": "Saved session to act as (see login); ignored while BETTER_IAM_TOKEN is set",
+     "env": "BETTER_IAM_PROFILE"
+    },
+    {
+     "flag": "--format",
+     "value": "FORMAT",
+     "optional": true,
+     "description": "Output as json (indented, default), compact (one line), or table",
+     "choices": [
+      "json",
+      "compact",
+      "table"
+     ]
+    },
+    {
+     "flag": "--query",
+     "value": "PATH",
+     "optional": true,
+     "description": "Print only part of the result, e.g. summary.create or findings[].kind (strings print raw)"
+    }
+   ],
+   "examples": [
+    "better-iam can projects:read project/p1 --tenant ten_123"
+   ],
+   "description": "can asks whether the token may perform ACTION on RESOURCE (type/id) in the tenant and prints the decision with its reason; it exits non-zero (ACCESS_DENIED) when the answer is no, so scripts can branch on it. The decision is recorded like any authorization check."
+  },
+  {
+   "name": "explain",
+   "group": "Access",
+   "summary": "Explain why an identity is or is not allowed an action",
+   "usage": "better-iam explain --config better-iam.config.mjs ACTION RESOURCE --tenant TENANT_ID --identity ID|EMAIL [--assume-mfa] [--url URL] [--profile NAME]",
+   "target": "token",
+   "args": [
+    {
+     "name": "action",
+     "description": "The action, for example projects:write",
+     "required": true
+    },
+    {
+     "name": "resource",
+     "description": "type/id or type:id",
+     "required": true
+    }
+   ],
+   "flags": [
+    {
+     "flag": "--tenant",
+     "value": "TENANT_ID",
+     "optional": false,
+     "description": "The tenant to act in",
+     "env": "BETTER_IAM_TENANT"
+    },
+    {
+     "flag": "--identity",
+     "value": "ID|EMAIL",
+     "optional": false,
+     "description": "Whose decision to explain"
+    },
+    {
+     "flag": "--assume-mfa",
+     "optional": true,
+     "description": "Evaluate as an MFA session"
+    },
+    {
+     "flag": "--config",
+     "value": "PATH",
+     "optional": true,
+     "description": "Configuration module; default: the nearest better-iam.config.mjs, .js, or .ts",
+     "env": "BETTER_IAM_CONFIG"
+    },
+    {
+     "flag": "--url",
+     "value": "URL",
+     "optional": true,
+     "description": "Call a running IAM server (https://host or https://host/api/iam) instead of loading the configuration",
+     "env": "BETTER_IAM_URL"
+    },
+    {
+     "flag": "--profile",
+     "value": "NAME",
+     "optional": true,
+     "description": "Saved session to act as (see login); ignored while BETTER_IAM_TOKEN is set",
+     "env": "BETTER_IAM_PROFILE"
+    },
+    {
+     "flag": "--format",
+     "value": "FORMAT",
+     "optional": true,
+     "description": "Output as json (indented, default), compact (one line), or table",
+     "choices": [
+      "json",
+      "compact",
+      "table"
+     ]
+    },
+    {
+     "flag": "--query",
+     "value": "PATH",
+     "optional": true,
+     "description": "Print only part of the result, e.g. summary.create or findings[].kind (strings print raw)"
+    }
+   ],
+   "examples": [
+    "better-iam explain projects:write project/p1 --identity alice@acme.test"
+   ],
+   "description": "explain simulates the decision for another identity (by ID or email) without signing in as them: the matching statements, boundaries, and reason (policies.simulate, which needs iam:policies:simulate). --assume-mfa evaluates as if they had used MFA."
+  },
+  {
+   "name": "who-can",
+   "group": "Access",
+   "summary": "List every identity that may perform an action on a resource",
+   "usage": "better-iam who-can --config better-iam.config.mjs ACTION RESOURCE --tenant TENANT_ID [--kind user|service] [--assume-mfa] [--limit N] [--url URL] [--profile NAME]",
+   "target": "token",
+   "args": [
+    {
+     "name": "action",
+     "description": "The action",
+     "required": true
+    },
+    {
+     "name": "resource",
+     "description": "type/id or type:id",
+     "required": true
+    }
+   ],
+   "flags": [
+    {
+     "flag": "--tenant",
+     "value": "TENANT_ID",
+     "optional": false,
+     "description": "The tenant to act in",
+     "env": "BETTER_IAM_TENANT"
+    },
+    {
+     "flag": "--kind",
+     "value": "user|service",
+     "optional": true,
+     "description": "Only people or only service accounts",
+     "choices": [
+      "user",
+      "service"
+     ]
+    },
+    {
+     "flag": "--assume-mfa",
+     "optional": true,
+     "description": "Evaluate as MFA sessions"
+    },
+    {
+     "flag": "--limit",
+     "value": "N",
+     "optional": true,
+     "description": "Most identities listed",
+     "default": 100
+    },
+    {
+     "flag": "--config",
+     "value": "PATH",
+     "optional": true,
+     "description": "Configuration module; default: the nearest better-iam.config.mjs, .js, or .ts",
+     "env": "BETTER_IAM_CONFIG"
+    },
+    {
+     "flag": "--url",
+     "value": "URL",
+     "optional": true,
+     "description": "Call a running IAM server (https://host or https://host/api/iam) instead of loading the configuration",
+     "env": "BETTER_IAM_URL"
+    },
+    {
+     "flag": "--profile",
+     "value": "NAME",
+     "optional": true,
+     "description": "Saved session to act as (see login); ignored while BETTER_IAM_TOKEN is set",
+     "env": "BETTER_IAM_PROFILE"
+    },
+    {
+     "flag": "--format",
+     "value": "FORMAT",
+     "optional": true,
+     "description": "Output as json (indented, default), compact (one line), or table",
+     "choices": [
+      "json",
+      "compact",
+      "table"
+     ]
+    },
+    {
+     "flag": "--query",
+     "value": "PATH",
+     "optional": true,
+     "description": "Print only part of the result, e.g. summary.create or findings[].kind (strings print raw)"
+    }
+   ],
+   "examples": [
+    "better-iam who-can projects:delete project/p1 --format table"
+   ],
+   "description": "who-can lists every active identity of the tenant that could perform ACTION on RESOURCE, with the reason (policies.whoCan, which needs iam:policies:simulate); root administrators are not listed because their override applies everywhere."
+  },
+  {
+   "name": "api",
+   "group": "API",
+   "summary": "Call any IAM API method as the current token",
+   "usage": "better-iam api GROUP.METHOD [key=value ...] [--data JSON|@FILE|-] [--tenant TENANT_ID] [--list] [--url URL] [--profile NAME]",
+   "target": "token",
+   "args": [
+    {
+     "name": "route",
+     "description": "group.method (roles.create, auth.getSession) or authorize"
+    },
+    {
+     "name": "fields",
+     "description": "key=value, key:=json, key:=@file.json, key=@file.txt",
+     "variadic": true
+    }
+   ],
+   "flags": [
+    {
+     "flag": "--data",
+     "value": "JSON|@FILE|-",
+     "optional": true,
+     "description": "Request body as JSON, a JSON file, or standard input"
+    },
+    {
+     "flag": "--tenant",
+     "value": "TENANT_ID",
+     "optional": true,
+     "description": "tenantId for inputs that do not set one",
+     "env": "BETTER_IAM_TENANT"
+    },
+    {
+     "flag": "--list",
+     "optional": true,
+     "description": "List routes (optionally of one group) instead of calling one"
+    },
+    {
+     "flag": "--config",
+     "value": "PATH",
+     "optional": true,
+     "description": "Configuration module; default: the nearest better-iam.config.mjs, .js, or .ts",
+     "env": "BETTER_IAM_CONFIG"
+    },
+    {
+     "flag": "--url",
+     "value": "URL",
+     "optional": true,
+     "description": "Call a running IAM server (https://host or https://host/api/iam) instead of loading the configuration",
+     "env": "BETTER_IAM_URL"
+    },
+    {
+     "flag": "--profile",
+     "value": "NAME",
+     "optional": true,
+     "description": "Saved session to act as (see login); ignored while BETTER_IAM_TOKEN is set",
+     "env": "BETTER_IAM_PROFILE"
+    },
+    {
+     "flag": "--format",
+     "value": "FORMAT",
+     "optional": true,
+     "description": "Output as json (indented, default), compact (one line), or table",
+     "choices": [
+      "json",
+      "compact",
+      "table"
+     ]
+    },
+    {
+     "flag": "--query",
+     "value": "PATH",
+     "optional": true,
+     "description": "Print only part of the result, e.g. summary.create or findings[].kind (strings print raw)"
+    }
+   ],
+   "examples": [
+    "better-iam api --list roles",
+    "better-iam api roles.create name=Reader permissions:='[\"documents:read\"]'",
+    "better-iam api policies.create name=Deny-deletes document:=@deny.json --tenant ten_123",
+    "better-iam api identities.list limit:=5 --query \"[].email\"",
+    "echo '{\"slug\":\"acme\"}' | better-iam api tenants.lookup --data -"
+   ],
+   "description": "api calls any method of the HTTP API (the same routes and permission checks as POST {basePath}/{group}/{method}) as BETTER_IAM_TOKEN or the session saved by login, in process through the configuration or against --url, and prints the result. Build the input with --data (JSON, @file.json, or - for standard input) and key=value items: name=Admin sets a string, limit:=10 or actions:='[\"a\",\"b\"]' sets JSON, document:=@policy.json reads a JSON file, content=@terms.md reads a text file, resource.type=project nests, and actions[]=a appends. --tenant (or BETTER_IAM_TENANT, or the saved profile) fills tenantId when the input has none. api --list [GROUP] lists every route with whether it needs a credential."
+  },
+  {
+   "name": "login",
+   "group": "Session",
+   "summary": "Sign in once and save the session for later commands",
+   "usage": "better-iam login [--config better-iam.config.mjs | --url URL] [--tenant TENANT_ID | --org SLUG] [--email EMAIL] [--email-code] [--with-token] [--profile NAME]",
+   "target": "token",
+   "args": [],
+   "flags": [
+    {
+     "flag": "--tenant",
+     "value": "TENANT_ID",
+     "optional": true,
+     "description": "Organization to sign in to",
+     "env": "BETTER_IAM_TENANT"
+    },
+    {
+     "flag": "--org",
+     "value": "SLUG",
+     "optional": true,
+     "description": "Organization to sign in to, by its slug"
+    },
+    {
+     "flag": "--email",
+     "value": "EMAIL",
+     "optional": true,
+     "description": "Account email (prompted when absent)",
+     "env": "BETTER_IAM_EMAIL"
+    },
+    {
+     "flag": "--email-code",
+     "optional": true,
+     "description": "Email a one-time code for MFA instead of using an authenticator"
+    },
+    {
+     "flag": "--with-token",
+     "optional": true,
+     "description": "Save a token read from standard input instead of signing in"
+    },
+    {
+     "flag": "--config",
+     "value": "PATH",
+     "optional": true,
+     "description": "Configuration module; default: the nearest better-iam.config.mjs, .js, or .ts",
+     "env": "BETTER_IAM_CONFIG"
+    },
+    {
+     "flag": "--url",
+     "value": "URL",
+     "optional": true,
+     "description": "Call a running IAM server (https://host or https://host/api/iam) instead of loading the configuration",
+     "env": "BETTER_IAM_URL"
+    },
+    {
+     "flag": "--profile",
+     "value": "NAME",
+     "optional": true,
+     "description": "Saved session to act as (see login); ignored while BETTER_IAM_TOKEN is set",
+     "env": "BETTER_IAM_PROFILE"
+    },
+    {
+     "flag": "--format",
+     "value": "FORMAT",
+     "optional": true,
+     "description": "Output as json (indented, default), compact (one line), or table",
+     "choices": [
+      "json",
+      "compact",
+      "table"
+     ]
+    },
+    {
+     "flag": "--query",
+     "value": "PATH",
+     "optional": true,
+     "description": "Print only part of the result, e.g. summary.create or findings[].kind (strings print raw)"
+    }
+   ],
+   "examples": [
+    "better-iam login --url https://iam.example.com --org acme --email me@acme.test",
+    "echo \"$API_KEY\" | better-iam login --with-token --url https://iam.example.com --profile ci"
+   ],
+   "description": "login signs in with an email and password (and an authenticator or emailed code when MFA is required) and saves the session in the credentials file as a profile (--profile, default the current profile or \"default\"; a profile that holds a session for another deployment is only replaced when named with --profile), so later token commands need no BETTER_IAM_TOKEN. The password comes from BETTER_IAM_PASSWORD or a hidden prompt and the code from BETTER_IAM_MFA_CODE or a prompt, never from flags. --with-token saves a token read from standard input instead (an API key for CI, or a session from elsewhere) after checking it. The profile remembers the server (--url) or configuration it was created with, and --tenant/--org sets the default tenant of later commands."
+  },
+  {
+   "name": "logout",
+   "group": "Session",
+   "summary": "Sign out and forget a saved session",
+   "usage": "better-iam logout --config better-iam.config.mjs [--url URL] [--profile NAME]",
+   "target": "token",
+   "args": [],
+   "flags": [
+    {
+     "flag": "--config",
+     "value": "PATH",
+     "optional": true,
+     "description": "Configuration module; default: the nearest better-iam.config.mjs, .js, or .ts",
+     "env": "BETTER_IAM_CONFIG"
+    },
+    {
+     "flag": "--url",
+     "value": "URL",
+     "optional": true,
+     "description": "Call a running IAM server (https://host or https://host/api/iam) instead of loading the configuration",
+     "env": "BETTER_IAM_URL"
+    },
+    {
+     "flag": "--profile",
+     "value": "NAME",
+     "optional": true,
+     "description": "Saved session to act as (see login); ignored while BETTER_IAM_TOKEN is set",
+     "env": "BETTER_IAM_PROFILE"
+    },
+    {
+     "flag": "--format",
+     "value": "FORMAT",
+     "optional": true,
+     "description": "Output as json (indented, default), compact (one line), or table",
+     "choices": [
+      "json",
+      "compact",
+      "table"
+     ]
+    },
+    {
+     "flag": "--query",
+     "value": "PATH",
+     "optional": true,
+     "description": "Print only part of the result, e.g. summary.create or findings[].kind (strings print raw)"
+    }
+   ],
+   "examples": [],
+   "description": "logout signs a saved user session out on the server (best effort; API keys and other machine credentials saved with --with-token are only forgotten, never revoked) and removes the profile from the credentials file."
+  },
+  {
+   "name": "profiles",
+   "group": "Session",
+   "summary": "List saved sessions, or choose or remove one",
+   "usage": "better-iam profiles [use NAME | remove NAME]",
+   "target": "none",
+   "args": [
+    {
+     "name": "action",
+     "description": "use or remove"
+    },
+    {
+     "name": "name",
+     "description": "The profile"
+    }
+   ],
+   "flags": [
+    {
+     "flag": "--format",
+     "value": "FORMAT",
+     "optional": true,
+     "description": "Output as json (indented, default), compact (one line), or table",
+     "choices": [
+      "json",
+      "compact",
+      "table"
+     ]
+    },
+    {
+     "flag": "--query",
+     "value": "PATH",
+     "optional": true,
+     "description": "Print only part of the result, e.g. summary.create or findings[].kind (strings print raw)"
+    }
+   ],
+   "examples": [],
+   "description": "profiles lists the sessions saved by login (never their tokens) and marks the current one; profiles use NAME makes NAME current, and profiles remove NAME forgets one without signing it out."
+  },
+  {
+   "name": "token",
+   "group": "Session",
+   "summary": "Print the token commands act as, for scripts",
+   "usage": "better-iam token --config better-iam.config.mjs [--url URL] [--profile NAME]",
+   "target": "token",
+   "args": [],
+   "flags": [
+    {
+     "flag": "--config",
+     "value": "PATH",
+     "optional": true,
+     "description": "Configuration module; default: the nearest better-iam.config.mjs, .js, or .ts",
+     "env": "BETTER_IAM_CONFIG"
+    },
+    {
+     "flag": "--url",
+     "value": "URL",
+     "optional": true,
+     "description": "Call a running IAM server (https://host or https://host/api/iam) instead of loading the configuration",
+     "env": "BETTER_IAM_URL"
+    },
+    {
+     "flag": "--profile",
+     "value": "NAME",
+     "optional": true,
+     "description": "Saved session to act as (see login); ignored while BETTER_IAM_TOKEN is set",
+     "env": "BETTER_IAM_PROFILE"
+    }
+   ],
+   "examples": [],
+   "description": "token prints the bearer token token commands would use (BETTER_IAM_TOKEN, else the saved profile's), for scripts and other tools: export BETTER_IAM_TOKEN=$(better-iam token). It is a secret; do not log it."
+  },
+  {
+   "name": "completion",
+   "group": "Shell",
+   "summary": "Print a shell completion script for commands, flags, and values",
+   "usage": "better-iam completion SHELL",
+   "target": "none",
+   "args": [
+    {
+     "name": "shell",
+     "description": "bash, zsh, fish, or powershell",
+     "required": true
+    }
+   ],
+   "flags": [],
+   "examples": [
+    "eval \"$(better-iam completion bash)\"",
+    "better-iam completion fish > ~/.config/fish/completions/better-iam.fish",
+    "better-iam completion powershell | Out-String | Invoke-Expression"
+   ],
+   "description": "completion prints a completion script for bash, zsh, fish, or PowerShell covering every command, its flags, and the values of flags with fixed choices; load it from your shell profile. Project commands from the configuration are included when it is found."
+  }
+ ],
+ "env": [
+  "BETTER_IAM_CONFIG",
+  "BETTER_IAM_TOKEN",
+  "BETTER_IAM_URL",
+  "BETTER_IAM_PROFILE",
+  "BETTER_IAM_TENANT",
+  "BETTER_IAM_CREDENTIALS",
+  "BETTER_IAM_ROOT_EMAIL",
+  "BETTER_IAM_ROOT_NAME",
+  "BETTER_IAM_ROOT_PASSWORD",
+  "BETTER_IAM_PASSWORD",
+  "BETTER_IAM_MFA_CODE",
+  "BETTER_IAM_DATABASE_URL",
+  "BETTER_IAM_SECRET"
+ ],
+ "environment": [
+  {
+   "name": "BETTER_IAM_CONFIG",
+   "description": "Configuration module, like --config"
+  },
+  {
+   "name": "BETTER_IAM_TOKEN",
+   "description": "Session or API key token commands act as"
+  },
+  {
+   "name": "BETTER_IAM_URL",
+   "description": "IAM server token commands call, like --url"
+  },
+  {
+   "name": "BETTER_IAM_PROFILE",
+   "description": "Saved session to use, like --profile"
+  },
+  {
+   "name": "BETTER_IAM_TENANT",
+   "description": "Default --tenant for token commands"
+  },
+  {
+   "name": "BETTER_IAM_CREDENTIALS",
+   "description": "File saved sessions live in (default ~/.config/better-iam/credentials.json, %APPDATA% on Windows)"
+  },
+  {
+   "name": "BETTER_IAM_ROOT_EMAIL",
+   "description": "bootstrap / recover-root: the root administrator (with BETTER_IAM_ROOT_NAME, BETTER_IAM_ROOT_PASSWORD)"
+  },
+  {
+   "name": "BETTER_IAM_ROOT_NAME",
+   "description": "bootstrap / recover-root: display name"
+  },
+  {
+   "name": "BETTER_IAM_ROOT_PASSWORD",
+   "description": "bootstrap / recover-root: password (never a flag)"
+  },
+  {
+   "name": "BETTER_IAM_PASSWORD",
+   "description": "login: the password, instead of the prompt"
+  },
+  {
+   "name": "BETTER_IAM_MFA_CODE",
+   "description": "login: the authenticator code, instead of the prompt"
+  },
+  {
+   "name": "BETTER_IAM_DATABASE_URL",
+   "description": "Without a configuration file: the database (postgres://, sqlite:PATH, libsql://), with BETTER_IAM_SECRET"
+  },
+  {
+   "name": "BETTER_IAM_SECRET",
+   "description": "Without a configuration file: the deployment secret"
+  }
+ ],
+ "notes": "init writes a starter better-iam.config.mjs (or better-iam.config.ts with --typescript): a configuration factory for the chosen database that reads the secret and URLs from the environment, CLI flag defaults, and an empty list of project commands. It never overwrites an existing file. migrate creates or upgrades the database schema and applies plugin migrations. Run it on every deploy before the application starts. bootstrap creates the root administrator from BETTER_IAM_ROOT_EMAIL, BETTER_IAM_ROOT_NAME, and BETTER_IAM_ROOT_PASSWORD (secrets are never accepted in command-line arguments). The root must enroll MFA before use. recover-root creates a new root administrator from the same environment variables as bootstrap, for when every root credential is lost; the action is audited as root:recover. doctor connects to the database and lists findings (schema behind, not bootstrapped, weak secret, risky durability, missing email transport, jobs that are not running); --strict exits non-zero when any error or warning is found; pass the --retention-days your sweep uses so its backlog is judged the same way. secret prints a new random value for BETTER_IAM_SECRET (64 URL-safe characters by default) from the operating system random generator; --env prints it as a BETTER_IAM_SECRET= line for a .env file. It reads no configuration and stores nothing. outbox delivers pending transactional messages from the encrypted delivery outbox and then dispatches audit hooks (webhooks); a deployment operation for a scheduler. Purge removes tenants deleted more than N days ago (default 30) including their data, and records the action in the audit log. Audit records remain. sweep deletes expired sessions, devices, relationship tuples, OAuth and SAML artifacts, and deliveries older than --retention-days (30) in short batches, at most --limit (10000) records per run; schedule it beside purge. digest emails the access report to the owners of every active organization (or one --tenant) that has something to report, at most once a day per organization; a deployment operation for cron, like purge. remind emails each person whose account, role bindings, group memberships, or packages end within --within-days (7), once per item and end date; a deployment operation like digest. reconcile applies access-package rules (birthright access): identities that match a package's autoAssign rule receive it and automatic holders that stopped matching lose it, at most --limit (1000) changes per organization and run, under each rule owner's grant authority; a deployment operation for cron (run it after purge). Unusually large changes are held back until confirmed with --tenant ID --package ID --confirm; --fail-on-attention exits non-zero when a change failed, was held back, or a rule is suspended. close-certifications closes every access-certification campaign created with autoClose whose due date has passed (or only one --tenant's), applying its decisions under the creator's authority; a deployment operation for cron. monitor-invariants evaluates every organization's invariants (or one --tenant's) and records invariant:broken / invariant:restored audit events when their status changes, so webhooks can alert; a deployment operation for cron. rotate-secrets re-seals authenticator secrets, webhook secrets, and pending deliveries sealed with previousSecrets using the current secret; --dry-run only counts them. billing-close invoices every billing account with something to bill in --period (default: last month): usage, subscription fees and seats, and pending invoice items. It skips accounts already invoiced, applies coupons and credit, emails the invoices, and deletes raw usage events past their retention; a deployment operation for a daily scheduler. With --draft (or billing.autoFinalize: false) invoices stay drafts, refreshed on each run, until finalized. billing-reminders emails the billing contacts of every finalized invoice with an amount due as payment-reminder at the steps of billing.paymentReminderDays (default 3 days before the due date, on it, and 7 and 14 days after), once per step; each is audited as billing:payment-reminder. Run it daily. billing-alerts checks every spend budget (or those one --tenant owns) and alerts, once per threshold and window, on thresholds reached and projections past the budget: audited as billing:budget-alert and emailed as spend-alert when mail is configured. Run it hourly. billing-anomalies checks every billing account (or the one paying for --tenant) for people, teams and meters whose spend on --day (default yesterday) is --factor (3) times their average over the 14 days before and --minimum (10) currency units more; each is audited as billing:anomaly once and emailed as spend-anomaly when mail is configured. Run it daily. billing-seats records one unit of --meter (default seats) for every active person of every tenant the meter reaches, once per day; a sum meter then counts seat-days and a unique meter active seats per month. Run it daily. spend prints the spend of the tenant and the tenants below it as BETTER_IAM_TOKEN (iam:billing:read), grouped by --group-by (default meter) and optionally narrowed to a --team, --department, --identity or --meter; the current month also carries a linear forecast. audit-verify recomputes a tenant's audit hash chain from storage and exits non-zero (AUDIT_CHAIN_BROKEN) when it does not verify; it records nothing. audit-export writes a tenant's audit chain as JSON Lines for archiving (never overwriting a file); it records nothing. audit-prune deletes a tenant's events older than --retention-days (365) after you archived them and appends an audit:prune checkpoint so the remaining chain still verifies. With an auditArchive configured, it only deletes events the archive already holds. audit-archive copies new audit events, verified and in chain order, to the configured auditArchive; with an archive configured, audit-prune only deletes events it already holds. audit-verify-archive verifies one tenant's archived chain from createJsonlAuditArchive files alone, without the database: every sequence present once, hashes recomputed, links intact. store-export writes every record of the database as a JSON Lines snapshot (one consistent transaction; the file holds credential hashes and encrypted secrets, so protect it like the database). It never overwrites a file. store-import loads a snapshot into an empty database in one transaction; it migrates the target first and changes nothing on failure. Run migrate afterwards to apply plugin migrations. store-copy copies the configured database into the empty database of --target-config (for example SQLite to PostgreSQL); it migrates the target first and changes nothing on failure. config-export writes a tenant's roles, policies, groups, resource types, group bindings, packages, invariants, and agreements as JSON (or as a typed module when --output ends in .ts or .mjs). The config commands act as the session or API key in BETTER_IAM_TOKEN (or the session saved by login) and are authorized and audited like console operations. config-plan shows what config-apply would change (--prune also plans deleting items the file omits); --fail-on-drift exits non-zero when anything would change, for CI. The input can be JSON or a JavaScript/TypeScript module whose default export is the configuration or a factory receiving { tenantId, env }. config-apply applies a configuration in one transaction (--prune also deletes items the file omits), authorized and audited like console operations. config-validate checks a configuration file offline: its shape, and names it refers to that the file does not define (those must already exist in the tenant, or planning fails). --strict exits non-zero on such warnings. It needs no configuration, database, or token, so it fits pre-commit hooks and CI. analyze prints the tenant's access-analysis findings (as BETTER_IAM_TOKEN, which needs iam:analysis:read); with --fail-on it exits non-zero when an unsuppressed finding of that severity or higher exists, for CI and cron. report prints the tenant's access report as BETTER_IAM_TOKEN: identities and bindings ending within --within-days (30), keys unused for --unused-days (30) or ending soon, live activations, and pending activation requests. mine-roles prints role-mining suggestions (role bundles, roles to bind to a group, redundant direct bindings, duplicate roles) and peer outliers grouped by --peer-by (default manager) as BETTER_IAM_TOKEN, which needs iam:analysis:read. check-invariants evaluates the tenant's access invariants as BETTER_IAM_TOKEN (iam:invariants:read); --fail-on-broken exits non-zero when one is broken or cannot be evaluated, for CI after config-apply. whoami prints who BETTER_IAM_TOKEN acts as (sts.getCallerIdentity): identity, tenant, session kind and id, format, MFA, expiry, and any role, trust, session name, or web identity; it needs no permission and records nothing, so it also checks that a session, API key, role session, or session token (opaque or JWT) is still valid. Without BETTER_IAM_TOKEN it reports the session saved by login. can asks whether the token may perform ACTION on RESOURCE (type/id) in the tenant and prints the decision with its reason; it exits non-zero (ACCESS_DENIED) when the answer is no, so scripts can branch on it. The decision is recorded like any authorization check. explain simulates the decision for another identity (by ID or email) without signing in as them: the matching statements, boundaries, and reason (policies.simulate, which needs iam:policies:simulate). --assume-mfa evaluates as if they had used MFA. who-can lists every active identity of the tenant that could perform ACTION on RESOURCE, with the reason (policies.whoCan, which needs iam:policies:simulate); root administrators are not listed because their override applies everywhere. api calls any method of the HTTP API (the same routes and permission checks as POST {basePath}/{group}/{method}) as BETTER_IAM_TOKEN or the session saved by login, in process through the configuration or against --url, and prints the result. Build the input with --data (JSON, @file.json, or - for standard input) and key=value items: name=Admin sets a string, limit:=10 or actions:='[\"a\",\"b\"]' sets JSON, document:=@policy.json reads a JSON file, content=@terms.md reads a text file, resource.type=project nests, and actions[]=a appends. --tenant (or BETTER_IAM_TENANT, or the saved profile) fills tenantId when the input has none. api --list [GROUP] lists every route with whether it needs a credential. login signs in with an email and password (and an authenticator or emailed code when MFA is required) and saves the session in the credentials file as a profile (--profile, default the current profile or \"default\"; a profile that holds a session for another deployment is only replaced when named with --profile), so later token commands need no BETTER_IAM_TOKEN. The password comes from BETTER_IAM_PASSWORD or a hidden prompt and the code from BETTER_IAM_MFA_CODE or a prompt, never from flags. --with-token saves a token read from standard input instead (an API key for CI, or a session from elsewhere) after checking it. The profile remembers the server (--url) or configuration it was created with, and --tenant/--org sets the default tenant of later commands. logout signs a saved user session out on the server (best effort; API keys and other machine credentials saved with --with-token are only forgotten, never revoked) and removes the profile from the credentials file. profiles lists the sessions saved by login (never their tokens) and marks the current one; profiles use NAME makes NAME current, and profiles remove NAME forgets one without signing it out. token prints the bearer token token commands would use (BETTER_IAM_TOKEN, else the saved profile's), for scripts and other tools: export BETTER_IAM_TOKEN=$(better-iam token). It is a secret; do not log it. completion prints a completion script for bash, zsh, fish, or PowerShell covering every command, its flags, and the values of flags with fixed choices; load it from your shell profile. Project commands from the configuration are included when it is found."
+}

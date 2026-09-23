@@ -1,0 +1,245 @@
+# policies
+
+Policies are named, versioned policy documents that roles attach to grant access. A policy grants nothing on its
+own: it takes effect when a role lists it in `policyIds` and that role is bound to someone. Storing a document as a
+policy, instead of inline in a role, lets several roles share it, keeps every change as a version you can list and
+restore, and lets editors test a draft before saving it. This group also holds the administrator-only review reads
+(`simulate`, `whoCan`, `effectiveActions`) that explain access without creating a session or granting anything.
+The document format itself is described in [policy documents](/docs/guides/authorization/policies).
+
+## Versions and edit rights
+
+- **Every change is a version.** A policy starts at version 1. Each `update` or `restoreVersion` archives the
+  current version and saves the next one, so `listVersions` always shows the full history.
+- **Optimistic concurrency.** `update` takes the `version` you read and fails with `VERSION_CONFLICT` when someone
+  saved in between, so two editors cannot silently overwrite each other.
+- **Edits stay with their authority.** A policy records the [grant authority](/docs/guides/authorization/roles#grant-authorities)
+  it was created under. Only that authority's holder, or root, may update, restore, or delete it, and its ceiling
+  keeps bounding the policy wherever it is attached, even when a higher authority attaches it to a role.
+- **Validated against the catalog.** Documents are checked when they are created, updated, or restored:
+  `INVALID_POLICY` for a malformed document, `INVALID_ACTION` for an unknown action, and `INVALID_RESOURCE_TYPE` for
+  an unknown resource type.
+- **The Owner policy is protected.** The system Owner policy behind every tenant's Owner role cannot be edited,
+  restored, or deleted (`PROTECTED_RESOURCE`).
+
+## Reading a review result
+
+`simulate`, `whoCan`, and `effectiveActions` evaluate an identity in a synthetic session that is never issued: a
+user session (an API-key session for service accounts), without MFA unless you pass `assumeMfa: true`. The ordinary
+evaluator runs, so conditions, boundaries, authority ceilings, access windows, relationships, and just-in-time
+eligibility (only live activations count) all apply. Results are advisory: they explain access, they never enforce
+it. See [access reviews](/docs/guides/authorization/reviews).
+
+| Reason | Meaning |
+| --- | --- |
+| `allowed` | A role grants the action and no deny or boundary blocks it. |
+| `explicit-deny` | A deny statement in one of the identity's roles matched. |
+| `boundary-deny` | A tenant boundary, principal boundary, or session policy does not allow the action. |
+| `NO_APPLICABLE_GRANT` | No role grants the action within its authority ceilings. |
+| `no-grant` | Returned by `test` only: the tested document does not allow the action. |
+| `ROOT_OVERRIDE` | The identity is a platform root administrator evaluated with MFA; the root override applies. |
+| `TENANT_INACTIVE` | The tenant or one of its ancestors is not active. |
+| `UNKNOWN_ACTION` | Returned by `simulate` only: the action is not in the catalog. |
+
+## create
+
+Stores a new policy document at version 1 under your grant authority.
+
+- **Permission:** `iam:policies:create` on the tenant, plus an active grant authority.
+- **Audited as:** `iam:policies:create`.
+- **Errors:** `INVALID_POLICY`, `INVALID_ACTION`, or `INVALID_RESOURCE_TYPE` when the document does not validate
+  against the catalog; `GRANT_AUTHORITY_REQUIRED` when you hold no active grant authority; `LIMIT_EXCEEDED` when the
+  tenant's plan limit for policies is reached; `INVALID_INPUT` for an empty name or a description over 512
+  characters.
+
+The new policy grants nothing until a role attaches it with
+[`roles.create`](/docs/reference/api/roles#create) or [`roles.update`](/docs/reference/api/roles#update). Try a
+draft with `test` first.
+
+```ts
+const readOwn = await iam.api.policies.create(credential, {
+  tenantId,
+  name: 'Read own documents',
+  document: {
+    version: 1,
+    statements: [
+      {
+        sid: 'OwnedDocuments',
+        effect: 'allow',
+        actions: ['documents:read'],
+        resources: ['document/*'],
+        conditions: { StringEquals: { 'resource.ownerId': '${principal.id}' } },
+      },
+    ],
+  },
+});
+```
+
+## update
+
+Saves a new version of a policy's document, name, or description, keeping the previous version in its history.
+
+- **Permission:** `iam:policies:update` on the policy, and the grant authority the policy was created under (or
+  root).
+- **Audited as:** `iam:policies:update`.
+- **Errors:** `VERSION_CONFLICT` (409) when `version` is not the current version; `ACCESS_DENIED` when another
+  administrator's authority created the policy; `PROTECTED_RESOURCE` for the Owner policy; `INVALID_INPUT` when
+  none of `document`, `name`, or `description` is given; `INVALID_POLICY`, `INVALID_ACTION`, or
+  `INVALID_RESOURCE_TYPE` for the new document; `GRANT_AUTHORITY_REQUIRED`; `NOT_FOUND`; `INVARIANT_VIOLATION` when
+  the change would newly break an enforced [access invariant](/docs/reference/api/invariants).
+
+Pass the `version` you read. Renaming also creates a new version. The change applies at the next request to every
+role that attaches the policy, so preview it first with [`impact.preview`](/docs/reference/api/impact#preview).
+
+```ts
+const current = await iam.api.policies.get(credential, { tenantId, policyId });
+await iam.api.policies.update(credential, {
+  tenantId,
+  policyId,
+  version: current.version,
+  document: {
+    version: 1,
+    statements: [
+      ...current.document.statements,
+      { effect: 'deny', actions: ['documents:delete'], resources: ['document/*'] },
+    ],
+  },
+});
+```
+
+## restoreVersion
+
+Rolls a policy back to an earlier document by saving that document as a new version.
+
+- **Permission:** `iam:policies:update` on the policy, and the policy's grant authority (or root).
+- **Audited as:** `iam:policies:update`.
+- **Errors:** `INVALID_INPUT` when `version` is not between 1 and the current version, or is the current version;
+  `NOT_FOUND` when that version is not in the history; `INVALID_ACTION` or `INVALID_RESOURCE_TYPE` when the old
+  document no longer fits the catalog; `PROTECTED_RESOURCE`; `ACCESS_DENIED`; `INVARIANT_VIOLATION`.
+
+History is never rewritten: restoring version 3 of a policy at version 7 saves version 8 with version 3's
+document. Only the document is restored; the name and description stay as they are. The old document is validated
+again because actions or resource types may have been removed since it was written.
+
+## test
+
+Evaluates an unsaved policy document against one action, resource, and context, for policy editors.
+
+- **Permission:** `iam:policies:simulate` on the tenant.
+- **Audited as:** `iam:policies:simulate`.
+- **Errors:** `INVALID_POLICY`, `INVALID_ACTION`, or `INVALID_RESOURCE_TYPE` when the document does not validate;
+  `INVALID_INPUT` when `context` has more than 200 keys or `resource` is over 2048 characters.
+
+Only the document is evaluated: no identity, roles, bindings, or boundaries are involved, so it answers "does this
+document say what I mean?". `resource` is a `type/id` string. The context starts with the keys a session issued now
+would carry (`resource.tenantId` and `principal.tenantId` set to the tenant, `principal.sessionId`,
+`principal.tokenIssueTime`, `principal.authTime`, `principal.sessionTagKeys`, and `request.time`); your `context`
+adds keys or overrides them. Add `'principal.mfa': true` to test an MFA condition and `principal.id` to resolve
+`${principal.id}` variables. The result is a full decision with `matched`, the statements that matched as
+`grant:{index}:{sid}` (the statement's position when it has no `sid`).
+
+```ts
+const decision = await iam.api.policies.test(credential, {
+  tenantId,
+  document: draft,
+  action: 'documents:read',
+  resource: 'document/plan-2027',
+  context: { 'principal.id': 'usr_123', 'resource.ownerId': 'usr_123' },
+});
+// { allowed: true, reason: 'allowed', matched: ['grant:0:OwnedDocuments'] }
+```
+
+## get
+
+Returns one policy with its current document and version.
+
+- **Permission:** `iam:policies:read` on the policy.
+- **Audited as:** `iam:policies:read`.
+- **Errors:** `NOT_FOUND` when the policy is not in this tenant.
+
+## list
+
+Lists every policy in the tenant at its current version, including the protected Owner policy.
+
+- **Permission:** `iam:policies:read` on the tenant.
+- **Audited as:** `iam:policies:read`.
+
+## listVersions
+
+Returns a policy's full history, oldest first, ending with the current version.
+
+- **Permission:** `iam:policies:read` on the policy.
+- **Audited as:** `iam:policies:read`.
+- **Errors:** `NOT_FOUND` when the policy is not in this tenant.
+
+Each entry carries the `document`, `name`, and `version` as they were. Archived entries have their own record `id`
+and point back to the policy through `policyId`, so pick a version for `restoreVersion` by its `version` number.
+
+## delete
+
+Deletes a policy that no role attaches.
+
+- **Permission:** `iam:policies:delete` on the policy, and the policy's grant authority (or root).
+- **Audited as:** `iam:policies:delete`.
+- **Errors:** `RESOURCE_IN_USE` (409) while any role still attaches the policy; `PROTECTED_RESOURCE` for the Owner
+  policy; `ACCESS_DENIED` when another administrator's authority created it; `NOT_FOUND`.
+
+Detach the policy first by updating each role's `policyIds`. The refusal exists so that deleting a policy never
+silently removes access from the roles built on it.
+
+## simulate
+
+Explains the decision one identity would get for one action on one resource, without creating a session or
+granting anything.
+
+- **Permission:** `iam:policies:simulate` on the identity (`iam/{identityId}`).
+- **Audited as:** `iam:policies:simulate`.
+- **Errors:** `NOT_FOUND` when the identity is not in this tenant or a managed resource is not registered;
+  `RESOURCE_RESOLVER_REQUIRED` for an application-owned resource type when no `resolveResource` is configured;
+  `RESOURCE_MISMATCH` when the resolver returns a record of another tenant or resource.
+
+Use it when support asks "why can't this person open this?". Unlike the public authorization calls, the result
+includes `matched`, the statements that decided. An action missing from the catalog returns `allowed: false` with
+reason `UNKNOWN_ACTION` rather than an error. For `iam:*` actions, pass platform resources such as
+`{ type: 'iam', id: roleId }`.
+
+```ts
+const decision = await iam.api.policies.simulate(credential, {
+  tenantId,
+  identityId: alice.id,
+  action: 'invoices:approve',
+  resource: { type: 'invoice', id: 'inv_2041' },
+  assumeMfa: true,
+});
+// { allowed: false, reason: 'explicit-deny', matched: [...] }
+```
+
+## whoCan
+
+Lists every active identity that could perform an action on a resource, with the reason, for access reviews.
+
+- **Permission:** `iam:policies:simulate` on the tenant.
+- **Audited as:** `iam:policies:simulate`.
+- **Errors:** `INVALID_ACTION` for an action missing from the catalog; `INVALID_INPUT` for a `kind` other than
+  `user` or `service`, a `limit` outside 1 to 1000, or an invalid `offset`; `NOT_FOUND` when a managed resource is
+  not registered; `RESOURCE_RESOLVER_REQUIRED`.
+
+Every active identity of the tenant is evaluated, people and service accounts alike; `kind` narrows to one. The
+result has `identities` (id, name, email, kind, and the decision reason) and `total`, the number of matches before
+paging with `limit` (100 by default) and `offset`. Grants are loaded per identity, so the cost grows with the
+directory: use it on review screens, not on every request.
+
+## effectiveActions
+
+Lists which actions one identity could perform on one resource, with a reason per action.
+
+- **Permission:** `iam:policies:simulate` on the identity (`iam/{identityId}`).
+- **Audited as:** `iam:policies:simulate`.
+- **Errors:** `INVALID_INPUT` for more than 200 `actions`; `INVALID_ACTION` when one of them is not in the catalog;
+  `NOT_FOUND` when the identity is not in this tenant or a managed resource is not registered;
+  `RESOURCE_RESOLVER_REQUIRED`.
+
+Without `actions`, every action in the catalog is checked: the built-in `iam:*` actions, your product's and plugins'
+actions, and tenant-defined ones. The identity's grants are loaded once, so this is cheaper than calling `simulate`
+per action. The result has `allowed` (the sorted action names) and `results` (each action with `allowed` and
+`reason`), which is what a "what can this person do here?" panel needs.

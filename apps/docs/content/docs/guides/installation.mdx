@@ -1,0 +1,162 @@
+---
+title: Installation
+description: Install the umbrella package or individual @better-iam packages, choose a database adapter, and configure your runtime.
+icon: Download
+packages: ['better-iam']
+sources: ['README.md', 'packages/better-iam/package.json']
+---
+
+Better IAM is split into separately publishable `@better-iam/*` packages. Most applications install the umbrella
+`better-iam` package, which depends on all of them and re-exports each one as a subpath. Framework and protocol
+code loads only when you import its subpath, so unused integrations cost nothing at runtime.
+
+## Requirements
+
+| Requirement | Notes |
+| --- | --- |
+| Node.js 22.12 or newer | The engines field of every package. Web-standard `Request`/`Response`, Web Crypto, and `AsyncLocalStorage` are used throughout. |
+| ESM | Packages are ES modules with TypeScript declarations. Use `"type": "module"` or a bundler. |
+| Native modules | `argon2` (password hashing) and, for SQLite, `better-sqlite3`. Allow their install scripts (pnpm: `allowBuilds` / `onlyBuiltDependencies`). |
+| A database | PostgreSQL, SQLite, or libSQL/Turso through the bundled adapters, or your own adapter. |
+| TypeScript (optional) | `moduleResolution` of `bundler`, `node16`, or `nodenext` so subpath exports resolve. |
+
+## Install
+
+<Tabs items={['Umbrella package', 'Individual packages']} groupId="install-style" persist>
+<Tab value="Umbrella package">
+
+```npm
+npm i better-iam
+```
+
+```ts
+import { betterIam } from 'better-iam';
+import { postgresAdapter } from 'better-iam/adapter-postgres';
+import { createIamClient } from 'better-iam/client';
+import { createIamNext } from 'better-iam/next';
+```
+
+Framework peers (`next`, `react`, `vue`, `svelte`, `@sveltejs/kit`, `react-router`, `@nestjs/*`) are optional peer
+dependencies: install the ones your application already uses.
+
+</Tab>
+<Tab value="Individual packages">
+
+```npm
+npm i @better-iam/server @better-iam/adapter-postgres @better-iam/client
+```
+
+```ts
+import { betterIam } from '@better-iam/server';
+import { postgresAdapter } from '@better-iam/adapter-postgres';
+import { createIamClient } from '@better-iam/client';
+```
+
+Installing individual packages keeps `node_modules` smaller in services that only need part of the platform, for
+example a resource server that verifies assertions but never signs anyone in.
+
+</Tab>
+</Tabs>
+
+## Choose a database
+
+Better IAM keeps all of its records in your database through a storage adapter, which you pass as the `database`
+option. The three bundled adapters share one schema, so you can start on SQLite and move to PostgreSQL later.
+
+<Tabs items={['PostgreSQL', 'SQLite', 'libSQL / Turso']} groupId="database" persist>
+<Tab value="PostgreSQL">
+
+```ts title="better-iam.config.mjs"
+import { postgresAdapter } from 'better-iam/adapter-postgres';
+
+export default {
+  database: postgresAdapter({ connectionString: process.env.DATABASE_URL }),
+  // ...
+};
+```
+
+The recommended production store. Uses `pg` and `kysely`.
+
+</Tab>
+<Tab value="SQLite">
+
+```ts title="better-iam.config.mjs"
+import { sqliteAdapter } from 'better-iam/adapter-sqlite';
+
+export default {
+  database: sqliteAdapter({ filename: './iam.db' }),
+  // ...
+};
+```
+
+A single file on local disk through `better-sqlite3`. Ideal for development, tests, and single-node deployments.
+
+</Tab>
+<Tab value="libSQL / Turso">
+
+```ts title="better-iam.config.mjs"
+import { libsqlAdapter } from 'better-iam/adapter-libsql';
+
+export default {
+  database: libsqlAdapter({ url: process.env.LIBSQL_URL, authToken: process.env.LIBSQL_AUTH_TOKEN }),
+  // ...
+};
+```
+
+SQLite-compatible storage over the network (Turso) or in a local file, through `@libsql/client`.
+
+</Tab>
+</Tabs>
+
+See [Storage adapters](/docs/operations/storage) for durability settings, snapshots, and moving between databases,
+and [Adapters and plugins](/docs/operations/extensions) to write your own adapter.
+
+## Subpath imports
+
+Every subpath of the umbrella package maps to one workspace package, so importing from a subpath loads only that
+package:
+
+| Import | Package | What it provides |
+| --- | --- | --- |
+| `better-iam` | `@better-iam/server` and `@better-iam/core` | The common entry points: `betterIam()`, `IamError`, `definePolicy`, `evaluatePolicy`, `verifyAssertion`, `verifyWebhookSignature`, and the main types |
+| `better-iam/server` | `@better-iam/server` | Everything the server package exports, including the route tables and server types |
+| `better-iam/core` | `@better-iam/core` | Models, `evaluatePolicy`, `definePolicy`, the storage contract, `IamError` |
+| `better-iam/auth`, `better-iam/auth/templates` | `@better-iam/auth` | Authentication service internals and `renderDeliveryMessage` |
+| `better-iam/client`, `/client/session`, `/client/passkeys` | `@better-iam/client` | Typed browser client, session store, WebAuthn helpers |
+| `better-iam/adapter-postgres`, `/adapter-sqlite`, `/adapter-libsql` | `@better-iam/adapter-*` | Storage adapters |
+| `better-iam/oauth`, `better-iam/saml`, `better-iam/scim` | `@better-iam/oauth`, `saml`, `scim` | Federation protocols |
+| `better-iam/react`, `better-iam/vue` | `@better-iam/react`, `vue` | UI bindings |
+| `better-iam/next`, `/next/edge`, `/next/client` | `@better-iam/next` | Next.js App Router helpers |
+| `better-iam/svelte`, `/svelte/kit` | `@better-iam/svelte` | Svelte stores and SvelteKit hooks |
+| `better-iam/react-router` | `@better-iam/react-router` | React Router middleware and guards |
+| `better-iam/nestjs`, `/nestjs/testing` | `@better-iam/nestjs` | NestJS module, guard, decorators |
+| `better-iam/middleware`, `/express`, `/hono`, `/fastify` | `@better-iam/middleware` | Node framework middleware |
+| `better-iam/cli`, `better-iam/projects` | `@better-iam/cli`, `projects` | CLI entry point, reference plugin |
+
+The Nuxt module is published separately as `@better-iam/nuxt` because it depends on `@nuxt/kit`.
+
+## All packages
+
+<PackageTable />
+
+## Verify the installation
+
+Before you serve traffic, check that the configuration loads and the database is ready:
+
+```bash
+npx better-iam doctor --config better-iam.config.mjs
+```
+
+`doctor` reports schema, bootstrap, secret strength, durability, email transport, and scheduled-job problems, and
+`--strict` exits non-zero on any warning so you can run it in CI. See the [CLI reference](/docs/reference/cli#doctor).
+
+## Next steps
+
+<Cards>
+  <Card title="Quickstart" href="/docs/guides/quickstart">
+    Migrate, bootstrap the root, create an organization, and make your first authorization check.
+  </Card>
+  <Card title="Core concepts" href="/docs/guides/concepts">
+    How tenants, identities, resources, and the request pipeline fit together.
+  </Card>
+</Cards>

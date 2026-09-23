@@ -1,0 +1,386 @@
+---
+title: Scheduled jobs
+description: The worker jobs a deployment schedules (outbox, purge, sweep, reconcile, digest, remind, certifications, invariants, audit archive) with cadences and results.
+icon: CalendarClock
+packages: ['@better-iam/server', '@better-iam/cli']
+sources: ['docs/deployment.md', 'docs/events.md', 'packages/server/src/lifecycle.ts', 'packages/server/src/retention.ts', 'packages/server/src/audit-archive.ts', 'packages/server/src/index.ts', 'packages/cli/src/index.ts']
+---
+
+Better IAM starts no background work of its own, apart from the optional access-usage writer. Work that happens
+after a request (delivering email from the <Term id="outbox">outbox</Term>, dispatching
+<Term id="webhook">webhooks</Term> and subscribers, expiring access, cleaning up) waits in the database until your
+scheduler calls the matching function or CLI command. This keeps request latency independent of mail providers and
+lets you choose where the work runs. Each job is safe to run repeatedly, and `doctor` reports the ones that have
+stopped running.
+
+## At a glance
+
+Each job can run in two ways: call the instance function from a worker in your application, or run the CLI command
+from a system scheduler. Both do the same work.
+
+| Job | Instance function | CLI command | Suggested cadence |
+| --- | --- | --- | --- |
+| Deliver email, SMS, and webhooks | [`iam.auth.dispatchOutbox()`](#outbox-and-audit-hooks) | [`outbox`](/docs/reference/cli#outbox) | Every minute |
+| Dispatch audit hooks and subscribers | [`iam.events.dispatch()`](/docs/reference/api#dispatchaudithooks) (alias `iam.dispatchAuditHooks()`) | [`outbox`](/docs/reference/cli#outbox) (runs both) | Every minute, in the process that registers subscribers |
+| Retention worker | [`iam.purgeDeleted()`](/docs/reference/api#purgedeleted) | [`purge`](/docs/reference/cli#purge) | Hourly, at least daily |
+| Retention sweep | [`iam.sweepExpired()`](/docs/reference/api#sweepexpired) | [`sweep`](/docs/reference/cli#sweep) | Hourly or daily, beside `purge` |
+| Birthright access packages | [`iam.reconcilePackages()`](/docs/reference/api#reconcilepackages) | [`reconcile`](/docs/reference/cli#reconcile) | Every 15 minutes, after `purge` |
+| Owners' access digest | [`iam.sendAccessDigest()`](/docs/reference/api#sendaccessdigest) | [`digest`](/docs/reference/cli#digest) | Daily, then `outbox` |
+| Expiry reminders | [`iam.sendExpiryReminders()`](/docs/reference/api#sendexpiryreminders) | [`remind`](/docs/reference/cli#remind) | Daily, beside `digest` |
+| Auto-closing certifications | [`iam.closeOverdueCertifications()`](/docs/reference/api#closeoverduecertifications) | [`close-certifications`](/docs/reference/cli#close-certifications) | Hourly or daily |
+| Invariant monitoring | [`iam.checkInvariants()`](/docs/reference/api#checkinvariants) | [`monitor-invariants`](/docs/reference/cli#monitor-invariants) | Hourly, and after configuration changes |
+| Continuous audit archiving | [`iam.archiveAudit()`](/docs/reference/api#archiveaudit) | [`audit-archive`](/docs/reference/cli#audit-archive) | Every few minutes |
+| Audit retention | [`iam.pruneAudit()`](/docs/reference/api#pruneaudit) | [`audit-prune`](/docs/reference/cli#audit-prune) | Per your retention policy, after archiving |
+| Access usage flush | [`iam.flushAccessUsage()`](/docs/reference/api#flushaccessusage) | None | Automatic; call it before shutdown |
+| Protocol jobs (OAuth logout, Shared Signals, SCIM outbound) | `logoutEndedSessions()`, `dispatch()`, `syncAll()` on the protocol services | None | See [Protocol jobs](#protocol-jobs) |
+
+These are deployment operations: they need no credential, run with the deployment's authority, and record their
+effects in the audit log where it matters (`identity:expire`, `tenants:purge`, `tenant:access-digest`,
+`identity:expiry-reminder`, `certification:auto-close`, `invariant:broken`). Protect the scheduler's configuration
+like root.
+
+The CLI commands suit a system scheduler such as cron. Chain commands with `&&` where one must run after another,
+for example `reconcile` after `purge`:
+
+```sh title="crontab"
+CONFIG=/etc/better-iam/better-iam.config.mjs
+# Every minute: deliver email, SMS, and webhooks, then dispatch audit hooks.
+*        * * * *  better-iam outbox --config $CONFIG
+# Every 5 minutes: continuous audit archiving.
+*/5      * * * *  better-iam audit-archive --config $CONFIG
+# Hourly: expire access, sweep, then apply package rules; reconcile again every quarter hour.
+0        * * * *  better-iam purge --config $CONFIG && better-iam sweep --config $CONFIG && better-iam reconcile --config $CONFIG --fail-on-attention
+15,30,45 * * * *  better-iam reconcile --config $CONFIG --fail-on-attention
+# Hourly: due certification campaigns and guardrails.
+30       * * * *  better-iam close-certifications --config $CONFIG && better-iam monitor-invariants --config $CONFIG
+# Daily: owner digest and personal reminders, then deliver them.
+0        7 * * *  better-iam digest --config $CONFIG && better-iam remind --config $CONFIG && better-iam outbox --config $CONFIG
+```
+
+Run in-process instead when your application already has a worker:
+
+```ts title="worker.ts"
+import { iam } from './lib/iam';
+
+// Subscribers registered with iam.events.subscribe live in this process, so dispatch here.
+setInterval(async () => {
+  const { delivered, failed, abandoned } = await iam.auth.dispatchOutbox();
+  await iam.events.dispatch();
+  if (abandoned) alerts.warn('IAM deliveries abandoned', { delivered, failed, abandoned });
+}, 60_000);
+
+setInterval(async () => {
+  await iam.purgeDeleted();
+  await iam.sweepExpired();
+}, 3_600_000);
+```
+
+## Outbox and audit hooks
+
+Requests never talk to your mail provider or a webhook endpoint directly. Instead, a message is written to the
+outbox in the same transaction as the change that caused it, so a rolled-back change sends nothing and a committed
+one is never lost. The outbox job then delivers what is waiting.
+
+The outbox carries email, SMS, and webhook deliveries in creation order, encrypted at rest.
+`iam.auth.dispatchOutbox(limit?)` sends up to `limit` due messages, oldest first (default 100, at most 1000), and
+returns `{ delivered, failed, abandoned }`. Each message is claimed in its own short transaction, so two workers
+running at the same time never pick up the same message.
+
+- A failed attempt is retried with exponential backoff from thirty seconds to one hour and abandoned after
+  `authentication.maxDeliveryAttempts` (default 25), with `failedAt` and `lastError` recorded.
+- Delivery is at least once. Delivery transports must deduplicate by message ID, and must not log tokens or
+  message payloads. Alert on persistent failures.
+- Delivery callbacks are invoked outside the write transaction.
+- Audit records omit passwords, keys, and token bodies.
+
+Audit hooks work the same way for your own code. `iam.events.dispatch()` (the same function as
+`iam.dispatchAuditHooks()`) runs `events.onEvent`, in-process
+subscribers from `iam.events.subscribe`, and plugin `afterAudit` hooks for committed events. Dispatch is at least
+once: a handler that throws leaves its row queued for the next run, so handlers must be idempotent by `event.id`.
+In-process subscribers exist only where your application registered them, so dispatch in that process; the CLI's
+`outbox` command dispatches too, but only reaches hooks defined in the configuration.
+
+`doctor` reports `outbox-stalled` when messages have waited more than 15 minutes, `outbox-abandoned` for messages
+abandoned in the last day, and `audit-hooks-stalled` when audit hooks have waited more than 15 minutes.
+
+## Retention worker
+
+Access with an end date must actually end: deleted tenants must eventually leave storage, temporary grants must
+disappear, and contractors must be disabled on their last day. The retention worker does that housekeeping.
+
+`iam.purgeDeleted({ retentionMs })` (CLI `purge`, `--retention-days` from 0 to 3650, default 30) is idempotent and
+preserves audit records. In one run it:
+
+- removes tombstoned tenants past their retention window, including plugin-owned records through plugin `purge`
+  callbacks in the same transaction, and records one `tenants:purge` event per purged root;
+- deletes expired temporary <Term id="binding">bindings</Term> and ended role
+  <Term id="activation">activations</Term>;
+- marks stale access requests and package requests expired;
+- disables identities past their scheduled deactivation (`expiresAt`), revoking their sessions and recording
+  `identity:expire`;
+- removes lapsed temporary group memberships, with the activations they carried, and ended package assignments;
+- deletes authentication bookkeeping past its end: rate-limit counters, expired challenges, and lapsed network
+  blocks.
+
+It returns `purgedTenants`, `deletedRecords`, `expiredBindings`, `expiredRequests`, `expiredIdentities`,
+`expiredActivations`, `expiredMemberships`, and `expiredAssignments`. Expired identities and activations are refused
+at their next use even before the worker runs, so the schedule only affects how quickly status and reports catch
+up. `doctor` reports `purge-not-running` when expired bindings, memberships, or challenges are more than a day old.
+
+## Retention sweep
+
+Sign-ins, OAuth and SAML flows, and deliveries leave records behind after they stop mattering. Without a sweep,
+storage and some scans grow with traffic; `dispatchOutbox`, for example, reads the whole outbox.
+`iam.sweepExpired()` (CLI `sweep`) walks the expiry indexes oldest first in short batches and deletes:
+
+- user and role sessions, trusted devices, and relationship tuples past their expiry;
+- OAuth artifacts and login states, and SAML request, relay-state, and assertion-replay records past their expiry.
+  OAuth grants stay 31 days past their expiry, so back-channel logout still reaches the client when a bound session
+  ends later;
+- delivered or abandoned outbox messages, and abandoned Shared Signals deliveries, once they are older than the
+  delivery retention (counted from delivery or abandonment). This also bounds the webhook delivery history and
+  `redeliver`;
+- audit hook rows already dispatched (the audit log keeps the events).
+
+Some records are never deleted by age: pending deliveries; API keys and any session kind other than user and role
+(API keys are listed as expired and can be renewed); invitations, access requests, usage records, and SCIM
+connections. Expired challenges, rate-limit windows, blocks, bindings, and memberships are `purge`'s job.
+
+<TypeTable
+  type={{
+    limit: {
+      type: 'number',
+      default: '10000',
+      description: <>The most records one run deletes, at most 1000000 (CLI <code>--limit</code>). A run that stops at the limit reports <code>truncated: true</code>: more records may be due, so run it again.</>,
+    },
+    deliveryRetentionMs: {
+      type: 'number',
+      default: '30 days',
+      description: <>How long delivered and abandoned deliveries stay, 0 to 3650 days (CLI <code>--retention-days</code>). Pass the same value to <code>doctor --retention-days</code>.</>,
+    },
+    graceMs: {
+      type: 'number',
+      default: '5 minutes',
+      description: 'A margin past expiry, at most one day, that absorbs clock skew between instances.',
+    },
+    batchSize: {
+      type: 'number',
+      default: '500',
+      description: 'Records per transaction, 1 to 5000. Short transactions keep the write lock brief.',
+    },
+    now: {
+      type: 'number',
+      description: 'Epoch milliseconds to treat as now, for tests and backfills.',
+    },
+  }}
+/>
+
+The result is `{ deleted, total, truncated }`, with `deleted` counting records per collection. `doctor` reports
+`sweep-backlog` when records have been due for more than two days, judged with the sweep's own retention.
+
+## Package reconciliation
+
+Rule-based <Term id="access-package">access packages</Term> ("everyone in Engineering gets the Reader role") must
+follow people as their attributes and groups change. `iam.reconcilePackages()` (CLI `reconcile`) applies those
+rules, the <Term id="birthright">birthright access</Term> described in
+[Access packages](/docs/guides/privileged-access/access-packages). It assigns and removes automatic assignments
+under each rule owner's authority, at most `--limit` (1000, up to 10000) changes per organization per run, and
+prints `assigned`, `refreshed`, `restored`, `ending`, `revoked`, `stale`, `failed`, `suspended`, and `braked`. An
+unusually large change is held back by a brake (`braked`) until someone confirms it.
+
+- `truncated: true` means run it again.
+- `--tenant` and `--package` scope the run, and `--package ID --confirm` (with `--tenant`) releases changes the
+  brake held back.
+- `--fail-on-attention` exits non-zero when a change failed, was held back, or a rule is suspended, for alerting.
+
+Schedule it every 15 minutes after `purge`: SCIM provisioning, invitations, and group changes only take effect in
+packages through it. It needs no email transport.
+
+## Digest and reminders
+
+Expiring access is only useful if someone notices it before it ends. These two jobs tell the right people: owners
+get a summary of their organization, and each person hears about their own access.
+
+`iam.sendAccessDigest()` (CLI `digest`) delivers the [access report](/docs/guides/privileged-access/access-report)
+by email. For every active organization (or one `--tenant`) whose report has findings, the owners receive an
+`access-digest` message with the counts and the full report as JSON. Each organization gets at most one digest per
+20 hours (`minimumIntervalMs`), so a daily schedule that drifts a little still sends one a day. Each run is recorded
+as `tenant:access-digest`. `--within-days` (30) and `--unused-days` (30) set the report windows.
+
+`iam.sendExpiryReminders()` (CLI `remind`) speaks to the people themselves. Everyone whose account, direct role
+bindings, group memberships, or package assignments end within `--within-days` (7) gets one `expiry-reminder`
+email listing them (`items` as JSON with kind, name, and end). Each item is reminded once per end date, so extending
+access brings a fresh reminder when the new end comes into the window. Each reminder is recorded as
+`identity:expiry-reminder`.
+
+Both need the configured `sendEmail` callback (otherwise `DELIVERY_REQUIRED`). Run `outbox` afterwards to deliver
+the messages.
+
+## Certifications and invariants
+
+Governance features have deadlines and standing rules that nobody should have to enforce by hand. These jobs close
+reviews on time and watch the rules continuously.
+
+`iam.closeOverdueCertifications()` (CLI `close-certifications`) applies every
+<Term id="certification">certification campaign</Term> (see [Certifications](/docs/guides/governance/certifications))
+created with `autoClose` whose due date has passed
+(or one `--tenant`'s), each in its own transaction, under the campaign creator's grant authority. It prints
+`{ closed, skipped }` and records `certification:auto-close`.
+
+`iam.checkInvariants()` (CLI `monitor-invariants`) evaluates every organization's access
+<Term id="invariant">invariants</Term> (see [Change safety](/docs/guides/governance/change-safety)), or one `--tenant`'s, and records `invariant:broken` and
+`invariant:restored` when a status changes, so webhooks can alert.
+
+## Continuous audit archiving
+
+The <Term id="audit-chain">audit chain</Term> detects tampering, but only against a reference kept somewhere an
+attacker with database access cannot reach. Continuous archiving copies every tenant's chain, verified, to storage
+you choose, and lets you prune the database without losing history.
+
+Configure `auditArchive` and schedule `iam.archiveAudit()` (CLI `audit-archive`) every few minutes to keep an
+independent copy of every tenant's [audit chain](/docs/guides/events/audit-chain):
+
+```ts title="lib/iam.ts"
+import { betterIam, createJsonlAuditArchive } from 'better-iam/server';
+
+export const iam = betterIam({
+  // ...
+  auditArchive: createJsonlAuditArchive({ directory: '/var/lib/better-iam/audit' }),
+  // or your own sink, write-once per range:
+  // auditArchive: {
+  //   write: (batch) =>
+  //     putObjectIfAbsent(`${batch.tenantId}/${batch.fromSequence}-${batch.toSequence}`, batch),
+  // },
+});
+```
+
+Each run reads every tenant's events after its archive cursor (collection `auditArchiveCursors`), in chain order
+and in batches (`batchSize`, 1000 by default). Each batch is checked with `verifyAuditChain` against the previous
+batch's `lastHash` before it is handed to `write`. The cursor moves only after `write` resolves, so a batch can be
+written again after a crash, possibly covering a longer range. A sink must therefore:
+
+- key stored batches by `tenantId`, `fromSequence`, and `toSequence`;
+- never replace a stored batch with different content, and throw instead.
+
+One run at a time holds a tenant through a lease on its cursor (`leaseMs`, 10 minutes by default) that the run
+renews before each batch. A second run skips the tenant and lists it under `busy`, so overlapping schedules or
+instances never race each other's batches. The result also reports `archived` per tenant, `batches`, `failed`,
+`gaps`, and `truncated`; `--tenant` and `--limit` scope a run.
+
+- A chain that does not verify (for example an edited row) is reported under `failed` with `AUDIT_CHAIN_BROKEN`,
+  and nothing past it is archived.
+- A failing sink is reported with `ARCHIVE_WRITE_FAILED`, and a batch that conflicts with a stored one with
+  `ARCHIVE_CONFLICT`. The CLI exits non-zero in all three cases.
+- Sequences deleted before they were archived are listed under `gaps`.
+
+`createJsonlAuditArchive` writes one file per batch, `{tenantId}/{fromSequence}-{toSequence}.jsonl` with
+zero-padded sequences. Files are write-once: each is written under a unique temporary name, flushed, and published
+with a hard link that never replaces an existing file, and the directory is flushed too (not possible on
+Windows). Writing the same batch again is accepted; different events under an existing name are refused with
+`ARCHIVE_CONFLICT`. A restored or tampered database therefore cannot overwrite archived events. After a crash,
+files can overlap; read them by `sequence`.
+
+```sh
+better-iam audit-verify-archive --directory /var/lib/better-iam/audit --tenant TENANT_ID
+```
+
+`audit-verify-archive` checks one tenant's archive on its own, without the database or a configuration file, so an
+auditor can run it on a copy of the archive. It verifies that overlapping copies agree, that no sequence is missing,
+and that every hash and link recomputes, and exits non-zero (`AUDIT_ARCHIVE_INVALID`) otherwise. `doctor` reports `audit-archive-behind` when a tenant has unarchived events
+older than a day.
+
+### Audit retention
+
+Audit logs grow forever unless you prune them, and many retention policies require deleting old events. Pruning
+keeps the remaining chain verifiable.
+
+`iam.pruneAudit({ tenantId, retentionMs })` (CLI `audit-prune --tenant ID`, `--retention-days` default 365)
+deletes events older than the retention and appends an `audit:prune` checkpoint so the remaining chain still
+verifies. Once a tenant has an archive cursor, or wherever `auditArchive` is set, it deletes only events the
+archive already holds, in every process, including ones without the option. It reports `heldForArchive: true` when
+it stopped early, so the database never drops an event the archive lacks.
+
+For one-off checks, `audit-verify` recomputes a tenant's chain straight from storage and exits non-zero when it
+does not verify, and `audit-export` writes the chain as JSON Lines to a new file (it refuses to overwrite). Both
+need no credential and record no audit event.
+
+## Access usage flush
+
+With `accessUsage` enabled, IAM counts which actions each identity actually uses, so role mining can point out
+unused grants. Counting happens in memory and is written in batches (every minute by default, or earlier when the
+buffer fills), so no request waits on storage. The writer runs by itself; the only job for you is to call
+`iam.flushAccessUsage()` before the process exits, so the last minute of usage is not lost:
+
+```ts
+process.on('SIGTERM', async () => {
+  await iam.flushAccessUsage(); // { written }
+  process.exit(0);
+});
+```
+
+## Protocol jobs
+
+The [federation services](/docs/federation) keep their own queues and have no CLI commands, because the CLI loads
+only the IAM instance. Run their jobs in the application process or worker that creates the services, next to the
+event subscriptions that trigger them early:
+
+| Service | Call | Suggested cadence | Why it needs a schedule |
+| --- | --- | --- | --- |
+| [OAuth/OIDC provider](/docs/federation/oauth-provider#back-channel-logout) | `issuer.logoutEndedSessions()` | Every minute, and after `auth:session:*`, `identity:*`, and `tenant:*` events | Session expiry raises no event, so grants bound to expired sessions are revoked, and back-channel logouts sent, only when it runs. |
+| [Shared Signals](/docs/federation/shared-signals#delivery) | `signals.dispatch()` | Every minute; `signals.subscribe(iam.events)` delivers new events early | Retries failed deliveries with backoff and prunes delivered records older than a week. |
+| [SCIM outbound](/docs/federation/scim-outbound#keep-targets-current) | `provisioner.syncAll()` | Every 15 minutes; `provisioner.subscribe(iam.events)` syncs soon after changes | Catches changes that raise no event, such as expiries, and retries failed downstream calls. |
+
+```ts title="worker.ts"
+import { iam } from './lib/iam';
+import { issuer } from './oauth';
+import { signals } from './signals';
+import { provisioner } from './provisioning';
+
+// React to IAM events as they are dispatched...
+iam.events.subscribe(['auth:session:*', 'identity:*', 'tenant:*'], () => issuer.logoutEndedSessions());
+signals.subscribe(iam.events);
+provisioner.subscribe(iam.events);
+
+// ...and catch up on a schedule.
+setInterval(() => void issuer.logoutEndedSessions(), 60_000).unref();
+setInterval(() => void signals.dispatch(), 60_000).unref();
+setInterval(() => void provisioner.syncAll(), 15 * 60_000).unref();
+```
+
+Event subscriptions fire only when `iam.events.dispatch()` runs in the same process (see
+[Outbox and audit hooks](#outbox-and-audit-hooks)), so dispatch there too. How quickly they react is therefore set
+by that interval. None of these calls takes a credential, so never expose them over HTTP.
+
+## Nightly checks with a credential
+
+Some useful jobs act as a tenant administrator rather than as the deployment. They run as the session or API key
+in `BETTER_IAM_TOKEN`, so each run is authorized and audited:
+
+```sh
+# Lifecycle report for a ticket or chat channel (iam:identities:read, plus bindings and credentials read).
+better-iam report --config better-iam.config.mjs --tenant TENANT_ID --within-days 30 --unused-days 30
+# Fail when unsuppressed high-severity access findings exist (iam:analysis:read).
+better-iam analyze --config better-iam.config.mjs --tenant TENANT_ID --fail-on high
+# Fail when production drifted from the reviewed configuration file.
+better-iam config-plan --config better-iam.config.mjs --tenant TENANT_ID --input tenant.json --fail-on-drift
+# Fail when an invariant is broken or cannot be evaluated (iam:invariants:read).
+better-iam check-invariants --config better-iam.config.mjs --tenant TENANT_ID --fail-on-broken
+# Weekly: role-mining suggestions and peer outliers for cleanup (iam:analysis:read).
+better-iam mine-roles --config better-iam.config.mjs --tenant TENANT_ID --peer-by attribute:department
+```
+
+Treat that token as an administrator credential, and scope it with a role that holds only these read permissions.
+
+## Next steps
+
+<Cards>
+  <Card title="CLI reference" href="/docs/reference/cli">
+    Every command with its flags, exit codes, and a complete crontab.
+  </Card>
+  <Card title="Doctor" href="/docs/operations/storage#doctor">
+    The findings that tell you a job has stopped running.
+  </Card>
+  <Card title="Observability" href="/docs/operations/observability">
+    Metrics and spans to alert on stuck deliveries and failures.
+  </Card>
+</Cards>

@@ -1,0 +1,169 @@
+---
+title: Separation of duties
+description: Declare roles nobody may hold together, block every grant that would combine them, and report the conflicts that already exist.
+icon: Split
+packages: ['@better-iam/server']
+sources:
+  - docs/policies.md
+  - packages/server/src/sod.ts
+  - packages/server/src/api/sod.ts
+  - packages/server/src/operations.ts
+  - packages/server/src/api/analysis.ts
+---
+
+Some pairs of duties must never meet in one person. Whoever creates a supplier should not also approve payments
+to it; whoever writes code should not also approve its release to production. Each
+<Term id="role">role</Term> is fine on its own; the combination makes fraud or an unnoticed mistake possible.
+Auditors call this <Term id="sod">separation of duties</Term> (SoD), and the risky pairs "toxic combinations".
+
+Roles are usually granted by many people over time, through direct <Term id="binding">bindings</Term>,
+<Term id="group">groups</Term>, <Term id="access-request">access requests</Term>, and
+<Term id="access-package">access packages</Term>, so nobody sees the combination forming. A separation-of-duties
+rule names the roles that must not be combined, and Better IAM checks it on every operation that can grant a
+role.
+
+## Declare a rule
+
+`sod.create` declares a set of roles nobody may hold together. It requires `iam:sod:manage`.
+
+```ts
+const rule = await iam.api.sod.create(credential, {
+  tenantId,
+  name: 'Supplier creation vs payment approval',
+  roleIds: [supplierAdmin.id, paymentApprover.id],
+  description: 'Required by the finance controls policy, section 4.2',
+});
+// rule.existingViolations: how many people already hold two of these roles
+```
+
+<TypeTable
+  type={{
+    name: {
+      type: 'string',
+      description: 'A name shown in errors, reports, and the console, such as the control it implements. At most 200 characters.',
+      required: true,
+    },
+    roleIds: {
+      type: 'string[]',
+      description: 'The 2 to 20 roles that conflict. Holding any two of them at once is a violation. Owner roles cannot be part of a rule.',
+      required: true,
+    },
+    mode: {
+      type: "'prevent' | 'detect'",
+      description: 'prevent refuses every grant that would create a new conflict; detect only reports conflicts. Start with detect to see the impact, then switch to prevent.',
+      default: "'prevent'",
+    },
+    description: {
+      type: 'string',
+      description: 'Why the rule exists, for reviewers and auditors. At most 1000 characters.',
+    },
+  }}
+/>
+
+The response carries `existingViolations`, the number of conflicts that already existed when the rule was
+created. They are reported, but they never block unrelated work.
+
+## What counts as holding a role
+
+A rule looks at every way a person can come to hold a role, including ways that do not grant anything yet:
+
+- a direct binding to the person;
+- a binding to a group they are a live member of;
+- an <Term id="eligible-binding">eligible</Term> (just-in-time) binding, even while it is not activated, because
+  the person can activate it at any moment;
+- a future-dated binding, so a conflict scheduled to start later is stopped now.
+
+Expired bindings and lapsed group memberships do not count. Deleted identities are ignored; disabled ones still
+count, because they can be re-enabled.
+
+Rules compare the roles people are bound to. Role inheritance is not expanded, so name the roles you actually
+bind: a role that inherits one of the rule's roles is not treated as holding it.
+
+## Prevent mode
+
+In `prevent` mode (the default), every operation that can grant a role compares the tenant's conflicts before
+and after it runs. If the operation would create a new conflict, it fails with `SOD_CONFLICT` (409) and its
+transaction is rolled back, so nothing is half-applied. The message names the rule and the roles, for example
+"Separation of duties (Supplier creation vs payment approval): one person cannot hold Supplier admin and Payment
+approver".
+
+The operations checked are:
+
+- `bindings.create` and `bindings.update`, which give or change a role binding;
+- group membership changes, which give a person every role bound to the group;
+- `identities.createMany`, bulk onboarding with roles and groups;
+- access-request approval;
+- access-package assignment and approved package requests;
+- `config.apply`, configuration as code;
+- member-invitation acceptance, when the invitation grants roles or groups.
+
+Conflicts that already existed when the rule was added never block unrelated work: only operations that create a
+*new* conflict are refused. That lets you adopt a rule in a tenant that is not clean yet and fix violations at
+your own pace.
+
+A few paths do not block, by design, and rely on reporting instead:
+
+- <Term id="scim">SCIM</Term> role mappings from an identity provider are not blocked; their conflicts appear in
+  the reports.
+- [Automatic package assignment](/docs/guides/privileged-access/access-packages) skips a person whose assignment
+  would conflict (reported in the run's `failed`, audited once, and retried later) and never fails a run or an
+  identity update.
+
+## Detect mode
+
+A `detect` rule never refuses anything; it only reports. Use it to measure a new rule's impact before enforcing
+it, or for combinations that are risky but sometimes necessary and reviewed after the fact.
+
+## Find and fix conflicts
+
+`sod.violations({ tenantId, ruleId? })` lists everyone who currently holds two or more roles of a rule, with names
+for review screens. It requires `iam:sod:read`. Pass `ruleId` to check one rule.
+
+```ts
+const violations = await iam.api.sod.violations(credential, { tenantId });
+// [{ ruleId, ruleName, mode, identityId, identityName, roleIds, roleNames }]
+```
+
+`identityName` is the person's email, or their name when they have none. The
+[access analysis](/docs/guides/authorization/reviews#scan-for-risky-configuration) also reports each violation as
+a high-severity `separation-of-duties` finding, so conflicts appear in scheduled risk reports.
+
+To fix a violation, remove one of the conflicting grants: delete a binding with `bindings.delete`, remove the
+person from the group that carries the role, or revoke the access package that granted it.
+
+## Manage rules
+
+- `sod.list({ tenantId })` returns the tenant's rules, newest first (`iam:sod:read`).
+- `sod.update({ tenantId, ruleId, name?, description?, roleIds?, mode? })` changes a rule, for example to add a
+  role or switch from `detect` to `prevent` (`iam:sod:manage`).
+- `sod.delete({ tenantId, ruleId })` removes a rule (`iam:sod:manage`).
+
+Rule management is evaluated against `iam/sod/*` for creating and listing, and `iam/sod/{ruleId}` for changing or
+deleting one rule, so you can let a compliance team manage rules without other administrative rights.
+
+## Separation of duties or an invariant?
+
+Both stop dangerous access, from different angles:
+
+| | Separation-of-duties rule | <Term id="invariant">Access invariant</Term> ([details](/docs/guides/authorization/reviews#guardrails-that-must-always-hold)) |
+| --- | --- | --- |
+| Describes | Roles that must not be combined | An outcome: who must or must not be able to perform an action on a resource |
+| Looks at | Role bindings, including eligible and future-dated ones | The evaluated decision, including conditions, boundaries, and relationships |
+| Best for | Classic finance and release controls stated in terms of roles | "Contractors can never delete the payroll workspace", whatever roles they hold |
+
+Many organizations use both: SoD rules for the controls their auditors list, invariants for the outcomes that must
+hold regardless of how roles evolve.
+
+## Next steps
+
+<Cards>
+  <Card title="Roles and bindings" href="/docs/guides/authorization/roles">
+    How roles reach people directly and through groups.
+  </Card>
+  <Card title="Access reviews" href="/docs/guides/authorization/reviews">
+    Scan for violations and other risks.
+  </Card>
+  <Card title="SoD API" href="/docs/reference/api/sod">
+    Signatures for create, update, list, delete, and violations.
+  </Card>
+</Cards>

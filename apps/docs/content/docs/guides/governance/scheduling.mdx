@@ -1,0 +1,141 @@
+---
+title: Scheduling
+description: The jobs, CLI commands, and cadences that keep governance and the access lifecycle running without manual work.
+icon: Clock
+packages: ['@better-iam/server', '@better-iam/cli']
+sources:
+  - docs/governance.md
+  - docs/privileged-access.md
+  - docs/deployment.md
+  - apps/docs/generated/cli.json
+---
+
+Much of governance happens between requests. Usage is written in batches, invariants are checked for new
+violations, due review campaigns close, package rules pick up directory changes, and expired accounts are
+disabled. Nothing does these things unless a scheduler runs them, and a missing job fails quietly: access that
+should have ended keeps working in reports, and alerts never fire.
+
+This page lists each job, what it does, and how often to run it. [Background jobs](/docs/operations/jobs) covers
+how to run a worker in each deployment model.
+
+## Governance jobs
+
+| Job                  | Call                                   | CLI                      | Suggested cadence |
+| -------------------- | -------------------------------------- | ------------------------ | ----------------- |
+| Write buffered usage | automatic (every minute) and on demand | none                     | none              |
+| Invariant monitor    | `iam.checkInvariants()`                | `monitor-invariants`     | hourly            |
+| Role-mining snapshot | `roleMining.suggest` as a token holder | `mine-roles --tenant ID` | weekly            |
+| Guardrail gate in CI | `invariants.run`                       | `check-invariants`       | every deploy      |
+
+- **Write buffered usage.** With the `accessUsage` option on, the server counts which actions people use and
+  writes the counts every minute (`flushIntervalMs`), or sooner when `maxBuffered` pairs wait. No schedule is
+  needed, but call `iam.flushAccessUsage()` on shutdown so the last minute is not lost. See
+  [usage and role mining](/docs/guides/governance/usage-and-mining#access-usage).
+- **Invariant monitor.** Evaluates every organization's <Term id="invariant">access invariants</Term> and records
+  `invariant:broken` or `invariant:restored` once per change, so a webhook on `invariant:*` alerts without
+  repeating itself. It catches what enforcement cannot, such as changes made by SCIM or other jobs. See
+  [change safety](/docs/guides/governance/change-safety#monitor-and-alert).
+- **Role-mining snapshot.** Prints role-mining suggestions and peer outliers as JSON, so you can review them and
+  see whether the access model gets simpler over time.
+- **Guardrail gate.** `check-invariants --fail-on-broken` runs every invariant and exits with `INVARIANTS_BROKEN`
+  when one is broken or cannot be evaluated. Run it after `config-apply` so a deploy that crosses a line fails.
+
+## Lifecycle jobs
+
+The jobs behind [privileged access](/docs/guides/privileged-access) and
+[certifications](/docs/guides/governance/certifications):
+
+| Job                        | Call                               | CLI                             | Suggested cadence             |
+| -------------------------- | ---------------------------------- | ------------------------------- | ----------------------------- |
+| Expire and purge           | `iam.purgeDeleted()`               | `purge`                         | nightly or more often         |
+| Package rules (birthright) | `iam.reconcilePackages()`          | `reconcile`                     | every 15 minutes, after purge |
+| Close due campaigns        | `iam.closeOverdueCertifications()` | `close-certifications`          | daily                         |
+| Owner digest               | `iam.sendAccessDigest()`           | `digest`                        | daily                         |
+| Expiry reminders           | `iam.sendExpiryReminders()`        | `remind`                        | daily                         |
+| Access report to a channel | `reports.access` as a token holder | `report --tenant ID`            | nightly                       |
+| Configuration drift check  | `config.plan` as a token holder    | `config-plan --fail-on-drift`   | nightly and in CI             |
+| Deliver email and webhooks | `iam.auth.dispatchOutbox()`        | `outbox`                        | every minute                  |
+| Event subscribers          | `iam.events.dispatch()`            | none (in the subscribing process) | every minute                |
+
+What each one does:
+
+- **Expire and purge** disables identities past their `expiresAt` (recording `identity:expire`). It deletes
+  expired bindings, lapsed memberships, ended activations, and package assignments past their end, and marks stale
+  access and package requests expired. It also removes organizations deleted more than 30 days ago
+  (`--retention-days`). Expired access is refused at its next use regardless; this job decides how quickly
+  statuses and reports catch up. See [access lifecycle](/docs/guides/privileged-access/lifecycle).
+- **Package rules** applies every [package rule](/docs/guides/privileged-access/automatic-assignment): it assigns
+  packages to identities that newly match and removes them from holders who stopped matching. It must be
+  scheduled, because SCIM provisioning, invitations, federated sign-in attributes, group membership changes, and
+  expiry reach the rules only through it. `--fail-on-attention` exits non-zero (`RECONCILE_ATTENTION`) when a rule
+  needs a person.
+- **Close due campaigns** applies every <Term id="certification">certification campaign</Term> created with
+  `autoClose` once its due date has passed, removing the bindings reviewers revoked.
+- **Owner digest** emails each organization's owners its [access report](/docs/guides/privileged-access/access-report)
+  when there is something to report, at most once per 20 hours.
+- **Expiry reminders** emails each person whose account, bindings, memberships, or packages end within a week, so
+  they can ask for an extension in time.
+- **Access report to a channel** prints the report as JSON, for a chat channel or ticket.
+- **Configuration drift check** exits non-zero (`CONFIG_DRIFT`) when a tenant no longer matches its reviewed
+  [configuration file](/docs/guides/privileged-access/config-as-code), so hand edits are noticed.
+- **Deliver email and webhooks** sends the messages that operations and the other jobs queued in the
+  <Term id="outbox">delivery outbox</Term>, retrying failures with backoff. Run it after `digest` and `remind`,
+  which only queue their emails.
+- **Event subscribers** runs in-process subscribers, plugin hooks, and `events.onEvent` for newly recorded events.
+  It belongs in the process that registers the subscribers. The CLI `outbox` command also runs this dispatch, but
+  only for the plugins and `events.onEvent` in its configuration file. See [events](/docs/guides/events).
+
+Two storage jobs belong in the same schedule: `sweep` (`iam.sweepExpired()`) deletes expired sessions, remembered
+devices, relationship tuples, and old deliveries, and `audit-archive` (`iam.archiveAudit()`) copies new audit events
+to your archive. See [background jobs](/docs/operations/jobs) and the [audit chain](/docs/guides/events/audit-chain).
+
+## Credentials
+
+Two kinds of jobs appear above:
+
+- **Deployment operations** (`purge`, `sweep`, `reconcile`, `close-certifications`, `digest`, `remind`,
+  `monitor-invariants`, `outbox`, `audit-archive`) need no credential, only the configuration file. They act as
+  `deployment-operator`, and the ones that change access record their own audit events.
+- **Token jobs** (`report`, `mine-roles`, `check-invariants`, `config-plan`, `config-apply`) act as the session or
+  API key in `BETTER_IAM_TOKEN`, so each run is authorized and audited like the console. Give them a
+  [scoped API key](/docs/guides/privileged-access/lifecycle#api-key-hygiene) of a service account with only the
+  permissions they need (`iam:analysis:read`, `iam:invariants:read`, `iam:config:read`, `iam:identities:read`, and
+  so on).
+
+## Example crontab
+
+```sh title="crontab"
+CONFIG=/etc/better-iam/better-iam.config.mjs
+# Every minute: deliver email and webhooks
+* * * * *     better-iam outbox --config $CONFIG
+# Every 15 minutes: package rules, after purge
+*/15 * * * *  better-iam reconcile --config $CONFIG --fail-on-attention
+# Hourly: invariant monitor
+0 * * * *     better-iam monitor-invariants --config $CONFIG
+# Nightly: expire and purge, sweep expired records, close due campaigns
+0 2 * * *     better-iam purge --config $CONFIG
+15 2 * * *    better-iam sweep --config $CONFIG
+30 2 * * *    better-iam close-certifications --config $CONFIG
+# Mornings: email owners and people, then deliver
+0 7 * * *     better-iam digest --config $CONFIG && better-iam remind --config $CONFIG && better-iam outbox --config $CONFIG
+# Weekly: role-mining snapshot (as a token holder)
+0 6 * * 1     BETTER_IAM_TOKEN=... better-iam mine-roles --config $CONFIG --tenant TENANT_ID
+```
+
+To catch a job that stopped running, use `better-iam doctor`. Among other things, it reports:
+
+- expired bindings or memberships older than a day (`purge` is not running);
+- records due for `sweep` for more than two days;
+- outbox messages, and audit hooks, waiting more than 15 minutes;
+- audit events older than a day that are not archived, when `auditArchive` is configured.
+
+`--strict` makes it exit non-zero, which suits a health check. See [observability](/docs/operations/observability).
+
+<Cards>
+  <Card title="Background jobs" href="/docs/operations/jobs">
+    Running workers on servers, serverless platforms, and in-process timers.
+  </Card>
+  <Card title="CLI reference" href="/docs/reference/cli">
+    Every command with its flags and defaults.
+  </Card>
+</Cards>

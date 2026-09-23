@@ -1,0 +1,461 @@
+---
+title: Conditions
+description: Every condition operator, how values combine, negation and missing-key rules, and the context keys the server provides to policies.
+icon: Funnel
+packages: ['@better-iam/core', '@better-iam/server']
+sources:
+  - docs/policies.md
+  - docs/security.md
+  - packages/core/src/policy.ts
+  - packages/server/src/decisions.ts
+  - packages/server/src/policy-lint.ts
+  - packages/server/src/catalog.ts
+  - packages/core/src/index.ts
+---
+
+<Term id="role">Roles</Term> and resource patterns answer "who may do what, on which things". Real rules often
+depend on the situation too: only from an MFA-verified session, only on documents you own, only until the end of
+the audit, only after accepting the terms of use. A <Term id="condition">condition</Term> adds such a test to a
+policy <Term id="statement">statement</Term>, and the statement applies only when every condition holds.
+
+Each condition compares one key of the request **context** with the values you list. The context is a set of
+facts the server assembles for every decision from trusted sources: about the
+<Term id="principal">principal</Term> (the person or service account making the request), such as
+`principal.mfa`; about the <Term id="resource">resource</Term>, such as `resource.ownerId`; and about the request,
+such as `request.time`.
+
+```json
+{
+  "effect": "allow",
+  "actions": ["documents:write"],
+  "resources": ["document/*"],
+  "conditions": {
+    "Bool": { "principal.mfa": true },
+    "StringEquals": { "principal.kind": "user", "resource.classification": ["internal", "public"] }
+  }
+}
+```
+
+This statement applies to MFA-verified people, on documents classified `internal` or `public`. The keys of
+`conditions` are **operators** (`Bool`, `StringEquals`), each operator maps context keys to the expected values,
+and a key can list several values.
+
+<TryInPlayground
+  grants={[
+    {
+      version: 1,
+      statements: [
+        {
+          sid: 'WriteInternalWithMfa',
+          effect: 'allow',
+          actions: ['documents:write'],
+          resources: ['document/*'],
+          conditions: {
+            Bool: { 'principal.mfa': true },
+            StringEquals: { 'principal.kind': 'user', 'resource.classification': ['internal', 'public'] },
+          },
+        },
+      ],
+    },
+  ]}
+  action="documents:write"
+  resource="document/roadmap"
+  context={{ 'principal.id': 'usr_alice', 'principal.kind': 'user', 'principal.mfa': true, 'resource.classification': 'internal' }}
+>
+  Try this statement in the playground
+</TryInPlayground>
+
+Change `resource.classification` to `secret`, or `principal.mfa` to `false`, and the statement stops applying. With
+no other statement allowing the write, the decision becomes an implicit deny.
+
+## How conditions combine
+
+A few rules decide how several conditions, keys, and values add up:
+
+- **Operators and keys are ANDed.** Every operator in `conditions`, and every key under each operator, must hold.
+- **Listed values are ORed.** A key with several values holds when any of them matches.
+- **Except for negated operators and `ArrayContainsAll`**, which must hold for every listed value:
+  `StringNotEquals` with `["secret", "restricted"]` means "neither secret nor restricted".
+- **Types are strict.** A missing or wrongly typed context value never satisfies an operator, including the
+  negated ones. `StringNotEquals` on an absent key is false, not vacuously true. Use `Exists` to test absence.
+- **Invalid syntax is rejected early.** Unknown operators and values of the wrong type fail with `INVALID_POLICY`
+  when a policy is created or updated.
+
+## Operators
+
+Better IAM supports 21 operators, grouped by the kind of value they compare. Every operator accepts one value or a
+list of up to 64 values per key.
+
+### Text
+
+Use the string operators for identifiers, names, and labels: the kind of account, a department, a
+classification. The `IgnoreCase` variants help with values people type, and the `Like` variants accept `*` and
+`?` wildcards.
+
+| Operator | In plain English | Example |
+| --- | --- | --- |
+| `StringEquals` | The value is exactly one of these strings (case matters). | `{ "StringEquals": { "principal.kind": "service" } }` |
+| `StringNotEquals` | The value is a string, and none of these. | `{ "StringNotEquals": { "resource.classification": ["secret", "restricted"] } }` |
+| `StringEqualsIgnoreCase` | The value is one of these strings, ignoring upper and lower case. | `{ "StringEqualsIgnoreCase": { "principal.department": "Finance" } }` |
+| `StringNotEqualsIgnoreCase` | The value is a string, and none of these, ignoring case. | `{ "StringNotEqualsIgnoreCase": { "principal.department": "contractors" } }` |
+| `StringLike` | The value matches one of these wildcard patterns. | `{ "StringLike": { "principal.department": "eng-*" } }` |
+| `StringNotLike` | The value is a string that matches none of these patterns. | `{ "StringNotLike": { "resource.name": "tmp-*" } }` |
+| `StringLikeIgnoreCase` | The value matches one of these patterns, ignoring case. | `{ "StringLikeIgnoreCase": { "principal.department": "ENG-*" } }` |
+
+The values of the string operators may contain <Term id="policy-variable">policy variables</Term>, such as
+`"${principal.id}"`; see [Policy variables](/docs/guides/authorization/policies#policy-variables).
+
+### Yes or no
+
+Use `Bool` for flags: whether the session used MFA, whether the person is an owner, whether a project is
+archived.
+
+| Operator | In plain English | Example |
+| --- | --- | --- |
+| `Bool` | The value is `true` (or `false`), and really a boolean. | `{ "Bool": { "principal.mfa": true } }` |
+
+### Numbers
+
+Use the numeric operators for amounts, levels, and counts: an invoice total, a clearance level, how many required
+agreements are still owed.
+
+| Operator | In plain English | Example |
+| --- | --- | --- |
+| `NumericEquals` | The value is one of these numbers. | `{ "NumericEquals": { "principal.clearance": 3 } }` |
+| `NumericNotEquals` | The value is a number, and none of these. | `{ "NumericNotEquals": { "resource.stage": 0 } }` |
+| `NumericLessThan` | The value is below this number. | `{ "NumericLessThan": { "resource.amount": 10000 } }` |
+| `NumericLessThanEquals` | The value is at most this number. | `{ "NumericLessThanEquals": { "resource.amount": 10000 } }` |
+| `NumericGreaterThan` | The value is above this number. | `{ "NumericGreaterThan": { "principal.pendingAgreements": 0 } }` |
+| `NumericGreaterThanEquals` | The value is at least this number. | `{ "NumericGreaterThanEquals": { "principal.clearance": 2 } }` |
+
+### Dates and times
+
+Use the date operators to make access start or end at a fixed moment, usually by testing `request.time`.
+
+| Operator | In plain English | Example |
+| --- | --- | --- |
+| `DateBefore` | The value is a moment earlier than this one. | `{ "DateBefore": { "request.time": "2026-12-31T23:59:59Z" } }` |
+| `DateAfter` | The value is a moment later than this one. | `{ "DateAfter": { "request.time": "2026-10-01T00:00:00Z" } }` |
+
+### Network addresses
+
+Use the IP operators to allow or block networks, such as an office range or a VPN. The server puts the caller's
+address in `request.sourceIp` when it knows it (see [Resource and request keys](#resource-and-request-keys)).
+
+| Operator | In plain English | Example |
+| --- | --- | --- |
+| `IpAddress` | The value is an IP address inside one of these networks. | `{ "IpAddress": { "request.sourceIp": ["203.0.113.0/24", "2001:db8::/32"] } }` |
+| `NotIpAddress` | The value is a valid IP address outside all of these networks. | `{ "NotIpAddress": { "request.sourceIp": "10.0.0.0/8" } }` |
+
+### Lists
+
+Some context keys hold lists: the groups a person belongs to, their roles, the relations they hold on a resource.
+Use the array operators for them; the string operators never match a list.
+
+| Operator | In plain English | Example |
+| --- | --- | --- |
+| `ArrayContains` | The list includes at least one of these values. | `{ "ArrayContains": { "principal.groups": "grp_admins" } }` |
+| `ArrayContainsAll` | The list includes every one of these values. | `{ "ArrayContainsAll": { "resource.relations": ["editor", "owner"] } }` |
+
+The values listed for `ArrayContains` and `ArrayContainsAll` may contain policy variables too.
+
+### Presence
+
+Use `Exists` to test whether a key is there at all, which matters because a missing key fails every other
+operator (see [Missing keys](#missing-keys)).
+
+| Operator | In plain English | Example |
+| --- | --- | --- |
+| `Exists` | The key is present (`true`) or absent (`false`). | `{ "Exists": { "principal.authMethod": true } }` |
+
+## Negated operators
+
+"Not equal to secret" sounds like it should hold for a document with no classification at all. In Better IAM it
+does not, and that is deliberate: a negated test on a missing or malformed value would otherwise quietly let
+requests through. The negated operators are `StringNotEquals`, `StringNotEqualsIgnoreCase`, `StringNotLike`,
+`NumericNotEquals`, and `NotIpAddress`. A negated operator only negates a comparison that could have succeeded, so
+the context value must first have the operator's type:
+
+| Operator | The context value must be |
+| --- | --- |
+| `StringNotEquals`, `StringNotEqualsIgnoreCase`, `StringNotLike` | a string |
+| `NumericNotEquals` | a finite number |
+| `NotIpAddress` | a valid IP address |
+
+If it is not (missing, a list, a number where a string is expected, text that is not an address), the condition
+is false: an allow with `NotIpAddress` does not apply to a malformed address, and neither does a deny.
+
+## Missing keys
+
+A key that is absent from the context never satisfies any operator except `Exists`. For allow statements this is
+the safe direction: the statement simply does not apply. For deny statements it is a trap, because the deny also
+does not apply.
+
+<Callout type="warn" title="Guard denies on optional keys">
+  Keys such as `principal.authMethod`, `principal.mfaTime`, `request.sourceIp`, session tags, identity attributes,
+  resource attributes, and application keys can be missing. A deny conditioned only on them silently never applies
+  when they are.
+</Callout>
+
+This pair of statements keeps payments to the finance department, including for people with no department set:
+
+```json title="Deny on an optional key, with its missing-key case"
+[
+  {
+    "sid": "OnlyFinance",
+    "effect": "deny",
+    "actions": ["payments:*"],
+    "resources": ["*"],
+    "conditions": { "StringNotEquals": { "principal.department": "finance" } }
+  },
+  {
+    "sid": "OnlyFinanceWhenUnset",
+    "effect": "deny",
+    "actions": ["payments:*"],
+    "resources": ["*"],
+    "conditions": { "Exists": { "principal.department": false } }
+  }
+]
+```
+
+<TryInPlayground
+  grants={[
+    {
+      version: 1,
+      statements: [
+        { sid: 'Payments', effect: 'allow', actions: ['payments:*'], resources: ['*'] },
+        {
+          sid: 'OnlyFinance',
+          effect: 'deny',
+          actions: ['payments:*'],
+          resources: ['*'],
+          conditions: { StringNotEquals: { 'principal.department': 'finance' } },
+        },
+        {
+          sid: 'OnlyFinanceWhenUnset',
+          effect: 'deny',
+          actions: ['payments:*'],
+          resources: ['*'],
+          conditions: { Exists: { 'principal.department': false } },
+        },
+      ],
+    },
+  ]}
+  action="payments:create"
+  resource="payment/pay_42"
+  context={{ 'principal.id': 'usr_dave' }}
+>
+  See the missing-key case in the playground
+</TryInPlayground>
+
+The request has no `principal.department`, so `OnlyFinance` does not apply and `OnlyFinanceWhenUnset` denies it.
+Remove the second deny in the playground and the payment is allowed, which is exactly the gap the guard closes.
+
+[`analysis.lintPolicy`](/docs/guides/authorization/policies#lint) reports such denies as `optional-key-deny`.
+
+## Value formats
+
+Because types are strict, a value in the wrong format never matches. These are the formats each family expects,
+both in your policy and in the context:
+
+- **Timestamps** for `DateBefore` and `DateAfter` are ISO 8601 with seconds and a zone: `2026-09-22T09:30:00Z`,
+  optionally with one to three fractional digits (`.250`) or an offset (`+02:00`) instead of `Z`. Impossible
+  calendar dates such as February 31 are rejected in policies and never match in the context. `request.time` is
+  always in this format.
+- **Numbers** must be finite. A string of digits, such as `"3"`, does not match a numeric operator.
+- **IP addresses and networks** are IPv4 dotted decimal or IPv6 (with `::` compression or an embedded IPv4
+  suffix), optionally with a `/prefix`. Zone IDs (`%eth0`) and brackets are not accepted. Across families, an
+  IPv4-mapped IPv6 address (`::ffff:198.51.100.7`) stands for its IPv4 address, so how a dual-stack listener
+  spells a client can neither sidestep a block nor get an allowed office refused.
+- **Globs** in `StringLike`, `StringNotLike`, and `StringLikeIgnoreCase` work like resource patterns: anchored,
+  with `*` and `?` as the only wildcards.
+- **Array membership** is exact: `ArrayContains` with `3` does not match an array holding `"3"`.
+
+`DateBefore` and `DateAfter` compare absolute instants. For recurring hours, such as weekdays from 9 to 5, use an
+<Term id="access-window">access window</Term> on the <Term id="binding">binding</Term> instead; see
+[Access windows](/docs/guides/authorization/temporary-access#access-windows).
+
+## Context keys
+
+A condition can only test what is in the context, so this list is the vocabulary of your conditions. The server
+builds the context for every decision from trusted sources: the session, stored identity records, the resolved
+resource, and your own callbacks. Nothing comes from the browser, so a caller cannot claim to be an owner or to
+have used MFA.
+
+### Principal keys
+
+These describe who is calling and how they signed in.
+
+| Key | Type | Value |
+| --- | --- | --- |
+| `principal.id` | string | The identity's ID. |
+| `principal.tenantId` | string | The tenant of the session. |
+| `principal.mfa` | boolean | Whether the session is MFA-verified. Always false for API keys and delegated sessions. |
+| `principal.kind` | string | `user`, `service`, or `agent` (an [AI agent](/docs/guides/ai-agents)'s own key). A delegated session acts as the person, so it is `user`; test `principal.delegated` for agents acting for people. |
+| `principal.owner` | boolean | Whether the identity is an owner of this tenant. False in role sessions and delegated sessions. |
+| `principal.rootAdmin` | boolean | Whether the identity holds root authority. False in role sessions and delegated sessions. |
+| `principal.sessionKind` | string | The credential: `user`, `api-key`, `role`, `session-token`, or `delegated` (an AI agent acting for a person). |
+| `principal.authMethod` | string, optional | How a user session was established: `password`, `passwordless-email`, `passwordless-sms`, `passkey`, `federated`, or `impersonation`. Absent for API keys, role sessions, and sessions issued before methods were recorded. |
+| `principal.impersonated` | boolean | True while an administrator acts as the member. |
+| `principal.impersonatorId` | string, optional | The administrator, present only during impersonation. |
+| `principal.groups` | list | IDs of the groups the identity is a live member of. |
+| `principal.teams` | list | IDs of the person's teams and every team above them. Empty for people without teams and for assumed roles. See [Teams and departments](/docs/guides/teams-and-departments). |
+| `principal.departments` | list | The person's department ID and every department above it; empty without a department. |
+| `principal.departmentId` | string, optional | The person's own department, absent when they have none. |
+| `principal.roles` | list | IDs of the roles bound to the identity directly or through groups, including eligible roles while activated. Roles reached only through inheritance are not listed. |
+| `principal.agreements` | list | Names of the <Term id="agreement">terms of use</Term> accepted in their current version. See [Agreements](/docs/guides/governance/agreements). |
+| `principal.pendingAgreements` | number | How many required agreements are still owed. |
+| `principal.spendExceeded` | boolean | Whether an enforced spend budget covering the principal is spent. See [Billing and spend](/docs/guides/billing). |
+| `principal.budgetsExceeded` | list | Names of every spent budget covering the principal. Budget standings are cached for up to 30 seconds; an assumed role sees only the tenant's budgets. |
+| `principal.onboarding` | list | Names of the onboarding flows the person completed. See [Onboarding](/docs/guides/onboarding). |
+| `principal.pendingOnboarding` | number | How many required onboarding flows are still open. |
+| `principal.delegated` | boolean | Whether an AI agent is acting on the person's behalf. |
+| `principal.delegationChain` | list, optional | For work [handed on between agents](/docs/guides/ai-agents#handing-work-on-to-other-agents): the agents from the person's own delegate to the acting one. |
+| `principal.delegationId`, `principal.agentId`, `principal.agentSponsorId`, `principal.agentModel`, `principal.agentProvider` | string, optional | For AI agents: the delegation in use, the agent behind the credential (its own key or a delegated session), the person who sponsors it, and its model and provider. |
+| `principal.{name}` | declared type, optional | Identity attributes declared in `permissions.identityAttributes`. They cannot shadow the keys above. |
+
+The session itself adds a second set of keys. They let a policy ask how fresh a sign-in is ("MFA within the last
+hour"), or who a temporary session was issued to:
+
+| Key | Type | Value |
+| --- | --- | --- |
+| `principal.sessionId` | string | The ID of the session making the request. |
+| `principal.tokenIssueTime` | timestamp | When the session was created. |
+| `principal.authTime` | timestamp | When the person last authenticated in this session. |
+| `principal.mfaTime` | timestamp, optional | When the second factor was completed. Present only for a first-hand second factor, not for a remembered device or an impersonation session, so a `DateAfter` on it proves recent MFA. |
+| `principal.sessionTagKeys` | list | The names of the session's tags, sorted; empty for sessions without tags. |
+| `principal.sessionTags.{key}` | string, optional | The value of one session tag, such as `principal.sessionTags.ticket`. Tags are set when a [role session](/docs/guides/authorization/temporary-access#role-sessions) is started. |
+| `principal.sourceTenantId` | string, optional | For role sessions, the tenant the caller came from. |
+| `principal.sessionName`, `principal.sourceIdentity` | string, optional | Names recorded when a temporary session was issued, so audit and policies can attribute it to a person or job. |
+| `principal.webIdentityProvider`, `principal.webIdentitySubject` | string, optional | For sessions exchanged from an external identity provider's token: which provider, and the subject it vouched for. |
+
+### Resource and request keys
+
+These describe the thing being acted on, the caller's relation to it, and when the request happens.
+
+| Key | Type | Value |
+| --- | --- | --- |
+| `resource.tenantId` | string | The tenant the resource belongs to. |
+| `resource.{name}` | declared type, optional | Attributes from `resolveResource` or the managed registration. |
+| `resource.ownerId`, `resource.parentId`, `resource.parentType` | string, optional | Managed resources, when set. |
+| `resource.relations` | list | Relations the principal holds on the resource, directly or through a group. See [Relationships](/docs/guides/authorization/relationships). |
+| `resource.parentRelations` | list | Relations the principal holds on the resource's registered parent. |
+| `request.time` | timestamp | When the request is evaluated. |
+| `request.sourceIp` | string, optional | The caller's IP address, when the server saw one for this request and it parses as an address (see [client details](/docs/guides/authentication/http#client-details)). Never present in simulations. |
+
+### Tenant keys
+
+| Key | Type | Value |
+| --- | --- | --- |
+| `tenant.features` | list | Keys of the [feature flags](/docs/guides/feature-flags) that are on for the decision's tenant, internal flags included. Read only for decisions whose documents name it. |
+
+The server never sets `resource.type` or `resource.id` (match them in the resource pattern instead), nor
+`principal.email`, `principal.name`, or `principal.managerId` (declare an identity attribute if a policy needs
+one). The linter flags these as `unknown-context-key`.
+
+### Application keys
+
+Some rules depend on your own data, such as the customer's billing plan or whether their seats are used up.
+`resolveContext`, on the server options or on a plugin, adds such server-derived values to the context. It
+receives the authenticated principal and returns a map of keys, and it runs for every decision, so keep it fast:
+
+```ts title="lib/iam.ts"
+export const iam = betterIam({
+  // ...
+  async resolveContext(principal) {
+    const account = await billing.accountFor(principal.session.tenantId);
+    return { 'app.plan': account.plan, 'app.seatsExceeded': account.seatsUsed > account.seats };
+  },
+});
+```
+
+```json
+{ "effect": "deny", "actions": ["reports:export"], "resources": ["*"], "conditions": { "StringEquals": { "app.plan": "free" } } }
+```
+
+Precedence runs from least to most trusted: the application's `resolveContext`, then plugins, then declared
+identity attributes, and finally the server-derived principal and request keys, which always win. Resource keys
+are set from the resolved resource. Neither callback may trust arbitrary browser attributes.
+
+For network rules, test `request.sourceIp`. It is optional: a request whose address the server did not see (a
+server-side call without client details, or a simulation) has no such key, so pair a network deny with an
+`Exists` guard as shown in [Missing keys](#missing-keys).
+
+### Special sessions
+
+A few kinds of session see a different context, which matters when a condition behaves unexpectedly for them:
+
+- **Role sessions**, created by <Term id="role-assumption">role assumption</Term>, carry only the assumed role:
+  `principal.roles` holds the role, `principal.groups` is empty, `principal.owner` and `principal.rootAdmin` are
+  false, no relations apply, and there are no agreements. `principal.authMethod` is absent, while `principal.mfa`,
+  `principal.authTime`, and `principal.mfaTime` carry over from the session that assumed the role.
+  `principal.sourceTenantId` names the caller's own tenant, and the caller's declared identity attributes are
+  included unless the trust withholds them.
+- **<Term id="impersonation">Impersonation</Term>** sets `principal.impersonated` and `principal.impersonatorId`,
+  and the decision is also checked against the administrator's own rights.
+- **Simulations and reviews** evaluate an identity in a <Term id="synthetic-session">synthetic session</Term>:
+  `principal.sessionKind` is `user` for people and `api-key` for service accounts, `principal.authMethod` is
+  absent, and `principal.mfa` is false unless you pass `assumeMfa: true`. `principal.sessionId` is `simulation`,
+  `principal.authTime` is the moment of evaluation, and there are no session tags. `principal.mfaTime` and
+  `request.sourceIp` are always absent, even with `assumeMfa`, so a condition that requires recent MFA or a
+  particular network never holds in a simulation.
+
+## Common conditions
+
+These statements solve problems that come up in most applications. Add them to a role, or to a policy attached
+to a role everyone holds.
+
+```json title="Administration only from MFA sessions"
+{ "effect": "deny", "actions": ["iam:*"], "resources": ["*"], "conditions": { "Bool": { "principal.mfa": false } } }
+```
+
+`principal.mfa` is always present, so this deny is safe without an `Exists` guard. It also blocks API keys, which
+are never MFA-verified; exclude them with a `StringEquals` on `principal.kind` if integrations administer the
+tenant.
+
+```json title="Hold back documents until required terms are accepted"
+{
+  "effect": "deny",
+  "actions": ["documents:*"],
+  "resources": ["*"],
+  "conditions": { "NumericGreaterThan": { "principal.pendingAgreements": 0 } }
+}
+```
+
+```json title="Only people who accepted an optional agreement"
+{
+  "effect": "allow",
+  "actions": ["beta:use"],
+  "resources": ["*"],
+  "conditions": { "ArrayContains": { "principal.agreements": ["Beta program"] } }
+}
+```
+
+```json title="No deletions while viewing as a member"
+{ "effect": "deny", "actions": ["*:delete"], "resources": ["*"], "conditions": { "Bool": { "principal.impersonated": true } } }
+```
+
+```json title="Access that ends on a date"
+{
+  "effect": "allow",
+  "actions": ["audit-workspace:read"],
+  "resources": ["*"],
+  "conditions": { "DateBefore": { "request.time": "2026-12-31T23:59:59Z" } }
+}
+```
+
+Try any of these in the [policy playground](/playground) with your own context values.
+
+## Next steps
+
+<Cards>
+  <Card title="Policy variables" href="/docs/guides/authorization/policies#policy-variables">
+    Compare context keys with each other, such as the owner and the caller.
+  </Card>
+  <Card title="Relationships" href="/docs/guides/authorization/relationships">
+    Conditions on relations the caller holds.
+  </Card>
+  <Card title="Access reviews" href="/docs/guides/authorization/reviews">
+    See how a condition affects real people before you rely on it.
+  </Card>
+</Cards>

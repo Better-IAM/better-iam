@@ -1,0 +1,261 @@
+---
+title: Access lifecycle
+description: Recipes for just-in-time elevation with approvals, scheduled deactivation for contractors, API key hygiene, configuration as code, and offboarding.
+icon: Timer
+packages: ['@better-iam/server', '@better-iam/cli']
+sources: ['docs/recipes.md', 'docs/privileged-access.md', 'docs/security.md', 'docs/deployment.md']
+---
+
+These recipes keep access time-bound from the day someone joins to the day they leave: privileged roles held only
+while needed, accounts that switch off on schedule, keys that do not linger, reviewed configuration, and a clean
+exit. `credential` is the caller's credential (`{ token }` or `{ headers }`).
+
+## Just-in-time elevation instead of standing admin roles
+
+**The problem:** administrator and production roles held permanently are the most valuable target in any account,
+and most of the time nobody is using them.
+
+**The solution:** make people _eligible_ for those roles instead of holding them. An
+<Term id="eligible-binding">eligible binding</Term> grants nothing until the person activates it. An
+<Term id="activation">activation</Term> lasts a bounded time and can require a reason, MFA, and, for the most
+sensitive roles, a second person's approval.
+
+```ts
+// 1. Everyone may activate the roles they are eligible for.
+const member = await iam.api.roles.create(credential, {
+  tenantId,
+  name: 'Member',
+  permissions: ['iam:bindings:activate'],
+});
+await iam.api.bindings.create(credential, {
+  tenantId,
+  roleId: member.id,
+  subjectType: 'group',
+  subjectId: everyone.id,
+});
+
+// 2. The on-call group is eligible for incident response: two hours at most, with a reason and MFA.
+const onCall = await iam.api.bindings.create(credential, {
+  tenantId,
+  roleId: responder.id,
+  subjectType: 'group',
+  subjectId: onCallGroup.id,
+  eligible: true,
+  maxActivationMs: 2 * 3_600_000,
+  requireJustification: true,
+  requireMfa: true,
+});
+
+// 3. Production administration also needs a second person: the platform team approves.
+const production = await iam.api.bindings.create(credential, {
+  tenantId,
+  roleId: productionAdmin.id,
+  subjectType: 'group',
+  subjectId: engineers.id,
+  eligible: true,
+  requireApproval: true,
+  approverGroupId: platformTeam.id, // members hold iam:bindings:approve and receive activation-request emails
+});
+
+// A responder elevates from an MFA session, works, and steps down early.
+const activation = await iam.api.bindings.activate(responderCredential, {
+  tenantId,
+  bindingId: onCall.id,
+  justification: 'INC-4211',
+  durationMs: 30 * 60_000,
+});
+await iam.api.bindings.deactivate(responderCredential, { tenantId, activationId: activation.id });
+
+// An engineer asks for production access: the activation starts as a request (status 'pending').
+const request = await iam.api.bindings.activate(engineerCredential, {
+  tenantId,
+  bindingId: production.id,
+  justification: 'CHG-88',
+});
+await iam.api.bindings.approveActivation(platformCredential, {
+  tenantId,
+  activationId: request.id,
+  durationMs: 45 * 60_000, // optional: the approver sets how long the role stays active
+});
+
+// Alert on every elevation.
+await iam.api.webhooks.create(credential, {
+  tenantId,
+  url: 'https://ops.example.com/hooks/iam',
+  events: ['binding:*'],
+});
+```
+
+- An eligible binding grants nothing until activated, and then only for a bounded time. `maxActivationMs` is one
+  hour by default and seven days at most.
+- Without `durationMs`, an approval grants the duration the requester asked for. With it, the approver picks any
+  duration from one minute up to the binding's effective maximum, which may be longer than the request. Nobody
+  approves their own request.
+- Every step is audited (`binding:activate`, `binding:activation-requested`, `binding:activation-approved`,
+  `binding:activation-denied`, `binding:deactivate`), which is why the webhook on `binding:*` makes a good alert.
+- An organization can set floors for every eligible binding at once with `tenants.setAccessPolicy`, such as a
+  shorter maximum or a required justification.
+
+See [Just-in-time elevation](/docs/guides/privileged-access/elevation).
+
+## Contractors: schedule deactivation
+
+**The problem:** contractors and temporary <Term id="service-account">service accounts</Term> outlive their
+contracts because nobody remembers to disable them.
+
+**The solution:** give the identity an end date (`expiresAt`) when you create it. Its credentials stop working at
+that moment, and the retention worker then disables it.
+
+```ts
+await iam.api.identities.create(credential, {
+  tenantId,
+  email: 'contractor@example.com',
+  name: 'Contractor',
+  expiresAt: Date.parse('2027-03-31T00:00:00Z'),
+});
+// Who deactivates in the next 30 days?
+const expiring = await iam.api.identities.list(credential, {
+  tenantId,
+  expiresBefore: Date.now() + 30 * 86400_000,
+});
+// Extend with a later date, or clear the deadline with null.
+await iam.api.identities.update(credential, { tenantId, identityId, expiresAt: null });
+// Run the retention worker on a schedule: it disables expired identities and records identity:expire.
+await iam.purgeDeleted();
+```
+
+- Past `expiresAt`, every credential of the identity is refused at once, even before the worker runs. The
+  [retention worker](/docs/operations/jobs#retention-worker) then disables the identity, revokes its sessions, and
+  records `identity:expire`.
+- Clearing or extending the deadline is the only way to re-enable an expired identity, so nobody quietly turns a
+  contractor back on.
+- Service accounts accept `expiresAt` too, and [`remind`](/docs/operations/jobs#digest-and-reminders) emails people
+  a week before their account ends.
+
+See [Access lifecycle](/docs/guides/privileged-access/lifecycle).
+
+## API key hygiene
+
+**The problem:** API keys get created for a pipeline or an integration, then forgotten, and keep working long after
+anyone needs them.
+
+**The solution:** label every key and give it an expiry when you create it. Then regularly list the keys nobody
+has used with `credentials.list` and `unusedForMs`, and revoke them.
+
+```ts
+const key = await iam.api.credentials.create(credential, {
+  tenantId,
+  identityId: deployer.id,
+  name: 'github-actions',
+  description: 'Deploys from the release workflow',
+  expiresInSeconds: 90 * 86400,
+});
+// key.token is returned once: store it in the pipeline's secrets now.
+
+// Keys nobody has used for 30 days, including keys never used since they were issued.
+const unused = await iam.api.credentials.list(credential, {
+  tenantId,
+  unusedForMs: 30 * 86400_000,
+});
+for (const item of unused)
+  await iam.api.credentials.revoke(credential, { tenantId, credentialId: item.id });
+```
+
+- Keys record `lastUsedAt` when they authenticate a request, which is what `unusedForMs` compares against.
+- Issue keys with `scopes` (an action allowlist) so an integration never holds more than it needs.
+- Rotation (`credentials.rotate`) keeps the label and expiry but resets the usage history, so a rotated key shows
+  up as unused until it is put to work.
+- The nightly [`report`](/docs/operations/jobs#nightly-checks-with-a-credential) and the owners' digest list unused
+  and expiring keys.
+
+See [Access lifecycle](/docs/guides/privileged-access/lifecycle#api-key-hygiene).
+
+## Configuration as code
+
+**The problem:** roles and policies edited by hand in production drift from staging, and nobody can review a change
+before it lands.
+
+**The solution:** export a tenant's configuration as one JSON document and keep it in version control. Review
+changes as pull requests, preview them with `config.plan`, and apply the same file everywhere with
+`config.apply`.
+
+```ts
+// Export from staging, keep the file in version control, apply to production.
+const document = await staging.api.config.export(stagingCredential, { tenantId: stagingTenant });
+const plan = await production.api.config.plan(productionCredential, {
+  tenantId: productionTenant,
+  config: document,
+  prune: true,
+});
+console.log(
+  plan.summary, // { create, update, delete, unchanged }
+  plan.changes.filter((change) => change.action !== 'unchanged'),
+);
+await production.api.config.apply(productionCredential, {
+  tenantId: productionTenant,
+  config: document,
+  prune: true,
+});
+```
+
+```bash
+BETTER_IAM_TOKEN=... better-iam config-export --config better-iam.config.mjs --tenant TENANT_ID --output tenant.json
+BETTER_IAM_TOKEN=... better-iam config-plan --config better-iam.config.mjs --tenant TENANT_ID --input tenant.json --prune
+BETTER_IAM_TOKEN=... better-iam config-apply --config better-iam.config.mjs --tenant TENANT_ID --input tenant.json --prune
+# In CI: fail the pipeline when production drifted from the reviewed file.
+BETTER_IAM_TOKEN=... better-iam config-plan --config better-iam.config.mjs --tenant TENANT_ID --input tenant.json --fail-on-drift
+```
+
+- The document holds roles (with inheritance), policies, groups with their members, tenant-defined resource types,
+  group bindings with every activation rule and window, access packages and their rules, the tenant's access
+  policy, invariants, and agreements, keyed by name.
+- Identities, their direct bindings, and who holds which package are runtime state and stay out of it.
+- `plan` lists the creates, updates, and deletes without writing; `apply` performs them in one transaction.
+  `prune` also deletes items of a listed kind that the file omits.
+- `--fail-on-drift` exits non-zero (`CONFIG_DRIFT`) when anything would change, which turns the plan into a CI check.
+- The commands act as `BETTER_IAM_TOKEN` (`iam:config:read`, and `iam:config:apply` plus the permission for each
+  change). Treat that token as an administrator credential.
+
+See [Configuration as code](/docs/guides/privileged-access/config-as-code).
+
+## Offboard a person
+
+**The problem:** when someone leaves, their access is spread across sessions, keys, roles, groups,
+<Term id="relationship">relationships</Term>, and resources they own. Missing one piece leaves a door open.
+
+**The solution:** `identities.offboard` removes all of it in one transaction and hands their resources and direct
+reports to a successor.
+
+```ts
+const summary = await iam.api.identities.offboard(credential, {
+  tenantId,
+  identityId: leaver.id,
+  reason: 'Left the company (HR-1234)',
+  successorId: manager.id, // takes over the workspaces the leaver owned
+});
+// summary: how many sessions, bindings, memberships, activations, packages, relationships,
+// accessRequests, and authorities were removed, and resourcesReassigned / reportsReassigned
+// Later, after the retention period:
+await iam.api.identities.delete(credential, { tenantId, identityId: leaver.id });
+```
+
+- Offboarding disables the person or service account. It removes their sessions and keys, role bindings, group
+  memberships, activations, package assignments, relationships, pending access requests, and the
+  <Term id="authority">grant authorities</Term> they held.
+- It transfers ownership of their managed resources to the successor, and a manager's reports move to the
+  successor too.
+- It is audited as `identity:offboard` with the reason and the counts of everything removed.
+- The identity stays as a disabled record for retention; `identities.delete` tombstones it later.
+
+See [Access lifecycle](/docs/guides/privileged-access/lifecycle).
+
+## Next steps
+
+<Cards>
+  <Card title="Operations recipes" href="/docs/guides/recipes/operations">
+    Audit chain, assertions, observability, and webhooks.
+  </Card>
+  <Card title="Privileged access" href="/docs/guides/privileged-access">
+    Elevation, packages, expiry, and configuration as code in depth.
+  </Card>
+</Cards>

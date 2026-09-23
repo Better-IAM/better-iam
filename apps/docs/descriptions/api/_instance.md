@@ -1,0 +1,729 @@
+# _instance
+
+`betterIam(options)` returns one object that is your whole identity server. You create it once, usually in
+`lib/iam.ts`, export it as `iam`, and import it wherever server code needs to check access, serve the IAM routes, or
+run maintenance. This reference covers all of it: the `api` groups that manage organizations, people, and access
+(listed under Groups), and the functions on the instance itself (listed under Instance functions).
+
+| Member | What it is for |
+| --- | --- |
+| `api` | Every provisioning and authentication method, by group: `iam.api.groups.addMember(credential, input)`. The HTTP routes and the browser client call the same methods. |
+| `authorize`, `authorizeMany`, `listAccessible`, `require`, `authenticate` | The checks your own routes, pages, and jobs run before they touch product data. |
+| `callPlugin` | Calls a plugin endpoint through the same authorized, audited envelope as built-in methods. |
+| `handler`, `nodeHandler` | The HTTP transports. Mount one of them at `basePath` (default `/api/iam`); see [HTTP handlers](#http-handlers). |
+| `events` | `subscribe(patterns, handler)` for in-process audit subscribers, and `dispatch()` to run them (the same function as `dispatchAuditHooks`). |
+| `useProtocol`, `protocolHost` | Mount OAuth, SAML, and SCIM services, and the host callbacks those packages are built from. |
+| `initialize`, `bootstrap`, `recoverRoot`, `rotateSecrets`, `selfCheck` | Deployment operations: schema, the first administrator, break-glass recovery, secret rotation, and health findings. |
+| `purgeDeleted`, `sweepExpired`, `reconcilePackages`, `sendAccessDigest`, `sendExpiryReminders`, `closeOverdueCertifications`, `checkInvariants`, `archiveAudit`, `pruneAudit`, `dispatchAuditHooks`, `flushAccessUsage` | Scheduled jobs and shutdown work. See [Scheduled jobs](/docs/operations/jobs). |
+| `assertionKey`, `assertionKeys` | The keys downstream services verify [assertions](/docs/reference/api/assertions#issue) with. |
+| `auth` | Low-level authentication primitives for trusted integrations, such as `dispatchOutbox()` and `withClient()`. |
+| `store` | The storage adapter you passed as `database`. |
+| `metrics`, `sessionTokens`, `endpoint` | Prometheus-style metrics (with `observability.metrics`), session JWT keys and online verification (with `sts.jwt`), and where the handler is mounted (origin, `basePath`, cookie settings) for framework integrations. |
+
+Keep the instance on the server. `auth`, `store`, `bootstrap`, `recoverRoot`, `assertionKey`, and `protocolHost` act
+with the deployment's authority rather than a caller's permissions. The HTTP router leaves them out on purpose, and you
+should never expose them through RPC reflection or send them to a browser.
+
+## HTTP handlers
+
+`iam.handler(request)` serves the Fetch API (a `Request` in, a `Response` out) and `iam.nodeHandler(req, res)` serves
+Node's `http` interface. They route identically, so mount exactly one of them. Both need Node.js 22.12 or later; edge
+runtimes are not supported. They answer:
+
+- `POST {basePath}/{group}/{method}` for every routed group method, plus `POST {basePath}/authorize`,
+  `/authorizeMany`, `/listAccessible`, and `/plugins/{pluginId}/{path}` for plugin endpoints;
+- `GET {basePath}/health` (one database read, status 503 when storage fails), `GET {basePath}/metrics` (only with
+  `observability.metrics.bearerToken`), and `GET {basePath}/.well-known/jwks.json` (only with `sts.jwt`);
+- the routes of every protocol service mounted with [`useProtocol`](#useprotocol), which are asked first.
+
+`nodeHandler` is required when you mount the OAuth authorization server, which only speaks Node's request and
+response objects. It offers each request to the Node protocol mounts first and hands everything else to `handler`.
+
+Both enforce the browser boundary: JSON bodies with `X-Better-IAM: 1`, an exact trusted `Origin` for requests that
+carry cookies (`CSRF_REJECTED` or `UNTRUSTED_ORIGIN` otherwise), and API bodies of at most 64 KiB
+(`PAYLOAD_TOO_LARGE`). They set the session cookie on sign-in routes and clear it on sign-out, add CORS headers for
+trusted origins, echo a plain `X-Request-Id`, and return every error as `{ "error": { "code", "message" } }`. The
+framework packages ([Next.js](/docs/frameworks/nextjs), [NestJS](/docs/frameworks/nestjs),
+[Node middleware](/docs/frameworks/node)) wrap them for you.
+
+```ts
+import { createServer } from 'node:http';
+import { iam } from './lib/iam';
+
+// A dedicated identity server: IAM routes, health, metrics, and every mounted protocol.
+createServer((req, res) => iam.nodeHandler(req, res)).listen(3000);
+
+// Or, inside a Fetch-style router running on Node (Hono shown):
+app.all('/api/iam/*', (c) => iam.handler(c.req.raw));
+```
+
+## When to call each function
+
+| When | Functions |
+| --- | --- |
+| In the request path | `authenticate`, `authorize`, `require`, `authorizeMany`, `listAccessible`, `callPlugin` |
+| Once at process start | `useProtocol`, `iam.events.subscribe` |
+| Once per deploy or installation | `initialize` (CLI `migrate`), `bootstrap`, `selfCheck` (CLI `doctor`) |
+| On a schedule | `dispatchAuditHooks`, `purgeDeleted`, `sweepExpired`, `reconcilePackages`, `sendAccessDigest`, `sendExpiryReminders`, `closeOverdueCertifications`, `checkInvariants`, `archiveAudit`, `pruneAudit` |
+| Rarely, by an operator | `recoverRoot`, `rotateSecrets`, `assertionKey`, `assertionKeys` |
+| At shutdown | `flushAccessUsage` |
+
+Deployment operations and jobs take no credential. They act as `deployment-operator`, the actor you see on the audit
+events they record, so protect the process and configuration that runs them like a root credential. Every job is safe
+to run again and to overlap with itself; each function below says how it avoids doing work twice, and
+[`selfCheck`](#selfcheck) reports the jobs that have stopped running. Most jobs have a matching
+[CLI command](/docs/reference/cli) for cron.
+
+## authorize
+
+Decides whether the caller may perform one action on one resource and returns the decision instead of throwing.
+
+- **When:** in the request path, before you read or change a product resource. Also served as
+  `POST {basePath}/authorize` and `client.authorize(input)`.
+- **Permission:** none to call. The credential in the request (`token` or `headers`) is the principal being checked.
+- **Audited as:** the requested action, only for denials (outcome `deny`) and root overrides. Allowed checks are not
+  recorded.
+- **Errors:** `UNAUTHENTICATED` when the credential is missing, expired, idle, or revoked; `MFA_REQUIRED` when the
+  session still owes MFA; `TENANT_UNAVAILABLE` or `TENANT_INACTIVE` when the caller's organization or one of its
+  ancestors is not active; `NOT_FOUND` for an unknown tenant or a managed resource that is not registered;
+  `RESOURCE_RESOLVER_REQUIRED` for an application resource type without the `resolveResource` option;
+  `RESOURCE_MISMATCH` when `resolveResource` returns a different resource.
+
+The result is `{ allowed, reason, matched }`. An allow carries the reason it was granted. Every denial reports
+`ACCESS_DENIED` with an empty `matched`, so a caller learns nothing about which rule refused it. The check reads
+current state in one transaction (bindings, groups, policies, [conditions](/docs/guides/authorization/conditions),
+boundaries, relationships, and the tenant tree), and there is no permission cache to invalidate.
+
+- An action the catalog does not know is denied, not an error.
+- A root administrator signed in with MFA is allowed everything (`ROOT_OVERRIDE`), and each override is audited.
+- Any other credential only works in its own organization: asking about another `tenantId` is denied.
+- An [impersonation](/docs/guides/authentication/impersonation) session is allowed only what both the member and the
+  administrator behind it may do.
+- With the `accessUsage` option on, each allowed check counts as usage for
+  [role mining](/docs/guides/governance/usage-and-mining).
+
+```ts
+const decision = await iam.authorize({
+  headers: request.headers,
+  tenantId,
+  action: 'documents:write',
+  resource: { type: 'document', id: documentId },
+});
+if (!decision.allowed) return new Response('Forbidden', { status: 403 });
+```
+
+## authorizeMany
+
+Evaluates up to 50 checks for one caller in one tenant in a single transaction, for rendering UI state.
+
+- **When:** in the request path, typically while a page decides which buttons and menu items to show. Also served as
+  `POST {basePath}/authorizeMany` and `client.authorizeMany(input)`.
+- **Permission:** none to call. Every check is evaluated for the request's credential.
+- **Audited as:** each check's action, for denials and root overrides only.
+- **Errors:** `INVALID_INPUT` for no checks, more than 50, or a check without `action`, `resource.type`, or
+  `resource.id`; otherwise the errors of [`authorize`](#authorize).
+
+Results come back in request order as `{ action, resource, allowed, reason }`, with the same rules as `authorize`.
+Treat them as advisory: they say what the caller could do when the page rendered, so enforce each action again with
+`authorize` or `require` when it is performed. One principal validation and one transaction serve every check, which
+is cheaper than separate calls. Denied checks are recorded like any denied `authorize`, so a page that probes many
+forbidden actions writes one audit event per denial.
+
+```ts
+const { results } = await iam.authorizeMany({
+  headers: request.headers,
+  tenantId,
+  checks: [
+    { action: 'documents:write', resource: { type: 'document', id: documentId } },
+    { action: 'documents:delete', resource: { type: 'document', id: documentId } },
+  ],
+});
+const [canEdit, canDelete] = results.map((result) => result.allowed);
+```
+
+## listAccessible
+
+Lists the registered resources of one managed type that the caller may perform an action on, one page at a time.
+
+- **When:** in the request path, for list pages such as "my workspaces". Also served as
+  `POST {basePath}/listAccessible` and `client.listAccessible(input)`.
+- **Permission:** none to call. Results are filtered for the request's credential.
+- **Audited as:** not audited.
+- **Errors:** `INVALID_ACTION` for an action the catalog does not know; `INVALID_RESOURCE_TYPE` for an unknown type or
+  one your application resolves itself; `INVALID_INPUT` for `limit` outside 1 to 1000 or `offset` outside 0 to
+  1,000,000; `NOT_FOUND` for an unknown tenant; plus the credential errors of [`authorize`](#authorize).
+
+It is the reverse of `authorize`: instead of asking about one resource, it evaluates every
+[registered resource](/docs/guides/concepts/resources-and-catalog) of `type` against the caller's grants,
+boundaries, and conditions, which are loaded once. `total` counts every accessible resource and `resources` holds
+the requested page (`limit` defaults to 100, `offset` to 0) in a stable order. A root administrator sees them all,
+an impersonation session sees only what the administrator behind it could reach, and a caller from another
+organization gets an empty list. It only works for managed types, because application-resolved resources are not
+stored in IAM. Like `authorizeMany`, the list is advisory: check the action again when the person opens an item.
+
+```ts
+const { resources, total } = await iam.listAccessible({
+  headers: request.headers,
+  tenantId,
+  action: 'workspaces:read',
+  type: 'workspace',
+  limit: 25,
+  offset: 0,
+});
+```
+
+## require
+
+Checks one action like `authorize` and throws `ACCESS_DENIED` (403) when it is not allowed.
+
+- **When:** in the request path, as a guard at the top of a route handler or server action.
+- **Permission:** none to call. The request's credential is checked.
+- **Audited as:** the requested action, for denials and root overrides.
+- **Errors:** `ACCESS_DENIED` when the decision is a denial; otherwise the errors of [`authorize`](#authorize).
+
+Use `require` when a denial should end the request, and `authorize` when you want to branch on the decision.
+Framework guards and middleware call it for you. Map the thrown `IamError` to a response by its `code`, never its
+message.
+
+```ts
+await iam.require({
+  headers: request.headers,
+  tenantId,
+  action: 'invoices:approve',
+  resource: { type: 'invoice', id: invoiceId },
+});
+```
+
+## authenticate
+
+Resolves a credential to the identity and session behind it, re-checking everything that could have revoked it.
+
+- **When:** in the request path, when you need to know who is calling (to render a profile, choose a tenant, or pass
+  the principal on) without checking a specific permission.
+- **Permission:** none. It proves identity, not access.
+- **Audited as:** nothing, except `auth:session:mismatch` when a session bound to its sign-in network is presented
+  from another address.
+- **Errors:** `UNAUTHENTICATED` for a missing, malformed, expired, idle, or revoked credential, or a disabled or
+  expired identity; `MFA_REQUIRED` when the session still owes MFA; `EMAIL_UNVERIFIED` when email verification is
+  required and missing; `TENANT_UNAVAILABLE` or `TENANT_INACTIVE` when the organization is not active;
+  `IP_NOT_ALLOWED` or `IP_BLOCKED` when network rules refuse the session.
+
+Pass `{ token }`, or the incoming `{ headers }` (the session cookie or an `Authorization: Bearer` value). Every
+credential kind works: user sessions, API keys, assumed-role sessions, session tokens, and IAM-signed session JWTs.
+Each is backed by a stored session row, so revoking the row ends the credential at its next use. When you pass
+headers, the client address is derived from them as the HTTP handler would (`http.clientInfo`), so network
+allowlists and blocks apply. The result is `{ identity, session }`; `session.kind`, `session.mfa`, and
+`session.tenantId` describe the caller. It checks no permission, so follow it with `authorize` or `require` before
+acting on data. See [sessions](/docs/guides/authentication/sessions).
+
+```ts
+const { identity, session } = await iam.authenticate({ headers: request.headers });
+return Response.json({ name: identity.name, tenantId: session.tenantId, mfa: session.mfa });
+```
+
+## callPlugin
+
+Runs a plugin endpoint from server code inside the same authorized, audited transaction as a built-in method.
+
+- **When:** in the request path. The same endpoint is served as `POST {basePath}/plugins/{pluginId}/{path}`, and the
+  browser client reaches it with `client.$request('plugins/{pluginId}/{path}', input)`.
+- **Permission:** the endpoint's declared `action`, on `iam/{tenantId}`.
+- **Audited as:** the endpoint's `action`.
+- **Errors:** `NOT_FOUND` when no plugin with that id has a `POST` endpoint at `path`; `INVALID_INPUT` when
+  `input.tenantId` differs from `tenantId` or the endpoint's `validate` rejects the input; `ACCESS_DENIED` without the
+  action; plus whatever the endpoint's handler throws.
+
+[Plugins](/docs/operations/extensions) add endpoints of their own. `callPlugin` finds the endpoint by `pluginId` and
+`path`, runs its `validate` on `input` (with `tenantId` added), and then runs its handler in the operation envelope:
+the principal is re-validated, the action is authorized, plugin `beforeOperation` and `afterOperation` hooks run, and
+the handler's writes commit together with one audit event, or not at all. The handler's return value is returned
+unchanged.
+
+```ts
+const project = await iam.callPlugin(
+  { headers: request.headers },
+  { pluginId: 'projects', path: 'create', tenantId, input: { name: 'Website relaunch' } },
+);
+```
+
+## initialize
+
+Creates or upgrades the database schema and runs one-time data upgrades so the instance can serve requests.
+
+- **When:** once per deploy, before the new version serves traffic.
+- **CLI:** [`migrate`](/docs/reference/cli#migrate).
+- **Permission:** none. A deployment operation, never exposed over HTTP.
+- **Errors:** `SCHEMA_VERSION` when the database carries a schema version this release does not support.
+- **Safe to repeat:** yes. Every step is idempotent, and instances that migrate at the same time wait for each
+  other's lock (up to ten minutes) instead of failing.
+
+In order, it applies the storage adapter's schema migrations, runs each plugin's `migrate` in its own transaction,
+starts the retention window of tenants deleted before `deletedAt` existed, and chains audit events recorded before
+the hash chain existed (once, in timestamp order per tenant). Some upgrades build indexes inside the migration
+transaction, which blocks IAM writes (not reads) on large tables while it runs, and the first run after upgrading to
+the chained audit log backfills it in one transaction. Plan those deploys for a maintenance window; see
+[storage](/docs/operations/storage).
+
+```ts
+// In a release step, before the new version starts serving.
+await iam.initialize();
+```
+
+## bootstrap
+
+Creates the platform's root tenant and its first root administrator, once per installation.
+
+- **When:** once, right after the first `initialize`.
+- **CLI:** [`bootstrap`](/docs/reference/cli#bootstrap), which reads the `BETTER_IAM_ROOT_*` environment variables.
+- **Permission:** none. A deployment operation, never exposed over HTTP.
+- **Audited as:** `root:bootstrap`, by `deployment-operator`.
+- **Errors:** `ALREADY_INITIALIZED` (409) when a root tenant exists; `WEAK_PASSWORD` for a password shorter than 12
+  characters or refused by the password policy, `BREACHED_PASSWORD` when a configured breach check matches it;
+  `SLUG_TAKEN` when `slug` is in use; `INVALID_INPUT` for a malformed email or an empty name.
+- **Safe to repeat:** yes. Every call after the first fails with `ALREADY_INITIALIZED` and changes nothing.
+
+In one transaction it creates the root tenant (named `rootName`, default "Platform", with an optional `slug` alias
+for sign-in screens), an identity that owns it and is a root administrator with a verified email, and an
+unrestricted grant authority for that identity. The result's `mfaEnrollmentRequired: true` is a reminder that root
+administrators always need MFA: the first sign-in enrolls a factor before the account can do anything. Read the
+password from a secret store; the CLI takes it from the environment so it never appears in a command line.
+
+```ts
+const { tenant, identity } = await iam.bootstrap({
+  email: 'platform-admin@example.com',
+  name: 'Platform administrator',
+  password: process.env.BETTER_IAM_ROOT_PASSWORD!,
+  slug: 'platform',
+});
+```
+
+## recoverRoot
+
+Creates an additional root administrator in the root tenant when nobody can sign in as root any more.
+
+- **When:** during an incident, from a trusted shell with the production configuration.
+- **CLI:** [`recover-root`](/docs/reference/cli#recover-root), which reads the `BETTER_IAM_ROOT_*` environment
+  variables.
+- **Permission:** none. A deployment operation, never exposed over HTTP: access to the database and configuration is
+  the authority.
+- **Audited as:** `root:recover`, by `deployment-operator`.
+- **Errors:** `NOT_INITIALIZED` before `bootstrap` has run; `IDENTITY_EXISTS` when the email already belongs to an
+  identity in the root tenant; `WEAK_PASSWORD` or `BREACHED_PASSWORD` for a password the policy refuses.
+- **Safe to repeat:** each call adds another administrator and another `root:recover` event.
+
+It does not reset or unlock existing administrators. It adds a new identity with a verified email and the root
+administrator flag, which enrolls MFA at its first sign-in, so use an email address that is not in the root tenant
+yet. Once you are back in, review the [root administrators](/docs/reference/api/root#listadministrators) and repair
+or remove the lost account. Treat it as a break-glass procedure and alert on `root:recover` events.
+
+## purgeDeleted
+
+Runs the retention worker: ends access whose time is up and removes deleted tenants past their retention window.
+
+- **When:** on a schedule, hourly or at least daily.
+- **CLI:** [`purge`](/docs/reference/cli#purge).
+- **Permission:** none. A deployment operation.
+- **Audited as:** `identity:expire` for each identity it disables and `tenants:purge` for each purged tenant tree, by
+  `deployment-operator`. Audit records of purged tenants are kept.
+- **Errors:** `INVALID_INPUT` when `retentionMs` is outside 0 to ten years.
+- **Safe to repeat:** yes. Authentication bookkeeping is deleted in short batches that re-read each row, and the rest
+  runs in one transaction, so a second or overlapping run finds nothing left to do.
+
+In one run it:
+
+- deletes expired temporary role bindings with their activations, and ended just-in-time activations;
+- removes lapsed temporary group memberships (with the activations of the group's eligible bindings they carried) and
+  access-package assignments past their end;
+- marks pending access requests and package requests past their lifetime as `expired`;
+- disables identities past their scheduled deactivation (`expiresAt`), revoking their sessions and activations;
+- deletes rate-limit counters past their window, expired challenges, and lapsed network blocks;
+- deletes every record of tenants tombstoned more than `retentionMs` ago (default 30 days), their descendants,
+  plugin-owned records through plugin `purge` callbacks, and references to them from surviving tenants.
+
+Expired access is refused at its next use even before the worker runs, so the schedule only decides how quickly
+statuses, lists, and reports catch up. The result counts `purgedTenants`, `deletedRecords`, `expiredBindings`,
+`expiredRequests`, `expiredIdentities`, `expiredActivations`, `expiredMemberships`, and `expiredAssignments`. See
+[access lifecycle](/docs/guides/privileged-access/lifecycle).
+
+```ts
+const result = await iam.purgeDeleted({ retentionMs: 30 * 24 * 60 * 60 * 1000 });
+```
+
+## sweepExpired
+
+Deletes records nothing reads any more (expired sessions, protocol artifacts, old deliveries) so storage stops growing with traffic.
+
+- **When:** on a schedule, hourly or daily, beside `purgeDeleted`.
+- **CLI:** [`sweep`](/docs/reference/cli#sweep).
+- **Permission:** none. A deployment operation.
+- **Audited as:** not audited.
+- **Errors:** `INVALID_INPUT` for an option outside its range.
+- **Safe to repeat:** yes. Each batch is read and deleted in its own short transaction, and records are judged on
+  their current state, so it can run during traffic and beside another run.
+
+It deletes user sessions, role sessions, and session tokens past their absolute expiry; trusted devices and
+relationship tuples past expiry; redeemed web-identity tokens once they could no longer be presented; OAuth artifacts
+and login states (OAuth grants 31 days after expiry, so back-channel logout still reaches the client); SAML request,
+relay-state, and assertion-replay records; delivered or abandoned outbox messages and abandoned Shared Signals
+deliveries older than `deliveryRetentionMs`; and audit hook rows already dispatched. API keys, pending deliveries,
+invitations, access requests, usage records, and SCIM connections are never deleted by age.
+
+Options: `limit` (default 10,000 records per run, at most 1,000,000), `batchSize` (500 per transaction, 1 to 5000),
+`deliveryRetentionMs` (30 days, 0 to 3650 days), `graceMs` (a five-minute margin past expiry against clock skew, at
+most one day), and `now` (for tests and backfills). The result is `{ deleted, total, truncated }` with counts per
+collection; `truncated: true` means more records are due, so run it again. Pass the same `deliveryRetentionMs` to
+[`selfCheck`](#selfcheck) so its backlog check agrees.
+
+```ts
+const { total, truncated } = await iam.sweepExpired({ deliveryRetentionMs: 14 * 24 * 60 * 60 * 1000 });
+```
+
+## pruneAudit
+
+Deletes one tenant's audit events older than a retention period while keeping the rest of the chain verifiable.
+
+- **When:** on a schedule that matches your retention policy, after the events were archived or exported.
+- **CLI:** [`audit-prune`](/docs/reference/cli#audit-prune).
+- **Permission:** none. A deployment operation, with no tenant check.
+- **Audited as:** `audit:prune` on the tenant, by `deployment-operator`, with the number deleted, the cutoff, and the
+  sequence and hash the chain now starts after.
+- **Errors:** `INVALID_INPUT` for a missing `tenantId` or a `retentionMs` outside 0 to 100 years.
+- **Safe to repeat:** yes. It runs in one transaction; a rerun with the same retention deletes only events that have
+  aged since, and records nothing when nothing was deleted.
+
+It deletes the longest run of oldest events, in chain order, whose timestamps are before now minus `retentionMs`,
+stopping at the first newer event, then appends the `audit:prune` checkpoint so
+[chain verification](/docs/guides/events/audit-chain) starts after the pruned prefix. Once a tenant has an archive
+cursor, or wherever `auditArchive` is configured, it deletes only events the archive already holds, in every process,
+and returns `heldForArchive: true` when it stopped early for that reason. Pruned events are gone from the database,
+so archive or export them first.
+
+```ts
+const { deleted, heldForArchive } = await iam.pruneAudit({
+  tenantId,
+  retentionMs: 365 * 24 * 60 * 60 * 1000,
+});
+```
+
+## archiveAudit
+
+Copies every tenant's new audit events, verified and in chain order, to the configured `auditArchive` sink.
+
+- **When:** on a schedule, every few minutes and at least hourly.
+- **CLI:** [`audit-archive`](/docs/reference/cli#audit-archive).
+- **Permission:** none. A deployment operation.
+- **Audited as:** not audited. Progress is kept in one archive cursor per tenant.
+- **Errors:** `NO_AUDIT_ARCHIVE` (501) when no `auditArchive` is configured; `INVALID_INPUT` for `limit` outside 1 to
+  10,000,000.
+- **Safe to repeat:** yes. One run at a time holds a tenant through a renewable lease; a tenant another run holds is
+  skipped and listed under `busy`.
+
+Each run reads the events after each tenant's cursor in batches, verifies every batch against the hash the previous
+one ended with, hands it to your sink's `write`, and moves the cursor only after `write` resolves. A crash can
+therefore hand the sink the same range again, so a sink must key batches by tenant and sequence range and throw
+rather than replace a stored batch with different content; `createJsonlAuditArchive` does both (see
+[continuous audit archiving](/docs/operations/jobs#continuous-audit-archiving)).
+
+Problems do not throw. They are reported per tenant under `failed` with the code `AUDIT_CHAIN_BROKEN` (the chain does
+not verify, and nothing past the break is archived), `ARCHIVE_WRITE_FAILED`, or `ARCHIVE_CONFLICT`, and sequences
+deleted before they were archived appear under `gaps`. A run archives at most `limit` events (default 100,000);
+`truncated: true` means run it again.
+
+```ts
+const result = await iam.archiveAudit();
+if (result.failed.length) alerts.error('Audit archive is failing', result.failed);
+```
+
+## rotateSecrets
+
+Re-seals values encrypted with a previous deployment secret using the current one, so the old secret can be retired.
+
+- **When:** during a secret rotation, after every process runs with the new `secret` and the old value in
+  `previousSecrets`.
+- **CLI:** [`rotate-secrets`](/docs/reference/cli#rotate-secrets).
+- **Permission:** none. A deployment operation.
+- **Audited as:** not audited.
+- **Errors:** `INVALID_INPUT` for a `batchSize` outside 1 to 2000 or a `limit` that is not a positive integer.
+- **Safe to repeat:** yes. It works a page at a time in short transactions that re-read each record, so you can stop
+  it and run it again.
+
+It rewrites TOTP authenticator secrets, webhook signing secrets, and the sealed payloads of undelivered outbox
+messages. Sessions, API keys, and invitation links do not depend on the secret, so nobody is signed out.
+`dryRun: true` only counts. The result has `resealed` and `unreadable` counts per collection, `current` (values
+already sealed with the current secret), `complete`, and `done`. Repeat until `done` is true, wait a day for emailed
+links and assertions issued under the old secret to expire, then remove `previousSecrets` everywhere.
+`unreadable` values open with no configured secret, which means the secret was replaced without listing the old one:
+put it back into `previousSecrets` and run again. See
+[rotating the deployment secret](/docs/operations/deployment/secrets).
+
+```ts
+const preview = await iam.rotateSecrets({ dryRun: true });
+if (!preview.done) await iam.rotateSecrets();
+```
+
+## selfCheck
+
+Reports configuration and storage problems an operator should act on, each with a severity and a fix.
+
+- **When:** after each deploy as a gate, and on a schedule as a health check. It only reads.
+- **CLI:** [`doctor`](/docs/reference/cli#doctor).
+- **Permission:** none. A deployment operation.
+- **Errors:** `INVALID_INPUT` for `cap` outside 1 to 100,000 or a retention option out of range.
+
+It returns `{ ok, findings, storage }`. `ok` is false when any finding is an `error`. `storage` is the adapter's own
+description: schema version, applied migrations, record counts, and durability settings. Each finding has a stable
+`check` id, a `severity`, a `message`, a `fix`, and sometimes a `count`:
+
+- **Errors:** `schema-behind`, `not-bootstrapped`, `sqlite-durability` (a rollback journal with `synchronous` at
+  NORMAL or OFF), and `unreadable-secrets`.
+- **Warnings:** `in-memory-database`, `postgres-async-commit`, `weak-secret`, `weak-metrics-token`,
+  `no-email-transport`, `secret-rotation-pending`, `secret-rotation-unverified`, and jobs that are not running:
+  `sweep-backlog` (records due for more than two days), `purge-not-running` (expired bindings, memberships, or
+  challenges over a day old), `outbox-stalled` (messages waiting over 15 minutes), `outbox-abandoned` (messages
+  abandoned in the last day), `audit-hooks-stalled` (hooks waiting over 15 minutes), and `audit-archive-behind`
+  (unarchived events older than a day, with `auditArchive`).
+- **Info:** `storage-undescribed` and `previous-secrets-configured`.
+
+Pass the `deliveryRetentionMs` and `graceMs` your sweep runs with so its backlog is judged the same way. `cap`
+(default 1000) bounds how many records each check counts and how many sealed values per collection it samples.
+
+```ts
+const { ok, findings } = await iam.selfCheck({ deliveryRetentionMs: 30 * 24 * 60 * 60 * 1000 });
+if (!ok) throw new Error(findings.map((finding) => `${finding.check}: ${finding.fix}`).join('\n'));
+```
+
+## sendAccessDigest
+
+Emails each organization's owners its access report when the report has something in it, at most once per interval.
+
+- **When:** on a schedule, daily, followed by an outbox run that delivers the messages.
+- **CLI:** [`digest`](/docs/reference/cli#digest).
+- **Permission:** none. A deployment operation that includes every report section.
+- **Audited as:** `tenant:access-digest` on each organization emailed, by `deployment-operator`, with the recipient
+  and finding counts.
+- **Errors:** `DELIVERY_REQUIRED` when `authentication.sendEmail` is not configured; `NOT_FOUND` for an unknown
+  `tenantId`; `INVALID_INPUT` for a window out of range.
+- **Safe to repeat:** yes. An organization digested within `minimumIntervalMs` (default 20 hours) is skipped, so
+  reruns and overlapping schedules never email twice.
+
+For every active organization, or one `tenantId`, it builds the
+[access report](/docs/guides/privileged-access/access-report): identities and temporary bindings ending within
+`withinMs` (default 30 days), memberships ending soon, live just-in-time activations, pending activation requests,
+and API keys unused for `unusedForMs` (default 30 days) or ending soon. Each active owner with an email address of an
+organization with findings is sent one `access-digest` message with the counts and the full report as JSON. The
+result lists `sent` per organization and `skipped` counts (`inactive`, `recent`, `quiet`, `noOwners`).
+
+```ts
+await iam.sendAccessDigest({ withinMs: 14 * 24 * 60 * 60 * 1000 });
+await iam.auth.dispatchOutbox();
+```
+
+## sendExpiryReminders
+
+Emails each person whose access ends soon one reminder listing it, once per item and end date.
+
+- **When:** on a schedule, daily beside `sendAccessDigest`, followed by an outbox run.
+- **CLI:** [`remind`](/docs/reference/cli#remind).
+- **Permission:** none. A deployment operation.
+- **Audited as:** `identity:expiry-reminder` on each person emailed, by `deployment-operator`, with the reminded items.
+- **Errors:** `DELIVERY_REQUIRED` when `authentication.sendEmail` is not configured; `NOT_FOUND` for an unknown
+  `tenantId`; `INVALID_INPUT` for a `withinMs` outside one minute to 365 days.
+- **Safe to repeat:** yes. A reminder mark per item and end date prevents repeats.
+
+It looks at every active person in every active organization, or one `tenantId`, and collects what ends within
+`withinMs` (default seven days): their own account (`expiresAt`), direct role bindings, temporary group memberships,
+and access-package assignments. Bindings and memberships that belong to a package are reminded as the package, group
+bindings are left to the owners' digest, and eligible (just-in-time) bindings are skipped. Each person with something
+new gets one `expiry-reminder` email with `items` as JSON (kind, name, and end). Extending access brings a fresh
+reminder when the new end enters the window. People without an email address are skipped.
+
+```ts
+const { sent } = await iam.sendExpiryReminders({ withinMs: 3 * 24 * 60 * 60 * 1000 });
+```
+
+## reconcilePackages
+
+Applies access-package rules: people who match a rule receive the package, and automatic holders who stopped matching lose it.
+
+- **When:** on a schedule, every 15 minutes, after `purgeDeleted`.
+- **CLI:** [`reconcile`](/docs/reference/cli#reconcile).
+- **Permission:** none to call. Each change runs under the rule owner's grant authority, so a rule never grants more
+  than its owner could.
+- **Audited as:** `package:auto-assign`, `package:auto-ending`, and `package:auto-revoke` for each change, plus
+  `package:auto-suspended`, `package:auto-braked`, `package:auto-failed`, `package:auto-resumed`, and
+  `package:auto-confirm` for rule problems and confirmations.
+- **Errors:** `INVALID_INPUT` for a `packageId` without `tenantId`, `confirm` without `packageId`, or a `limit`
+  outside 1 to 10,000; `NOT_FOUND` for an unknown `tenantId`.
+- **Safe to repeat:** yes. It plans from plain reads and applies each change in its own transaction; a change whose
+  inputs moved in between is counted as `stale` and retried on the next run.
+
+This is how [automatic assignment](/docs/guides/privileged-access/automatic-assignment) (birthright access) keeps up
+with SCIM provisioning, invitations, attribute changes, and group changes. Removals run first and honor the rule's
+grace period (`ending`). A run makes at most `limit` changes per organization (default 1000); `truncated: true` means
+run it again. Scheduled runs hold back unusually large changes (listed under `braked`) until a person confirms them in
+the console or with `confirm: true` for one `packageId`. A rule that cannot be evaluated is `suspended` instead of
+revoking everyone, and an organization that fails is listed under `skipped.failedTenants` without stopping the
+others.
+
+```ts
+const result = await iam.reconcilePackages();
+if (result.failed.length || result.suspended.length || result.braked.length) await notifyAdmins(result);
+```
+
+## closeOverdueCertifications
+
+Closes every auto-closing certification campaign whose due date has passed and applies its decisions.
+
+- **When:** on a schedule, hourly or daily with the other jobs.
+- **CLI:** [`close-certifications`](/docs/reference/cli#close-certifications).
+- **Permission:** none to call. Revocations run under the campaign creator's grant authority.
+- **Audited as:** `certification:auto-close` for each campaign, with the outcome counts, plus `iam:bindings:delete`
+  for each removed binding, by `deployment-operator`.
+- **Errors:** `NOT_FOUND` for an unknown `tenantId`.
+- **Safe to repeat:** yes. Each campaign is re-read and closed in its own transaction, so a campaign an administrator
+  closed meanwhile is left alone and none is closed twice.
+
+Only [campaigns](/docs/guides/governance/certifications) created with `autoClose` and a `dueAt` are affected. Revoked
+bindings are removed, and items nobody decided follow the campaign's `undecided` setting. When the creator no longer
+exists the campaign still closes, and every revocation is reported as `revocation-failed`. The result is
+`{ closed, skipped }`, where `skipped` counts open auto-closing campaigns that are not due yet.
+
+## checkInvariants
+
+Evaluates the access invariants of every active organization and records an audit event when one breaks or recovers.
+
+- **When:** on a schedule, hourly and after configuration changes.
+- **CLI:** [`monitor-invariants`](/docs/reference/cli#monitor-invariants).
+- **Permission:** none. A deployment operation.
+- **Audited as:** `invariant:broken` (outcome `deny`) when an invariant starts failing or gains violators, and
+  `invariant:restored` when it passes again, by `deployment-operator`.
+- **Safe to repeat:** yes. The outcome is stored on each invariant (`lastCheck`) and events are recorded only when it
+  changes; each organization is evaluated in its own transaction.
+
+Enforced invariants already refuse changes that would break them. This job is how `monitor` invariants, and
+violations that predate enforcement, reach you: a webhook subscribed to `invariant:*` alerts once per change instead
+of every hour. The result is `{ checked, broken, restored }`. For a CI gate that fails a build, use
+[`invariants.run`](/docs/reference/api/invariants#run) (CLI `check-invariants`). See
+[change safety](/docs/guides/governance/change-safety).
+
+## flushAccessUsage
+
+Writes the access usage buffered in memory to storage now.
+
+- **When:** at shutdown (for example on `SIGTERM`). Buffered usage is also written on its own every `flushIntervalMs`
+  (one minute by default) and when `maxBuffered` pairs are waiting.
+- **Permission:** none.
+- **Audited as:** not audited.
+- **Safe to repeat:** yes. Concurrent calls queue behind one write, and a failed write keeps its batch for the next
+  attempt before rethrowing.
+
+With the `accessUsage` option on, every allowed `authorize`, `authorizeMany`, `listAccessible`, and provisioning
+operation is counted in memory per person and action (root overrides and impersonation excepted) and written in
+batches, so no request waits on storage. Without a final flush, the last interval of usage is lost when the process
+exits. The result is `{ written }`, the number of person and action pairs written; with tracking off it writes
+nothing. See [usage and role mining](/docs/guides/governance/usage-and-mining).
+
+```ts
+process.on('SIGTERM', async () => {
+  await iam.flushAccessUsage();
+  process.exit(0);
+});
+```
+
+## dispatchAuditHooks
+
+Runs plugin `afterAudit` hooks, `events.onEvent`, and in-process subscribers for audit events that have committed.
+
+- **When:** on a schedule, every minute, in the process that registers your subscribers. It is the same function as
+  `iam.events.dispatch()`.
+- **Permission:** none.
+- **Errors:** whatever a handler throws. The run stops there and the event stays queued.
+- **Safe to repeat:** yes, but delivery is at least once. A throwing handler leaves its event queued, and two
+  dispatchers running at once can both deliver the same event, so make handlers idempotent by `event.id`.
+
+Handlers never run inside the request. The process that records an audit event queues it in the same transaction,
+but only when that process has an `iam.events.subscribe` handler, an `events.onEvent` option, or a plugin with
+`afterAudit`. This function delivers the queue oldest first and marks each row delivered, and those rows are shared
+by every process. The CLI's `outbox` command dispatches too, but a CLI process only has the hooks in its
+configuration file, so events it dispatches never reach subscribers your application registered: dispatch in the
+application process instead. Webhooks are separate and travel through the outbox (`iam.auth.dispatchOutbox()`). The
+result is `{ dispatched }`. See [lifecycle events](/docs/guides/events/lifecycle-events).
+
+```ts
+iam.events.subscribe('iam:identities:*', async (event) => {
+  await searchIndex.refreshIdentity(event.resourceId);
+});
+setInterval(() => void iam.dispatchAuditHooks().catch(reportError), 60_000);
+```
+
+## useProtocol
+
+Mounts a protocol service (OAuth sign-in, the OAuth authorization server, SAML, or SCIM) so the HTTP handlers route its paths to it.
+
+- **When:** once per service at process start, before the handler serves requests.
+- **Permission:** none. The mounted service authenticates its own requests.
+
+A protocol service is `{ basePath, handler, nodeHandler }` (either handler optional), as returned by
+`createScimService`, `createSamlService`, `createOAuthLogin`, or `createOAuthProvider`, which you build from the
+`iam.protocolHost` callbacks. `handler` asks each mounted service in mount order and uses the first response.
+`nodeHandler` also offers requests under a service's `basePath` to that service's Node handler, which the OAuth
+authorization server requires, so serve it through `iam.nodeHandler`. When a mounted service returns a session (a
+SAML or OAuth sign-in), the handler sets the IAM session cookie, and every mount runs with the request's client
+address, so network allowlists and blocks apply to the sessions it issues. There is no unmount, so call it once per
+service. See [protocol mounts](/docs/operations/deployment/protocol-mounts).
+
+```ts
+import { createScimService } from 'better-iam/scim';
+
+const scim = createScimService({ ...iam.protocolHost });
+iam.useProtocol(scim);
+```
+
+## assertionKey
+
+Returns the key downstream services use to verify the assertions this deployment issues.
+
+- **When:** when you configure a downstream service. Never send it to a browser.
+- **Permission:** none. A deployment secret, never exposed over HTTP.
+
+[Assertions](/docs/reference/api/assertions#issue) are short-lived HS256 JSON Web Tokens that describe the caller
+to another service. The key is a SHA-256 derivation of the deployment `secret`, as 64 hex characters: a service that
+holds it verifies assertions with `verifyAssertion`, without a database round trip, and cannot recover the secret.
+HS256 is symmetric, so whoever holds the key can also mint assertions that every other holder accepts: give it only
+to services you trust and store it like a secret. It changes when `secret` changes; during a rotation, hand out
+`assertionKeys()` instead.
+
+```ts
+// In the IAM deployment, once, to configure the reports service:
+const reportsKey = iam.assertionKey();
+
+// In the reports service, which holds only that key:
+import { verifyAssertion } from 'better-iam';
+const claims = verifyAssertion(token, { key: process.env.IAM_ASSERTION_KEY!, audience: 'reports' });
+```
+
+## assertionKeys
+
+Returns the assertion key of the current secret followed by those of `previousSecrets`, for verifiers during a secret rotation.
+
+- **When:** while the deployment secret rotates.
+- **Permission:** none. Deployment secrets, never exposed over HTTP.
+
+New assertions are always signed with the current `secret`, but a verifier configured before a switch must accept
+tokens signed on either side of it while configurations roll out. `verifyAssertion`, the NestJS assertion module, and
+the Next.js edge verifier all accept this list. Hand it to verifiers when you introduce the new secret, and replace it
+with `assertionKey()` alone when you retire `previousSecrets` (see
+[rotating the deployment secret](/docs/operations/deployment/secrets)). If the old secret leaked, never give its key
+to new verifiers.
+
+```ts
+// In the IAM deployment: every key, current first, for the downstream secret store.
+const keys = iam.assertionKeys();
+
+// In the reports service, while the rotation is in progress:
+import { verifyAssertion } from 'better-iam';
+const claims = verifyAssertion(token, {
+  key: process.env.IAM_ASSERTION_KEYS!.split(','),
+  audience: 'reports',
+});
+```

@@ -1,0 +1,685 @@
+---
+title: Configuration reference
+description: Every top-level betterIam() option, grouped by area, with what it controls, its default, when you would change it, and the rule enforced at startup.
+icon: SlidersHorizontal
+packages: ['@better-iam/server', '@better-iam/auth']
+sources: ['packages/server/src/options.ts', 'packages/auth/src/types.ts', 'packages/auth/src/service/base.ts', 'packages/auth/src/rate-limit.ts', 'packages/auth/src/password-policy.ts', 'packages/server/src/observe.ts', 'packages/server/src/metrics.ts', 'packages/server/src/audit-archive.ts', 'packages/server/src/usage.ts', 'packages/server/src/api/domains.ts', 'packages/server/src/http.ts', 'packages/server/src/decisions.ts', 'packages/core/src/index.ts']
+---
+
+Everything a Better IAM instance does is decided by the options object you pass to `betterIam()`. Most options
+have safe defaults, so a development instance needs only a database, a secret, and a URL. Production deployments
+usually adjust a handful more: delivery callbacks, the client-IP hook, session lifetimes, and metrics.
+
+The configuration is validated once, when `betterIam()` runs. Anything out of range throws an `IamError` with code
+`INVALID_CONFIG` before the instance exists, so a misconfigured deployment fails at startup instead of on the first
+request. Durations are in milliseconds unless the name ends in `Seconds` or `Days`.
+
+```ts title="Where each group of options lives"
+betterIam({
+  database, secret, previousSecrets, baseURL, basePath, trustedOrigins, // core
+  authentication, http,                                                  // sign-in and transport
+  hierarchy, permissions, onboarding, tenantDefaults, domains,           // tenancy and catalog
+  hosts, regions,                                                        // sign-in addresses and regions
+  inference, a2a, billing,                                               // AI models, agent cards, spend
+  resolveResource, resolveContext,                                       // application integration
+  accessRequests, accessUsage,                                           // access workflows
+  events, auditArchive, observability,                                   // events, audit, telemetry
+  plugins, protocols, sts,                                               // extensions and credentials
+});
+```
+
+## Core
+
+The core options tell the instance where its data lives (the <Term id="adapter">storage adapter</Term>), which
+secret protects it, and where it is reachable.
+Every deployment sets the first four.
+
+<TypeTable
+  type={{
+    database: {
+      type: 'IamStore',
+      required: true,
+      description: <>Where every IAM record is stored: <code>postgresAdapter</code>, <code>sqliteAdapter</code>, <code>libsqlAdapter</code>, or your own implementation of the adapter contract. Choose the adapter for your operational needs; see <a href="/docs/operations/storage">Storage adapters</a>.</>,
+    },
+    secret: {
+      type: 'string',
+      required: true,
+      description: 'The deployment secret, at least 32 characters. It encrypts authenticator secrets, webhook secrets, and pending deliveries, keys the digests of one-time challenges, and derives the assertion signing key. Generate it once and keep it stable: changing it outright makes enrolled factors and webhooks unusable.',
+    },
+    previousSecrets: {
+      type: 'string[]',
+      default: '[]',
+      description: <>Old secrets during a rotation: at most five, distinct, each at least 32 characters, none equal to <code>secret</code>. Values they sealed keep opening while new values use <code>secret</code>. Set it only while rotating; see <a href="/docs/operations/deployment/secrets">Secrets and keys</a>.</>,
+    },
+    baseURL: {
+      type: 'string',
+      required: true,
+      description: 'The public URL people and clients reach the deployment at. It must be https, except on the loopback hosts localhost, 127.0.0.1, and [::1] for development. Its origin is always trusted, and HTTPS selects the __Host- prefixed session cookie.',
+    },
+    basePath: {
+      type: 'string',
+      default: "'/api/iam'",
+      description: 'The URL path the HTTP handler answers under. Change it when /api/iam collides with your own routes. It must start with a slash, use only letters, digits, underscores, hyphens, and slashes, and not end with a slash. Clients must use the same path.',
+    },
+    trustedOrigins: {
+      type: 'string[]',
+      default: 'the baseURL origin',
+      description: 'Additional exact origins (scheme, host, and port) allowed to call the handler from a browser. Add your application origin when it differs from baseURL, for example app.example.com calling identity.example.com. Requests from any other Origin are refused with UNTRUSTED_ORIGIN.',
+    },
+  }}
+/>
+
+## Authentication
+
+`authentication` configures how people sign in, how <Term id="session">sessions</Term> behave, and how messages
+reach them. It accepts every
+`AuthOptions` field except `store`, `secret`, `previousSecrets`, `baseURL`, and `trustedOrigins`, which come from
+the top level. Its `onAudit` and `deliverWebhook` hooks are wired by the server itself, so use
+[`events.onEvent`](#events-and-audit) and `events.deliverWebhook` instead.
+
+### Sign-in methods and delivery
+
+These options decide which sign-in methods exist at all, and how email and SMS leave the system through the
+<Term id="outbox">outbox</Term>. <Term id="tenant">Tenants</Term> can restrict methods further with their own
+policy, but never enable one the deployment turned off.
+
+<TypeTable
+  type={{
+    appName: {
+      type: 'string',
+      default: "'Better IAM'",
+      description: 'Your product name as it appears in delivery payloads and the built-in email templates. Set it so invitations and resets name your product.',
+    },
+    signUpEnabled: {
+      type: 'boolean',
+      default: 'false',
+      description: 'Lets anyone create an account with email and password. Leave it off for invitation-only products and B2B tenants; turn it on for self-service consumer sign-up.',
+    },
+    requireEmailVerification: {
+      type: 'boolean',
+      default: 'signUpEnabled',
+      description: <>Refuses sign-in until the address is verified, so a self-registered account proves it owns its mailbox. It follows <code>signUpEnabled</code> unless set, and needs <code>sendEmail</code>.</>,
+    },
+    emailPassword: {
+      type: 'boolean',
+      default: 'true',
+      description: <>Enables password sign-in, sign-up, and reset. Set <code>false</code> for passwordless-only or federation-only deployments.</>,
+    },
+    passwordlessEmail: {
+      type: 'boolean',
+      default: 'false',
+      description: <>Enables magic links and one-time email codes, for products that prefer not to handle passwords. Needs <code>sendEmail</code>.</>,
+    },
+    passwordlessSms: {
+      type: 'boolean',
+      default: 'false',
+      description: <>Enables one-time SMS codes. Needs <code>sendSms</code>.</>,
+    },
+    sendEmail: {
+      type: '(message: DeliveryMessage) => Promise<void>',
+      description: 'Your email transport. The outbox calls it outside the write transaction with the template name and payload; throw to have the message retried. Delivery is at least once, so deduplicate by message ID. Without it, every email feature is unavailable and doctor warns.',
+    },
+    sendSms: {
+      type: '(message: DeliveryMessage) => Promise<void>',
+      description: 'Your SMS transport, with the same contract as sendEmail. Needed for SMS sign-in and phone verification.',
+    },
+    maxDeliveryAttempts: {
+      type: 'number',
+      default: '25',
+      description: <>How many failed attempts (1 to 1000) the outbox makes before abandoning a message with <code>failedAt</code> and <code>lastError</code>. Retries back off from 30 seconds, doubling to one hour, so the default rides out roughly 18 hours of provider outage. Lower it if stale messages are worse than lost ones.</>,
+    },
+    passkeys: {
+      type: '{ rpID: string; rpName?: string }',
+      description: 'Enables WebAuthn passkeys. rpID is the domain passkeys are bound to; it must equal, or be a parent domain of, the host of every trusted origin. Use your registrable domain (example.com) so passkeys work across subdomains.',
+    },
+    requireMfa: {
+      type: '(tenant, identity) => boolean | Promise<boolean>',
+      description: 'A deployment-wide rule that decides who must complete MFA, for example every administrator or every tenant on an enterprise plan. Tenant policies add to it and never replace it.',
+    },
+    now: {
+      type: '() => number',
+      default: 'Date.now',
+      description: 'Replaces the clock. Use it only in integration tests that need to move time forward deterministically.',
+    },
+  }}
+/>
+
+### Sessions, devices, and notifications
+
+These options bound how long a sign-in lasts and what people are told about activity on their account. Tenant
+policies can shorten the lifetimes, never extend them.
+
+<TypeTable
+  type={{
+    sessionLifetimeMs: {
+      type: 'number',
+      default: '7 days',
+      description: 'The absolute lifetime of a user session, from one minute to thirty days. After it, the person signs in again however active they were. Shorten it for sensitive products.',
+    },
+    sessionIdleTimeoutMs: {
+      type: 'number',
+      default: 'min(lifetime, 1 day)',
+      description: 'Ends a session that has not been used for this long, from one minute to the absolute lifetime. Shorten it for shared or kiosk devices.',
+    },
+    recentAuthenticationMs: {
+      type: 'number',
+      default: '5 minutes',
+      description: 'How long after signing in a session counts as recent, from one second to fifteen minutes. Sensitive operations (changing a password, email, or factor, deleting identities, moving tenants) require a recent sign-in.',
+    },
+    trustedDeviceLifetimeMs: {
+      type: 'number',
+      default: '30 days',
+      description: <>The longest a browser may skip MFA after "remember this device": 0 disables the feature, otherwise one minute to one year. Tenants can only shorten it, with <code>trustedDeviceDays</code>.</>,
+    },
+    signInNotifications: {
+      type: 'boolean',
+      default: 'false',
+      description: <>Emails a <code>new-sign-in</code> notice when a session starts from a client none of the person's live sessions or remembered devices has used, so a stolen password is noticed quickly. Needs client details from the HTTP handler. Tenants override it with <code>notifyNewSignIn</code>.</>,
+    },
+    mfaEmailCodes: {
+      type: 'boolean',
+      default: 'false',
+      description: <>Lets people with no authenticator satisfy an MFA requirement with a code emailed to their verified address, so a tenant can require MFA without forcing everyone to install an app. Never applies to root administrators or to people who have an authenticator. Tenants override it with <code>mfaEmailCodes</code>.</>,
+    },
+    failedSignInAlerts: {
+      type: 'number',
+      default: '0',
+      description: <>Emails a person a <code>sign-in-failures</code> alert once this many attempts against their account have failed since their last sign-in, once per streak. Use it so people hear about password guessing right away. 0 disables it; at most 1000; needs <code>sendEmail</code>.</>,
+    },
+  }}
+/>
+
+### Rate limits
+
+`authentication.rateLimits` bounds how fast anyone can guess credentials. Counters are durable and shared by every
+instance through the database by default. A refusal is `RATE_LIMITED` (429) with `retryAfterMs` in the body and a
+`Retry-After` header.
+
+<TypeTable
+  type={{
+    attempts: {
+      type: 'number',
+      default: '10',
+      description: 'Attempts per window, per account, for ordinary flows such as password sign-in (1 to 100000). Lower it for stricter lockouts; raise it if legitimate users hit it.',
+    },
+    sensitiveAttempts: {
+      type: 'number',
+      default: '5',
+      description: 'Attempts per window for MFA, recovery, and delivery requests (1 to 100000). Kept lower because these flows guard the second factor and send messages.',
+    },
+    windowMs: {
+      type: 'number',
+      default: '15 minutes',
+      description: 'The rolling window the counters apply to, from one second to 24 hours. It is also the Retry-After value clients receive.',
+    },
+    ipAttempts: {
+      type: 'number',
+      default: '0',
+      description: <>An extra counter per client IP across every flow of a tenant (0 to 1000000; 0 disables it). It stops credential stuffing and password spraying from one address however many accounts it names. Needs a recorded IP from <code>http.clientInfo</code>; size it for the largest office behind one NAT.</>,
+    },
+    limiter: {
+      type: 'RateLimiter',
+      default: 'counters in the IAM database',
+      description: <>Replaces the counter store, for example with Redis in a multi-instance deployment that prefers a shared cache. Implement <code>consume()</code>, and <code>reset()</code> so <code>identities.unlock</code> can clear lockouts. <code>createMemoryRateLimiter()</code> suits single-process deployments and tests.</>,
+    },
+  }}
+/>
+
+### Password policy
+
+`authentication.passwordPolicy` screens every password the deployment accepts, wherever it is set. Passwords always
+use Argon2id and need at least 12 characters; tenant policies add their own rules on top of these.
+
+<TypeTable
+  type={{
+    blockCommonPasswords: {
+      type: 'boolean',
+      default: 'true',
+      description: 'A small built-in screen against well-known passwords, keyboard walks, sequences, and passwords with fewer than five distinct characters. Leave it on; turn it off only if a stronger external check replaces it.',
+    },
+    isBreached: {
+      type: '(password: string) => Promise<boolean>',
+      description: <>Checks a breach corpus, which catches far more reused passwords than the built-in list. <code>pwnedPasswords()</code> from <code>@better-iam/auth</code> is a Have I Been Pwned client that sends only a five-character SHA-1 prefix, times out after three seconds, and fails open unless <code>failClosed</code>.</>,
+    },
+    check: {
+      type: '(password, context) => string | undefined',
+      description: 'Your own rule, such as banning the company name. Return a message to reject the password, or nothing to accept it. It may be async and receives the tenant and identity.',
+    },
+  }}
+/>
+
+## HTTP
+
+The `http` options shape how the handler treats the browser: which client details it records and how its cookies
+behave.
+
+<TypeTable
+  type={{
+    'http.clientInfo': {
+      type: '(request: Request) => SessionClientInfo | undefined',
+      default: 'User-Agent only',
+      description: 'Returns the ip, userAgent, and optional device label recorded on sessions a request issues. Set it behind a proxy you control and read the IP only from the header that proxy sets. Tenant IP allowlists, network blocks, IP-bound sessions, ipAttempts, and new-sign-in notifications all depend on it. Values are informational and never used for authorization.',
+    },
+    'http.cookieSameSite': {
+      type: "'lax' | 'strict'",
+      default: "'lax'",
+      description: 'SameSite of the session and device cookies. lax also sends the cookie on top-level navigations from other sites, such as a link in an email; strict sends it on first-party requests only, at the cost of appearing signed out after following an external link.',
+    },
+    'http.persistentCookies': {
+      type: 'boolean',
+      default: 'true',
+      description: <>Whether session cookies outlive the browser. <code>true</code> sets <code>Max-Age</code> to the session's remaining lifetime; <code>false</code> issues browser-session cookies unless the sign-in request sends <code>X-Better-IAM-Persistent: 1</code> (a "keep me signed in" checkbox). The server session expires on its own schedule either way.</>,
+    },
+  }}
+/>
+
+## Tenancy and catalog
+
+These options describe your product's shape: which kinds of tenants exist, which
+<Term id="action">actions</Term> and <Term id="resource-type">resource types</Term>
+<Term id="policy">policies</Term> can mention, how people join, and what every new tenant starts with.
+
+<TypeTable
+  type={{
+    hierarchy: {
+      type: '{ types: Record<string, { allowedChildren: string[] }>; maxDepth?: number }',
+      default: 'root → organization → project, depth 8',
+      description: 'The kinds of tenants and which children each may have. Change it when your product nests differently, for example root → reseller → customer → workspace. Must define root; every allowed child must be a defined type other than root; maxDepth is 1 to 100.',
+    },
+    'permissions.mode': {
+      type: "'catalog' | 'tenant-defined'",
+      default: "'catalog'",
+      description: <>In <code>catalog</code> mode only you declare actions and resource types. <code>tenant-defined</code> also lets tenants register their own managed resource types and actions, for platforms whose customers model their own resources.</>,
+    },
+    'permissions.actions': {
+      type: 'string[]',
+      description: 'Product actions not tied to a declared resource type, such as billing:export. Policies may only name actions the catalog knows.',
+    },
+    'permissions.resourceTypes': {
+      type: 'Record<string, ResourceTypeDefinition>',
+      description: 'Your resource types with their actions, attribute schema, parent type, managed flag, and relation names. Declaring them documents your model for administrators and makes policy validation check resource patterns against real types.',
+    },
+    'permissions.identityAttributes': {
+      type: "Record<string, 'string' | 'number' | 'boolean'>",
+      description: <>Typed attributes administrators, SCIM, or federation set on identities (department, cost center), surfaced to policy conditions and variables under the attribute's own name, for example <code>principal.department</code>. Names cannot shadow built-in principal keys.</>,
+    },
+    'onboarding.mode': {
+      type: "'invitation' | 'linked'",
+      default: "'invitation'",
+      description: 'How existing people join another tenant. invitation creates a separate identity per tenant; linked also lets people connect accounts they hold in several tenants through an explicit, recently authenticated link.',
+    },
+    'onboarding.invitationLifetimeMs': {
+      type: 'number',
+      default: '1 day',
+      description: 'How long owner and member invitation links stay valid. Lengthen it when invitees often act days later; resending renews it.',
+    },
+    'tenantDefaults.limits': {
+      type: 'TenantLimits',
+      description: 'Plan limits stamped on every tenant tenants.create creates (identities, serviceAccounts, groups, roles, policies, resources, webhooks), so a SaaS plan applies from the first sign-in.',
+    },
+    'tenantDefaults.authPolicy': {
+      type: 'TenantAuthPolicy',
+      description: 'An authentication policy stamped on every new tenant, for example requireMfa for all organizations. Validated at construction; errors are prefixed with tenantDefaults.',
+    },
+    'domains.resolveTxt': {
+      type: '(hostname: string) => Promise<string[][]>',
+      default: 'node:dns/promises',
+      description: 'The DNS TXT lookup that proves an organization controls an email domain or a custom sign-in hostname. Replace it in tests or to use DNS over HTTPS.',
+    },
+    'domains.recordName': {
+      type: 'string',
+      default: "'_better-iam-challenge'",
+      description: 'The label under the domain where organizations publish the verification TXT record. Change it to brand the record.',
+    },
+    'domains.blockedDomains': {
+      type: 'string[]',
+      default: 'common consumer mailbox providers',
+      description: 'Domains no tenant may claim, compared exactly, so nobody claims gmail.com for home-realm discovery. Supplying it replaces the default list.',
+    },
+    hosts: {
+      type: 'HostOptions',
+      description: <>Organization sign-in addresses: subdomain patterns such as <code>{'{tenant}'}.signin.example.com</code>, verified custom hostnames, and the sign-in path. Requests on an organization's address are pinned to it. See <a href="/docs/operations/deployment/hosts-and-regions">sign-in addresses and regions</a>.</>,
+    },
+    regions: {
+      type: 'RegionOptions',
+      description: <>For multi-region deployments: this deployment's region, every region's base URL, and an optional directory for regions with separate databases. Sign-in for an organization homed elsewhere answers <code>WRONG_REGION</code> with its sign-in URL there.</>,
+    },
+  }}
+/>
+
+### Application integration
+
+These two callbacks connect authorization to your own data. They run as trusted server code on every decision
+that needs them.
+
+<TypeTable
+  type={{
+    resolveResource: {
+      type: 'async (reference: ResourceRef) => ResolvedResource',
+      description: <>Looks up an application-owned resource (one you did not register with IAM as managed) and returns its tenant and attributes from your trusted storage, so policies can check ownership and attributes. Required for such types: without it, their checks fail with <code>RESOURCE_RESOLVER_REQUIRED</code>. The returned <code>tenantId</code> must match the request.</>,
+    },
+    resolveContext: {
+      type: '(principal) => Promise<Record<string, unknown>>',
+      description: 'Adds trusted, server-derived keys to every policy evaluation, such as the plan a tenant pays for. It has the lowest precedence: plugin context, identity attributes, and server-owned keys override it. Never pass browser input through it.',
+    },
+  }}
+/>
+
+## Access workflows
+
+These options tune self-service <Term id="access-request">access requests</Term> and the usage tracking behind
+role mining.
+
+<TypeTable
+  type={{
+    'accessRequests.lifetimeMs': {
+      type: 'number',
+      default: '7 days',
+      description: 'How long a pending access request waits for a reviewer before it expires, from one minute to 365 days.',
+    },
+    'accessRequests.maxDurationSeconds': {
+      type: 'number',
+      default: '90 days',
+      description: 'The longest temporary grant anyone may request, from 60 seconds to ten years. Lower it to keep requested access short-lived.',
+    },
+    accessUsage: {
+      type: 'boolean | AccessUsageOptions',
+      default: 'false',
+      description: <>Records which actions each identity actually uses, so <code>roleMining.usage</code> and <code>roleMining.rightSize</code> can point out unused bindings and never-used grants. Counted in memory and written in batches, so the hot path never waits on storage. Call <code>iam.flushAccessUsage()</code> before shutting down.</>,
+    },
+    'accessUsage.flushIntervalMs': {
+      type: 'number',
+      default: '1 minute',
+      description: 'How often buffered usage is written; at least one second. Longer intervals mean fewer writes and more usage lost if the process crashes.',
+    },
+    'accessUsage.maxBuffered': {
+      type: 'number',
+      default: '10000',
+      description: 'Buffered identity and action pairs that trigger an early write, which bounds memory on busy instances.',
+    },
+  }}
+/>
+
+## Events and audit
+
+These options decide where audit events go after commit: to your code, to <Term id="webhook">webhooks</Term>, and
+to an independent archive of the <Term id="audit-chain">audit chain</Term>.
+
+<TypeTable
+  type={{
+    'events.onEvent': {
+      type: '(event: AuditEvent) => void | Promise<void>',
+      description: <>Receives every audit event after commit, from the dispatcher (<code>iam.events.dispatch()</code>), at least once. Use it to feed a SIEM or analytics from configuration rather than from an in-process subscriber.</>,
+    },
+    'events.deliverWebhook': {
+      type: '(delivery: WebhookDelivery) => Promise<void>',
+      description: 'Replaces the built-in HTTPS POST transport, for example to hand deliveries to a queue or an egress proxy. Signature headers are already computed; throw to signal failure.',
+    },
+    'events.webhookTimeoutMs': {
+      type: 'number',
+      default: '10000',
+      description: 'How long the built-in transport waits for an endpoint (1000 to 120000) before counting the attempt as failed.',
+    },
+    'auditArchive.write': {
+      type: '(batch: AuditArchiveBatch) => Promise<void>',
+      description: <>Stores one verified batch of a tenant's audit chain somewhere the database cannot rewrite, such as object storage. While <code>auditArchive</code> is set, <code>pruneAudit</code> deletes only archived events. <code>createJsonlAuditArchive</code> provides a file-based sink; see <a href="/docs/operations/jobs#continuous-audit-archiving">continuous audit archiving</a>.</>,
+    },
+    'auditArchive.batchSize': {
+      type: 'number',
+      default: '1000',
+      description: 'Events per batch, from 1 to 10000. Match it to what your sink stores comfortably in one object.',
+    },
+    'auditArchive.leaseMs': {
+      type: 'number',
+      default: '10 minutes',
+      description: 'How long one archiving run may hold a tenant before another run may take over, from one minute to one hour. Keep it well above your slowest write.',
+    },
+  }}
+/>
+
+## Observability
+
+These options expose timing and outcomes of everything the instance does. See
+[Observability](/docs/operations/observability) for span fields and metric names.
+
+<TypeTable
+  type={{
+    'observability.onSpan': {
+      type: '(span: IamSpan) => void',
+      description: 'Receives one span per operation, authorization query, authentication call, and HTTP request, for your metrics library or tracer. Must be synchronous and cheap; exceptions are ignored.',
+    },
+    'observability.metrics': {
+      type: 'boolean | MetricsOptions',
+      default: 'false',
+      description: <>Keeps built-in Prometheus-style counters and histograms in <code>iam.metrics</code>, when you want metrics without wiring your own collector.</>,
+    },
+    'metrics.buckets': {
+      type: 'number[]',
+      default: '[0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10]',
+      description: 'Latency histogram bucket bounds in seconds; each must be positive. Change them to match your latency objectives.',
+    },
+    'metrics.bearerToken': {
+      type: 'string',
+      description: <>Serves <code>GET basePath/metrics</code> to scrapers that send this bearer token. Without it, metrics are available only in code. Use at least 24 characters; <code>doctor</code> warns below that.</>,
+    },
+    'metrics.maxSeries': {
+      type: 'number',
+      default: '2000',
+      description: <>Distinct label sets per metric before new ones collapse into <code>(other)</code>, which bounds memory against hostile or high-cardinality traffic.</>,
+    },
+    'metrics.gauges': {
+      type: 'boolean',
+      default: 'false',
+      description: 'Also reports outbox backlog and live sessions, read from storage on each scrape. Useful for alerting on stuck deliveries; leave it off for very large deployments.',
+    },
+  }}
+/>
+
+## Extensions and protocols
+
+These options add code to the instance: <Term id="plugin">plugins</Term> that extend the API, and raw protocol
+handlers.
+
+<TypeTable
+  type={{
+    plugins: {
+      type: 'IamPlugin[]',
+      default: '[]',
+      description: <>Plugins that add actions, resource types, endpoints, hooks, and policy context, such as <code>createProjectsPlugin()</code>. Validated at construction: unique ids, registered endpoint actions, and unique POST endpoint paths with a validator and a handler. See <a href="/docs/operations/extensions">Adapters and plugins</a>.</>,
+    },
+    protocols: {
+      type: 'ProtocolMount[]',
+      default: '[]',
+      description: <>Raw request handlers consulted before the IAM routes. Most deployments call <code>iam.useProtocol(service)</code> for OAuth, SAML, and SCIM instead; see <a href="/docs/operations/deployment/protocol-mounts">Protocol mounts</a>.</>,
+    },
+  }}
+/>
+
+## AI models, agent cards, and billing
+
+These options turn on and tune the features for AI agents and spend tracking. Each has its own guide with the full
+settings.
+
+<TypeTable
+  type={{
+    inference: {
+      type: 'boolean | InferenceOptions',
+      default: 'off',
+      description: <>Model access control: the <code>inference</code> API group (providers with sealed keys, models, budgets, usage) and <code>iam.inference</code> with the gateway. Settings include <code>usageRetentionDays</code> and <code>allowCustomBaseUrls</code>. See <a href="/docs/guides/inference">Model access and budgets</a>.</>,
+    },
+    a2a: {
+      type: 'A2aOptions',
+      default: 'off',
+      description: <>Signing keys (Ed25519 or ES256 JWKs with a <code>kid</code>), <code>jwksUrl</code>, <code>cardLifetimeSeconds</code>, and <code>issuer</code> (default: the base URL plus <code>basePath</code>) for IAM-attested agent cards (<code>agents.signCard</code>). Bad keys fail with <code>INVALID_CONFIG</code>. See <a href="/docs/guides/ai-agents#agent-to-agent-a2a">Agent-to-agent</a>.</>,
+    },
+    billing: {
+      type: 'BillingOptions',
+      description: <>Tunes billing, which is always available: the currency, the time zone billing months follow, usage retention, how team spend is attributed (<code>teamAttribution</code>), and payment terms. See <a href="/docs/guides/billing">Billing and spend</a>.</>,
+    },
+  }}
+/>
+
+## Temporary credentials
+
+`sts` controls temporary credentials: how long <Term id="role-assumption">role sessions</Term> and session tokens
+may last, whether session tokens
+can be signed JWTs that services verify offline, and whether workloads (CI, Kubernetes, cloud functions) may
+exchange their own OIDC tokens for role sessions. Invalid values throw `INVALID_CONFIG` naming the field, such as
+`sts.maxRoleSessionSeconds must be an integer from 900 to 43200`.
+
+<TypeTable
+  type={{
+    maxRoleSessionSeconds: {
+      type: 'number',
+      default: '3600',
+      description: 'The longest role session anyone may assume, 900 to 43200. Trusts can only lower it.',
+    },
+    maxSessionTokenSeconds: {
+      type: 'number',
+      default: '43200',
+      description: 'The longest session token anyone may request, 900 to 129600.',
+    },
+    maxSessionTokensPerIdentity: {
+      type: 'number',
+      default: '50',
+      description: 'Live session tokens one identity may hold, 1 to 1000, which bounds runaway token minting by scripts.',
+    },
+    jwt: {
+      type: 'SessionTokenSigningOptions',
+      description: <>Enables <code>format: 'jwt'</code> tokens and the JWKS route, for services that verify tokens without calling IAM. Its keys are separate from <code>secret</code>, so rotating the deployment secret never affects them, and they are never shared with the OAuth provider.</>,
+    },
+    webIdentity: {
+      type: 'StsWebIdentityOptions',
+      description: 'Enables AssumeRoleWithWebIdentity, so workloads authenticate with the OIDC tokens their platform already issues instead of stored API keys. Off unless enabled.',
+    },
+  }}
+/>
+
+### Session JWT signing
+
+`sts.jwt` holds the keys that sign session JWTs and the rotation window for retired keys.
+
+<TypeTable
+  type={{
+    signingKeys: {
+      type: 'JWK[]',
+      required: true,
+      description: <>1 to 10 private JWKs: Ed25519 (<code>kty: 'OKP'</code>, <code>alg: 'EdDSA'</code>) or P-256 (<code>kty: 'EC'</code>, <code>alg: 'ES256'</code>), each with a unique <code>kid</code> of up to 64 letters, digits, dots, underscores, or hyphens; <code>use</code> absent or sig, <code>key_ops</code> absent or including sign.</>,
+    },
+    activeKeyId: {
+      type: 'string',
+      default: 'the first signing key',
+      description: 'The kid new tokens are signed with. Change it to switch keys during a rotation.',
+    },
+    verificationKeys: {
+      type: 'JWK[]',
+      description: 'Public-only retired keys (0 to 10) that still verify tokens they signed but never sign new ones. Keep a retired key here until its tokens expire.',
+    },
+    issuer: {
+      type: 'string',
+      default: 'baseURL origin + basePath',
+      description: 'The iss claim verifiers check.',
+    },
+    audiences: {
+      type: 'string[]',
+      description: 'Audiences a token may be issued for; the issuer is always included. List the services that verify these tokens.',
+    },
+    maxLifetimeSeconds: {
+      type: 'number',
+      default: '3600',
+      description: 'The longest JWT lifetime, 300 to 43200. JWTs are verified offline, so shorter lifetimes limit how long a leaked token works.',
+    },
+  }}
+/>
+
+### Web-identity federation
+
+`sts.webIdentity` governs the OIDC token exchange, including the safety limits on fetching each provider's keys.
+
+<TypeTable
+  type={{
+    enabled: {
+      type: 'boolean',
+      default: 'false',
+      description: 'Turns web-identity federation on.',
+    },
+    allowedIssuers: {
+      type: 'string[]',
+      description: 'Pins the issuers any tenant may register as an OIDC provider, at most 100 https issuers. Set it so tenants can only trust the CI and cloud platforms you approve.',
+    },
+    jwksCacheSeconds: {
+      type: 'number',
+      default: '600',
+      description: 'How long fetched provider keys are cached, 60 to 3600. Shorter picks up provider key rotation sooner at the cost of more fetches.',
+    },
+    fetchTimeoutMs: {
+      type: 'number',
+      default: '5000',
+      description: 'Timeout of each discovery or JWKS fetch, 500 to 10000.',
+    },
+    maxJwksBytes: {
+      type: 'number',
+      default: '65536',
+      description: 'Largest accepted discovery or JWKS response, 1024 to 1048576 bytes, so a hostile provider cannot exhaust memory.',
+    },
+    maxExchangesPerWindow: {
+      type: 'number',
+      default: '600',
+      description: 'Token exchanges per trust per rate-limit window, 1 to 100000.',
+    },
+    maxSessionsPerTrust: {
+      type: 'number',
+      default: '1000',
+      description: 'Live role sessions per web-identity trust, 1 to 100000.',
+    },
+    allowPrivateNetworks: {
+      type: 'boolean',
+      default: 'false',
+      description: 'Lets discovery and JWKS fetches reach private and reserved addresses. Development and tests only.',
+    },
+    allowInsecureLocalhost: {
+      type: 'boolean',
+      default: 'false',
+      description: 'Accepts http issuers and key URLs on loopback hosts. Development and tests only.',
+    },
+    fetchJson: {
+      type: '(url: URL) => Promise<unknown>',
+      description: 'Replaces the built-in fetch, which refuses private addresses, redirects, and oversized or non-JSON responses. Use it to route through an egress proxy; the host becomes responsible for the safety of its transport.',
+    },
+  }}
+/>
+
+## Validation rules at a glance
+
+Construction fails with `INVALID_CONFIG` when:
+
+- `database` is missing, or `secret` is shorter than 32 characters;
+- `previousSecrets` lists more than five values, repeats one, includes one shorter than 32 characters, or includes `secret`;
+- `baseURL` is not HTTPS outside localhost, 127.0.0.1, and [::1], or `basePath` is malformed or ends with a slash;
+- a trusted origin is not an exact origin, or the passkey RP ID does not match every trusted origin;
+- `requireEmailVerification` or `passwordlessEmail` is on without `sendEmail`, `passwordlessSms` is on without
+  `sendSms`, or `failedSignInAlerts` is set without `sendEmail`;
+- a session, idle, recent-authentication, trusted-device, rate-limit, delivery-attempt, access-request,
+  webhook-timeout, archive, or `sts` value is outside the ranges above;
+- `http.cookieSameSite` is not `lax` or `strict`, or `http.persistentCookies` is not a boolean;
+- the hierarchy has no `root`, names an undefined or `root` child, or sets `maxDepth` outside 1 to 100;
+- `tenantDefaults` fails tenant limit or authentication policy validation;
+- plugins repeat an id, or an endpoint uses an unregistered action, a method other than POST, a duplicate or
+  malformed path, or lacks a validator or handler.
+
+Startup validation cannot judge everything. `doctor` catches the rest: a placeholder-like secret, a short metrics
+token, or no email transport. See [Doctor](/docs/operations/storage#doctor).
+
+## Next steps
+
+<Cards>
+  <Card title="Deployment" href="/docs/operations/deployment">
+    The options every production instance sets, and the deploy sequence.
+  </Card>
+  <Card title="Secrets and keys" href="/docs/operations/deployment/secrets">
+    Rotating `secret` with `previousSecrets` without signing anyone out.
+  </Card>
+  <Card title="Scheduled jobs" href="/docs/operations/jobs">
+    The workers that deliver the outbox and expire access.
+  </Card>
+</Cards>

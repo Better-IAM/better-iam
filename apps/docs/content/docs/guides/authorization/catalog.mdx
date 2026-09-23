@@ -1,0 +1,419 @@
+---
+title: Permission catalog
+description: The actions and resource types policies may name, from built-in iam:* actions to product, plugin, and tenant-defined types and their resources.
+icon: Library
+packages: ['@better-iam/server', '@better-iam/core']
+sources:
+  - docs/policies.md
+  - docs/security.md
+  - packages/server/src/catalog.ts
+  - packages/server/src/api/catalog.ts
+  - packages/server/src/api/resources.ts
+  - packages/server/src/decisions.ts
+  - packages/core/src/index.ts
+---
+
+<Term id="policy">Policies</Term> refer to <Term id="action">actions</Term> and
+<Term id="resource">resources</Term> by name. Without a list of valid names, a typo such as `document:read` instead
+of `documents:read` would be stored happily and then silently match nothing, and nobody would notice until someone
+was refused. The <Term id="permission-catalog">permission catalog</Term> is that list: the set of action names a
+policy may use, and the <Term id="resource-type">resource types</Term> those actions apply to.
+
+The catalog contains the built-in `iam:*` actions, your product's actions, <Term id="plugin">plugin</Term>
+actions, and, when you enable it, actions that <Term id="tenant">tenants</Term> define for themselves. For each
+resource type it also records which attributes policies can test, which relations people can hold on it, and
+whether IAM stores its records.
+
+Registering an action grants nothing. It only makes the name valid in policies; access still comes from
+<Term id="role">roles</Term>.
+
+## Configure the catalog
+
+You declare your product's part of the catalog once, in the `permissions` option, next to the rest of your
+configuration. List every action your code checks, grouped by the resource type it applies to:
+
+```ts title="lib/iam.ts"
+import { betterIam } from 'better-iam';
+import { sqliteAdapter } from 'better-iam/adapter-sqlite';
+
+export const iam = betterIam({
+  database: sqliteAdapter({ filename: './iam.db' }),
+  secret: process.env.BETTER_IAM_SECRET!,
+  baseURL: 'https://app.example.com',
+  permissions: {
+    mode: 'tenant-defined', // or 'catalog' (default) to allow only developer-defined names
+    actions: ['reports:export'], // actions without a resource type
+    resourceTypes: {
+      document: { actions: ['documents:read', 'documents:write'], attributes: { classification: 'string' } },
+      project: { managed: true, actions: ['projects:read', 'projects:manage'], attributes: { archived: 'boolean' } },
+      task: { managed: true, parent: 'project', actions: ['tasks:read', 'tasks:write'] },
+    },
+    identityAttributes: { department: 'string', contractor: 'boolean' },
+  },
+});
+```
+
+<TypeTable
+  type={{
+    mode: {
+      type: "'catalog' | 'tenant-defined'",
+      description: "Who may add names. 'catalog' allows only the names you declare here. 'tenant-defined' also lets each tenant's administrators register resource types and actions of their own, for products whose customers model their own objects.",
+      default: "'catalog'",
+    },
+    actions: {
+      type: 'string[]',
+      description: 'Actions that do not belong to one resource type, such as reports:export. Declare them here so policies may name them.',
+    },
+    resourceTypes: {
+      type: 'Record<string, ResourceTypeDefinition>',
+      description: 'The kinds of things your product protects, keyed by type name, each with its actions, attributes, parent, and relations (see the next table). Once you set this, resource patterns in policies must name declared types, which catches typos in types too.',
+    },
+    identityAttributes: {
+      type: "Record<string, 'string' | 'number' | 'boolean'>",
+      description: 'Typed facts administrators may record on people and service accounts, such as department or contractor. Policies read them as principal.{name}. They cannot redefine built-in principal keys.',
+    },
+  }}
+/>
+
+Each resource type accepts:
+
+<TypeTable
+  type={{
+    actions: {
+      type: 'string[]',
+      description: 'The fully qualified actions that apply to this type, such as documents:read. They join the catalog, and administrators see them grouped under the type.',
+    },
+    attributes: {
+      type: "Record<string, 'string' | 'number' | 'boolean'>",
+      description: 'Facts about each resource that conditions can test as resource.{name}, such as classification or archived. At most 64; names start with a letter, use letters, digits, and underscores, and cannot be tenantId.',
+    },
+    parent: {
+      type: 'string',
+      description: 'The type that contains this one, such as project for task. Policies can then read the parent through resource.parentId and resource.parentRelations. The chain must end at declared types without cycles, and a managed type needs a managed parent.',
+    },
+    managed: {
+      type: 'boolean',
+      description: 'Whether IAM stores the records. Managed resources are registered with the resources API and can be listed with listAccessible; unmanaged ones are looked up through your resolveResource callback.',
+      default: 'false',
+    },
+    relations: {
+      type: 'string[]',
+      description: 'Relation names such as viewer or editor that people and groups may hold on resources of this type, for sharing. Lowercase, at most 32 per type.',
+    },
+    description: {
+      type: 'string',
+      description: 'A human-readable summary shown in catalog listings and the console; at most 512 characters.',
+    },
+  }}
+/>
+
+Plugins contribute actions and platform resource types the same way (`actions` and `resourceTypes` on the plugin object), validated exactly like your own. Configuration errors fail at startup with `INVALID_CONFIG`:
+
+- Action names cannot start with `iam:` or `tenant/`, and cannot contain `*`, `?`, or whitespace.
+- Resource type names match `^[a-z][a-z0-9-]{0,63}$`, and a name declared twice (by you or a plugin) is rejected.
+- These names are reserved for the platform: `iam`, `role`, `oauth-client`, `scim`, `saml`, `ssf`, `tenant`,
+  `identity`, and `session`.
+
+## How documents are validated
+
+The catalog pays off when a document is saved: mistakes are refused on the spot instead of surfacing later as
+unexplained denials. Policy documents are validated against the catalog when they are stored:
+
+- An exact action name that does not exist is rejected with `INVALID_ACTION`.
+- Once `resourceTypes` is configured, an exact resource type in a resource pattern must also exist
+  (`INVALID_RESOURCE_TYPE`). The platform's own types, such as `iam`, are always accepted.
+- Wildcard patterns such as `documents:*` or `*/report` are stored as written, without being resolved.
+
+The same validation applies to every document the server stores, not only to policies attached to roles. That
+includes inline role documents, <Term id="boundary">boundaries</Term> (ceiling documents that cap what anyone can
+reach, set on a tenant or on one person), <Term id="authority">grant-authority</Term> ceilings (the cap on what a
+delegated administrator may hand out), trust ceilings, and session policies, including the policy compiled from
+an API key's `scopes`.
+
+At request time, `iam.authorize` denies an action that is not in the tenant's catalog with the decision reason
+`UNKNOWN_ACTION`.
+
+## Built-in actions
+
+Every operation of the platform is authorized with an `iam:*` action, so administration is delegated with the
+same policies as your product. The built-in actions are:
+
+| Area | Actions |
+| --- | --- |
+| Tenants | `iam:tenants:create`, `iam:tenants:read`, `iam:tenants:update`, `iam:tenants:delete` |
+| Identities | `iam:identities:create`, `iam:identities:read`, `iam:identities:update`, `iam:identities:delete`, `iam:identities:impersonate` |
+| Groups | `iam:groups:create`, `iam:groups:read`, `iam:groups:update`, `iam:groups:delete` |
+| Roles | `iam:roles:create`, `iam:roles:read`, `iam:roles:update`, `iam:roles:delete`, `iam:roles:assume`, `iam:roles:revoke-sessions` |
+| Policies | `iam:policies:create`, `iam:policies:read`, `iam:policies:update`, `iam:policies:delete`, `iam:policies:simulate` |
+| Bindings | `iam:bindings:create`, `iam:bindings:read`, `iam:bindings:delete`, `iam:bindings:activate`, `iam:bindings:approve` |
+| Access packages | `iam:packages:create`, `iam:packages:read`, `iam:packages:update`, `iam:packages:delete`, `iam:packages:assign`, `iam:packages:request`, `iam:packages:approve` |
+| Access requests | `iam:access-requests:create`, `iam:access-requests:read`, `iam:access-requests:review` |
+| Delegation | `iam:authorities:create`, `iam:authorities:revoke`, `iam:boundaries:update`, `iam:root:grant` |
+| Catalog | `iam:actions:create`, `iam:actions:read`, `iam:actions:delete`, `iam:resource-types:create`, `iam:resource-types:read`, `iam:resource-types:update`, `iam:resource-types:delete` |
+| Resources | `iam:resources:create`, `iam:resources:read`, `iam:resources:update`, `iam:resources:delete` |
+| Relationships | `iam:relationships:create`, `iam:relationships:read`, `iam:relationships:delete` |
+| Credentials and trust | `iam:credentials:create`, `iam:credentials:read`, `iam:credentials:revoke`, `iam:trust:create`, `iam:trust:read`, `iam:trust:update`, `iam:trust:revoke`, `iam:assertions:create` |
+| Temporary credentials | `iam:session-tokens:create`, `iam:oidc-providers:create`, `iam:oidc-providers:read`, `iam:oidc-providers:update`, `iam:oidc-providers:delete` |
+| Configuration | `iam:config:read`, `iam:config:apply` |
+| Audit and webhooks | `iam:audit:read`, `iam:webhooks:create`, `iam:webhooks:read`, `iam:webhooks:update`, `iam:webhooks:delete` |
+| OAuth provider | `iam:oauth:clients:create`, `iam:oauth:clients:read`, `iam:oauth:clients:update`, `iam:oauth:clients:delete`, `iam:oauth:grants:read`, `iam:oauth:grants:revoke` |
+| SCIM | `iam:scim:connections:create`, `iam:scim:connections:read`, `iam:scim:connections:delete`, `iam:scim:credentials:create`, `iam:scim:credentials:revoke`, `iam:scim:mappings:update`, `iam:scim:targets:create`, `iam:scim:targets:read`, `iam:scim:targets:update`, `iam:scim:targets:delete`, `iam:scim:targets:sync` |
+| SAML | `iam:saml:connections:create`, `iam:saml:connections:read`, `iam:saml:connections:update`, `iam:saml:connections:delete` |
+| Shared Signals | `iam:ssf:streams:create`, `iam:ssf:streams:read`, `iam:ssf:streams:update`, `iam:ssf:streams:delete` |
+| Domains | `iam:domains:create`, `iam:domains:read`, `iam:domains:update`, `iam:domains:delete` |
+| Governance | `iam:analysis:read`, `iam:analysis:update`, `iam:certifications:read`, `iam:certifications:review`, `iam:certifications:manage`, `iam:sod:read`, `iam:sod:manage`, `iam:invariants:read`, `iam:invariants:manage`, `iam:agreements:read`, `iam:agreements:manage` |
+| Network security | `iam:security:read`, `iam:security:manage` |
+
+Most names say what they allow: `create`, `read`, `update`, and `delete` on the area's records. The less obvious
+ones:
+
+- `iam:identities:impersonate` starts a "view as" <Term id="impersonation">impersonation</Term> session for a
+  member.
+- `iam:roles:assume` starts a role session through a <Term id="trust">trust</Term>, and
+  `iam:roles:revoke-sessions` ends the live role sessions of a role.
+- `iam:bindings:activate` activates an eligible binding one holds, and `iam:bindings:approve` decides activation
+  requests ([Just-in-time elevation](/docs/guides/privileged-access/elevation)).
+- `iam:packages:assign`, `iam:packages:request`, and `iam:packages:approve` grant, ask for, and decide on
+  [access packages](/docs/guides/privileged-access/access-packages).
+- `iam:boundaries:update` sets tenant and principal boundaries, and `iam:root:grant` makes someone a root
+  administrator; both are for root administrators only.
+- `iam:assertions:create` issues signed <Term id="assertion">assertions</Term> for downstream services, and
+  `iam:session-tokens:create` issues short-lived session tokens from one's own session or API key.
+- `iam:oidc-providers:*` registers external OpenID Connect providers whose tokens can be exchanged for role
+  sessions.
+- `iam:config:apply` applies [configuration as code](/docs/guides/privileged-access/config-as-code), and
+  `iam:analysis:update` suppresses access-analysis findings.
+
+To see the whole catalog of a tenant, call `iam.api.actions.list`. It returns every action a policy in that
+tenant may name, each marked `platform` (declared in configuration or built in) or `tenant` (registered by the
+tenant), with the resource type it belongs to. Use it to build a policy editor or to check which names exist.
+
+### Administrative resources
+
+Giving someone `iam:roles:update` on `*` lets them edit every role in the tenant. Often you want less: a team
+lead who manages only their team's roles, or a project admin who registers only that project's tasks. That is
+possible because every administrative operation is evaluated against an `iam/...` resource naming exactly what it
+touches, and resource patterns can narrow it:
+
+| What the operation does | Checked against |
+| --- | --- |
+| Creates something tenant-wide or reads across the tenant: creating roles and policies (`roles.create`, `policies.create`), listing policies (`policies.list`), registering resource types (`resourceTypes.register`), asking who can reach a resource (`policies.whoCan`) | `iam/{tenantId}` |
+| Reads or changes one role (`roles.get`, `roles.update`, `roles.delete`), binds it to someone or edits such a binding (`bindings.create`, `bindings.update`, both under `iam:bindings:create`), activates it or approves an activation (`bindings.activate`, `bindings.approveActivation`) | `iam/{roleId}` |
+| Reads, edits, rolls back, or deletes one stored policy (`policies.get`, `policies.update`, `policies.restoreVersion`, `policies.delete`) | `iam/{policyId}` |
+| Removes one binding (`bindings.delete`) | `iam/{bindingId}` |
+| Renames a group, changes its members, or deletes it (`groups.update`, `groups.addMember`, `groups.removeMember`, `groups.delete`) | `iam/{groupId}` |
+| Registers, reads, changes, or deletes one managed resource (`resources.register`, `resources.get`, `resources.update`, `resources.delete`), or shares it (`relationships.create`) | `iam/{type}/{id}` |
+| Lists resources or relationships (`resources.list`, `relationships.list`) | `iam/{type}/*` with a type filter, otherwise `iam/*` |
+| Starts a role session (`roles.assume`, evaluated in the caller's own tenant) | `iam/{roleId}` of the target role |
+| Acts on one identity: delegating authority to it, issuing it an API key, or simulating its access (`authorities.create`, `credentials.create`, `policies.simulate`, `policies.effectiveActions`) | `iam/{identityId}` |
+| Creates, lists, or reports on separation-of-duties rules (`sod.create`, `sod.list`, `sod.violations`); changes or deletes one (`sod.update`, `sod.delete`) | `iam/sod/*`; `iam/sod/{ruleId}` |
+
+For example, this policy lets its holders register and update the tasks of one project, and nothing else:
+
+```json title="Delegated administration of one project's tasks"
+{
+  "version": 1,
+  "statements": [
+    {
+      "sid": "RegisterApolloTasks",
+      "effect": "allow",
+      "actions": ["iam:resources:create", "iam:resources:update"],
+      "resources": ["iam/task/apollo-*"]
+    }
+  ]
+}
+```
+
+## Resource types and resources
+
+A decision needs facts about the resource: which tenant it belongs to (so nobody reaches another tenant's data),
+who owns it, and the attributes conditions test. Before evaluating a request, the server **resolves** the
+resource to learn these facts. Resource patterns in policies then match `type/id` within that already-resolved
+tenant; `*` and `?` are anchored glob wildcards, not regular expressions, and they cannot change the target
+tenant.
+
+Where the facts come from depends on the type, which is either **application-owned** or **managed**:
+
+| | Application-owned | Managed |
+| --- | --- | --- |
+| Records live in | Your database | Better IAM's database |
+| Resolved by | Your `resolveResource` callback | The IAM registry, no callback |
+| Owner and parent | Whatever your resolver returns as attributes | Built in: `ownerId` and `parentId`, validated on registration |
+| Relationship tuples | Accepted for the resource as named | Accepted once the resource is registered |
+| Listable with `listAccessible` | No | Yes |
+| Choose it when | Your product already stores the records and their tenant | You want IAM to hold ownership and sharing, or to list what a person may open |
+
+### Application-owned types
+
+Application-owned types are resolved by your `resolveResource` callback. It receives the requested tenant, type,
+and ID, and must load ownership and attributes from trusted storage. Types that are not declared at all are still
+passed to `resolveResource`, so existing integrations keep working; declaring them adds validation and documents
+the attribute schema.
+
+```ts title="lib/iam.ts"
+import { betterIam, IamError } from 'better-iam';
+
+export const iam = betterIam({
+  // ...database, secret, baseURL, permissions
+  async resolveResource({ type, id }) {
+    if (type !== 'document') throw new IamError('NOT_FOUND', 'Unknown resource type', 404);
+    const document = await db.documents.findById(id);
+    if (!document) throw new IamError('NOT_FOUND', 'Document not found', 404);
+    return {
+      tenantId: document.organizationId, // from your storage, never from the request
+      type,
+      id,
+      attributes: { classification: document.classification, ownerId: document.ownerId },
+    };
+  },
+});
+```
+
+<Callout type="warn" title="Never echo the requested tenant">
+  The resolver is what proves a resource belongs to the tenant being authorized. Never copy the request's tenant ID
+  into a fetched record to satisfy it. When the returned tenant, type, or ID differs from the request, the check
+  fails with `RESOURCE_MISMATCH` (403). Without a resolver, application resources fail with
+  `RESOURCE_RESOLVER_REQUIRED`.
+</Callout>
+
+### Managed types
+
+Managed types (`managed: true`, and every tenant-defined type) are registered with IAM, so authorization resolves
+the registration and no application callback is involved. Your code tells IAM when a resource is created, changed,
+or deleted, through [`iam.api.resources`](/docs/reference/api/resources). `resources.register` records a new
+resource with its attributes, owner, and parent:
+
+```ts title="Registering managed resources"
+await iam.api.resources.register(credential, {
+  tenantId,
+  type: 'project',
+  id: 'apollo',
+  attributes: { archived: false },
+  ownerId: alice.id,
+});
+
+// A task needs its registered parent project.
+await iam.api.resources.register(credential, { tenantId, type: 'task', id: 'apollo-42', parentId: 'apollo' });
+```
+
+- Attribute values are validated against the declared schema (string values up to 2048 characters).
+- `ownerId` must be an identity of the same tenant.
+- Types with a `parent` require a registered parent resource of the declared parent type; a type without one
+  refuses `parentId`.
+- Registering a resource requires `iam:resources:create` on `iam/{type}/{id}`, so policies can scope who may
+  register which resources. Registering the same resource twice fails with `CONFLICT`.
+- `resources.update` keeps the registration in step with your data: it replaces the attributes (validated
+  again) and sets or clears (`ownerId: null`) the owner. Call it when a document is reclassified or changes hands.
+- `resources.get` returns one registration, and `resources.list` lists them for administration screens, filtered
+  by `type`, `parentId`, and `ownerId`, ordered by type and ID, with `limit` (default 100, at most 1000) and
+  `offset`. To list what a person may open, use `listAccessible` instead.
+- `resources.delete` removes a registration when the resource is deleted. It refuses while child resources exist
+  (`RESOURCE_IN_USE`) and removes the resource's relationships with it.
+- `resources.registerMany` registers up to 100 resources in one transaction, for imports and backfills; see
+  [Batches and reverse queries](/docs/guides/authorization/queries#register-resources-in-bulk).
+
+A tenant's `resources` plan limit, when set, caps how many it may register (`LIMIT_EXCEEDED`). Managed resource
+registrations are trusted authorization inputs: the `iam:resources:*` permissions decide who may register or
+edit them.
+
+Only managed types can be listed with [`listAccessible`](/docs/guides/authorization/queries#list-accessible-resources),
+the <Term id="reverse-query">reverse query</Term> behind list pages. For application-owned types, check the IDs
+your product already has with `authorizeMany`.
+
+### What policies see
+
+The resolved resource becomes context for <Term id="condition">conditions</Term>, the tests inside policy
+statements. The <Term id="principal">principal</Term> below is the caller:
+
+| Key | Source |
+| --- | --- |
+| `resource.{name}` | Attributes from the resolver or the registration. |
+| `resource.ownerId`, `resource.parentId`, `resource.parentType` | Managed resources, when set. |
+| `resource.tenantId` | The tenant the resource belongs to. |
+| `resource.relations`, `resource.parentRelations` | <Term id="relationship">Relations</Term> the principal holds on the resource and its parent. See [Relationships](/docs/guides/authorization/relationships). |
+
+For administrative actions on `iam/{type}/{id}` that name a registered managed resource, these keys describe that
+resource, so administration such as sharing can be conditioned on ownership and relations. The full list of keys
+is on the [Conditions](/docs/guides/authorization/conditions#context-keys) page.
+
+## Tenant-defined catalogs
+
+Some products let each customer model their own objects: a workflow tool where one customer tracks invoices and
+another tracks shipments. You cannot declare those types in advance. With `mode: 'tenant-defined'`, tenant
+administrators extend the catalog for their own organization, and the new types and actions work in their
+policies exactly like yours. Tenant types are always managed, so IAM stores their records.
+
+`resourceTypes.register` creates a type with its actions, attributes, and relations in one call, and
+`actions.register` adds one more action to an existing tenant type:
+
+```ts title="A tenant registers its own type"
+await iam.api.resourceTypes.register(credential, {
+  tenantId,
+  name: 'invoice',
+  description: 'Supplier invoices',
+  actions: ['read', 'approve'], // registers invoice:read and invoice:approve
+  attributes: { amount: 'number', currency: 'string' },
+  relations: ['approver'],
+});
+
+await iam.api.actions.register(credential, { tenantId, name: 'invoice:export', description: 'Download as CSV' });
+```
+
+- Tenant type names cannot collide with reserved names, platform resource types, or the namespace of any platform
+  action (`documents` is taken by `documents:read`), and fail with `INVALID_RESOURCE_TYPE`. A name the tenant
+  already registered fails with `CONFLICT`.
+- A `parent` must be an existing managed type.
+- Tenant-defined actions are namespaced under a tenant-defined type as `{type}:{verb}`. `actions.register` and the
+  `actions` list on `resourceTypes.register` (verbs only) create them; the type must be registered first
+  (`INVALID_ACTION` otherwise).
+- `resourceTypes.update` evolves a type: it changes the description, attributes, and relations and adds verbs;
+  existing verbs are kept. A new attribute schema must still accept every registered resource of the type, and a
+  relation still held by someone cannot be dropped (`RESOURCE_IN_USE`).
+- Deleting a type or action is refused while resources or policies still use it. `resourceTypes.delete` removes a
+  type once its resources, relationships, and child types are gone. `actions.unregister` removes one action and
+  refuses while a policy or inline role document names it (`RESOURCE_IN_USE`).
+- With `mode: 'catalog'`, every tenant registration fails with `CATALOG_LOCKED` (403).
+
+The permissions are `iam:resource-types:create`, `read`, `update`, and `delete`, and `iam:actions:create`, `read`,
+and `delete`. `resourceTypes.list` returns platform and tenant types together, each with its `source`, and
+`resourceTypes.get` returns one of them with its actions, attributes, and relations.
+
+Configuration as code carries tenant-defined resource types (with `actions` as verbs), so a tenant's catalog can
+live in version control with the roles that use it. See
+[Configuration as code](/docs/guides/privileged-access/config-as-code).
+
+## Identity attributes
+
+Roles answer "what job does this person do?". Some rules depend on facts about the person instead: their
+department, whether they are a contractor, their clearance level. Identity attributes carry those facts, so one
+statement can cover everyone in finance without a role per department.
+
+Declare the attributes in `permissions.identityAttributes`. An administrator then sets them on a person with
+`identities.update` (or on a service account with `serviceAccounts.update`), and policies read them as
+`principal.{name}`:
+
+```ts
+await iam.api.identities.update(credential, { tenantId, identityId, attributes: { department: 'finance' } });
+```
+
+```json title="A condition on the attribute"
+{ "StringEquals": { "principal.department": "finance" } }
+```
+
+They cannot shadow the built-in principal keys such as `principal.id`, `principal.mfa`, or `principal.roles`, nor
+the session keys such as `principal.mfaTime` or `principal.sessionTags`; declaring one fails at startup with
+`INVALID_CONFIG`.
+
+## Next steps
+
+<Cards>
+  <Card title="Roles and bindings" href="/docs/guides/authorization/roles">
+    Turn catalog actions into roles and give them to people and groups.
+  </Card>
+  <Card title="Policy documents" href="/docs/guides/authorization/policies">
+    Write statements over actions and resource patterns.
+  </Card>
+  <Card title="Resources and the catalog" href="/docs/guides/concepts/resources-and-catalog">
+    The concepts behind resources, types, and tenants.
+  </Card>
+</Cards>

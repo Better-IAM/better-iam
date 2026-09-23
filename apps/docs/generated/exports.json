@@ -1,0 +1,3662 @@
+[
+ {
+  "specifier": "@better-iam/a2a",
+  "package": "@better-iam/a2a",
+  "exports": [
+   {
+    "name": "A2A_ACCESS_DENIED",
+    "kind": "const",
+    "params": null,
+    "doc": "JSON-RPC error code (HTTP 403) of a message the caller may not send: `error.data.reason` says why (`ACCESS_DENIED`,\n`UNKNOWN_SKILL`, `NO_RULE_FOR_CALLER`, `INSUFFICIENT_SCOPE`). Tasks of other callers answer A2A's own `-32001`.",
+    "deprecated": false
+   },
+   {
+    "name": "A2A_CONFIRMATION_REQUESTED",
+    "kind": "const",
+    "params": null,
+    "doc": "JSON-RPC error code (HTTP 403) telling an agent that acts for a person that the person must confirm this request\nfirst: a confirmation request was filed (`error.data.confirmationId`, `error.data.expiresAt`); retry once approved.",
+    "deprecated": false
+   },
+   {
+    "name": "agentAttestationUri",
+    "kind": "const",
+    "params": null,
+    "doc": "The URI of the attestation extension Better IAM adds to every card it signs.",
+    "deprecated": false
+   },
+   {
+    "name": "AgentCardError",
+    "kind": "class",
+    "params": null,
+    "doc": "Why an agent card was refused by `verifyAgentCard` or `discoverAgent`: `reason` is `unsigned`, `untrusted-key`,\n`signature`, `attestation`, `expired`, `issuer`, `tenant`, `endpoint`, `malformed` or `fetch`.",
+    "deprecated": false
+   },
+   {
+    "name": "createA2aAuthorizer",
+    "kind": "function",
+    "params": [
+     "options"
+    ],
+    "doc": "Decisions shared by the gate and by handlers written with an A2A SDK.",
+    "deprecated": false
+   },
+   {
+    "name": "createA2aGate",
+    "kind": "function",
+    "params": [
+     "options"
+    ],
+    "doc": "The gate: `gate(request, next)` answers the request itself (the agent card, challenges, refusals) or passes it to\n`next` (the A2A server's handler) with the authenticated caller, recording who started each task on the way back.",
+    "deprecated": false
+   },
+   {
+    "name": "createCardAttestor",
+    "kind": "function",
+    "params": [
+     "options"
+    ],
+    "doc": "Keeps an agent's own card attested: returns a function that yields the signed card, signing on first use and again\nwhen the attestation nears its end. Concurrent calls share one signing request; when re-signing fails while the\nprevious card is still valid, that card is returned.",
+    "deprecated": false
+   },
+   {
+    "name": "createDelegationTokenCache",
+    "kind": "function",
+    "params": [
+     "options"
+    ],
+    "doc": "For the agent side: returns a function yielding a current delegation token for an audience (and scopes), issuing one\non first use and again when it nears its end, so an agent calling a service repeatedly does not ask for a token on\nevery call. Concurrent calls for the same audience share one request.",
+    "deprecated": false
+   },
+   {
+    "name": "DelegationTokenError",
+    "kind": "class",
+    "params": null,
+    "doc": "Why `verifyDelegationToken` refused a token: `reason` is `malformed`, `type`, `issuer`, `untrusted-key`,\n`signature`, `audience`, `tenant`, `expired`, `not-yet-valid`, `lifetime`, `replay` or `fetch`.",
+    "deprecated": false
+   },
+   {
+    "name": "discoverAgent",
+    "kind": "function",
+    "params": [
+     "url",
+     "options"
+    ],
+    "doc": "Fetches a remote agent's card (`url` itself when it ends in `.json`, otherwise `/.well-known/agent-card.json` on its\norigin) and verifies it with `verifyAgentCard`, requiring the card's `url` to be on the origin it was fetched from.\nCall it only with agent addresses you chose: it makes an outbound request.",
+    "deprecated": false
+   },
+   {
+    "name": "handoffMetadataKey",
+    "kind": "const",
+    "params": null,
+    "doc": "The A2A message metadata key that carries a Better IAM hand-off (`delegations.handoff`) from the calling agent to the\nagent it calls, so the called agent can act for the same person with `delegations.assume`.",
+    "deprecated": false
+   },
+   {
+    "name": "handoffOf",
+    "kind": "function",
+    "params": [
+     "params"
+    ],
+    "doc": "The hand-off an A2A request carries (the called side): the delegation id in the message's metadata, else in the\nrequest's. Open a session for it with the called agent's own key (`delegations.assume`), which refuses hand-offs that\nare not this agent's.",
+    "deprecated": false
+   },
+   {
+    "name": "memoryTaskOwners",
+    "kind": "function",
+    "params": [
+     "options?"
+    ],
+    "doc": "In-memory owners: at most `maxTasks` entries (default 100000), each kept `ttlMs` (default seven days).",
+    "deprecated": false
+   },
+   {
+    "name": "taskOwnerOf",
+    "kind": "function",
+    "params": [
+     "caller"
+    ],
+    "doc": "The owner key of a caller: the same person through the same agent (or none), or the same OAuth client and subject.",
+    "deprecated": false
+   },
+   {
+    "name": "verifyAgentCard",
+    "kind": "function",
+    "params": [
+     "card",
+     "options"
+    ],
+    "doc": "Verifies that `card` was signed by a trusted Better IAM deployment and that its attestation is current: one of the\ncard's signatures verifies over the canonical card (RFC 8785, without `signatures`) with a trusted key, the card\ncarries exactly one attestation, it is neither expired nor from the future, and it matches `issuers`, `tenantId`\nand `origin` when given. Throws `AgentCardError` otherwise.",
+    "deprecated": false
+   },
+   {
+    "name": "verifyDelegationToken",
+    "kind": "function",
+    "params": [
+     "token",
+     "options"
+    ],
+    "doc": "Verifies a delegation token: a compact JWT of type `biam-delegation+jwt`, signed (EdDSA or ES256) by a key of the\ntrusted issuer it names, for exactly `audience` (and `tenantId`), current, and issued for at most an hour. Returns\nwho acts for whom; throws `DelegationTokenError` otherwise. Revocation reaches a token only when it expires, so keep\nlifetimes short, or verify inside the deployment with `iam.a2a.verifyDelegationToken(token, { live: true })`.",
+    "deprecated": false
+   },
+   {
+    "name": "withHandoff",
+    "kind": "function",
+    "params": [
+     "message",
+     "delegationId"
+    ],
+    "doc": "Adds a hand-off to an A2A message's metadata (the calling side).",
+    "deprecated": false
+   }
+  ]
+ },
+ {
+  "specifier": "@better-iam/adapter-libsql",
+  "package": "@better-iam/adapter-libsql",
+  "exports": [
+   {
+    "name": "libsqlAdapter",
+    "kind": "function",
+    "params": [
+     "options"
+    ],
+    "doc": "libSQL persistence: local files (including encrypted ones and embedded replicas) and remote Turso or sqld\ndatabases through one adapter. Transactions serialize per database in this process and take the writer lock\n(`BEGIN IMMEDIATE`) before any read; remote servers queue write transactions themselves.",
+    "deprecated": false
+   }
+  ]
+ },
+ {
+  "specifier": "@better-iam/adapter-postgres",
+  "package": "@better-iam/adapter-postgres",
+  "exports": [
+   {
+    "name": "postgresAdapter",
+    "kind": "function",
+    "params": [
+     "options"
+    ],
+    "doc": "Transactions serialize through a database advisory lock, including other adapter instances.",
+    "deprecated": false
+   }
+  ]
+ },
+ {
+  "specifier": "@better-iam/adapter-sqlite",
+  "package": "@better-iam/adapter-sqlite",
+  "exports": [
+   {
+    "name": "sqliteAdapter",
+    "kind": "function",
+    "params": [
+     "options"
+    ],
+    "doc": "SQLite serializes operations per canonical filename in this process. SQLite's\nown BEGIN IMMEDIATE lock coordinates other processes with a bounded wait.\nUse PostgreSQL when sustained concurrent writes or large datasets are expected.",
+    "deprecated": false
+   }
+  ]
+ },
+ {
+  "specifier": "@better-iam/auth",
+  "package": "@better-iam/auth",
+  "exports": [
+   {
+    "name": "AuthService",
+    "kind": "class",
+    "params": null,
+    "doc": "Authentication services. The class is assembled from feature modules (sessions, account management,\npasswordless, MFA, passkeys) over a shared base. Low-level transaction helpers are for trusted server integrations only.",
+    "deprecated": false
+   },
+   {
+    "name": "characterClasses",
+    "kind": "function",
+    "params": [
+     "password"
+    ],
+    "doc": "Lowercase, uppercase, digit, and everything else.",
+    "deprecated": false
+   },
+   {
+    "name": "createAuth",
+    "kind": "function",
+    "params": [
+     "options"
+    ],
+    "doc": "",
+    "deprecated": false
+   },
+   {
+    "name": "createMemoryRateLimiter",
+    "kind": "function",
+    "params": [
+     "options?"
+    ],
+    "doc": "In-process limiter for single-instance deployments and tests. Counters are not shared between processes, and the\nmap is bounded by `maxKeys`.",
+    "deprecated": false
+   },
+   {
+    "name": "createStoreRateLimiter",
+    "kind": "function",
+    "params": [
+     "store"
+    ],
+    "doc": "The default limiter: durable counters in the IAM database, committed independently so rejected credentials cannot roll back their attempt.",
+    "deprecated": false
+   },
+   {
+    "name": "credentialTokenKinds",
+    "kind": "const",
+    "params": null,
+    "doc": "The session kind each credential token type must resolve to; the stored kind stays authoritative.",
+    "deprecated": false
+   },
+   {
+    "name": "credentialTokenScanPattern",
+    "kind": "const",
+    "params": null,
+    "doc": "A pattern secret scanners can use to find better-iam credential tokens in text. It needs lookbehind support; without\nit, use `biam_(ses|key|rol|sts|dlg)_[A-Za-z0-9_-]{49}` with explicit boundary rules.",
+    "deprecated": false
+   },
+   {
+    "name": "decryptSecret",
+    "kind": "function",
+    "params": [
+     "value",
+     "secret",
+     "context?"
+    ],
+    "doc": "Opens a sealed value with the current secret or, during a rotation, a previous one.",
+    "deprecated": false
+   },
+   {
+    "name": "encryptSecret",
+    "kind": "function",
+    "params": [
+     "value",
+     "secret",
+     "context?"
+    ],
+    "doc": "Authenticated encryption; the application secret must be a high-entropy, stable secret.",
+    "deprecated": false
+   },
+   {
+    "name": "hashToken",
+    "kind": "const",
+    "params": [
+     "token"
+    ],
+    "doc": "",
+    "deprecated": false
+   },
+   {
+    "name": "isCommonPassword",
+    "kind": "function",
+    "params": [
+     "password"
+    ],
+    "doc": "The built-in weak-password screen: common passwords, keyboard walks and sequences, and low variety.",
+    "deprecated": false
+   },
+   {
+    "name": "newCredentialToken",
+    "kind": "function",
+    "params": [
+     "type"
+    ],
+    "doc": "A new opaque credential token, `biam_<type>_` + 43 random base64url characters + a 6-character CRC-32 checksum (58\ncharacters in all). The checksum lets scanners and the server reject garbage early; it authenticates nothing.",
+    "deprecated": false
+   },
+   {
+    "name": "newId",
+    "kind": "const",
+    "params": [
+     "prefix?"
+    ],
+    "doc": "",
+    "deprecated": false
+   },
+   {
+    "name": "newToken",
+    "kind": "const",
+    "params": [],
+    "doc": "",
+    "deprecated": false
+   },
+   {
+    "name": "openSecret",
+    "kind": "function",
+    "params": [
+     "value",
+     "secrets",
+     "context?"
+    ],
+    "doc": "Opens a sealed value with the first of `secrets` that authenticates it, and says which one\n(0 is the current secret; higher indexes are previous ones kept during a rotation). Undefined\nwhen none does.",
+    "deprecated": false
+   },
+   {
+    "name": "parseCredentialToken",
+    "kind": "function",
+    "params": [
+     "value"
+    ],
+    "doc": "Parses a prefixed credential token: its type when the shape and checksum match, otherwise undefined. The type is a\nrouting hint only; authorization always uses the stored session.",
+    "deprecated": false
+   },
+   {
+    "name": "pwnedPasswords",
+    "kind": "function",
+    "params": [
+     "options?"
+    ],
+    "doc": "A Have I Been Pwned \"range\" client (k-anonymity): hashes the password with SHA-1, sends only the first five hex\ncharacters, and matches the returned suffixes locally. Network failures accept the password unless `failClosed`.",
+    "deprecated": false
+   },
+   {
+    "name": "renderDeliveryMessage",
+    "kind": "function",
+    "params": [
+     "message",
+     "options?"
+    ],
+    "doc": "Renders the messages Better IAM queues (`verify-email`, `password-reset`, `email-change`, `magic-link`, `code`,\n`mfa-code`, `new-sign-in`, `sign-in-failures`, `certification-review`, `certification-reminder`, `delegation-request`,\n`delegation-confirmation`, `team-join-request`, `team-join-decided`, `team-review-requested`, `spend-alert`,\n`spend-anomaly`, `billing-statement`, `payment-reminder`,\n`owner-invitation`, `member-invitation`)\ninto a subject, plain text, and HTML, so a\ndelivery callback can hand them to any provider. Returns undefined for templates it does not know (plugins,\nnewer features), which the callback should render itself.",
+    "deprecated": false
+   }
+  ]
+ },
+ {
+  "specifier": "@better-iam/auth/templates",
+  "package": "@better-iam/auth",
+  "exports": [
+   {
+    "name": "renderDeliveryMessage",
+    "kind": "function",
+    "params": [
+     "message",
+     "options?"
+    ],
+    "doc": "Renders the messages Better IAM queues (`verify-email`, `password-reset`, `email-change`, `magic-link`, `code`,\n`mfa-code`, `new-sign-in`, `sign-in-failures`, `certification-review`, `certification-reminder`, `delegation-request`,\n`delegation-confirmation`, `team-join-request`, `team-join-decided`, `team-review-requested`, `spend-alert`,\n`spend-anomaly`, `billing-statement`, `payment-reminder`,\n`owner-invitation`, `member-invitation`)\ninto a subject, plain text, and HTML, so a\ndelivery callback can hand them to any provider. Returns undefined for templates it does not know (plugins,\nnewer features), which the callback should render itself.",
+    "deprecated": false
+   }
+  ]
+ },
+ {
+  "specifier": "@better-iam/cli",
+  "package": "@better-iam/cli",
+  "exports": [
+   {
+    "name": "builtinCommands",
+    "kind": "const",
+    "params": null,
+    "doc": "Every built-in command, in help order.",
+    "deprecated": false
+   },
+   {
+    "name": "CliError",
+    "kind": "class",
+    "params": null,
+    "doc": "A command-line failure: an `IamError` (same `code` contract) that may carry a hint, printed on its own line by\nthe `better-iam` binary, telling the person what to run or set next.",
+    "deprecated": false
+   },
+   {
+    "name": "cliManifest",
+    "kind": "function",
+    "params": [],
+    "doc": "The machine-readable description of every built-in command (what `better-iam help --json` prints), for docs and tools.",
+    "deprecated": false
+   },
+   {
+    "name": "commandHelp",
+    "kind": "function",
+    "params": [
+     "spec"
+    ],
+    "doc": "`better-iam help <command>`: usage, description, arguments, flags, and examples.",
+    "deprecated": false
+   },
+   {
+    "name": "configFileNames",
+    "kind": "const",
+    "params": null,
+    "doc": "Configuration file names the CLI looks for, in this order, in the working directory and then each parent.",
+    "deprecated": false
+   },
+   {
+    "name": "configFromEnv",
+    "kind": "function",
+    "params": [
+     "env?"
+    ],
+    "doc": "Deployment options from environment variables alone (twelve-factor style), for containers and CI jobs that have\nno configuration file:\n\n- `BETTER_IAM_DATABASE_URL` (required): `postgres://…`, `sqlite:./iam.db` (or a path ending in `.db`), or\n  `libsql://…` / `file:…` (needs `@better-iam/adapter-libsql` installed; `BETTER_IAM_DATABASE_TOKEN` authenticates)\n- `BETTER_IAM_SECRET` (required), `BETTER_IAM_PREVIOUS_SECRETS` (comma-separated, during a rotation)\n- `BETTER_IAM_BASE_URL` (default `http://localhost:3000`), `BETTER_IAM_BASE_PATH`, `BETTER_IAM_TRUSTED_ORIGINS`\n\nEverything else keeps its default; spread the result and add callbacks (email, resolvers) in code when you need\nthem: `betterIam({ ...(await configFromEnv()), authentication: { sendEmail } })`.",
+    "deprecated": false
+   },
+   {
+    "name": "createCli",
+    "kind": "function",
+    "params": [
+     "options?"
+    ],
+    "doc": "Creates a `better-iam`-style program from code: the built-in commands plus your own (`defineCommand`), with the same\nparsing, help, configuration loading, and output. Use it to ship a project CLI, or to run commands in tests.",
+    "deprecated": false
+   },
+   {
+    "name": "createProfileStore",
+    "kind": "function",
+    "params": [
+     "env"
+    ],
+    "doc": "Opens the saved-session file that `login`, `logout`, `profiles`, and token commands use, located from `env` (see\n`credentialsPath`), so tools can list, save, or switch profiles the same way the CLI does.",
+    "deprecated": false
+   },
+   {
+    "name": "credentialsPath",
+    "kind": "function",
+    "params": [
+     "env"
+    ],
+    "doc": "Where saved sessions live: `BETTER_IAM_CREDENTIALS`, else `%APPDATA%\\better-iam\\credentials.json` on Windows, else\n`$XDG_CONFIG_HOME/better-iam/credentials.json` or `~/.config/better-iam/credentials.json`. Read only from the\ngiven environment, so an embedding program (and every test) decides whether a profile can be found at all.",
+    "deprecated": false
+   },
+   {
+    "name": "defineCommand",
+    "kind": "function",
+    "params": [
+     "spec"
+    ],
+    "doc": "Declares a CLI command with typed flags. Export an array of them as `commands` from `better-iam.config.mjs` to add\nproject commands (seeding, reports, migrations of your own) that get the same flag parsing, help, configuration\nloading, and output formatting as the built-in ones.\n\n```js\nexport const commands = [\n  defineCommand({\n    name: 'seed',\n    summary: 'Create the demo organization',\n    target: 'config',\n    flags: { slug: { type: 'string', description: 'Organization slug', default: 'demo' } },\n    async run({ iam, flags }) { const instance = await iam(); ... return { created: true }; },\n  }),\n];\n```",
+    "deprecated": false
+   },
+   {
+    "name": "findConfigFile",
+    "kind": "function",
+    "params": [
+     "cwd"
+    ],
+    "doc": "The nearest configuration file in `cwd` or one of its parents, like Prettier and ESLint find theirs.",
+    "deprecated": false
+   },
+   {
+    "name": "formatResult",
+    "kind": "function",
+    "params": [
+     "value",
+     "format?",
+     "query?"
+    ],
+    "doc": "Turns a command result into the text printed on stdout. Strings are printed as they are.",
+    "deprecated": false
+   },
+   {
+    "name": "lintTenantConfig",
+    "kind": "function",
+    "params": [
+     "value"
+    ],
+    "doc": "Offline checks: the shape (`validateTenantConfig`) plus cross-references between the file's own items.",
+    "deprecated": false
+   },
+   {
+    "name": "listRoutes",
+    "kind": "function",
+    "params": [
+     "iam"
+    ],
+    "doc": "Every route the HTTP API serves for an instance, with whether it needs a credential.",
+    "deprecated": false
+   },
+   {
+    "name": "loadConfig",
+    "kind": "function",
+    "params": [
+     "options?"
+    ],
+    "doc": "Loads a configuration file and creates its instance: the same resolution the CLI uses, for scripts, workers, and\ntests that want `better-iam.config.mjs` without the command line. Close `instance.store` when done.",
+    "deprecated": false
+   },
+   {
+    "name": "loadTenantConfig",
+    "kind": "function",
+    "params": [
+     "path",
+     "context"
+    ],
+    "doc": "Reads a desired tenant configuration for `config-plan` / `config-apply` / `config-validate`: a `.json` file, or a\nJavaScript/TypeScript module whose default export is the configuration or a (possibly async) factory of it. Modules\nlet one file compute per-environment values (`env.STAGE === 'prod' ? ... : ...`) and share constants with the app.",
+    "deprecated": false
+   },
+   {
+    "name": "localTransport",
+    "kind": "function",
+    "params": [
+     "iam",
+     "target",
+     "token?"
+    ],
+    "doc": "Calls API routes in process on a configured instance, as `token` (or with no credential), exposing exactly the\nroutes and credential rules of the HTTP handler; what token commands use without `--url`.",
+    "deprecated": false
+   },
+   {
+    "name": "main",
+    "kind": "function",
+    "params": [
+     "argv?",
+     "cli?"
+    ],
+    "doc": "Runs the CLI like the `better-iam` binary: prints `CODE: message` (and a hint) on failure and resolves with the exit\nstatus, 0 on success, 2 for a usage mistake, 1 otherwise. For wrappers that ship their own binary.",
+    "deprecated": false
+   },
+   {
+    "name": "processIO",
+    "kind": "function",
+    "params": [],
+    "doc": "The process's own IO: stdout, stderr, `process.env`, and prompts when both stdin and stderr are terminals.",
+    "deprecated": false
+   },
+   {
+    "name": "remoteTransport",
+    "kind": "function",
+    "params": [
+     "url",
+     "token",
+     "fetcher?"
+    ],
+    "doc": "Calls API routes on a running IAM server over HTTP(S) with a bearer token, through the typed client (request IDs,\none retry after a short rate limit); what token commands use with `--url` or a profile saved against a server.",
+    "deprecated": false
+   },
+   {
+    "name": "runBinary",
+    "kind": "function",
+    "params": [
+     "argv?",
+     "cli?"
+    ],
+    "doc": "What the `better-iam` binary does: runs `main()` on the process arguments, sets the exit status, and fails a command\nthat can never finish instead of exiting 0. For packages that ship the CLI under their own `bin`.",
+    "deprecated": false
+   },
+   {
+    "name": "runCli",
+    "kind": "function",
+    "params": [
+     "argv",
+     "io?"
+    ],
+    "doc": "Runs one `better-iam` command line (without the program name) and resolves when it finishes; failures reject with an\n`IamError` (or `CliError`) whose `code` says what went wrong. This command loads trusted application configuration\nas executable JavaScript.",
+    "deprecated": false
+   },
+   {
+    "name": "selectPath",
+    "kind": "function",
+    "params": [
+     "value",
+     "path"
+    ],
+    "doc": "Selects part of a result for `--query`: dotted keys (`summary.create`), array indexes (`roles.0` or `roles[0]`),\nand `[]` to map over an array (`findings[].kind`). A missing key selects `null` rather than failing, like `jq`.",
+    "deprecated": false
+   },
+   {
+    "name": "usageError",
+    "kind": "function",
+    "params": [
+     "message",
+     "hint?"
+    ],
+    "doc": "A usage mistake (unknown flag, missing value, bad number): the binary exits with status 2 for these.",
+    "deprecated": false
+   }
+  ]
+ },
+ {
+  "specifier": "@better-iam/client",
+  "package": "@better-iam/client",
+  "exports": [
+   {
+    "name": "ClientError",
+    "kind": "class",
+    "params": null,
+    "doc": "HTTP errors preserve the server's stable code without exposing raw response bodies.",
+    "deprecated": false
+   },
+   {
+    "name": "createIamClient",
+    "kind": "function",
+    "params": [
+     "options?"
+    ],
+    "doc": "Types are inferred from the server instance using a type-only import:\nconst client = createIamClient<typeof iam>({ baseURL: 'https://app.example.com' });\nconst { tenantId } = await client.tenants.lookup({ slug: 'acme' });\nawait client.auth.signIn({ tenantId, email, password });\nconst { results } = await client.authorizeMany({ tenantId, checks });\nconst { resources } = await client.listAccessible({ tenantId, action: 'projects:read', type: 'project' });",
+    "deprecated": false
+   },
+   {
+    "name": "IamClientError",
+    "kind": "class",
+    "params": null,
+    "doc": "HTTP errors preserve the server's stable code without exposing raw response bodies.",
+    "deprecated": false
+   }
+  ]
+ },
+ {
+  "specifier": "@better-iam/client/passkeys",
+  "package": "@better-iam/client",
+  "exports": [
+   {
+    "name": "browserSupportsWebAuthn",
+    "kind": "function",
+    "params": [],
+    "doc": "Determine if the browser is capable of Webauthn",
+    "deprecated": false
+   },
+   {
+    "name": "browserSupportsWebAuthnAutofill",
+    "kind": "function",
+    "params": [],
+    "doc": "Determine if the browser supports conditional UI, so that WebAuthn credentials can\nbe shown to the user in the browser's typical password autofill popup.",
+    "deprecated": false
+   },
+   {
+    "name": "platformAuthenticatorIsAvailable",
+    "kind": "function",
+    "params": [],
+    "doc": "Determine whether the browser can communicate with a built-in authenticator, like\nTouch ID, Android fingerprint scanner, or Windows Hello.\n\nThis method will _not_ be able to tell you the name of the platform authenticator.",
+    "deprecated": false
+   },
+   {
+    "name": "startAuthentication",
+    "kind": "function",
+    "params": [
+     "options"
+    ],
+    "doc": "Begin authenticator \"login\" via WebAuthn assertion",
+    "deprecated": false
+   },
+   {
+    "name": "startRegistration",
+    "kind": "function",
+    "params": [
+     "options"
+    ],
+    "doc": "Begin authenticator \"registration\" via WebAuthn attestation",
+    "deprecated": false
+   },
+   {
+    "name": "WebAuthnAbortService",
+    "kind": "const",
+    "params": null,
+    "doc": "A service singleton to help ensure that only a single WebAuthn ceremony is active at a time.\n\nUsers of **@simplewebauthn/browser** shouldn't typically need to use this, but it can help e.g.\ndevelopers building projects that use client-side routing to better control the behavior of\ntheir UX in response to router navigation events.",
+    "deprecated": false
+   }
+  ]
+ },
+ {
+  "specifier": "@better-iam/client/session",
+  "package": "@better-iam/client",
+  "exports": [
+   {
+    "name": "createSessionStore",
+    "kind": "function",
+    "params": [
+     "client",
+     "options?"
+    ],
+    "doc": "Framework-agnostic session state. The React and Vue bindings subscribe to it;\nit can also drive other frameworks or plain scripts.",
+    "deprecated": false
+   },
+   {
+    "name": "isUnauthenticated",
+    "kind": "function",
+    "params": [
+     "error"
+    ],
+    "doc": "The server answers 401/403 for missing, expired, or step-up-required credentials; anything else is a transport failure.",
+    "deprecated": false
+   }
+  ]
+ },
+ {
+  "specifier": "@better-iam/core",
+  "package": "@better-iam/core",
+  "exports": [
+   {
+    "name": "appendAuditEvent",
+    "kind": "function",
+    "params": [
+     "tx",
+     "event"
+    ],
+    "doc": "Records an audit event at the end of its tenant's chain. Every audit insert must go through here.",
+    "deprecated": false
+   },
+   {
+    "name": "applyMigrations",
+    "kind": "function",
+    "params": [
+     "execute",
+     "dialect",
+     "options?"
+    ],
+    "doc": "Creates the schema and applies missing named migrations, recording each in `iam_migrations`.\nRun it inside the adapter's serialized write transaction. Returns the names applied now.",
+    "deprecated": false
+   },
+   {
+    "name": "auditEventHash",
+    "kind": "function",
+    "params": [
+     "event"
+    ],
+    "doc": "The hash of an event: SHA-256 over the canonical JSON of every field except `hash` itself.",
+    "deprecated": false
+   },
+   {
+    "name": "auditGenesis",
+    "kind": "const",
+    "params": null,
+    "doc": "The `previousHash` of the first event of every chain.",
+    "deprecated": false
+   },
+   {
+    "name": "authMethods",
+    "kind": "const",
+    "params": null,
+    "doc": "The sign-in methods a tenant policy can allow or restrict; impersonation is an administrative action, not a sign-in.",
+    "deprecated": false
+   },
+   {
+    "name": "canonicalizeJson",
+    "kind": "function",
+    "params": [
+     "value"
+    ],
+    "doc": "The JSON Canonicalization Scheme (RFC 8785): the single serialization of a JSON value that signers and verifiers\nagree on. Object members are sorted by the UTF-16 code units of their names at every depth, numbers use the\nECMAScript shortest form and strings the escaping of `JSON.stringify`, and there is no whitespace. Unlike\n`canonicalJson`, member order does not depend on how a JavaScript engine orders integer-like keys.\n\nMembers whose value is `undefined`, a function or a symbol are left out and such array entries become `null`, as\n`JSON.stringify` does; `toJSON` is honoured. Throws a `TypeError` for values JSON cannot represent: non-finite\nnumbers, bigints, cycles, and a top-level value without a JSON form.",
+    "deprecated": false
+   },
+   {
+    "name": "canonicalJson",
+    "kind": "function",
+    "params": [
+     "value"
+    ],
+    "doc": "Deterministic JSON: object keys sorted recursively, `undefined` properties omitted, arrays kept in order.",
+    "deprecated": false
+   },
+   {
+    "name": "chainAuditEvent",
+    "kind": "function",
+    "params": [
+     "tx",
+     "event"
+    ],
+    "doc": "Assigns the next chain position to an event and advances the tenant's chain head. The caller stores the returned\nevent; `appendAuditEvent` does both. Must run inside the transaction that records the event.",
+    "deprecated": false
+   },
+   {
+    "name": "COLLECTIONS_SQL",
+    "kind": "const",
+    "params": null,
+    "doc": "Distinct collection names in the records table.",
+    "deprecated": false
+   },
+   {
+    "name": "compareIds",
+    "kind": "function",
+    "params": [
+     "left",
+     "right"
+    ],
+    "doc": "Code-point (UTF-8 byte) order, the order of SQLite's BINARY and PostgreSQL's \"C\" collation.",
+    "deprecated": false
+   },
+   {
+    "name": "copyStore",
+    "kind": "function",
+    "params": [
+     "source",
+     "target",
+     "options?"
+    ],
+    "doc": "Copies every record from `source` into an empty, migrated `target` (for example SQLite to\nPostgreSQL). Reads in one source transaction and writes in one target transaction, so the copy\nis consistent and all-or-nothing.",
+    "deprecated": false
+   },
+   {
+    "name": "decodeJsonbDocument",
+    "kind": "function",
+    "params": [
+     "data"
+    ],
+    "doc": "The original record JSON of a document written by `encodeJsonbDocument`.",
+    "deprecated": false
+   },
+   {
+    "name": "definePolicy",
+    "kind": "function",
+    "params": [
+     "document"
+    ],
+    "doc": "Typed document builder. Returns a detached document after runtime validation.",
+    "deprecated": false
+   },
+   {
+    "name": "delegationActor",
+    "kind": "function",
+    "params": [
+     "chain"
+    ],
+    "doc": "The `act` claim for a chain of agents, the person's own delegate first and the agent acting now last.",
+    "deprecated": false
+   },
+   {
+    "name": "delegationTokenLimits",
+    "kind": "const",
+    "params": null,
+    "doc": "Lifetimes (seconds) and the longest chain of actors a delegation token carries.",
+    "deprecated": false
+   },
+   {
+    "name": "delegationTokenScopePattern",
+    "kind": "const",
+    "params": null,
+    "doc": "One scope a delegation token may carry: an action, or an action pattern whose only wildcard is `*`.",
+    "deprecated": false
+   },
+   {
+    "name": "delegationTokenType",
+    "kind": "const",
+    "params": null,
+    "doc": "The JWT `typ` header of delegation tokens: verifiers refuse any other.",
+    "deprecated": false
+   },
+   {
+    "name": "describeRecords",
+    "kind": "function",
+    "params": [
+     "execute",
+     "adapter",
+     "settings"
+    ],
+    "doc": "The adapter-independent part of `IamStore.describe()`: schema version, applied migrations, and\nrecord counts per collection. Missing tables read as empty, so an unmigrated database reports\nempty lists; any other failure rejects. Run it outside a transaction on PostgreSQL (a failed\nstatement would abort the transaction).",
+    "deprecated": false
+   },
+   {
+    "name": "encodeJsonbDocument",
+    "kind": "function",
+    "params": [
+     "data"
+    ],
+    "doc": "Record JSON as the PostgreSQL adapter stores it: valid jsonb, reversible by `decodeJsonbDocument`.",
+    "deprecated": false
+   },
+   {
+    "name": "encodeLegacyPostgresRows",
+    "kind": "function",
+    "params": [
+     "name",
+     "execute"
+    ],
+    "doc": "Migration hook for PostgreSQL: rewrites rows written before the value encoding existed, whose\ntext jsonb would reject, so the jsonb index of `0002_query_indexes` can be built.",
+    "deprecated": false
+   },
+   {
+    "name": "evaluatePolicy",
+    "kind": "function",
+    "params": [
+     "input"
+    ],
+    "doc": "Grants form a union; every boundary is an independent intersection. A boundary\nnever grants access. Callers must establish trusted context and tenant scope.",
+    "deprecated": false
+   },
+   {
+    "name": "EXPIRY_FIELDS",
+    "kind": "const",
+    "params": null,
+    "doc": "Numeric fields SQL adapters index for `findOrdered` across a whole collection, so retention\nsweeps find expired and long-delivered records without scanning (`0004_expiry_indexes`).",
+    "deprecated": false
+   },
+   {
+    "name": "exportStore",
+    "kind": "function",
+    "params": [
+     "store",
+     "write",
+     "options?"
+    ],
+    "doc": "Writes a snapshot through `write`, one line at a time (without newlines). Runs in one store\ntransaction, so the snapshot is consistent; that also holds the store's write lock until done.",
+    "deprecated": false
+   },
+   {
+    "name": "findOrdered",
+    "kind": "function",
+    "params": [
+     "store",
+     "collection",
+     "filter",
+     "order"
+    ],
+    "doc": "Records matching `filter` whose numeric `order.field` lies in `[from, to]`, ordered by that field\n(ties by id, ascending) and paged. Uses the store's `findOrdered` when it has one and otherwise\norders a plain `find` in memory. `where` adds an in-memory predicate (for example a glob); the\nstore is then read in ordered chunks until the page is full, so it never loads everything.",
+    "deprecated": false
+   },
+   {
+    "name": "IamError",
+    "kind": "class",
+    "params": null,
+    "doc": "",
+    "deprecated": false
+   },
+   {
+    "name": "importStore",
+    "kind": "function",
+    "params": [
+     "store",
+     "lines"
+    ],
+    "doc": "Loads a snapshot into an empty, migrated store in one transaction: a malformed line, a record\nthe store refuses, or a missing or mismatched trailer rolls everything back.",
+    "deprecated": false
+   },
+   {
+    "name": "INDEXED_FIELDS",
+    "kind": "const",
+    "params": null,
+    "doc": "High-cardinality string fields looked up across tenants or inside large collections (sessions,\nidentities, memberships, bindings, protocol artifacts, delivery queues). SQL adapters may index\nthem; the list only affects performance, never results. Every index adds work to each write, so\nkeep it to fields on hot or unscoped lookup paths.",
+    "deprecated": false
+   },
+   {
+    "name": "instrumentStore",
+    "kind": "function",
+    "params": [
+     "store",
+     "onCall",
+     "now?"
+    ],
+    "doc": "Wraps a store so every data call is reported to `onCall` (reads, writes, `collections`, and\n`describe`; `transaction`, `migrate`, and `close` pass straight through), for slow-query logging, capacity planning,\nand tests that bound how much work an operation does. The wrapper adds no behavior: results,\nerrors, and transactions are the underlying store's. `onCall` runs synchronously after each\ncall; exceptions it throws are ignored.",
+    "deprecated": false
+   },
+   {
+    "name": "ipCounterKey",
+    "kind": "function",
+    "params": [
+     "address"
+    ],
+    "doc": "The key a per-address counter uses for a client: an IPv4 address as itself (the IPv4-mapped IPv6 form folded to\nit), an IPv6 address as its /64 (`2001:db8:1:2::/64`), since one subscriber or host normally controls a whole\n/64 and can rotate through it at will. Spelling variants of one address (case, zero compression) share a key.\nUndefined when the value is not an IP address.",
+    "deprecated": false
+   },
+   {
+    "name": "ipMatches",
+    "kind": "function",
+    "params": [
+     "address",
+     "network"
+    ],
+    "doc": "True when `address` lies inside `network` (an address or CIDR block of the same family). An IPv4-mapped IPv6\naddress (`::ffff:198.51.100.7`) matches the IPv4 networks that contain its IPv4 address, and an IPv4 address the\nIPv4-mapped networks (`::ffff:198.51.100.0/120`) that contain it.",
+    "deprecated": false
+   },
+   {
+    "name": "isIpRange",
+    "kind": "function",
+    "params": [
+     "value"
+    ],
+    "doc": "True for an IPv4/IPv6 address or CIDR block, as accepted by the `IpAddress` operator.",
+    "deprecated": false
+   },
+   {
+    "name": "isMissingTable",
+    "kind": "function",
+    "params": [
+     "error"
+    ],
+    "doc": "A query failed because a table does not exist (PostgreSQL 42P01, SQLite \"no such table\").",
+    "deprecated": false
+   },
+   {
+    "name": "JSONB_ESCAPE_KEY",
+    "kind": "const",
+    "params": null,
+    "doc": "Reserved object key of the PostgreSQL value encoding (`encodeJsonbDocument`), which stores\nstrings jsonb cannot hold. Filters whose objects use it are evaluated in memory.",
+    "deprecated": false
+   },
+   {
+    "name": "LOOKUP_INDEX_STEPS",
+    "kind": "const",
+    "params": null,
+    "doc": "The lookup fields each schema step indexes (SQLite and libSQL; PostgreSQL's document index covers\nevery field). A released step never changes: new fields get a new step.",
+    "deprecated": false
+   },
+   {
+    "name": "matchesFilter",
+    "kind": "function",
+    "params": [
+     "record",
+     "filter"
+    ],
+    "doc": "The in-memory definition of filter semantics. Drivers' SQL must agree with it.",
+    "deprecated": false
+   },
+   {
+    "name": "matchPattern",
+    "kind": "function",
+    "params": [
+     "pattern",
+     "value",
+     "context?"
+    ],
+    "doc": "Glob matching is anchored; only * and ? are operators. No regular expressions are accepted. Variables resolve from context.",
+    "deprecated": false
+   },
+   {
+    "name": "MAX_QUERY_CONDITIONS",
+    "kind": "const",
+    "params": null,
+    "doc": "Most typed conditions `planQuery` hands to a driver; further keys are filtered in memory.",
+    "deprecated": false
+   },
+   {
+    "name": "ORDERED_FIELDS",
+    "kind": "const",
+    "params": null,
+    "doc": "Numeric fields SQL adapters index for `findOrdered` within a tenant (audit time and sequence).",
+    "deprecated": false
+   },
+   {
+    "name": "planQuery",
+    "kind": "function",
+    "params": [
+     "collection",
+     "filter",
+     "capabilities?"
+    ],
+    "doc": "Splits a validated filter into driver conditions and keys left to the in-memory filter.",
+    "deprecated": false
+   },
+   {
+    "name": "postgresSelect",
+    "kind": "function",
+    "params": [
+     "query"
+    ],
+    "doc": "SELECT for PostgreSQL. Scalar tests share one jsonb containment test, served by a GIN index.",
+    "deprecated": false
+   },
+   {
+    "name": "QUERYABLE_FIELD",
+    "kind": "const",
+    "params": null,
+    "doc": "Field names a driver may inline into SQL paths. Other names are filtered in memory.",
+    "deprecated": false
+   },
+   {
+    "name": "readDelegationTokenClaims",
+    "kind": "function",
+    "params": [
+     "claims",
+     "expected"
+    ],
+    "doc": "Checks the claims of a (signature-verified) delegation token against what the verifier expects: well formed, from an\naccepted issuer, for exactly this audience (and tenant), current within the clock tolerance, and issued for at most\n`delegationTokenLimits.maxSeconds`.",
+    "deprecated": false
+   },
+   {
+    "name": "RecordStore",
+    "kind": "class",
+    "params": null,
+    "doc": "Shared strict JSON behavior keeps SQLite, libSQL, and PostgreSQL semantically identical.",
+    "deprecated": false
+   },
+   {
+    "name": "resolvePolicyValue",
+    "kind": "function",
+    "params": [
+     "value",
+     "context"
+    ],
+    "doc": "Resolves the variables of a string condition value. Returns undefined when any variable is unresolved.",
+    "deprecated": false
+   },
+   {
+    "name": "schemaMigrations",
+    "kind": "function",
+    "params": [
+     "dialect"
+    ],
+    "doc": "Ordered, append-only schema steps. Never edit a released step; add a new one.\n\nSecondary indexes end in `id` so one index both finds rows and yields them in `ORDER BY id`\norder. Without that, SQLite (which has no statistics until ANALYZE) prefers walking the\nprimary key in id order over an index lookup followed by a sort.",
+    "deprecated": false
+   },
+   {
+    "name": "SNAPSHOT_FORMAT",
+    "kind": "const",
+    "params": null,
+    "doc": "Portable store snapshots: every record of every collection as JSON Lines, independent of the\nadapter, for backups, moving from SQLite to PostgreSQL, and test fixtures. Records are copied\nverbatim, so audit hash chains, token hashes, and encrypted secrets stay valid. A snapshot holds\ncredential hashes and encrypted secrets: protect it like the database itself.\n\nFormat: a header line `{ format, version, createdAt, collections }`, one `{ c, r }` line per\nrecord (collection, record), and a trailer `{ end: true, records, collections }` with counts,\nso a truncated file is detected before anything is committed.",
+    "deprecated": false
+   },
+   {
+    "name": "SNAPSHOT_VERSION",
+    "kind": "const",
+    "params": null,
+    "doc": "",
+    "deprecated": false
+   },
+   {
+    "name": "sqliteSelect",
+    "kind": "function",
+    "params": [
+     "query"
+    ],
+    "doc": "SELECT for SQLite and libSQL (JSON1). `json` conditions are not supported.",
+    "deprecated": false
+   },
+   {
+    "name": "storableString",
+    "kind": "function",
+    "params": [
+     "value"
+    ],
+    "doc": "True when the string has no U+0000 and no unpaired surrogate. Such strings can be stored as\nrecord values, but database text comparisons cannot represent them, so `find` evaluates filters\nholding them in memory. Identifiers must satisfy it.",
+    "deprecated": false
+   },
+   {
+    "name": "storageError",
+    "kind": "function",
+    "params": [
+     "error"
+    ],
+    "doc": "Map database failures without leaking SQL or credential-bearing record data.",
+    "deprecated": false
+   },
+   {
+    "name": "summarizeStoreCalls",
+    "kind": "function",
+    "params": [
+     "calls"
+    ],
+    "doc": "Totals of a list of calls, grouped by method and collection (`find:sessions`).",
+    "deprecated": false
+   },
+   {
+    "name": "tenantTreeActive",
+    "kind": "function",
+    "params": [
+     "store",
+     "tenantId"
+    ],
+    "doc": "Walks a tenant and its ancestors: true only when every one exists and is active. Cycles read as inactive.",
+    "deprecated": false
+   },
+   {
+    "name": "validatePolicy",
+    "kind": "function",
+    "params": [
+     "value"
+    ],
+    "doc": "Validate untrusted documents before storage and again before evaluation.",
+    "deprecated": false
+   },
+   {
+    "name": "validPolicyVariables",
+    "kind": "function",
+    "params": [
+     "value"
+    ],
+    "doc": "Every `${...}` in a value must be a well-formed variable reference.",
+    "deprecated": false
+   },
+   {
+    "name": "verifyAuditChain",
+    "kind": "function",
+    "params": [
+     "events",
+     "options?"
+    ],
+    "doc": "Verifies a run of events from one tenant: contiguous sequences, each `previousHash` equal to the previous event's\nhash (or `previousHash` of the first event when the run starts mid-chain), and every hash recomputable.\nEvents are sorted by sequence first, so exports and database reads can be passed as they come.",
+    "deprecated": false
+   }
+  ]
+ },
+ {
+  "specifier": "@better-iam/core/conformance",
+  "package": "@better-iam/core",
+  "exports": [
+   {
+    "name": "adapterConformanceCases",
+    "kind": "function",
+    "params": [],
+    "doc": "A fresh copy of every conformance case, in a stable order.",
+    "deprecated": false
+   },
+   {
+    "name": "ConformanceFailure",
+    "kind": "class",
+    "params": null,
+    "doc": "",
+    "deprecated": false
+   },
+   {
+    "name": "runAdapterConformance",
+    "kind": "function",
+    "params": [
+     "createStore"
+    ],
+    "doc": "Runs every case against fresh stores and collects failures instead of stopping at the first.",
+    "deprecated": false
+   }
+  ]
+ },
+ {
+  "specifier": "@better-iam/mcp",
+  "package": "@better-iam/mcp",
+  "exports": [
+   {
+    "name": "createMcpAuthorizer",
+    "kind": "function",
+    "params": [
+     "options"
+    ],
+    "doc": "Decisions shared by the gate and by tool handlers written with an MCP SDK.",
+    "deprecated": false
+   },
+   {
+    "name": "createMcpGate",
+    "kind": "function",
+    "params": [
+     "options"
+    ],
+    "doc": "The gate: `gate(request, next)` answers the request itself (metadata, challenges, refused calls) or passes it to\n`next` (the MCP server's handler) with the authenticated caller, filtering `tools/list` answers on the way back.",
+    "deprecated": false
+   },
+   {
+    "name": "protectedResourceMetadataUrl",
+    "kind": "function",
+    "params": [
+     "resource"
+    ],
+    "doc": "Where RFC 9728 metadata lives for a resource: `/.well-known/oauth-protected-resource` + the resource path.",
+    "deprecated": false
+   }
+  ]
+ },
+ {
+  "specifier": "@better-iam/middleware",
+  "package": "@better-iam/middleware",
+  "exports": [
+   {
+    "name": "checkRequestOrigin",
+    "kind": "function",
+    "params": [
+     "request",
+     "trustedOrigins?"
+    ],
+    "doc": "The CSRF boundary for application routes: a state-changing request authenticated by the session cookie (no\n`Authorization` header) must come from this application's origin, the IAM origin, or a trusted origin. Session\ncookies are `SameSite=Lax`, which still sends them from sibling subdomains, so the Origin check matters.\nReturns the refusal, or null when the request may proceed.",
+    "deprecated": false
+   },
+   {
+    "name": "checkStepUp",
+    "kind": "function",
+    "params": [
+     "session",
+     "requirement",
+     "now?"
+    ],
+    "doc": "Checks a session against a step-up requirement; null when it qualifies. Accepts the `getSession` result or its\ninner session record. Impersonated sessions always fail a recency requirement, as the server's own check does.",
+    "deprecated": false
+   },
+   {
+    "name": "createRequestHelpers",
+    "kind": "function",
+    "params": [
+     "resolveIam",
+     "binding",
+     "options?"
+    ],
+    "doc": "Builds the per-request helpers over a framework's request and response. Framework adapters call this once per request.",
+    "deprecated": false
+   },
+   {
+    "name": "enforceGuard",
+    "kind": "function",
+    "params": [
+     "helpers",
+     "request",
+     "spec?",
+     "origin?"
+    ],
+    "doc": "Runs a guard; resolves with the session or throws the refusal (`IamRequestError` or the server's `IamError`).\nWith `origin`, a cookie-authenticated unsafe request from an untrusted origin is refused first.",
+    "deprecated": false
+   },
+   {
+    "name": "errorBody",
+    "kind": "function",
+    "params": [
+     "error"
+    ],
+    "doc": "The IAM API's JSON error envelope, used by every adapter for refusals.",
+    "deprecated": false
+   },
+   {
+    "name": "errorCode",
+    "kind": "function",
+    "params": [
+     "error"
+    ],
+    "doc": "",
+    "deprecated": false
+   },
+   {
+    "name": "errorStatus",
+    "kind": "function",
+    "params": [
+     "error"
+    ],
+    "doc": "",
+    "deprecated": false
+   },
+   {
+    "name": "IamRequestError",
+    "kind": "class",
+    "params": null,
+    "doc": "A refusal raised by the request helpers and guards, with the IAM `code` and HTTP `status`. `reason` is set for\nstep-up failures (`mfa`, `recent`, `impersonation`). Framework adapters turn it into the IAM JSON error envelope or,\nfor page navigations, a redirect to the login / step-up page.",
+    "deprecated": false
+   },
+   {
+    "name": "isAuthenticationError",
+    "kind": "function",
+    "params": [
+     "error"
+    ],
+    "doc": "True for the errors `getSession` raises when there is no usable session.",
+    "deprecated": false
+   },
+   {
+    "name": "isIamRefusal",
+    "kind": "function",
+    "params": [
+     "error"
+    ],
+    "doc": "True for any error carrying an IAM code and an HTTP status (server `IamError`, client errors, `IamRequestError`).",
+    "deprecated": false
+   },
+   {
+    "name": "nodeHeaders",
+    "kind": "function",
+    "params": [
+     "record"
+    ],
+    "doc": "Converts a Node `IncomingMessage`-style header record into `Headers`.",
+    "deprecated": false
+   },
+   {
+    "name": "parseCookieHeader",
+    "kind": "function",
+    "params": [
+     "header"
+    ],
+    "doc": "Splits a `Cookie` header into name/value pairs (values left encoded).",
+    "deprecated": false
+   },
+   {
+    "name": "refusalResponse",
+    "kind": "function",
+    "params": [
+     "error",
+     "request",
+     "pages"
+    ],
+    "doc": "How a guard should answer a refusal: a redirect for page navigations when a page is configured, else JSON.",
+    "deprecated": false
+   },
+   {
+    "name": "safeRedirectPath",
+    "kind": "function",
+    "params": [
+     "value",
+     "fallback?"
+    ],
+    "doc": "A same-site relative path safe to redirect to, or `fallback`. Refuses schemes, `//host`, and backslash tricks.",
+    "deprecated": false
+   },
+   {
+    "name": "setCookieSummary",
+    "kind": "function",
+    "params": [
+     "header",
+     "now?"
+    ],
+    "doc": "The name, raw value, and whether a `Set-Cookie` header deletes the cookie (`Max-Age=0` or a past `Expires`).",
+    "deprecated": false
+   },
+   {
+    "name": "tenantOf",
+    "kind": "function",
+    "params": [
+     "session"
+    ],
+    "doc": "The tenant a session acts in.",
+    "deprecated": false
+   },
+   {
+    "name": "underPath",
+    "kind": "function",
+    "params": [
+     "pathname",
+     "prefix"
+    ],
+    "doc": "True when `pathname` is `prefix` or below it on a segment boundary.",
+    "deprecated": false
+   },
+   {
+    "name": "withQuery",
+    "kind": "function",
+    "params": [
+     "target",
+     "params"
+    ],
+    "doc": "Appends query parameters, skipping undefined values.",
+    "deprecated": false
+   }
+  ]
+ },
+ {
+  "specifier": "@better-iam/middleware/express",
+  "package": "@better-iam/middleware",
+  "exports": [
+   {
+    "name": "createIamExpress",
+    "kind": "function",
+    "params": [
+     "source",
+     "options?"
+    ],
+    "doc": "Express / Connect integration. `middleware` serves the IAM API (through `iam.nodeHandler`, so node protocol mounts\nsuch as the OAuth provider work) and gives every other request `req.iam`; `requireSession` and `authorize` are route\nguards; `errorHandler` answers IAM refusals thrown by your routes.\n\n```ts\nconst iamExpress = createIamExpress(iam, { loginPath: '/login' });\napp.use(iamExpress.middleware); // before express.json()\napp.get('/projects/:id', iamExpress.authorize('projects:read', { resource: (req) => ({ type: 'project', id: req.params.id }) }), handler);\napp.use(iamExpress.errorHandler);\n```",
+    "deprecated": false
+   }
+  ]
+ },
+ {
+  "specifier": "@better-iam/middleware/fastify",
+  "package": "@better-iam/middleware",
+  "exports": [
+   {
+    "name": "createIamFastify",
+    "kind": "function",
+    "params": [
+     "source",
+     "options?"
+    ],
+    "doc": "Fastify integration. `plugin` (register it with `app.register(iamFastify.plugin)`) answers the IAM API in an\n`onRequest` hook, before Fastify parses bodies, through `iam.nodeHandler`; every other request gets `request.iam`.\n`requireSession` and `authorize` are `preHandler` guards; `errorHandler` answers IAM refusals your routes throw.\n\n```ts\nconst iamFastify = createIamFastify(iam, { loginPath: '/login' });\nawait app.register(iamFastify.plugin);\napp.get('/admin', { preHandler: iamFastify.authorize('iam:identities:read') }, handler);\napp.setErrorHandler(iamFastify.errorHandler);\n```",
+    "deprecated": false
+   }
+  ]
+ },
+ {
+  "specifier": "@better-iam/middleware/hono",
+  "package": "@better-iam/middleware",
+  "exports": [
+   {
+    "name": "createIamHono",
+    "kind": "function",
+    "params": [
+     "source",
+     "options?"
+    ],
+    "doc": "Hono integration (Node, Bun, Deno, Workers). `middleware` answers the IAM API with `iam.handler` and sets\n`c.get('iam')` for every other request; `requireSession` and `authorize` are route guards; `onError` turns IAM\nrefusals thrown by handlers into the JSON error envelope. Node-only protocol mounts (the OAuth provider) need the\nNode adapters instead.\n\n```ts\nconst iamHono = createIamHono(iam);\nconst app = new Hono<{ Variables: IamVariables<typeof iam> }>();\napp.use(iamHono.middleware);\napp.get('/me', iamHono.requireSession(), async (c) => c.json((await c.get('iam').getSession())!.identity));\napp.onError(iamHono.onError);\n```",
+    "deprecated": false
+   }
+  ]
+ },
+ {
+  "specifier": "@better-iam/nestjs",
+  "package": "@better-iam/nestjs",
+  "exports": [
+   {
+    "name": "AssertionClaims",
+    "kind": "const",
+    "params": [
+     "...dataOrPipes"
+    ],
+    "doc": "The verified assertion claims (`sub`, `tid`, `roles`, `groups`, `ext`, ...), or null on a `@Public()` handler.",
+    "deprecated": false
+   },
+   {
+    "name": "Authorize",
+    "kind": "function",
+    "params": [
+     "action",
+     "options?"
+    ],
+    "doc": "Enforces `action` before the handler runs. Rules accumulate: every `@Authorize` on the class and the method must\nallow. The resource defaults to the tenant itself (`iam/{tenantId}`) and the tenant to the module's resolver.\n\n```ts",
+    "deprecated": false
+   },
+   {
+    "name": "createIamRequestHandler",
+    "kind": "function",
+    "params": [
+     "iam"
+    ],
+    "doc": "A Node request handler that serves the IAM HTTP API (and mounted OAuth/SAML/SCIM protocols) from inside a Nest\napplication, for `app.use('/api/iam', createIamRequestHandler(iam))` or the module's `mount` option. It works with\nbodies already consumed by Nest's parsers.",
+    "deprecated": false
+   },
+   {
+    "name": "credentialOf",
+    "kind": "function",
+    "params": [
+     "request"
+    ],
+    "doc": "",
+    "deprecated": false
+   },
+   {
+    "name": "Credentials",
+    "kind": "const",
+    "params": [
+     "...kinds"
+    ],
+    "doc": "Restricts which credential kinds may call the handler, e.g. `@Credentials('api-key')` for machine endpoints.",
+    "deprecated": false
+   },
+   {
+    "name": "CurrentIdentity",
+    "kind": "const",
+    "params": [
+     "...dataOrPipes"
+    ],
+    "doc": "The caller's identity, or null on a `@Public()` handler called without a credential.",
+    "deprecated": false
+   },
+   {
+    "name": "CurrentPrincipal",
+    "kind": "const",
+    "params": [
+     "...dataOrPipes"
+    ],
+    "doc": "The authenticated `{ identity, session }`, or null on a `@Public()` handler called without a credential.",
+    "deprecated": false
+   },
+   {
+    "name": "CurrentSession",
+    "kind": "const",
+    "params": [
+     "...dataOrPipes"
+    ],
+    "doc": "The caller's session record, or null on a `@Public()` handler called without a credential.",
+    "deprecated": false
+   },
+   {
+    "name": "FilterAccessible",
+    "kind": "function",
+    "params": [
+     "action",
+     "options"
+    ],
+    "doc": "Drops items the caller may not perform `action` on from a list response, using the reverse query `listAccessible`\nover the registered resources of a managed type (one query per page of 1000, never one decision per item, so the\naudit log is not flooded with denials). Requires `IamGuard` to have authenticated the request.\n\n```ts",
+    "deprecated": false
+   },
+   {
+    "name": "IAM_ASSERTION_OPTIONS",
+    "kind": "const",
+    "params": null,
+    "doc": "Injection token for the resolved `IamAssertionOptions`.",
+    "deprecated": false
+   },
+   {
+    "name": "IAM_INSTANCE",
+    "kind": "const",
+    "params": null,
+    "doc": "Injection token for the `betterIam()` instance.",
+    "deprecated": false
+   },
+   {
+    "name": "IAM_OPTIONS",
+    "kind": "const",
+    "params": null,
+    "doc": "Injection token for the resolved `IamModuleOptions`.",
+    "deprecated": false
+   },
+   {
+    "name": "IamAssertionGuard",
+    "kind": "class",
+    "params": null,
+    "doc": "For downstream services that receive stateless assertions from a Better IAM deployment: verifies the token without\na database or network round trip and exposes its claims. It never contacts the IAM server, so revocation takes\neffect when the (short-lived) assertion expires.",
+    "deprecated": false
+   },
+   {
+    "name": "IamAssertionModule",
+    "kind": "class",
+    "params": null,
+    "doc": "Configures `IamAssertionGuard` for a service that trusts assertions from a Better IAM deployment.",
+    "deprecated": false
+   },
+   {
+    "name": "IamEventsExplorer",
+    "kind": "class",
+    "params": null,
+    "doc": "Subscribes every `@OnIamEvent` provider method to the IAM event stream at bootstrap and, when\n`dispatchIntervalMs` is set, drives `iam.events.dispatch()` until shutdown.",
+    "deprecated": false
+   },
+   {
+    "name": "IamExceptionFilter",
+    "kind": "class",
+    "params": null,
+    "doc": "Renders `IamError`s thrown from handlers and providers (for example `IamService.require` or direct `iam.api.*`\ncalls) as the IAM server's `{ error: { code, message } }` body with the error's status instead of a 500.\nGraphQL receives an `HttpException`, WebSocket clients an `exception` event, and RPC callers an error payload.",
+    "deprecated": false
+   },
+   {
+    "name": "IamFilterInterceptor",
+    "kind": "class",
+    "params": null,
+    "doc": "",
+    "deprecated": false
+   },
+   {
+    "name": "IamGuard",
+    "kind": "class",
+    "params": null,
+    "doc": "Authenticates every request it guards and enforces the handler's metadata: `@Public()`, `@Credentials()`,\n`@RequireMfa()`, and `@Authorize()` rules. Failures render as the IAM server's `{ error: { code, message } }` body\nwith its status (401 unauthenticated, 403 denied, 429 rate limited).",
+    "deprecated": false
+   },
+   {
+    "name": "IamHttpMiddleware",
+    "kind": "class",
+    "params": null,
+    "doc": "Nest middleware form of `createIamRequestHandler`, registered by `IamModule.forRoot({ mount: true })`.",
+    "deprecated": false
+   },
+   {
+    "name": "IamModule",
+    "kind": "class",
+    "params": null,
+    "doc": "Better IAM for NestJS: provides `IamService`, `IamGuard`, and the exception filter; optionally installs the guard\nglobally, mounts the IAM HTTP API, and binds `@OnIamEvent` handlers.\n\n```ts",
+    "deprecated": false
+   },
+   {
+    "name": "IamService",
+    "kind": "class",
+    "params": null,
+    "doc": "Request-scoped IAM calls for controllers and providers: every method takes the incoming request (Express, Fastify,\nor anything with `headers`) and forwards its credential, so decisions are always made for the actual caller.",
+    "deprecated": false
+   },
+   {
+    "name": "isAuthenticationError",
+    "kind": "function",
+    "params": [
+     "error"
+    ],
+    "doc": "True for the errors authentication raises when a request carries no usable credential.",
+    "deprecated": false
+   },
+   {
+    "name": "isIamError",
+    "kind": "function",
+    "params": [
+     "error"
+    ],
+    "doc": "Duck-typed so errors from a second copy of `@better-iam/core` are still recognised.",
+    "deprecated": false
+   },
+   {
+    "name": "OnIamEvent",
+    "kind": "const",
+    "params": [
+     "pattern"
+    ],
+    "doc": "Subscribes a provider method to audit events whose action matches the pattern(s), e.g. `identity:*`. Delivery is\npost-commit and at-least-once, driven by `iam.events.dispatch()` (see `IamModule`'s `dispatchIntervalMs`).",
+    "deprecated": false
+   },
+   {
+    "name": "Public",
+    "kind": "const",
+    "params": [],
+    "doc": "Skips the session requirement; the guard still resolves a principal when a credential is present.",
+    "deprecated": false
+   },
+   {
+    "name": "RequireClaims",
+    "kind": "const",
+    "params": [
+     "requirements"
+    ],
+    "doc": "Requirements the verified assertion must meet in addition to signature, audience, and lifetime.",
+    "deprecated": false
+   },
+   {
+    "name": "RequireMfa",
+    "kind": "const",
+    "params": [],
+    "doc": "Requires a session that completed multi-factor authentication (user sessions only).",
+    "deprecated": false
+   },
+   {
+    "name": "TenantId",
+    "kind": "const",
+    "params": [
+     "...dataOrPipes"
+    ],
+    "doc": "The tenant the request's `@Authorize` rules were evaluated in (or the session tenant when there were none).",
+    "deprecated": false
+   },
+   {
+    "name": "toHttpException",
+    "kind": "function",
+    "params": [
+     "error"
+    ],
+    "doc": "The HTTP exception Nest renders for an IAM error: the server's own `{ error: { code, message } }` body and status.",
+    "deprecated": false
+   }
+  ]
+ },
+ {
+  "specifier": "@better-iam/nestjs/testing",
+  "package": "@better-iam/nestjs",
+  "exports": [
+   {
+    "name": "createTestingIam",
+    "kind": "function",
+    "params": [
+     "options?"
+    ],
+    "doc": "An in-memory stand-in for a `betterIam()` instance for unit and e2e tests of Nest applications: no database,\nno password hashing, principals chosen by bearer token, and decisions made by a callback.\n\n```ts\nconst iam = createTestingIam({\n  principals: { alice: { identity: { email: 'alice@example.test' } } },\n  decide: ({ principal, action }) => principal.identity.email === 'alice@example.test' && action === 'projects:read',\n});\nconst moduleRef = await Test.createTestingModule({\n  imports: [IamModule.forRoot({ iam, guard: true })],\n  controllers: [ProjectsController],\n}).compile();\n```",
+    "deprecated": false
+   }
+  ]
+ },
+ {
+  "specifier": "@better-iam/next",
+  "package": "@better-iam/next",
+  "exports": [
+   {
+    "name": "AssertionError",
+    "kind": "class",
+    "params": null,
+    "doc": "Raised by the edge verifiers; `code` and `status` match the server's `IamError` for the same failure.",
+    "deprecated": false
+   },
+   {
+    "name": "authFields",
+    "kind": "const",
+    "params": null,
+    "doc": "Form field names shared by the actions and the client forms. `intent` selects the step a submission performs.",
+    "deprecated": false
+   },
+   {
+    "name": "authHiddenFields",
+    "kind": "function",
+    "params": [
+     "state"
+    ],
+    "doc": "The hidden inputs a form renders for `state` so its next submission continues the flow: `next`, the pending\nchallenge on the MFA and enrollment steps, the email and organization on the steps after the credentials, and the\n\"keep me signed in\" choice (after the credentials step, which renders its own checkbox).",
+    "deprecated": false
+   },
+   {
+    "name": "authStepFields",
+    "kind": "const",
+    "params": null,
+    "doc": "Hidden fields the MFA and enrollment steps post back besides `tenantId`, `challenge`, `next`, and `keepSignedIn`,\nso a refused code re-renders the same step without client JavaScript. `authHiddenFields(state)` lists them all.",
+    "deprecated": false
+   },
+   {
+    "name": "checkStepUp",
+    "kind": "function",
+    "params": [
+     "session",
+     "requirement",
+     "now?"
+    ],
+    "doc": "Checks a session against a step-up requirement; null when it qualifies. Accepts the `getSession` result, its inner\nsession record, or an `apiRoute` principal. Impersonated sessions always fail a recency requirement, as the\nserver's own check does, and `mfa: 'fresh'` fails closed whenever the record cannot show a first-hand factor.",
+    "deprecated": false
+   },
+   {
+    "name": "createAuthActions",
+    "kind": "function",
+    "params": [
+     "host",
+     "options?"
+    ],
+    "doc": "Headless server actions for sign-in, MFA, passwordless codes, password reset, sign-up, email verification,\ninvitations, step-up, and sign-out. Pass `createIamNext()`'s result; the actions call the IAM handler in process,\nso session cookies are written through `cookies()` and forms work without client JavaScript.\n\n```ts\n// app/login/actions.ts\n'use server';\nconst auth = createAuthActions(iamNext, { discover: true });\nexport async function signIn(previous: AuthFormState | null, form: FormData) {\n  return auth.signIn(previous, form);\n}\n```\n\nFields are named by `authFields`. The tenant comes from `resolveTenant`, else the `tenantId` field, else the `org`\nslug, else (with `discover`) the email's verified domain. Steps after the first factor post back the fields of\n`authHiddenFields(state)`. Completed sign-ins redirect to the form's `next` when it is a safe same-origin path.\nServer refusals come back as `state.error` with the field they belong to; passwords, codes, tokens, and sessions\nnever appear in the returned state. Other errors (bugs, or a database outage in `resolveTenant`) and Next's own\ncontrol flow propagate.",
+    "deprecated": false
+   },
+   {
+    "name": "createBackground",
+    "kind": "function",
+    "params": [
+     "resolve",
+     "options?"
+    ],
+    "doc": "Background delivery and maintenance for a Better IAM instance in Next.js. Call `background.schedule()` after\nactions that queue email (sign-up, password reset, invitations) so it goes out after the response, and mount\n`background.cron()` for periodic jobs and as a safety net when `after()` cannot run.\n\n```ts\nexport const background = createBackground(getIam);\n// app/api/cron/iam/route.ts\nexport const GET = background.cron({ tasks: { purge: true, digest: true } });\n```",
+    "deprecated": false
+   },
+   {
+    "name": "createIamMiddleware",
+    "kind": "function",
+    "params": [
+     "options"
+    ],
+    "doc": "Edge-safe presence check for the session cookie: signed-out visitors are redirected before a protected page renders.\nIt is a routing convenience, not authorization; pages still call `requireSession` or `require`.",
+    "deprecated": false
+   },
+   {
+    "name": "createIamNext",
+    "kind": "function",
+    "params": [
+     "source",
+     "options?"
+    ],
+    "doc": "Server-side helpers for the App Router. Server components and route handlers read the session from the request\ncookies, enforce with `require`, batch advisory decisions with `can`, and mount the IAM handler with `handlers()`.\n`client()` is the typed API bound to the current request (cookies are kept in sync from server actions), and\n`page`, `route`, and `action` wrap pages, route handlers, and server actions with authentication, step-up, and\nauthorization; `apiRoute` also admits API keys and assumed roles.",
+    "deprecated": false
+   },
+   {
+    "name": "createWebhookHandler",
+    "kind": "function",
+    "params": [
+     "options"
+    ],
+    "doc": "A route handler that receives Better IAM webhooks: `export const POST = createWebhookHandler({ secret, onEvent })`.\nUnsigned, stale, or oversized requests answer 401/413 without calling `onEvent`; a throwing `onEvent` answers 500\nso the sender retries with backoff. Deliveries can repeat: deduplicate on `event.id` or `delivery.deliveryId`.",
+    "deprecated": false
+   },
+   {
+    "name": "isAuthenticationError",
+    "kind": "function",
+    "params": [
+     "error"
+    ],
+    "doc": "True for the errors `getSession` raises when there is no usable session.",
+    "deprecated": false
+   },
+   {
+    "name": "isNextControlError",
+    "kind": "function",
+    "params": [
+     "error"
+    ],
+    "doc": "True for Next's control-flow throws (`redirect`, `notFound`, `forbidden`, `unauthorized`), which must propagate.",
+    "deprecated": false
+   },
+   {
+    "name": "matchPath",
+    "kind": "function",
+    "params": [
+     "pattern",
+     "pathname"
+    ],
+    "doc": "Glob over URL paths: `*` matches within one segment, `**` across segments.",
+    "deprecated": false
+   },
+   {
+    "name": "parseSetCookie",
+    "kind": "function",
+    "params": [
+     "header"
+    ],
+    "doc": "Parses one `Set-Cookie` header into the name, decoded value, and options Next's `cookies().set` accepts.",
+    "deprecated": false
+   },
+   {
+    "name": "pathnameHeader",
+    "kind": "const",
+    "params": null,
+    "doc": "The request header middleware forwards so server components know the path being rendered.",
+    "deprecated": false
+   },
+   {
+    "name": "safeRedirectPath",
+    "kind": "function",
+    "params": [
+     "value",
+     "fallback?"
+    ],
+    "doc": "A same-origin path safe to redirect to after sign-in, or `fallback`. Rejects absolute URLs, protocol-relative\n`//host`, backslash tricks, and control characters, so a `?next=` parameter cannot become an open redirect.",
+    "deprecated": false
+   },
+   {
+    "name": "sessionCookieName",
+    "kind": "function",
+    "params": [
+     "secure"
+    ],
+    "doc": "The cookie name the server issues: host-prefixed on HTTPS, plain on loopback development.",
+    "deprecated": false
+   },
+   {
+    "name": "verifyAssertionToken",
+    "kind": "function",
+    "params": [
+     "token",
+     "options"
+    ],
+    "doc": "Verifies an assertion issued by `assertions.issue` with Web Crypto, so middleware and edge handlers can trust it\nwithout a database. Same rules as the server's `verifyAssertion`: HS256 only, audience, optional issuer, and time.",
+    "deprecated": false
+   },
+   {
+    "name": "verifyWebhook",
+    "kind": "function",
+    "params": [
+     "input"
+    ],
+    "doc": "Checks an `X-Better-IAM-Signature` header (`v1=<hex HMAC-SHA256 of \"{timestamp}.{body}\">`) with Web Crypto.\nEquivalent to the server's `verifyWebhookSignature`, for edge runtimes.",
+    "deprecated": false
+   },
+   {
+    "name": "withAssertion",
+    "kind": "function",
+    "params": [
+     "options",
+     "handler"
+    ],
+    "doc": "Route handler guard for services that receive assertions from a Better IAM application: the bearer token is\nverified offline and its claims passed to the handler. Failures answer 401 with the server's error envelope.\n\n```ts\nexport const GET = withAssertion({ key: process.env.IAM_ASSERTION_KEY!, audience: 'reports' },\n  async (request, { claims }) => Response.json({ tenant: claims.tid }));\n```",
+    "deprecated": false
+   }
+  ]
+ },
+ {
+  "specifier": "@better-iam/next/client",
+  "package": "@better-iam/next",
+  "exports": [
+   {
+    "name": "Can",
+    "kind": "function",
+    "params": [
+     "props"
+    ],
+    "doc": "Renders children only when the advisory decision allows the action; `fallback` otherwise and `loading` meanwhile.",
+    "deprecated": false,
+    "from": "@better-iam/react"
+   },
+   {
+    "name": "IamNextProvider",
+    "kind": "function",
+    "params": [
+     "props"
+    ],
+    "doc": "`IamProvider` for the App Router: pass `initialSession` from `iamNext.sessionForClient()` in a server layout, and\nserver components refresh automatically when the session changes on the client.",
+    "deprecated": false
+   },
+   {
+    "name": "InvitationForm",
+    "kind": "function",
+    "params": [
+     "props"
+    ],
+    "doc": "Accepts an invitation with a name and a new password, then enrolls or verifies the second factor when the\norganization requires one, and shows the recovery codes.",
+    "deprecated": false
+   },
+   {
+    "name": "InvitationFormView",
+    "kind": "function",
+    "params": [
+     "props"
+    ],
+    "doc": "The markup of `InvitationForm` for a given action state.",
+    "deprecated": false
+   },
+   {
+    "name": "PasswordResetForm",
+    "kind": "function",
+    "params": [
+     "props"
+    ],
+    "doc": "Sets a new password from a reset link. Existing sessions end; the person signs in again.",
+    "deprecated": false
+   },
+   {
+    "name": "PasswordResetFormView",
+    "kind": "function",
+    "params": [
+     "props"
+    ],
+    "doc": "The markup of `PasswordResetForm` for a given action state.",
+    "deprecated": false
+   },
+   {
+    "name": "PasswordResetRequestForm",
+    "kind": "function",
+    "params": [
+     "props"
+    ],
+    "doc": "Asks for a password reset email. The reply never reveals whether the account exists.",
+    "deprecated": false
+   },
+   {
+    "name": "PasswordResetRequestFormView",
+    "kind": "function",
+    "params": [
+     "props"
+    ],
+    "doc": "The markup of `PasswordResetRequestForm` for a given action state.",
+    "deprecated": false
+   },
+   {
+    "name": "ReauthenticateForm",
+    "kind": "function",
+    "params": [
+     "props"
+    ],
+    "doc": "Confirms the signed-in person's password, then their second factor when the account has one. The confirmation\nissues a new session, whose cookie follows `keepSignedIn`.",
+    "deprecated": false
+   },
+   {
+    "name": "ReauthenticateFormView",
+    "kind": "function",
+    "params": [
+     "props"
+    ],
+    "doc": "The markup of `ReauthenticateForm` for a given action state.",
+    "deprecated": false
+   },
+   {
+    "name": "SignInForm",
+    "kind": "function",
+    "params": [
+     "props"
+    ],
+    "doc": "Password sign-in with an optional emailed sign-in code, then the second factor (authenticator, emailed code, or\nrecovery code) or first-time authenticator enrollment, as `action` directs. Works without client JavaScript.",
+    "deprecated": false
+   },
+   {
+    "name": "SignInFormView",
+    "kind": "function",
+    "params": [
+     "props"
+    ],
+    "doc": "The markup of `SignInForm` for a given action state.",
+    "deprecated": false
+   },
+   {
+    "name": "SignUpForm",
+    "kind": "function",
+    "params": [
+     "props"
+    ],
+    "doc": "Self-registration: name, email, and password, usually followed by an email to confirm the address.",
+    "deprecated": false
+   },
+   {
+    "name": "SignUpFormView",
+    "kind": "function",
+    "params": [
+     "props"
+    ],
+    "doc": "The markup of `SignUpForm` for a given action state.",
+    "deprecated": false
+   },
+   {
+    "name": "useAccessible",
+    "kind": "function",
+    "params": [
+     "options"
+    ],
+    "doc": "The registered resources of a managed type the signed-in principal may act on; refetched when the input or identity changes.",
+    "deprecated": false,
+    "from": "@better-iam/react"
+   },
+   {
+    "name": "useAuthorize",
+    "kind": "function",
+    "params": [
+     "options"
+    ],
+    "doc": "Batched advisory decisions for rendering menus and buttons. Re-evaluated when the checks or the signed-in identity change;\nthe server still enforces every operation.",
+    "deprecated": false,
+    "from": "@better-iam/react"
+   },
+   {
+    "name": "useIamClient",
+    "kind": "function",
+    "params": [],
+    "doc": "The client passed to the provider, typed as the caller declares it.",
+    "deprecated": false,
+    "from": "@better-iam/react"
+   },
+   {
+    "name": "useRouterSync",
+    "kind": "function",
+    "params": [],
+    "doc": "Calls `router.refresh()` whenever the signed-in identity changes in the client (sign-in, sign-out, account switch,\nor a session that expired while the tab was open), so server components re-render with the new cookies.",
+    "deprecated": false
+   },
+   {
+    "name": "useSession",
+    "kind": "function",
+    "params": [],
+    "doc": "The current session snapshot plus refresh, sign-out, and manual replacement (after a sign-in response).",
+    "deprecated": false,
+    "from": "@better-iam/react"
+   },
+   {
+    "name": "useSignOut",
+    "kind": "function",
+    "params": [
+     "options?"
+    ],
+    "doc": "Signs out through the client session store, then navigates (when `redirectTo` is given) and refreshes server\ncomponents so no page keeps rendering the previous session.",
+    "deprecated": false
+   }
+  ]
+ },
+ {
+  "specifier": "@better-iam/next/edge",
+  "package": "@better-iam/next",
+  "exports": [
+   {
+    "name": "AssertionError",
+    "kind": "class",
+    "params": null,
+    "doc": "Raised by the edge verifiers; `code` and `status` match the server's `IamError` for the same failure.",
+    "deprecated": false
+   },
+   {
+    "name": "createIamMiddleware",
+    "kind": "function",
+    "params": [
+     "options"
+    ],
+    "doc": "Edge-safe presence check for the session cookie: signed-out visitors are redirected before a protected page renders.\nIt is a routing convenience, not authorization; pages still call `requireSession` or `require`.",
+    "deprecated": false
+   },
+   {
+    "name": "createWebhookHandler",
+    "kind": "function",
+    "params": [
+     "options"
+    ],
+    "doc": "A route handler that receives Better IAM webhooks: `export const POST = createWebhookHandler({ secret, onEvent })`.\nUnsigned, stale, or oversized requests answer 401/413 without calling `onEvent`; a throwing `onEvent` answers 500\nso the sender retries with backoff. Deliveries can repeat: deduplicate on `event.id` or `delivery.deliveryId`.",
+    "deprecated": false
+   },
+   {
+    "name": "matchPath",
+    "kind": "function",
+    "params": [
+     "pattern",
+     "pathname"
+    ],
+    "doc": "Glob over URL paths: `*` matches within one segment, `**` across segments.",
+    "deprecated": false
+   },
+   {
+    "name": "pathnameHeader",
+    "kind": "const",
+    "params": null,
+    "doc": "The request header middleware forwards so server components know the path being rendered.",
+    "deprecated": false
+   },
+   {
+    "name": "safeRedirectPath",
+    "kind": "function",
+    "params": [
+     "value",
+     "fallback?"
+    ],
+    "doc": "A same-origin path safe to redirect to after sign-in, or `fallback`. Rejects absolute URLs, protocol-relative\n`//host`, backslash tricks, and control characters, so a `?next=` parameter cannot become an open redirect.",
+    "deprecated": false
+   },
+   {
+    "name": "sessionCookieName",
+    "kind": "function",
+    "params": [
+     "secure"
+    ],
+    "doc": "The cookie name the server issues: host-prefixed on HTTPS, plain on loopback development.",
+    "deprecated": false
+   },
+   {
+    "name": "verifyAssertionToken",
+    "kind": "function",
+    "params": [
+     "token",
+     "options"
+    ],
+    "doc": "Verifies an assertion issued by `assertions.issue` with Web Crypto, so middleware and edge handlers can trust it\nwithout a database. Same rules as the server's `verifyAssertion`: HS256 only, audience, optional issuer, and time.",
+    "deprecated": false
+   },
+   {
+    "name": "verifyWebhook",
+    "kind": "function",
+    "params": [
+     "input"
+    ],
+    "doc": "Checks an `X-Better-IAM-Signature` header (`v1=<hex HMAC-SHA256 of \"{timestamp}.{body}\">`) with Web Crypto.\nEquivalent to the server's `verifyWebhookSignature`, for edge runtimes.",
+    "deprecated": false
+   },
+   {
+    "name": "withAssertion",
+    "kind": "function",
+    "params": [
+     "options",
+     "handler"
+    ],
+    "doc": "Route handler guard for services that receive assertions from a Better IAM application: the bearer token is\nverified offline and its claims passed to the handler. Failures answer 401 with the server's error envelope.\n\n```ts\nexport const GET = withAssertion({ key: process.env.IAM_ASSERTION_KEY!, audience: 'reports' },\n  async (request, { claims }) => Response.json({ tenant: claims.tid }));\n```",
+    "deprecated": false
+   }
+  ]
+ },
+ {
+  "specifier": "@better-iam/nuxt",
+  "package": "@better-iam/nuxt",
+  "exports": [
+   {
+    "name": "default",
+    "kind": "const",
+    "params": [
+     "resolvedOptions",
+     "nuxt"
+    ],
+    "doc": "Better IAM for Nuxt: mounts the IAM API in Nitro, installs the Vue bindings with server-rendered sessions and\nhydrated advisory decisions, adds page-level access through `definePageMeta({ iam })`, and auto-imports the\ncomposables, the `<IamCan>` component, and the server utilities.",
+    "deprecated": false
+   }
+  ]
+ },
+ {
+  "specifier": "@better-iam/nuxt/h3",
+  "package": "@better-iam/nuxt",
+  "exports": [
+   {
+    "name": "createIamH3",
+    "kind": "function",
+    "params": [
+     "source",
+     "options?"
+    ],
+    "doc": "Server helpers for h3 and Nitro (Nuxt server routes, standalone Nitro, or h3 apps): read the session from the request\ncookies, enforce before handling, batch advisory decisions, and mount the IAM handler. Sessions are memoized per event.",
+    "deprecated": false
+   },
+   {
+    "name": "eventHeaders",
+    "kind": "function",
+    "params": [
+     "event"
+    ],
+    "doc": "The request headers of an h3 v1 or v2 event.",
+    "deprecated": false
+   },
+   {
+    "name": "eventRequest",
+    "kind": "function",
+    "params": [
+     "event"
+    ],
+    "doc": "A Web request for an h3 v1 or v2 event; the Node fallback buffers the body, so call it before anything reads it.",
+    "deprecated": false
+   },
+   {
+    "name": "IamH3Error",
+    "kind": "class",
+    "params": null,
+    "doc": "An error h3 understands in both majors (`statusCode` for v1, `status` for v2); `data.code` carries the IAM code.",
+    "deprecated": false
+   },
+   {
+    "name": "isAuthenticationError",
+    "kind": "function",
+    "params": [
+     "error"
+    ],
+    "doc": "True for the errors `getSession` raises when there is no usable session.",
+    "deprecated": false
+   }
+  ]
+ },
+ {
+  "specifier": "@better-iam/oauth",
+  "package": "@better-iam/oauth",
+  "exports": [
+   {
+    "name": "createAccessTokenVerifier",
+    "kind": "function",
+    "params": [
+     "options"
+    ],
+    "doc": "Offline verification of JWT access tokens issued for a resource server (RFC 9068), including DPoP proof of\npossession (RFC 9449) with in-memory proof replay detection. Opaque tokens need the provider's introspection.",
+    "deprecated": false
+   },
+   {
+    "name": "createOAuthLogin",
+    "kind": "function",
+    "params": [
+     "config"
+    ],
+    "doc": "OAuth/OIDC relying-party flows. Login state is single-use, browser-bound and tenant-bound.",
+    "deprecated": false
+   },
+   {
+    "name": "createOAuthProvider",
+    "kind": "function",
+    "params": [
+     "config"
+    ],
+    "doc": "OAuth 2.0 / OpenID Connect authorization server built on oidc-provider: persistent encrypted artifacts, PKCE-only\nauthorization code, rotating refresh tokens, client credentials, device authorization, pushed authorization\nrequests, DPoP sender-constrained tokens, resource indicators with JWT access tokens, and IAM-bound consent.",
+    "deprecated": false
+   },
+   {
+    "name": "createProtectedResourceHandler",
+    "kind": "function",
+    "params": [
+     "options"
+    ],
+    "doc": "Serves the metadata document at its well-known path (GET, HEAD, and CORS preflight, readable from any origin);\nreturns undefined for every other request so it can sit in front of the API's own routing.",
+    "deprecated": false
+   },
+   {
+    "name": "createProviderAdapter",
+    "kind": "function",
+    "params": [
+     "store",
+     "encodedKey",
+     "validateSession?",
+     "registerClient?"
+    ],
+    "doc": "Provider persistence with encrypted payloads and hashed token identifiers. Every artifact is bound to the\ntenant of its client and account, and every user grant is re-validated against its IAM session on each use.",
+    "deprecated": false
+   },
+   {
+    "name": "createResourceGuard",
+    "kind": "function",
+    "params": [
+     "options"
+    ],
+    "doc": "Everything an API (such as an MCP server) needs in front of its routes: it serves the RFC 9728 metadata document,\nverifies bearer or DPoP access tokens, and answers failures with 401/403 and a `WWW-Authenticate` challenge that\nnames the metadata URL, so OAuth clients can discover the authorization server and try again.",
+    "deprecated": false
+   },
+   {
+    "name": "createSharedSignalsTransmitter",
+    "kind": "function",
+    "params": [
+     "config"
+    ],
+    "doc": "An OpenID Shared Signals Framework transmitter: turns IAM audit events (sessions revoked, credentials changed,\nidentifiers changed, accounts disabled or deleted) into signed Security Event Tokens (RFC 8417) with CAEP and RISC\nevent types, and pushes them to each tenant's receivers (RFC 8935) with retries.",
+    "deprecated": false
+   },
+   {
+    "name": "protectedResourceMetadata",
+    "kind": "function",
+    "params": [
+     "options"
+    ],
+    "doc": "The metadata document (RFC 9728 §2) clients fetch to find the authorization server for an API.",
+    "deprecated": false
+   },
+   {
+    "name": "protectedResourceMetadataUrl",
+    "kind": "function",
+    "params": [
+     "resource"
+    ],
+    "doc": "Where the metadata lives: `/.well-known/oauth-protected-resource` inserted before the resource's path.",
+    "deprecated": false
+   },
+   {
+    "name": "sharedSignalEvents",
+    "kind": "const",
+    "params": null,
+    "doc": "Security event types the transmitter emits (CAEP and RISC).",
+    "deprecated": false
+   }
+  ]
+ },
+ {
+  "specifier": "@better-iam/projects",
+  "package": "@better-iam/projects",
+  "exports": [
+   {
+    "name": "createProjectsPlugin",
+    "kind": "function",
+    "params": [],
+    "doc": "Reference plugin providing tenant-scoped project records.\n\nRegistering the plugin adds the `projects:read` and `projects:write` actions\nto the catalog and mounts `POST /api/iam/plugins/projects/{create|list|get|update|archive|restore}`.\nEvery endpoint runs in the server's transactional authorization service; root\noverride, tenant scope, ancestry boundaries, and policies apply unchanged.",
+    "deprecated": false
+   }
+  ]
+ },
+ {
+  "specifier": "@better-iam/react",
+  "package": "@better-iam/react",
+  "exports": [
+   {
+    "name": "Can",
+    "kind": "function",
+    "params": [
+     "props"
+    ],
+    "doc": "Renders children only when the advisory decision allows the action; `fallback` otherwise and `loading` meanwhile.",
+    "deprecated": false
+   },
+   {
+    "name": "createSessionStore",
+    "kind": "function",
+    "params": [
+     "client",
+     "options?"
+    ],
+    "doc": "Framework-agnostic session state. The React and Vue bindings subscribe to it;\nit can also drive other frameworks or plain scripts.",
+    "deprecated": false,
+    "from": "@better-iam/client"
+   },
+   {
+    "name": "IamProvider",
+    "kind": "function",
+    "params": [
+     "props"
+    ],
+    "doc": "Holds the typed client and one session store for the tree below. Create the client once, outside render.",
+    "deprecated": false
+   },
+   {
+    "name": "isUnauthenticated",
+    "kind": "function",
+    "params": [
+     "error"
+    ],
+    "doc": "The server answers 401/403 for missing, expired, or step-up-required credentials; anything else is a transport failure.",
+    "deprecated": false,
+    "from": "@better-iam/client"
+   },
+   {
+    "name": "useAccessible",
+    "kind": "function",
+    "params": [
+     "options"
+    ],
+    "doc": "The registered resources of a managed type the signed-in principal may act on; refetched when the input or identity changes.",
+    "deprecated": false
+   },
+   {
+    "name": "useAccessPaths",
+    "kind": "function",
+    "params": [
+     "options"
+    ],
+    "doc": "For an action the signed-in person may be denied: whether they are allowed and, if not, the self-service paths\n(step up to MFA, accept terms, activate an eligible role, request a package) that would allow them.",
+    "deprecated": false
+   },
+   {
+    "name": "useAgentCatalog",
+    "kind": "function",
+    "params": [
+     "options"
+    ],
+    "doc": "The agents the signed-in person may delegate to, with their purpose, model and sponsor (`agents.catalog`).",
+    "deprecated": false
+   },
+   {
+    "name": "useAgreements",
+    "kind": "function",
+    "params": [
+     "options"
+    ],
+    "doc": "The signed-in person's terms of use and a way to accept them; policies can hold back access until they do.",
+    "deprecated": false
+   },
+   {
+    "name": "useAuthorize",
+    "kind": "function",
+    "params": [
+     "options"
+    ],
+    "doc": "Batched advisory decisions for rendering menus and buttons. Re-evaluated when the checks or the signed-in identity change;\nthe server still enforces every operation.",
+    "deprecated": false
+   },
+   {
+    "name": "useConfirmations",
+    "kind": "function",
+    "params": [
+     "options"
+    ],
+    "doc": "The actions AI agents acting for the signed-in person asked them to confirm (delegations with `confirm`), to answer\nfrom a notification or an inbox. An approval opens exactly that action on that resource for a few minutes.",
+    "deprecated": false
+   },
+   {
+    "name": "useDelegations",
+    "kind": "function",
+    "params": [
+     "options"
+    ],
+    "doc": "The AI agents acting (or asking to act) for the signed-in person, and the actions to manage them. Granting and\napproving need a recent sign-in (`RECENT_AUTH_REQUIRED` otherwise). Agents never get more than the person has.",
+    "deprecated": false
+   },
+   {
+    "name": "useFeatureFlag",
+    "kind": "function",
+    "params": [
+     "options"
+    ],
+    "doc": "Whether one feature flag is on for the tenant; `value` is `false` until it has loaded.",
+    "deprecated": false
+   },
+   {
+    "name": "useFeatureFlags",
+    "kind": "function",
+    "params": [
+     "options"
+    ],
+    "doc": "The tenant's feature flags for the signed-in session, to show or hide UI. `keys` limits the request to those\nflags. Hiding UI is not enforcement: gate the server side with `iam.features` or a `tenant.features` condition.",
+    "deprecated": false
+   },
+   {
+    "name": "useIamClient",
+    "kind": "function",
+    "params": [],
+    "doc": "The client passed to the provider, typed as the caller declares it.",
+    "deprecated": false
+   },
+   {
+    "name": "useModels",
+    "kind": "function",
+    "params": [
+     "options"
+    ],
+    "doc": "The AI models the signed-in caller may use now (`inference.listMine`), for a model picker.",
+    "deprecated": false
+   },
+   {
+    "name": "useMySpend",
+    "kind": "function",
+    "params": [
+     "options"
+    ],
+    "doc": "The signed-in person's own spend (`billing.mySpend`): what their usage and their agents' cost this month (or\n`period`), grouped by `meter` (default), `day`, `agent`, `tenant` or `tag:{name}`, with a projection and their budgets.",
+    "deprecated": false
+   },
+   {
+    "name": "useSession",
+    "kind": "function",
+    "params": [],
+    "doc": "The current session snapshot plus refresh, sign-out, and manual replacement (after a sign-in response).",
+    "deprecated": false
+   },
+   {
+    "name": "useSpendCheck",
+    "kind": "function",
+    "params": [
+     "options"
+    ],
+    "doc": "Whether the signed-in caller's usage (of `meter`, when given) is within every enforced spend budget that covers it\n(`billing.check`), to warn before a costly action. `allowed` is `true` until the answer arrives; the server still\nrefuses usage recorded with `enforceBudgets`.",
+    "deprecated": false
+   },
+   {
+    "name": "useTeams",
+    "kind": "function",
+    "params": [
+     "options"
+    ],
+    "doc": "The signed-in person's teams with self-service joining and leaving (`teams.listMine`, `requestToJoin`, `leave`).",
+    "deprecated": false
+   }
+  ]
+ },
+ {
+  "specifier": "@better-iam/react-router",
+  "package": "@better-iam/react-router",
+  "exports": [
+   {
+    "name": "checkRequestOrigin",
+    "kind": "function",
+    "params": [
+     "request",
+     "trustedOrigins?"
+    ],
+    "doc": "The CSRF boundary for application routes: a state-changing request authenticated by the session cookie (no\n`Authorization` header) must come from this application's origin, the IAM origin, or a trusted origin. Session\ncookies are `SameSite=Lax`, which still sends them from sibling subdomains, so the Origin check matters.\nReturns the refusal, or null when the request may proceed.",
+    "deprecated": false,
+    "from": "@better-iam/middleware"
+   },
+   {
+    "name": "checkStepUp",
+    "kind": "function",
+    "params": [
+     "session",
+     "requirement",
+     "now?"
+    ],
+    "doc": "Checks a session against a step-up requirement; null when it qualifies. Accepts the `getSession` result or its\ninner session record. Impersonated sessions always fail a recency requirement, as the server's own check does.",
+    "deprecated": false,
+    "from": "@better-iam/middleware"
+   },
+   {
+    "name": "createIamRouter",
+    "kind": "function",
+    "params": [
+     "source",
+     "options?"
+    ],
+    "doc": "React Router (framework mode, v7.9+ / v8) integration. `middleware` goes on the root route and gives every loader and\naction `iamRouter.helpers(args)`; cookies the in-process client receives are added to the response. `api` is the\nloader and action of an `api/iam/*` resource route. `guard` / `action` wrap loaders and actions.\n\n```ts\n// app/iam.server.ts\nexport const iamRouter = createIamRouter(iam, { loginPath: '/login' });\n// app/root.tsx\nexport const middleware = [iamRouter.middleware];\n// app/routes/api.iam.$.ts\nexport const loader = iamRouter.api;\nexport const action = iamRouter.api;\n```",
+    "deprecated": false
+   },
+   {
+    "name": "isAuthenticationError",
+    "kind": "function",
+    "params": [
+     "error"
+    ],
+    "doc": "True for the errors `getSession` raises when there is no usable session.",
+    "deprecated": false,
+    "from": "@better-iam/middleware"
+   },
+   {
+    "name": "safeRedirectPath",
+    "kind": "function",
+    "params": [
+     "value",
+     "fallback?"
+    ],
+    "doc": "A same-site relative path safe to redirect to, or `fallback`. Refuses schemes, `//host`, and backslash tricks.",
+    "deprecated": false,
+    "from": "@better-iam/middleware"
+   }
+  ]
+ },
+ {
+  "specifier": "@better-iam/saml",
+  "package": "@better-iam/saml",
+  "exports": [
+   {
+    "name": "certificateInfo",
+    "kind": "function",
+    "params": [
+     "pem"
+    ],
+    "doc": "",
+    "deprecated": false
+   },
+   {
+    "name": "createSamlCache",
+    "kind": "function",
+    "params": [
+     "store",
+     "tenantId",
+     "connectionId",
+     "expectedRequestId?"
+    ],
+    "doc": "Shared replay cache. Run response verification inside one store transaction.",
+    "deprecated": false
+   },
+   {
+    "name": "createSamlService",
+    "kind": "function",
+    "params": [
+     "config"
+    ],
+    "doc": "",
+    "deprecated": false
+   },
+   {
+    "name": "normalizeCertificate",
+    "kind": "function",
+    "params": [
+     "value"
+    ],
+    "doc": "Normalizes a PEM or bare base64 DER certificate to PEM, rejecting anything that is not a parseable X.509 certificate.",
+    "deprecated": false
+   },
+   {
+    "name": "parseIdpMetadata",
+    "kind": "function",
+    "params": [
+     "xml"
+    ],
+    "doc": "Reads entity ID, redirect-binding SSO/SLO endpoints, and signing certificates from IdP metadata. The document must\ndescribe exactly one identity provider; DTDs and entities are refused. Metadata signatures are not checked: import\nmetadata only from a source you trust (an administrator upload or an HTTPS URL of the IdP).",
+    "deprecated": false
+   },
+   {
+    "name": "validateSamlEnvelope",
+    "kind": "function",
+    "params": [
+     "xml",
+     "callbackUrl",
+     "expectedRequestId",
+     "encryptedRequired?"
+    ],
+    "doc": "Supplements Node-SAML's cryptographic checks with exact response destination checks. `expectedRequestId: null`\nvalidates an IdP-initiated response, which must not answer any request.",
+    "deprecated": false
+   }
+  ]
+ },
+ {
+  "specifier": "@better-iam/scim",
+  "package": "@better-iam/scim",
+  "exports": [
+   {
+    "name": "createScimProvisioner",
+    "kind": "function",
+    "params": [
+     "config"
+    ],
+    "doc": "Outbound SCIM 2.0 provisioning: keeps downstream applications' user directories in step with a tenant's members.\nEach target receives the active members in scope (all members, or members of chosen groups) as SCIM users keyed by\n`externalId`; people who leave scope, are disabled, or are deleted are deactivated (or deleted) downstream.",
+    "deprecated": false
+   },
+   {
+    "name": "createScimService",
+    "kind": "function",
+    "params": [
+     "config"
+    ],
+    "doc": "SCIM 2.0 provisioning server: connection-scoped bearer tokens, Users and Groups with RFC 7644 filtering, sorting,\nattribute projection, `/.search`, PATCH value paths, `/Bulk`, ETags and pagination, and explicit\nadministrator-controlled group-to-role mappings.",
+    "deprecated": false
+   },
+   {
+    "name": "parseScimFilter",
+    "kind": "function",
+    "params": [
+     "filter"
+    ],
+    "doc": "Parses a filter into a predicate over rendered SCIM resources; an absent filter matches everything.",
+    "deprecated": false
+   }
+  ]
+ },
+ {
+  "specifier": "@better-iam/server",
+  "package": "@better-iam/server",
+  "exports": [
+   {
+    "name": "actsInOwnRight",
+    "kind": "function",
+    "params": [
+     "session"
+    ],
+    "doc": "Whether a session acts in its identity's own right (a user session or an API key), as self-service actions such as\naccepting agreements or activating standing access require. False for temporary and unknown kinds.",
+    "deprecated": false
+   },
+   {
+    "name": "agentAttestationUri",
+    "kind": "const",
+    "params": null,
+    "doc": "The URI of the attestation extension IAM adds to `capabilities.extensions` of every card it signs.",
+    "deprecated": false
+   },
+   {
+    "name": "amountDue",
+    "kind": "function",
+    "params": [
+     "statement"
+    ],
+    "doc": "What is still owed on an invoice: its total less payments and credit notes (never below 0).",
+    "deprecated": false
+   },
+   {
+    "name": "amountPaid",
+    "kind": "function",
+    "params": [
+     "statement"
+    ],
+    "doc": "Payments received on an invoice; invoices marked paid before payments were recorded count as fully paid.",
+    "deprecated": false
+   },
+   {
+    "name": "assertionKey",
+    "kind": "function",
+    "params": [
+     "secret"
+    ],
+    "doc": "The verification key for a deployment secret: SHA-256 of a purpose-bound derivation, as hex.",
+    "deprecated": false
+   },
+   {
+    "name": "auditEventHash",
+    "kind": "function",
+    "params": [
+     "event"
+    ],
+    "doc": "The hash of an event: SHA-256 over the canonical JSON of every field except `hash` itself.",
+    "deprecated": false,
+    "from": "@better-iam/core"
+   },
+   {
+    "name": "authenticatedAuthMethods",
+    "kind": "const",
+    "params": null,
+    "doc": "",
+    "deprecated": false
+   },
+   {
+    "name": "betterIam",
+    "kind": "function",
+    "params": [
+     "options"
+    ],
+    "doc": "Composes the IAM server: configuration and catalog validation, the authentication service, the shared context,\nthe service modules, the provisioning API, deployment helpers, federation callbacks, and the HTTP transports.",
+    "deprecated": false
+   },
+   {
+    "name": "billingPeriod",
+    "kind": "function",
+    "params": [
+     "value",
+     "name?"
+    ],
+    "doc": "A billing period `YYYY-MM`.",
+    "deprecated": false
+   },
+   {
+    "name": "budgetWindow",
+    "kind": "function",
+    "params": [
+     "period",
+     "now"
+    ],
+    "doc": "The current window of a period (UTC), as [start, end).",
+    "deprecated": false
+   },
+   {
+    "name": "canonicalJson",
+    "kind": "function",
+    "params": [
+     "value"
+    ],
+    "doc": "Deterministic JSON: object keys sorted recursively, `undefined` properties omitted, arrays kept in order.",
+    "deprecated": false,
+    "from": "@better-iam/core"
+   },
+   {
+    "name": "configOptions",
+    "kind": "function",
+    "params": [
+     "config",
+     "context?"
+    ],
+    "doc": "The options a `defineConfig` value stands for: a factory is called with `context` (default: this process's\nenvironment and working directory), plain options are returned as they are.",
+    "deprecated": false
+   },
+   {
+    "name": "createInferenceGateway",
+    "kind": "function",
+    "params": [
+     "runtime",
+     "options?"
+    ],
+    "doc": "Builds the gateway handler over the inference runtime (see `InferenceGatewayOptions`).",
+    "deprecated": false
+   },
+   {
+    "name": "createJsonlAuditArchive",
+    "kind": "function",
+    "params": [
+     "options"
+    ],
+    "doc": "A file sink for `auditArchive`: one JSON Lines file per batch at\n`{directory}/{tenantId}/{fromSequence}-{toSequence}.jsonl` (sequences zero-padded, so files sort\nin chain order). Files are write-once: each is written under a unique temporary name, flushed,\nand published with a hard link that never replaces an existing file. Writing the same batch\nagain is accepted; a different batch under an existing name is refused (`ARCHIVE_CONFLICT`), so\na restored or tampered database can never overwrite archived events. After a crash, files can\noverlap; read events by `sequence`.",
+    "deprecated": false
+   },
+   {
+    "name": "createMetrics",
+    "kind": "function",
+    "params": [
+     "options?"
+    ],
+    "doc": "",
+    "deprecated": false
+   },
+   {
+    "name": "createSessionTokenVerifier",
+    "kind": "function",
+    "params": [
+     "options"
+    ],
+    "doc": "Creates an offline verifier for IAM session JWTs. It enforces the `biam-session+jwt` type, the EdDSA/ES256\nallowlist (pinned to each key's `alg` for a local key set), the exact issuer, one of the configured audiences,\n`exp`/`nbf` with clock tolerance, the lifetime cap, the accepted kinds and the claim types.",
+    "deprecated": false
+   },
+   {
+    "name": "dayOf",
+    "kind": "function",
+    "params": [
+     "at",
+     "timeZone"
+    ],
+    "doc": "The local day `YYYY-MM-DD` an instant falls on.",
+    "deprecated": false
+   },
+   {
+    "name": "defineConfig",
+    "kind": "function",
+    "params": [
+     "config"
+    ],
+    "doc": "Types a deployment configuration for `better-iam.config.{mjs,ts}`: options, or a factory of them that receives\n`{ command, env, cwd }` from the CLI. It returns its argument unchanged; the value is autocompletion and checking.\n\n```ts\nexport default defineConfig(({ env = process.env } = {}) => ({\n  database: sqliteAdapter({ filename: env.BETTER_IAM_DATABASE ?? './iam.db' }),\n  secret: env.BETTER_IAM_SECRET!,\n  baseURL: env.BETTER_IAM_BASE_URL ?? 'http://localhost:3000',\n}));\n// In the server: const iam = betterIam(await configOptions(config));\n```",
+    "deprecated": false
+   },
+   {
+    "name": "defineTenantConfig",
+    "kind": "function",
+    "params": [
+     "config"
+    ],
+    "doc": "Types a tenant's configuration as code (roles, policies, groups, bindings, packages, invariants, agreements) for\n`better-iam config-plan|config-apply --input tenant.config.ts`, or a factory that computes it per tenant and\nenvironment. Returns its argument unchanged; `iam.api.config.apply(credential, { tenantId, config })` applies the\nsame value from code.",
+    "deprecated": false
+   },
+   {
+    "name": "delegationTokenLimits",
+    "kind": "const",
+    "params": null,
+    "doc": "Lifetimes (seconds) and the longest chain of actors a delegation token carries.",
+    "deprecated": false,
+    "from": "@better-iam/core"
+   },
+   {
+    "name": "delegationTokenType",
+    "kind": "const",
+    "params": null,
+    "doc": "The JWT `typ` header of delegation tokens: verifiers refuse any other.",
+    "deprecated": false,
+    "from": "@better-iam/core"
+   },
+   {
+    "name": "departmentHeads",
+    "kind": "function",
+    "params": [
+     "tx",
+     "tenantId",
+     "departmentId",
+     "options?"
+    ],
+    "doc": "The heads of a department (identity IDs): its own head and, with `includeAncestors`, the heads of the departments\nabove it, nearest first and without duplicates.",
+    "deprecated": false
+   },
+   {
+    "name": "departmentOf",
+    "kind": "function",
+    "params": [
+     "tx",
+     "tenantId",
+     "identityId"
+    ],
+    "doc": "The ID of the department a person belongs to, if any.",
+    "deprecated": false
+   },
+   {
+    "name": "departmentPath",
+    "kind": "function",
+    "params": [
+     "tx",
+     "tenantId",
+     "departmentId"
+    ],
+    "doc": "Department IDs from the top of the tree down to `departmentId` itself (for roll-ups); empty when unknown.",
+    "deprecated": false
+   },
+   {
+    "name": "IamError",
+    "kind": "class",
+    "params": null,
+    "doc": "",
+    "deprecated": false,
+    "from": "@better-iam/core"
+   },
+   {
+    "name": "inferenceAction",
+    "kind": "const",
+    "params": null,
+    "doc": "",
+    "deprecated": false
+   },
+   {
+    "name": "inferenceResourceType",
+    "kind": "const",
+    "params": null,
+    "doc": "The resource type and action the inference module adds to the permission catalog.",
+    "deprecated": false
+   },
+   {
+    "name": "inferenceToolAction",
+    "kind": "const",
+    "params": null,
+    "doc": "The action decided on each `model-tool/{kind}` a request asks for, for models whose `providerTools` is `policy`.",
+    "deprecated": false
+   },
+   {
+    "name": "inferenceToolResourceType",
+    "kind": "const",
+    "params": null,
+    "doc": "Tools the provider runs itself (web search, code execution, remote MCP servers, ...), as resources of this type named\nby kind (`model-tool/web_search`, `model-tool/mcp:{host}`), checked with `inference:use-tool` for models whose\n`providerTools` is `policy`.",
+    "deprecated": false
+   },
+   {
+    "name": "isTeamMaintainer",
+    "kind": "function",
+    "params": [
+     "tx",
+     "tenantId",
+     "teamId",
+     "identityId",
+     "options?"
+    ],
+    "doc": "Whether a person maintains a team: a live maintainer membership of the team itself or, with `includeAncestors`, of\nany team above it (a parent team's maintainers manage its child teams too).",
+    "deprecated": false
+   },
+   {
+    "name": "lintPolicy",
+    "kind": "function",
+    "params": [
+     "document",
+     "context?"
+    ],
+    "doc": "Lints a policy document: validates it as storage would, then reports statements that grant more than intended,\nconditions that can never match or silently fail open, and statements that are shadowed or duplicated. The\ncontext tells the linter which identity attributes, resource attributes, and application keys exist. Pattern\ncomparisons are budgeted: past the budget, a `shadowed-allow-skipped` note replaces the rest of the shadow check.",
+    "deprecated": false
+   },
+   {
+    "name": "looksLikeJwt",
+    "kind": "function",
+    "params": [
+     "value"
+    ],
+    "doc": "True for a compact JWS shape (three base64url segments); says nothing about validity.",
+    "deprecated": false
+   },
+   {
+    "name": "machineIdentity",
+    "kind": "function",
+    "params": [
+     "identity"
+    ],
+    "doc": "Machine accounts: service accounts and agents. They hold API keys and never sign in.",
+    "deprecated": false
+   },
+   {
+    "name": "nextWatermark",
+    "kind": "function",
+    "params": [
+     "current",
+     "before",
+     "now"
+    ],
+    "doc": "The next `sessionsRevokedBefore` for a record: `max(current ?? 0, before ?? now + 1)`, so a watermark only ever\nmoves forward and never lies in the future (it can neither resurrect a session nor block new issuance). The default\nrevokes every session issued so far. Throws INVALID_INPUT when `before` is not a safe integer >= 0 or is > now + 1.",
+    "deprecated": false
+   },
+   {
+    "name": "periodBounds",
+    "kind": "function",
+    "params": [
+     "period",
+     "timeZone"
+    ],
+    "doc": "The first instant of a period and of the next one.",
+    "deprecated": false
+   },
+   {
+    "name": "periodOf",
+    "kind": "function",
+    "params": [
+     "at",
+     "timeZone"
+    ],
+    "doc": "The billing period an instant falls in.",
+    "deprecated": false
+   },
+   {
+    "name": "priceBreakdown",
+    "kind": "function",
+    "params": [
+     "spec",
+     "quantity"
+    ],
+    "doc": "How a quantity is priced, tier by tier, for invoice sub-lines: the tiers used, the free units, and what the tiers\ncame to before the price's minimum or maximum.",
+    "deprecated": false
+   },
+   {
+    "name": "priceQuantity",
+    "kind": "function",
+    "params": [
+     "spec",
+     "quantity"
+    ],
+    "doc": "The amount, in micros, a period's quantity costs under a price: its tiers, then its minimum and maximum.",
+    "deprecated": false
+   },
+   {
+    "name": "priceSpec",
+    "kind": "function",
+    "params": [
+     "value"
+    ],
+    "doc": "Validates a price given in currency units (`unitAmount`, `tiers[].unitAmount` / `flatAmount`, `packageAmount`) and\nreturns it in micros. Tiers ascend by `upTo`, and the last one has `upTo: null`.",
+    "deprecated": false
+   },
+   {
+    "name": "primaryTeamOf",
+    "kind": "function",
+    "params": [
+     "tx",
+     "tenantId",
+     "identityId",
+     "at?"
+    ],
+    "doc": "The person's oldest live direct team membership, for callers that attribute to one team only.",
+    "deprecated": false
+   },
+   {
+    "name": "providerToolsOf",
+    "kind": "function",
+    "params": [
+     "path",
+     "body"
+    ],
+    "doc": "The tools a request asks the provider to run (or that the provider defines for the model to drive): Anthropic\nserver and Anthropic-defined tools (`tools[].type` other than `custom`) and remote MCP servers (`mcp_servers`); OpenAI\nResponses built-in tools (`tools[].type` other than `function` and `custom`, MCP servers as `mcp:{host}` or\n`mcp:{connector_id}`), and a stored prompt (`prompt`, which may bring tools of its own); Chat Completions web search\n(`web_search_options`). Functions the caller runs itself are not listed. At most 65 entries are returned (more are\nrefused), from the first 256 tools and 64 MCP servers (the gateway refuses requests with more).",
+    "deprecated": false
+   },
+   {
+    "name": "publicApiMethods",
+    "kind": "const",
+    "params": null,
+    "doc": "",
+    "deprecated": false
+   },
+   {
+    "name": "publicAuthMethods",
+    "kind": "const",
+    "params": null,
+    "doc": "",
+    "deprecated": false
+   },
+   {
+    "name": "publicOidcProvider",
+    "kind": "function",
+    "params": [
+     "provider"
+    ],
+    "doc": "An OIDC provider as the API returns it: an explicit allowlist projection (static keys are public members only,\nas validated when they were stored).",
+    "deprecated": false
+   },
+   {
+    "name": "publicTrust",
+    "kind": "function",
+    "params": [
+     "trust"
+    ],
+    "doc": "A trust as the API returns it: an allowlist projection that never carries the external ID hash, reports whether an\nexternal ID is required, and reads legacy records (no kind) as identity trusts.",
+    "deprecated": false
+   },
+   {
+    "name": "readDelegationTokenClaims",
+    "kind": "function",
+    "params": [
+     "claims",
+     "expected"
+    ],
+    "doc": "Checks the claims of a (signature-verified) delegation token against what the verifier expects: well formed, from an\naccepted issuer, for exactly this audience (and tenant), current within the clock tolerance, and issued for at most\n`delegationTokenLimits.maxSeconds`.",
+    "deprecated": false,
+    "from": "@better-iam/core"
+   },
+   {
+    "name": "renderInvoiceHtml",
+    "kind": "function",
+    "params": [
+     "statement",
+     "options?"
+    ],
+    "doc": "The invoice as a standalone HTML page (print it or save it as PDF): issuer, bill-to, number and dates, lines with\ntier sub-lines and service periods, discounts, commitment, credit, tax, payments, credit notes, and amount due.",
+    "deprecated": false
+   },
+   {
+    "name": "revokedByWatermark",
+    "kind": "function",
+    "params": [
+     "createdAt",
+     "...watermarks"
+    ],
+    "doc": "Whether a session issued at `createdAt` falls under any revocation watermark (`sessionsRevokedBefore` of its role,\ntrust or provider): true when it was created strictly before a numeric watermark. Missing watermarks are ignored.",
+    "deprecated": false
+   },
+   {
+    "name": "rolloutBucket",
+    "kind": "function",
+    "params": [
+     "key",
+     "tenantId"
+    ],
+    "doc": "The rollout position (0 to 99.99) of a tenant branch for a flag: stable per key and tenant, so raising the\npercentage only ever adds tenants, and different flags spread over different tenants.",
+    "deprecated": false
+   },
+   {
+    "name": "routeGroups",
+    "kind": "const",
+    "params": null,
+    "doc": "",
+    "deprecated": false
+   },
+   {
+    "name": "SESSION_TOKEN_ALGORITHMS",
+    "kind": "const",
+    "params": null,
+    "doc": "The only signature algorithms IAM issues or accepts for session JWTs.",
+    "deprecated": false
+   },
+   {
+    "name": "SESSION_TOKEN_TYPE",
+    "kind": "const",
+    "params": null,
+    "doc": "The `typ` header of every IAM session JWT; other token classes (assertions, OAuth `at+jwt`) never carry it.",
+    "deprecated": false
+   },
+   {
+    "name": "SessionTokenError",
+    "kind": "class",
+    "params": null,
+    "doc": "Every verification failure. `reason` is for logs and metrics; clients should only see the 401.",
+    "deprecated": false
+   },
+   {
+    "name": "shiftPeriod",
+    "kind": "function",
+    "params": [
+     "period",
+     "months"
+    ],
+    "doc": "A period `months` after (or before, when negative) another.",
+    "deprecated": false
+   },
+   {
+    "name": "teamMaintainers",
+    "kind": "function",
+    "params": [
+     "tx",
+     "tenantId",
+     "teamId",
+     "at?"
+    ],
+    "doc": "The live direct maintainers of a team (identity IDs, oldest first).",
+    "deprecated": false
+   },
+   {
+    "name": "teamsOf",
+    "kind": "function",
+    "params": [
+     "tx",
+     "tenantId",
+     "identityId",
+     "options?"
+    ],
+    "doc": "The teams a person belongs to at `at` (default now): their live direct memberships (oldest first) and, with\n`includeAncestors`, the parent teams those memberships make them part of. Team IDs, never backing group IDs.\nThere is no membership history, so callers that attribute something to teams should call this when it happens.",
+    "deprecated": false
+   },
+   {
+    "name": "temporarySessionKinds",
+    "kind": "const",
+    "params": null,
+    "doc": "The temporary kinds: derived from a source credential, bounded by it, and never usable for self-service.",
+    "deprecated": false
+   },
+   {
+    "name": "usageCost",
+    "kind": "function",
+    "params": [
+     "model",
+     "usage"
+    ],
+    "doc": "Cost of a call in micro-dollars: tokens × dollars per million tokens (cached input at its own price when set).",
+    "deprecated": false
+   },
+   {
+    "name": "usageFrom",
+    "kind": "function",
+    "params": [
+     "format",
+     "usage"
+    ],
+    "doc": "Token counts from a provider's usage object (Anthropic, OpenAI Chat Completions / Embeddings, or OpenAI Responses);\nundefined when there is none. Cached input tokens are counted apart from other input.",
+    "deprecated": false
+   },
+   {
+    "name": "validateTenantConfig",
+    "kind": "function",
+    "params": [
+     "value"
+    ],
+    "doc": "Validates the shape of a desired configuration; references are checked against the tenant during planning.",
+    "deprecated": false
+   },
+   {
+    "name": "verifyAssertion",
+    "kind": "function",
+    "params": [
+     "token",
+     "options"
+    ],
+    "doc": "Verifies an assertion against the derived key, audience, optional issuer, and time; returns its\nclaims. `key` may list several keys (`iam.assertionKeys()`) while a deployment secret rotates.",
+    "deprecated": false
+   },
+   {
+    "name": "verifyAuditChain",
+    "kind": "function",
+    "params": [
+     "events",
+     "options?"
+    ],
+    "doc": "Verifies a run of events from one tenant: contiguous sequences, each `previousHash` equal to the previous event's\nhash (or `previousHash` of the first event when the run starts mid-chain), and every hash recomputable.\nEvents are sorted by sequence first, so exports and database reads can be passed as they come.",
+    "deprecated": false,
+    "from": "@better-iam/core"
+   },
+   {
+    "name": "verifyWebhookSignature",
+    "kind": "function",
+    "params": [
+     "input"
+    ],
+    "doc": "Verifies a webhook signature produced by Better IAM. `signature` is the X-Better-IAM-Signature header value.",
+    "deprecated": false
+   },
+   {
+    "name": "webTrustTagClaims",
+    "kind": "function",
+    "params": [
+     "value"
+    ],
+    "doc": "A web-identity trust's claim-to-tag mapping: at most 10 entries, each a session tag key (unique case-insensitively)\nmapped to a flattened claim name (`token.<claim>`).",
+    "deprecated": false
+   },
+   {
+    "name": "WrongRegionError",
+    "kind": "class",
+    "params": null,
+    "doc": "The organization is served by another region's deployment. `location` is its sign-in URL there (when one can be\nbuilt), so a sign-in page can redirect instead of showing an error. Answered with HTTP 421 Misdirected Request.",
+    "deprecated": false
+   }
+  ]
+ },
+ {
+  "specifier": "@better-iam/server/assertions",
+  "package": "@better-iam/server",
+  "exports": [
+   {
+    "name": "assertionKey",
+    "kind": "function",
+    "params": [
+     "secret"
+    ],
+    "doc": "The verification key for a deployment secret: SHA-256 of a purpose-bound derivation, as hex.",
+    "deprecated": false
+   },
+   {
+    "name": "createAssertionsApi",
+    "kind": "function",
+    "params": [
+     "ctx"
+    ],
+    "doc": "",
+    "deprecated": false
+   },
+   {
+    "name": "verifyAssertion",
+    "kind": "function",
+    "params": [
+     "token",
+     "options"
+    ],
+    "doc": "Verifies an assertion against the derived key, audience, optional issuer, and time; returns its\nclaims. `key` may list several keys (`iam.assertionKeys()`) while a deployment secret rotates.",
+    "deprecated": false
+   }
+  ]
+ },
+ {
+  "specifier": "@better-iam/server/session-tokens",
+  "package": "@better-iam/server",
+  "exports": [
+   {
+    "name": "createSessionTokenVerifier",
+    "kind": "function",
+    "params": [
+     "options"
+    ],
+    "doc": "Creates an offline verifier for IAM session JWTs. It enforces the `biam-session+jwt` type, the EdDSA/ES256\nallowlist (pinned to each key's `alg` for a local key set), the exact issuer, one of the configured audiences,\n`exp`/`nbf` with clock tolerance, the lifetime cap, the accepted kinds and the claim types.",
+    "deprecated": false
+   },
+   {
+    "name": "looksLikeJwt",
+    "kind": "function",
+    "params": [
+     "value"
+    ],
+    "doc": "True for a compact JWS shape (three base64url segments); says nothing about validity.",
+    "deprecated": false
+   },
+   {
+    "name": "MAX_SESSION_TOKEN_LENGTH",
+    "kind": "const",
+    "params": null,
+    "doc": "Longest accepted compact serialization, in characters.",
+    "deprecated": false
+   },
+   {
+    "name": "SESSION_TOKEN_ALGORITHMS",
+    "kind": "const",
+    "params": null,
+    "doc": "The only signature algorithms IAM issues or accepts for session JWTs.",
+    "deprecated": false
+   },
+   {
+    "name": "SESSION_TOKEN_TYPE",
+    "kind": "const",
+    "params": null,
+    "doc": "The `typ` header of every IAM session JWT; other token classes (assertions, OAuth `at+jwt`) never carry it.",
+    "deprecated": false
+   },
+   {
+    "name": "SessionTokenError",
+    "kind": "class",
+    "params": null,
+    "doc": "Every verification failure. `reason` is for logs and metrics; clients should only see the 401.",
+    "deprecated": false
+   }
+  ]
+ },
+ {
+  "specifier": "@better-iam/svelte",
+  "package": "@better-iam/svelte",
+  "exports": [
+   {
+    "name": "createIam",
+    "kind": "function",
+    "params": [
+     "options"
+    ],
+    "doc": "One typed client, one session store, and advisory authorization stores for a Svelte 4 or 5 app. Create it once\n(typically in the root `+layout.svelte`) and share it with `setIamContext` / `getIamContext`.\n\n```svelte\n<script>\n  const iam = createIam({ client, initialSession: data.session });\n  const { session } = iam;\n  const canManage = iam.can({ tenantId, action: 'projects:manage' });\n</script>\n{#if $canManage.allowed}<button>Manage</button>{/if}\n```",
+    "deprecated": false
+   },
+   {
+    "name": "createSessionStore",
+    "kind": "function",
+    "params": [
+     "client",
+     "options?"
+    ],
+    "doc": "Framework-agnostic session state. The React and Vue bindings subscribe to it;\nit can also drive other frameworks or plain scripts.",
+    "deprecated": false,
+    "from": "@better-iam/client"
+   },
+   {
+    "name": "getIamContext",
+    "kind": "function",
+    "params": [],
+    "doc": "The `Iam` a parent shared with `setIamContext`.",
+    "deprecated": false
+   },
+   {
+    "name": "isUnauthenticated",
+    "kind": "function",
+    "params": [
+     "error"
+    ],
+    "doc": "The server answers 401/403 for missing, expired, or step-up-required credentials; anything else is a transport failure.",
+    "deprecated": false,
+    "from": "@better-iam/client"
+   },
+   {
+    "name": "setIamContext",
+    "kind": "function",
+    "params": [
+     "iam"
+    ],
+    "doc": "Shares an `Iam` with descendant components; call during component initialisation.",
+    "deprecated": false
+   }
+  ]
+ },
+ {
+  "specifier": "@better-iam/svelte/kit",
+  "package": "@better-iam/svelte",
+  "exports": [
+   {
+    "name": "checkStepUp",
+    "kind": "function",
+    "params": [
+     "session",
+     "requirement",
+     "now?"
+    ],
+    "doc": "Checks a session against a step-up requirement; null when it qualifies. Accepts the `getSession` result or its\ninner session record. Impersonated sessions always fail a recency requirement, as the server's own check does.",
+    "deprecated": false,
+    "from": "@better-iam/middleware"
+   },
+   {
+    "name": "createIamKit",
+    "kind": "function",
+    "params": [
+     "source",
+     "options?"
+    ],
+    "doc": "SvelteKit integration: `handle` serves the IAM HTTP API, enforces `protect` rules, and gives every request\n`event.locals.iam`; `guard` and `action` wrap server loads and form actions.\n\n```ts\n// src/hooks.server.ts\nexport const iamKit = createIamKit(iam, { protect: [{ path: '/app' }] });\nexport const handle = iamKit.handle;\n```",
+    "deprecated": false
+   },
+   {
+    "name": "isAuthenticationError",
+    "kind": "function",
+    "params": [
+     "error"
+    ],
+    "doc": "True for the errors `getSession` raises when there is no usable session.",
+    "deprecated": false,
+    "from": "@better-iam/middleware"
+   },
+   {
+    "name": "isKitControlError",
+    "kind": "function",
+    "params": [
+     "error"
+    ],
+    "doc": "True for SvelteKit's own control-flow throws (`redirect()`, `error()`), which must propagate untouched.",
+    "deprecated": false
+   },
+   {
+    "name": "parseSetCookie",
+    "kind": "function",
+    "params": [
+     "header"
+    ],
+    "doc": "Parses one `Set-Cookie` header into the name, decoded value, and options `event.cookies.set` accepts.",
+    "deprecated": false
+   },
+   {
+    "name": "safeRedirectPath",
+    "kind": "function",
+    "params": [
+     "value",
+     "fallback?"
+    ],
+    "doc": "A same-site relative path safe to redirect to, or `fallback`. Refuses schemes, `//host`, and backslash tricks.",
+    "deprecated": false,
+    "from": "@better-iam/middleware"
+   }
+  ]
+ },
+ {
+  "specifier": "@better-iam/vue",
+  "package": "@better-iam/vue",
+  "exports": [
+   {
+    "name": "createHydration",
+    "kind": "function",
+    "params": [
+     "state?"
+    ],
+    "doc": "A plain object hydration store; serialize `state` into the page and pass the parsed object back on the client.",
+    "deprecated": false
+   },
+   {
+    "name": "createIam",
+    "kind": "function",
+    "params": [
+     "options"
+    ],
+    "doc": "The Vue plugin: one typed client and one session store for the app. `app.use(createIam({ client }))`.",
+    "deprecated": false
+   },
+   {
+    "name": "createSessionStore",
+    "kind": "function",
+    "params": [
+     "client",
+     "options?"
+    ],
+    "doc": "Framework-agnostic session state. The React and Vue bindings subscribe to it;\nit can also drive other frameworks or plain scripts.",
+    "deprecated": false,
+    "from": "@better-iam/client"
+   },
+   {
+    "name": "IamCan",
+    "kind": "const",
+    "params": null,
+    "doc": "Renders the default slot only when the advisory decision allows the action, the `fallback` slot otherwise, and the\n`loading` slot meanwhile. `<IamCan tenant-id=\"t1\" action=\"projects:delete\" :resource=\"{ type: 'project', id }\">`.",
+    "deprecated": false
+   },
+   {
+    "name": "isUnauthenticated",
+    "kind": "function",
+    "params": [
+     "error"
+    ],
+    "doc": "The server answers 401/403 for missing, expired, or step-up-required credentials; anything else is a transport failure.",
+    "deprecated": false,
+    "from": "@better-iam/client"
+   },
+   {
+    "name": "useAccessible",
+    "kind": "function",
+    "params": [
+     "input"
+    ],
+    "doc": "The registered resources of a managed type the signed-in principal may act on; refetched when the input or identity changes.",
+    "deprecated": false
+   },
+   {
+    "name": "useAccessPaths",
+    "kind": "function",
+    "params": [
+     "input"
+    ],
+    "doc": "Whether the signed-in person may perform an action and, if not, the self-service paths that would allow it.",
+    "deprecated": false
+   },
+   {
+    "name": "useAgreements",
+    "kind": "function",
+    "params": [
+     "input"
+    ],
+    "doc": "The signed-in person's terms of use and a way to accept them; policies can hold back access until they do.",
+    "deprecated": false
+   },
+   {
+    "name": "useAuthorize",
+    "kind": "function",
+    "params": [
+     "input"
+    ],
+    "doc": "Batched advisory decisions for rendering menus and buttons. Accepts a ref or getter so the checks can follow reactive\nstate; the server still enforces every operation.",
+    "deprecated": false
+   },
+   {
+    "name": "useCan",
+    "kind": "function",
+    "params": [
+     "input"
+    ],
+    "doc": "One advisory decision as a boolean ref, false while loading or signed out.",
+    "deprecated": false
+   },
+   {
+    "name": "useIamClient",
+    "kind": "function",
+    "params": [],
+    "doc": "The client passed to `createIam`, typed as the caller declares it.",
+    "deprecated": false
+   },
+   {
+    "name": "useSession",
+    "kind": "function",
+    "params": [],
+    "doc": "Reactive session state plus refresh, sign-out, and manual replacement.",
+    "deprecated": false
+   },
+   {
+    "name": "useTeams",
+    "kind": "function",
+    "params": [
+     "input"
+    ],
+    "doc": "The signed-in person's teams with self-service joining and leaving (`teams.listMine`, `requestToJoin`, `leave`).",
+    "deprecated": false
+   }
+  ]
+ }
+]

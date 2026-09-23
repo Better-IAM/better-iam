@@ -1,0 +1,192 @@
+---
+title: Protocol mounts
+description: Mount the IAM HTTP handler and the OAuth, SAML, and SCIM protocol services in a host application, and what the handler enforces on every request.
+icon: Plug
+packages: ['@better-iam/server', '@better-iam/oauth', '@better-iam/saml', '@better-iam/scim']
+sources: ['docs/deployment.md', 'docs/protocols.md', 'docs/architecture.md', 'docs/security.md', 'packages/server/src/http.ts', 'packages/server/src/options.ts']
+---
+
+The IAM instance exposes two transports over the same router: `iam.handler(request)` for Fetch-style runtimes
+and `iam.nodeHandler(req, res)` for Node's HTTP server. Federation and provisioning protocols (OAuth and
+<Term id="oidc">OpenID Connect</Term>, <Term id="saml">SAML</Term>, and <Term id="scim">SCIM</Term>) are separate
+services that you create with `iam.protocolHost` callbacks and attach with `iam.useProtocol(service)`. Nothing is
+mounted until you do so: importing the umbrella package never activates a provider.
+
+They are opt-in because each protocol is another public surface. An OAuth token endpoint, a SAML assertion consumer,
+or a SCIM API accepts requests from outside systems, and every one needs its own keys, trusted origins, and
+monitoring. An application that has no enterprise customers should not expose a SAML endpoint it never configured,
+so you mount exactly the protocols you use.
+
+## Mount the handler
+
+The handler is how browsers, the client SDK, and identity providers reach Better IAM. Serve it under `basePath`
+(default `/api/iam`). Every framework integration does this for you; see
+[Frameworks](/docs/frameworks) for Next.js, SvelteKit, NestJS, Express, Hono, Fastify, and others.
+
+<Tabs items={['Node', 'Fetch']}>
+<Tab value="Node">
+
+```ts title="server.ts"
+import { createServer } from 'node:http';
+import { iam } from './lib/iam';
+
+createServer((req, res) => {
+  void iam.nodeHandler(req, res);
+}).listen(3000);
+```
+
+</Tab>
+<Tab value="Fetch">
+
+```ts title="app/api/iam/[...path]/route.ts"
+import { iam } from '@/lib/iam';
+
+export const GET = (request: Request) => iam.handler(request);
+export const POST = (request: Request) => iam.handler(request);
+export const OPTIONS = (request: Request) => iam.handler(request);
+// Only when SCIM inbound is mounted under this path: identity providers also send these.
+export const PUT = (request: Request) => iam.handler(request);
+export const PATCH = (request: Request) => iam.handler(request);
+export const DELETE = (request: Request) => iam.handler(request);
+```
+
+</Tab>
+</Tabs>
+
+The IAM API itself only needs `GET`, `POST`, and `OPTIONS`. Forward every method to the handler when a mounted
+protocol needs more, as SCIM does for updates and deletions.
+
+## Mount protocols
+
+Create each protocol service with `...iam.protocolHost` and its own explicit configuration, then mount it. Mounted
+protocols are consulted before the IAM routes, in the order you mount them.
+
+```ts title="lib/protocols.ts"
+import { createOAuthLogin, createOAuthProvider } from 'better-iam/oauth';
+import { createSamlService } from 'better-iam/saml';
+import { createScimService } from 'better-iam/scim';
+import { iam } from './iam';
+
+const host = iam.protocolHost;
+
+// Inbound SCIM provisioning, served at /scim/v2 by default.
+iam.useProtocol(createScimService({ ...host }));
+
+// Tenant-managed SAML connections, served under /saml.
+iam.useProtocol(
+  createSamlService({
+    ...host,
+    serviceProvider: {
+      baseUrl: 'https://identity.example',
+      privateKey: secrets.samlSpKey,
+      publicCertificate: secrets.samlSpCertificate,
+    },
+  }),
+);
+
+// OAuth and OIDC sign-in, started at /oauth/login/{connectionId}.
+iam.useProtocol(createOAuthLogin({ ...host, trustedOrigins: ['https://product.example'], connections }));
+
+// The OAuth/OIDC authorization server. It needs Node's HTTP interfaces: serve it through iam.nodeHandler.
+iam.useProtocol(
+  createOAuthProvider({
+    ...host,
+    issuer: 'https://identity.example/oidc',
+    jwks: secrets.privateSigningJwks,
+    cookieKeys: secrets.cookieSigningKeys,
+    encryptionKey: secrets.base64Encoded32ByteEncryptionKey,
+    trustedOrigins: ['https://identity.example'],
+    interactionUrl: (uid) => `https://identity.example/interactions/${uid}`,
+    renderDevicePage: ({ kind, form }) => renderDeviceScreen(kind, form),
+    renderLogoutPage: ({ form }) => renderLogoutScreen(form),
+  }),
+);
+```
+
+Each service answers under its own default paths, which its `basePath` option (or, for the authorization server,
+its `issuer`) changes:
+
+| Service | Package | Default paths | Transport |
+| --- | --- | --- | --- |
+| SCIM 2.0 server | `better-iam/scim` | `/scim/v2/{connectionId}/Users`, `Groups`, `Bulk`, and the discovery documents; the admin JSON routes under `/scim/admin` | Fetch handler, served by either transport |
+| SAML service provider | `better-iam/saml` | `/saml/{connectionId}/login`, `/saml/{connectionId}/metadata`, `/saml/{connectionId}/acs`, and each configured connection's callback URL | Fetch handler, served by either transport |
+| OAuth and OIDC sign-in | `better-iam/oauth` | `/oauth/login/{connectionId}` and each connection's callback URL | Fetch handler, served by either transport |
+| OAuth/OIDC authorization server | `better-iam/oauth` | The issuer's path (for example `/oidc`) and `/.well-known/oauth-authorization-server` followed by that path | Node only: serve it through `iam.nodeHandler` |
+| SCIM outbound management API | `better-iam/scim` | `POST /scim/provisioning/targets/...` | Fetch handler, served by either transport |
+| Shared Signals transmitter metadata | `better-iam/oauth` | `/.well-known/ssf-configuration` followed by the issuer's path | Not a mounted service: call `signals.handler(request)` before `iam.handler` ([Shared Signals](/docs/federation/shared-signals#serve-the-transmitter-metadata)) |
+
+When a protocol is mounted through IAM, a successful federated sign-in sets the standard IAM
+<Term id="session">session</Term> cookie.
+Protocol requests run with the same client details as any other request, so tenant IP allowlists, network blocks,
+and IP-bound sessions judge federated sessions exactly like password sign-ins. If you use a protocol package
+standalone instead, you apply the returned session to your own response and must implement every host callback as
+a trusted server function.
+
+The protocol guides cover each service's configuration: [OAuth sign-in](/docs/federation/oauth-sign-in),
+[OAuth provider](/docs/federation/oauth-provider), [SAML](/docs/federation/saml), [SCIM inbound](/docs/federation/scim),
+and [SCIM outbound](/docs/federation/scim-outbound). The [Federation overview](/docs/federation#who-configures-what)
+explains which parts your team configures and which ones customers manage at runtime.
+
+### Interaction routes are yours
+
+The OAuth provider does not render login, consent, device, or logout screens; your application does. Those
+routes must:
+
+- validate the Origin and CSRF protection on every POST;
+- authenticate a real IAM credential (the signed-in session) and pass that credential to
+  `issuer.completeInteraction(req, res, { credential, consent })`;
+- never treat account IDs or tenant IDs posted from a form as verified identity;
+- render the provider-generated device and logout forms unchanged, because they carry the required CSRF fields.
+
+### Raw mounts
+
+The `protocols` option accepts raw mounts, `{ handle?(request), nodeHandler?(req, res) }`, consulted before the
+IAM routes. A `handle` returns a `Response` when it answered, or `undefined` to pass. A raw `nodeHandler` sees
+every request, so it must return `true` (or end the response) only for paths it owns. `useProtocol` builds the same
+kind of mount and restricts a service's Node handler to its own `basePath`.
+
+## What the handler enforces
+
+You do not need to add these protections yourself. Every request through `handler` or `nodeHandler` passes the
+same boundary:
+
+- **Routing.** Protocol mounts answer first. Other paths outside `basePath` get a 404. `GET` serves only
+  `basePath/health` and `basePath/metrics`; `OPTIONS` answers CORS preflights; the API itself is `POST` only. The
+  Node transport refuses `TRACE`, `CONNECT`, and `TRACK`.
+- **CSRF.** JSON mutations require `Content-Type: application/json` and `X-Better-IAM: 1`. Requests carrying
+  cookies also require an Origin header, and any Origin must exactly match `trustedOrigins`
+  (`UNTRUSTED_ORIGIN`, 403).
+- **CORS.** Trusted origins receive credentials-enabled CORS headers that expose `Retry-After` and
+  `X-Request-Id`, so browser clients can read error codes and back off.
+- **Body size.** IAM request bodies are capped at 64 KiB. The Node transport accepts up to 2 MiB for other paths,
+  such as protocol requests, and answers 413 beyond that.
+- **Credentials.** A bearer credential takes precedence over the session cookie, so a bearer-authenticated
+  request neither replaces nor clears the browser's cookie.
+- **Response headers.** Every JSON response carries `Cache-Control: no-store`, `X-Content-Type-Options: nosniff`,
+  and `Referrer-Policy: no-referrer`. A valid `X-Request-Id` is echoed; see
+  [Observability](/docs/operations/observability#request-ids).
+- **Cookies.** Over HTTPS the session cookie is `__Host-better-iam.session`: Secure, HttpOnly, `SameSite=Lax` (or
+  `Strict` with `http.cookieSameSite`), and `Path=/`, with no parent-domain cookie. "Remember this device" uses its
+  own `better-iam.device` cookie with the same attributes. Loopback HTTP development uses non-prefixed names.
+
+Deployment and server capabilities (`iam.store`, `bootstrap`, `recoverRoot`, `assertionKey`, `protocolHost`) are
+never routed. Do not expose them through your own application RPC reflection either.
+
+<Callout type="warn" title="Rate limits at the ingress">
+Account-level rate limits do not replace ingress controls. Apply request body limits and network rate limits in
+front of the handler, and in particular to public discovery routes such as `tenants.lookup`.
+</Callout>
+
+## Next steps
+
+<Cards>
+  <Card title="Federation" href="/docs/federation">
+    What each protocol is for and who configures it.
+  </Card>
+  <Card title="Secrets and keys" href="/docs/operations/deployment/secrets">
+    Where the OAuth and SAML keys come from and how they rotate.
+  </Card>
+  <Card title="Protocol jobs" href="/docs/operations/jobs#protocol-jobs">
+    The background work the OAuth provider, Shared Signals, and SCIM outbound need.
+  </Card>
+</Cards>

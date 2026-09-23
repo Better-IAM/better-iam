@@ -1,0 +1,467 @@
+---
+title: Policy documents
+description: Versioned JSON policies, from statement fields and limits to how grants and boundaries combine, policy variables, versions, testing, and lint.
+icon: FileBraces
+packages: ['@better-iam/core', '@better-iam/server']
+sources:
+  - docs/policies.md
+  - packages/core/src/policy.ts
+  - packages/server/src/api/policies.ts
+  - packages/server/src/decisions.ts
+  - packages/server/src/policy-lint.ts
+  - packages/server/src/api/analysis.ts
+  - packages/server/src/api/tenants.ts
+  - packages/server/src/api/identities.ts
+---
+
+<Term id="role">Roles</Term> say who does which job. <Term id="policy">Policy</Term> documents say what a job
+actually allows, precisely enough for a computer to decide. A policy document is a list of
+<Term id="statement">statements</Term>. Each statement says "allow" or "deny", names the
+<Term id="action">actions</Term> it covers and the <Term id="resource">resources</Term> it applies to, and can add
+<Term id="condition">conditions</Term>: tests on the request, such as "the session used MFA" or "the caller owns
+this document".
+
+Because the format is plain JSON, policies can be stored, versioned, reviewed in pull requests, tested before
+they are saved, and linted for mistakes. The same format is used for everything that limits access too:
+<Term id="boundary">boundaries</Term>, <Term id="authority">grant-authority</Term> ceilings, trust ceilings, and
+session policies.
+
+This document lets its holders read every document, edit and delete their own documents from an MFA session,
+and never modify archived ones:
+
+```json title="A policy document"
+{
+  "version": 1,
+  "statements": [
+    {
+      "sid": "ReadDocuments",
+      "effect": "allow",
+      "actions": ["documents:read"],
+      "resources": ["document/*"]
+    },
+    {
+      "sid": "WriteOwnDocumentsWithMfa",
+      "effect": "allow",
+      "actions": ["documents:write", "documents:delete"],
+      "resources": ["document/*"],
+      "conditions": {
+        "StringEquals": { "resource.ownerId": "${principal.id}" },
+        "Bool": { "principal.mfa": true }
+      }
+    },
+    {
+      "sid": "NeverTouchArchived",
+      "effect": "deny",
+      "actions": ["documents:write", "documents:delete"],
+      "resources": ["document/archive-*"]
+    }
+  ]
+}
+```
+
+<TryInPlayground
+  grants={[
+    {
+      version: 1,
+      statements: [
+        { sid: 'ReadDocuments', effect: 'allow', actions: ['documents:read'], resources: ['document/*'] },
+        {
+          sid: 'WriteOwnDocumentsWithMfa',
+          effect: 'allow',
+          actions: ['documents:write', 'documents:delete'],
+          resources: ['document/*'],
+          conditions: {
+            StringEquals: { 'resource.ownerId': '${principal.id}' },
+            Bool: { 'principal.mfa': true },
+          },
+        },
+        {
+          sid: 'NeverTouchArchived',
+          effect: 'deny',
+          actions: ['documents:write', 'documents:delete'],
+          resources: ['document/archive-*'],
+        },
+      ],
+    },
+  ]}
+  action="documents:write"
+  resource="document/q3-plan"
+  context={{ 'principal.id': 'usr_alice', 'principal.mfa': true, 'resource.ownerId': 'usr_alice' }}
+>
+  Try this document in the playground
+</TryInPlayground>
+
+In TypeScript, write documents with `definePolicy` from `better-iam`. It validates the document when your code
+loads, so a malformed policy fails at startup rather than when it is saved, and it returns a detached copy with
+its literal types preserved.
+
+## Document fields
+
+A document has two fields:
+
+<TypeTable
+  type={{
+    version: {
+      type: '1',
+      description: 'The format version, so the format can evolve without breaking stored documents. Only 1 exists today.',
+      required: true,
+    },
+    statements: {
+      type: 'PolicyStatement[]',
+      description: 'The allow and deny rules, in any order: evaluation does not depend on statement order. At most 128.',
+      required: true,
+    },
+  }}
+/>
+
+Each statement:
+
+<TypeTable
+  type={{
+    sid: {
+      type: 'string',
+      description: 'A short name for the statement, such as ReadDocuments, so explanations and lint results can point at it. Optional; 1 to 128 characters, unique within the document.',
+    },
+    effect: {
+      type: "'allow' | 'deny'",
+      description: 'What happens when the statement applies: allow grants the request, deny refuses it. A deny always wins over any allow.',
+      required: true,
+    },
+    actions: {
+      type: 'string[]',
+      description: 'The actions the statement covers, as 1 to 128 patterns such as documents:read, documents:*, or *. Policy variables are not allowed here.',
+      required: true,
+    },
+    resources: {
+      type: 'string[]',
+      description: 'The resources the statement covers, as 1 to 128 patterns of the form type/id, such as document/* for every document. Variables may appear after the resource type.',
+      required: true,
+    },
+    conditions: {
+      type: 'Record<Operator, Record<string, Value | Value[]>>',
+      description: 'Optional tests on the request that must all hold for the statement to apply, such as Bool on principal.mfa. See the Conditions page for the 21 operators.',
+    },
+  }}
+/>
+
+Documents are validated when they are stored and again before they are evaluated. Anything outside these limits
+is rejected with `INVALID_POLICY`:
+
+- The document and each statement are plain objects, and unknown fields are rejected.
+- Action and resource patterns are nonempty strings of at most 512 characters without control characters.
+- `conditions` is a nonempty map of known operators. Each operator lists 1 to 64 keys, each key is 1 to 128
+  characters (and never `__proto__`, `prototype`, or `constructor`), and each key has 1 to 64 expected values of
+  the operator's type. String values are at most 2048 characters.
+- Every `${...}` must be a well-formed [policy variable](#policy-variables).
+
+Stored documents are also checked against the [permission catalog](/docs/guides/authorization/catalog#how-documents-are-validated):
+unknown exact actions fail with `INVALID_ACTION`, and unknown exact resource types with `INVALID_RESOURCE_TYPE`.
+
+## Actions and resource patterns
+
+A statement rarely names one action on one resource. Patterns let it cover a family, such as "every document" or
+"every documents action". Patterns are anchored globs: `*` matches any run of characters, including none and
+including `/` and `:`, and `?` matches exactly one character. Nothing else is special: patterns are never regular
+expressions, so a `.` or `+` in a name means just that character.
+
+| Pattern | Matches |
+| --- | --- |
+| `documents:read` | Exactly that action. |
+| `documents:*` | Every action in the `documents` namespace, including ones added later. |
+| `*` | Every action, or every resource. |
+| `document/q3-plan` | One resource. |
+| `document/*` | Every resource of type `document`. |
+| `*/report` | Resources with ID `report` of any type. |
+| `iam/*` | Every administrative resource of the tenant. |
+| `iam/task/apollo-*` | Administration of `task` resources whose IDs start with `apollo-`. |
+
+A request's resource is the string `type/id` (at most 2048 characters), inside a tenant that was resolved before
+evaluation. A pattern cannot reach another tenant, however it is written.
+
+## How statements combine
+
+A person usually holds several roles, each with several statements, and some of them may disagree. The combining
+rules decide the outcome, and they are designed so that adding a restriction is always safe: a deny cannot be
+undone by another role's allow.
+
+A statement applies to a request when one of its action patterns matches the action, one of its resource
+patterns matches the resource, and all of its conditions hold. The <Term id="grant">grants</Term> are the
+documents a person holds through their roles; the boundaries are the ceiling documents described
+[below](#boundaries). The evaluator combines every applicable statement:
+
+1. **<Term id="explicit-deny">Explicit deny</Term>.** If any applicable statement is a deny, the request is denied
+   (`explicit-deny`), whatever else allows it. This includes deny statements inside boundaries.
+2. **Grants union.** Otherwise the request needs at least one applicable allow among the grants (`no-grant`
+   when there is none).
+3. **Boundaries intersect.** Every boundary is independent, and each one must contain an applicable allow.
+   One boundary without a match denies the request (`boundary-deny`). No boundaries at all means no restriction.
+4. Only then is the request `allowed`.
+
+Boundaries constrain; they never grant access. An allow inside a boundary only lets grants through.
+
+You can run the same evaluator anywhere, which is handy in unit tests for your policies. `evaluatePolicy`, exported
+from `better-iam`, takes an action, a resource string, grant and boundary documents, and a context, and returns
+the decision. It is also what the [policy playground](/playground) runs in the browser:
+
+```ts title="Evaluate offline"
+import { evaluatePolicy } from 'better-iam';
+
+const decision = evaluatePolicy({
+  action: 'documents:write',
+  resource: 'document/q3-plan',
+  grants: [
+    { version: 1, statements: [{ sid: 'Write', effect: 'allow', actions: ['documents:*'], resources: ['document/*'] }] },
+  ],
+  boundaries: [
+    { version: 1, statements: [{ effect: 'allow', actions: ['documents:*'], resources: ['*'], conditions: { Bool: { 'principal.mfa': true } } }] },
+  ],
+  context: { 'principal.mfa': true },
+});
+// { allowed: true, reason: 'allowed', matched: ['grant:0:Write', 'boundary:0:0'] }
+```
+
+`matched` lists every applicable statement as `grant:{document}:{sid}` or `boundary:{document}:{sid}`, using the
+statement's position when it has no `sid`. The offline evaluator knows nothing about tenants or identities: the
+caller must establish trusted context and tenant scope. On the server, the context is built for you (see
+[Context keys](/docs/guides/authorization/conditions#context-keys)).
+
+Public authorization responses omit matched statements. The administrator-only
+[simulation API](/docs/guides/authorization/reviews#explain-one-decision) returns them, and `policies.test` returns
+them for candidate documents.
+
+## Boundaries
+
+Grants answer "what may this person do?". A boundary answers a different question: "what is the most anyone
+here may ever do, whatever their roles say?". It is a policy document used as a ceiling. You reach for one when
+the people writing roles should not be the last line of defense: a platform operator fencing off a trial tenant,
+an integration key that must only read, or a delegated administrator who must never grant billing access.
+
+Several kinds of boundary can apply to one request, and each one is an independent intersection:
+
+| Boundary | What it is for | Set with |
+| --- | --- | --- |
+| Tenant boundary | Caps everything in a tenant and its descendants, for example a plan that excludes webhooks. | `tenants.setBoundary` (root only, `iam:boundaries:update`, recent authentication), or `boundary` on `tenants.create` |
+| Principal boundary | Caps one identity in one tenant, whatever roles it later receives. | `identities.setBoundary` (root only, `iam:boundaries:update`) |
+| Grant-authority ceiling | Caps every role, policy, and binding issued under a delegated authority or below it. | `authorities.create`; see [Grant authorities](/docs/guides/authorization/roles#grant-authorities) |
+| Trust ceiling | Caps role sessions started through one trust. | `trust.create({ ceiling })`; see [Role sessions](/docs/guides/authorization/temporary-access#role-sessions) |
+| Session policy | Caps one role session or one API key below what its identity could do. | `roles.assume({ policy })`, `credentials.create({ policy })`, or `scopes` |
+| Credential authority | Caps every request made with an API key at its issuing authority's ceilings, and a session exchanged from an external identity provider's token at the ceilings of whoever registered that provider. | Automatic |
+
+`tenants.setBoundary` replaces the boundary of one tenant, and `identities.setBoundary` replaces the boundary of
+one person or service account. Both are platform-controlled: only root administrators may call them, so tenant
+administrators cannot lift their own ceilings. Delegation can create a narrower child authority while retaining
+its parent chain, and there is no arbitrary policy-containment solver, so a ceiling is enforced when a request is
+evaluated rather than proved when a role is created.
+
+```ts title="A tenant ceiling set by a root administrator"
+await iam.api.tenants.setBoundary(rootCredential, {
+  tenantId,
+  boundary: {
+    version: 1,
+    statements: [
+      { effect: 'allow', actions: ['*'], resources: ['*'] },
+      { effect: 'deny', actions: ['iam:webhooks:*'], resources: ['*'] },
+    ],
+  },
+});
+```
+
+<Callout type="info" title="Deny inside a boundary">
+  A deny statement in a boundary denies with `explicit-deny`, like a deny in a grant. A boundary that lists only
+  denies, though, has no allow for anything and therefore blocks every request. Pair its denies with a broad allow,
+  as above.
+</Callout>
+
+<TryInPlayground
+  grants={[
+    {
+      version: 1,
+      statements: [{ sid: 'TenantAdministrator', effect: 'allow', actions: ['iam:*'], resources: ['*'] }],
+    },
+  ]}
+  boundaries={[
+    {
+      version: 1,
+      statements: [
+        { sid: 'Everything', effect: 'allow', actions: ['*'], resources: ['*'] },
+        { sid: 'NoWebhooks', effect: 'deny', actions: ['iam:webhooks:*'], resources: ['*'] },
+      ],
+    },
+  ]}
+  action="iam:webhooks:create"
+  resource="iam/webhooks"
+  context={{ 'principal.id': 'usr_admin' }}
+>
+  See a boundary override an administrator role
+</TryInPlayground>
+
+The grant allows every administrative action, and the boundary still denies creating a webhook. Change the action to
+`iam:roles:create` and the same administrator is allowed, because the boundary's broad allow covers it.
+
+## Policy variables
+
+"People may edit their own documents" is one rule, but without variables it would need one statement per person.
+A <Term id="policy-variable">policy variable</Term> fills in a value from the request instead. A resource pattern
+or a string condition value may reference a trusted context key as `${key}`, and the value is substituted before
+matching, so one statement can describe "the caller's own" resources:
+
+```json title="Owner-only access"
+{
+  "effect": "allow",
+  "actions": ["documents:*"],
+  "resources": ["document/*"],
+  "conditions": { "StringEquals": { "resource.ownerId": "${principal.id}" } }
+}
+```
+
+```json title="A home folder per person"
+{ "effect": "allow", "actions": ["folders:read"], "resources": ["folder/home-${principal.id}"] }
+```
+
+The rules:
+
+- **Where.** Variables work in resource patterns after the resource type (the part before the first `/`), in the
+  values of the `String*` operators, and in the values listed for `ArrayContains` and `ArrayContainsAll`. They
+  may not appear in action names or in the resource type segment; either is rejected when the document is stored.
+- **Syntax.** A key starts with a letter or underscore and continues with letters, digits, `_`, `.`, `:`, or `-`,
+  up to 128 characters. A malformed reference such as `${principal.id` is rejected when the document is stored.
+- **Literal substitution.** The substituted value always matches literally: a value containing `*` or `?` cannot
+  widen a pattern.
+- **Unresolved never matches.** A variable whose key is absent from the context, or holds a list, does not
+  resolve, and the pattern or value that uses it never matches. Strings, numbers, and booleans resolve.
+- **Any trusted key.** Any key from `resolveContext` can be referenced, so `${principal.department}` works once
+  the application supplies it (or it is a declared identity attribute).
+
+<Callout type="warn" title="Unresolved variables and negated operators">
+  A negated operator inverts a comparison that failed, so `StringNotEquals` against an unresolved variable
+  evaluates **true**. Add `Exists: { "principal.department": true }` to such statements. Likewise,
+  `StringLikeIgnoreCase` lowercases its pattern, variable names included, so a variable whose key has capital
+  letters never resolves there; use `StringLike` or a lowercase key. The linter reports both.
+</Callout>
+
+## Manage stored policies
+
+An inline role document is fine for a role's own permissions. When several roles share the same rules, store
+them once as a policy and attach it to each role, so a fix reaches all of them. Stored policies are also
+versioned: each save keeps the previous document, so you can see what changed and roll back a bad edit without
+rebuilding the old document by hand.
+
+```ts title="Create, update, restore"
+const policy = await iam.api.policies.create(credential, {
+  tenantId,
+  name: 'Document editors',
+  document: editorsDocument,
+});
+
+// Updates require the version you read (optimistic concurrency).
+const updated = await iam.api.policies.update(credential, {
+  tenantId,
+  policyId: policy.id,
+  version: policy.version,
+  document: revisedDocument,
+});
+
+const history = await iam.api.policies.listVersions(credential, { tenantId, policyId: policy.id });
+await iam.api.policies.restoreVersion(credential, { tenantId, policyId: policy.id, version: 1 });
+```
+
+- `policies.create` stores a new policy at version 1. It requires `iam:policies:create` and records the caller's
+  grant authority. The tenant's `policies` plan limit, when set, applies (`LIMIT_EXCEEDED`).
+- `policies.update` saves a new document, name, or description as the next version. It requires
+  `iam:policies:update` and the `version` you read, so two administrators editing at once cannot silently
+  overwrite each other: a stale version fails with `VERSION_CONFLICT` (409). An update with nothing to change
+  fails with `INVALID_INPUT`.
+- `policies.listVersions` returns the policy's history, every version oldest first, including the current one.
+- `policies.restoreVersion` rolls back to an earlier document by saving it as a new version, so history is never
+  rewritten. It re-validates the old document against today's catalog: a document that names an action removed
+  since then fails with `INVALID_ACTION`. Restoring the current version fails with `INVALID_INPUT`.
+- `policies.delete` removes a policy no role uses any more. It is refused while any role attaches the policy
+  (`RESOURCE_IN_USE`).
+- `policies.get` returns one policy and `policies.list` every policy of the tenant; both require
+  `iam:policies:read`.
+
+Only the holder of the authority that created a policy, or root, can edit or delete it, and the protected
+_Owner_ policy cannot be changed at all (`PROTECTED_RESOURCE`). Attach policies to roles with `policyIds` on
+[`roles.create` and `roles.update`](/docs/guides/authorization/roles#create-a-role).
+
+## Test a document before saving it
+
+A policy that is wrong in production either locks people out or lets them in. Two tools catch mistakes before a
+document is saved: a test that evaluates it against sample requests, and a linter that reads it for common
+errors.
+
+`policies.test` evaluates a candidate document that is not stored against an action, a resource string, and a
+context you supply, and returns the full decision with the matched statements. It requires
+`iam:policies:simulate` and validates the document against the catalog first. It is meant for policy editors and
+CI: it creates no session and grants nothing.
+
+```ts
+const decision = await iam.api.policies.test(credential, {
+  tenantId,
+  document: candidate,
+  action: 'documents:write',
+  resource: 'document/alice-notes',
+  context: { 'principal.id': 'alice', 'principal.mfa': true, 'resource.ownerId': 'alice' },
+});
+```
+
+The context holds at most 200 keys. `principal.tenantId` and `resource.tenantId` default to the tenant and
+`request.time` to the current time; your context may override them. To see how a stored configuration treats a
+real person, use [`policies.simulate`](/docs/guides/authorization/reviews#explain-one-decision) instead.
+
+### Lint
+
+Some policies are valid but almost certainly not what their author meant: a deny that can never apply, an allow
+that a deny always cancels, a condition on a key the server never sets. The linter finds these.
+
+`analysis.lintPolicy({ tenantId, document })` or `analysis.lintPolicy({ tenantId, policyId })` checks a candidate
+or stored document the way the server will evaluate it. It requires `iam:policies:read`. It first validates the
+document against the catalog, returning `valid: false` with the `error` (such as `INVALID_ACTION`) when that
+fails, and otherwise returns `warnings` sorted by statement. Pass `contextKeys` to declare keys your
+`resolveContext` supplies, so the linter does not report them as unknown. A `warning` means the document likely
+does not do what it says; `info` is worth a look but often intended.
+
+| Code | Severity | What it reports |
+| --- | --- | --- |
+| `unrestricted-admin` | warning | An unconditional allow of `*` or `iam:*` on `*`: every holder is a full administrator. |
+| `service-wildcard` | info | An unconditional service-wide wildcard such as `documents:*`, which also grants actions added later. |
+| `unknown-context-key` | warning | A condition key or variable the server never sets (for example `request.ip`) and the configuration does not declare. |
+| `optional-key-deny` | warning | A deny conditioned on a key that can be missing (`principal.authMethod`, `principal.mfaTime`, `request.sourceIp`, session tags, identity attributes, resource attributes, application keys), which silently never applies without an `Exists` guard. |
+| `negated-variable` | warning | A negated string operator whose variable may not resolve, which then evaluates true. |
+| `ignorecase-variable` | warning | `StringLikeIgnoreCase` with a variable whose key has capitals, which never resolves. |
+| `array-key-string-operator` | warning | A string operator on `principal.groups`, `principal.roles`, or a relation list, where only `ArrayContains` works. |
+| `array-variable` | warning | A variable that names a list, which never resolves. |
+| `type-mismatch` | warning | An operator that can never match the key's type, such as `NumericEquals` on a boolean. |
+| `always-true-condition` | info | `Bool` or `Exists` listing both `true` and `false`. |
+| `duplicate-statement` | info | A statement that repeats an earlier one. |
+| `shadowed-allow` | warning | An allow whose every action and resource an unconditional deny also covers, so it never grants anything. |
+| `deny-only` | info | A document without allow statements: it grants nothing, though its denies still restrict every holder. |
+| `shadowed-allow-skipped` | info | The shadowing check ran out of its work budget, so adversarial documents stay fast. |
+
+`lintPolicy` is also exported from `better-iam/server` for offline use, for example in CI. The offline form checks
+the document's structure but not your tenant's catalog; pass `identityAttributes`, `resourceAttributes`, and
+`contextKeys` as its second argument to describe your deployment.
+
+```ts title="scripts/lint-policies.ts"
+import { lintPolicy } from 'better-iam/server';
+
+const result = lintPolicy(document, { identityAttributes: { department: 'string' }, contextKeys: ['app.plan'] });
+for (const warning of result.warnings) console.log(warning.severity, warning.code, warning.message);
+```
+
+The access analysis (`analysis.findings`) reports stored policies and inline role documents with lint warnings as
+`policy-lint` findings. See [Access reviews](/docs/guides/authorization/reviews#scan-for-risky-configuration).
+
+## Next steps
+
+<Cards>
+  <Card title="Conditions" href="/docs/guides/authorization/conditions">
+    Every operator and context key.
+  </Card>
+  <Card title="Policy playground" href="/playground">
+    Evaluate grants and boundaries in your browser.
+  </Card>
+  <Card title="Policies API" href="/docs/reference/api/policies">
+    Signatures for create, update, test, simulate, and reviews.
+  </Card>
+</Cards>

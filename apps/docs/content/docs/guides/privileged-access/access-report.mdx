@@ -1,0 +1,195 @@
+---
+title: Access report
+description: One document with what ends soon, what is elevated now, and which keys nobody uses, plus digest emails to owners and expiry reminders.
+icon: ClipboardList
+packages: ['@better-iam/server', '@better-iam/cli']
+sources:
+  - docs/privileged-access.md
+  - docs/deployment.md
+  - packages/server/src/api/reports.ts
+  - packages/server/src/lifecycle.ts
+---
+
+End dates and just-in-time roles only help if someone keeps an eye on them. A contractor whose account ends
+tomorrow may need an extension today; an administrator <Term id="activation">activation</Term> that has been live
+all week deserves a question; an API key nobody has used in months should probably be revoked.
+
+The _access report_ puts that picture in one document per organization. Two scheduled jobs deliver it for you:
+the _access digest_ emails it to the organization's owners, and _expiry reminders_ tell each person what of
+theirs ends soon, so they can ask for an extension before they lose access.
+
+## The report
+
+`reports.access` builds the report for one organization. Use it for a Reports page, or run it nightly and post it
+to a chat channel or ticketing system. The console shows it under Reports, and the CLI prints it with
+`better-iam report --tenant ID`.
+
+It covers:
+
+- **Identities** ending within the window, including ones already past their deadline that the purge worker has
+  not disabled yet.
+- **Grants** ending within the window: temporary bindings, and temporary group memberships. Future-dated bindings
+  starting within the window are listed too, so new access does not surprise anyone.
+- **Elevation**: live just-in-time activations with their justification, and the number of activation requests
+  waiting for approval.
+- **API keys** unused for `unusedForMs` (including keys never used) and keys ending within the window.
+
+<Tabs items={['API', 'CLI']}>
+<Tab value="API">
+
+```ts
+const report = await iam.api.reports.access(credential, {
+  tenantId,
+  withinMs: 30 * 86400_000, // look 30 days ahead (the default)
+  unusedForMs: 30 * 86400_000, // keys unused for 30 days (the default)
+});
+if (report.omitted.length) console.warn('Sections hidden from this caller:', report.omitted);
+```
+
+</Tab>
+<Tab value="CLI">
+
+```sh
+BETTER_IAM_TOKEN=... better-iam report --config better-iam.config.mjs --tenant TENANT_ID --within-days 30 --unused-days 30
+```
+
+</Tab>
+</Tabs>
+
+<TypeTable
+  type={{
+    generatedAt: { type: 'number', description: 'When the report was built, in epoch milliseconds.' },
+    withinMs: {
+      type: 'number',
+      description: 'How far ahead the report looks for things that end or start (0 to ten years, 30 days by default).',
+    },
+    unusedForMs: {
+      type: 'number',
+      description: 'How long a key must have gone unused to be listed (0 to ten years, 30 days by default).',
+    },
+    identities: {
+      type: '{ total, disabled, expiring }',
+      description: 'How many identities exist and are disabled, and the ones whose deadline falls in the window. Each has expired set when it is already past.',
+    },
+    bindings: {
+      type: '{ total, eligible, windowed, expiring, starting, activations, pendingRequests, expiringMemberships }',
+      description: 'Binding counts (all, eligible, with a business-hours window), bindings ending or starting in the window, live activations, waiting activation requests, and memberships ending in the window.',
+    },
+    credentials: {
+      type: '{ total, unused, expiring }',
+      description: 'How many API keys exist, the ones unused for unusedForMs, and the ones ending in the window.',
+    },
+    omitted: {
+      type: "('bindings' | 'credentials')[]",
+      description: 'The sections left out because the caller may not read them.',
+    },
+  }}
+/>
+
+The report needs `iam:identities:read`. The binding and key sections additionally need `iam:bindings:read` and
+`iam:credentials:read`. Sections the caller may not read are left out and named in `omitted` rather than failing
+the whole call, so a directory administrator without `iam:credentials:read` still gets the identity section.
+
+An activation or request counts only while it could still grant: its binding is live and eligible, its holder is
+active, and, for a group binding, the holder is still a member.
+
+The CLI acts as the session or API key in `BETTER_IAM_TOKEN`, so each run is authorized and audited like any
+other call.
+
+## The access digest
+
+Most organizations will not open a Reports page every morning. `iam.sendAccessDigest()` (CLI `digest`) does the
+routing: every active organization whose report has findings gets it emailed to its owners, at most once per 20
+hours. Organizations with nothing to report get no email.
+
+<Tabs items={['API', 'CLI']}>
+<Tab value="API">
+
+```ts
+const result = await iam.sendAccessDigest({ withinMs: 30 * 86400_000, unusedForMs: 30 * 86400_000 });
+// result.sent: [{ tenantId, recipients, expiringIdentities, expiringBindings, startingBindings,
+//                 expiringMemberships, activations, pendingRequests, unusedKeys, expiringKeys }]
+// result.skipped: { inactive, recent, quiet, noOwners }
+```
+
+</Tab>
+<Tab value="CLI">
+
+```sh
+better-iam digest --config better-iam.config.mjs --within-days 30 --unused-days 30
+better-iam outbox --config better-iam.config.mjs
+```
+
+</Tab>
+</Tabs>
+
+- It is a <Term id="deployment-operation">deployment operation</Term> for schedulers: it needs no credential and
+  includes every report section.
+- `tenantId` limits it to one organization, and `minimumIntervalMs` (20 hours by default) sets how often one
+  organization may be emailed.
+- Each active owner with an email address receives an `access-digest` email. Its payload carries the finding
+  counts and the full report as JSON (`report`), so your email template can summarize it or attach it.
+- Organizations are skipped when they are not active, were emailed within the interval (`recent`), have nothing
+  to report (`quiet`), or have no owner with an email (`noOwners`).
+- Each digest is recorded as `tenant:access-digest` (actor `deployment-operator`) with the recipients and the
+  finding counts.
+- It needs the configured `sendEmail` callback (`DELIVERY_REQUIRED` otherwise). The emails are queued in the
+  <Term id="outbox">delivery outbox</Term>, so run `outbox` (or `iam.auth.dispatchOutbox()`), which delivers
+  queued messages, afterwards.
+
+## Expiry reminders
+
+Owners are not the only ones who need to know. `iam.sendExpiryReminders()` (CLI `remind`) tells the people
+themselves: everyone whose account, direct role bindings, group memberships, or package assignments end within the
+window (seven days by default) gets one `expiry-reminder` email listing them. They can then ask for an extension
+before they are locked out.
+
+<Tabs items={['API', 'CLI']}>
+<Tab value="API">
+
+```ts
+const result = await iam.sendExpiryReminders({ withinMs: 7 * 86400_000 });
+// result.sent: [{ tenantId, identityId, items }], result.skipped: { inactive, quiet }
+```
+
+</Tab>
+<Tab value="CLI">
+
+```sh
+better-iam remind --config better-iam.config.mjs --within-days 7
+```
+
+</Tab>
+</Tabs>
+
+- Each item is reminded once per end date, so extending the access brings a fresh reminder when the new end comes
+  into the window.
+- The `expiry-reminder` payload carries `count`, `earliest`, and `items` as JSON with the `kind` (`account`,
+  `role`, `group`, or `package`), `name`, and `expiresAt` of each.
+- A package's own bindings and memberships are reminded as the package.
+  <Term id="eligible-binding">Eligible bindings</Term> are not reminded, and group bindings are left to the
+  owners' digest.
+- Each reminder is recorded as `identity:expiry-reminder` on the person (actor `deployment-operator`) with the item
+  keys, which is how the job knows not to remind anyone twice.
+- `withinMs` ranges from one minute to a year. Like the digest, it needs no credential, needs a `sendEmail`
+  callback, and relies on the outbox for delivery. Schedule it daily beside the digest.
+
+## Scheduling
+
+| Job                  | Call                          | CLI      | Suggested cadence | Why                                          |
+| -------------------- | ----------------------------- | -------- | ----------------- | -------------------------------------------- |
+| Report to a channel  | `reports.access`              | `report` | nightly           | A shared view for the team that runs access. |
+| Owner digest         | `iam.sendAccessDigest()`      | `digest` | daily             | Owners hear about findings without looking.  |
+| Personal reminders   | `iam.sendExpiryReminders()`   | `remind` | daily             | People ask for extensions before they are locked out. |
+
+See [scheduling](/docs/guides/governance/scheduling) for the other governance jobs and
+[background jobs](/docs/operations/jobs) for how to run them.
+
+<Cards>
+  <Card title="reports.access" href="/docs/reference/api/reports#access">
+    Signature and result type.
+  </Card>
+  <Card title="CLI: report, digest, remind" href="/docs/reference/cli#report">
+    Flags and defaults.
+  </Card>
+</Cards>

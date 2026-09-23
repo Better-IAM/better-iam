@@ -1,0 +1,263 @@
+---
+title: Configuration as code
+description: Export, plan, and apply a tenant's roles, policies, groups, teams, bindings, packages, agents, and guardrails as one reviewed document.
+icon: FileCode
+packages: ['@better-iam/server', '@better-iam/cli']
+sources:
+  - docs/privileged-access.md
+  - docs/policies.md
+  - docs/deployment.md
+  - docs/recipes.md
+  - packages/server/src/sync.ts
+  - packages/server/src/org-sync.ts
+  - packages/cli/src/index.ts
+---
+
+An access model built by clicking through a console has three problems. Nobody reviews a change before it takes
+effect, staging and production slowly drift apart, and when something goes wrong there is no history of who
+changed what and why.
+
+_Configuration as code_ solves them the way infrastructure as code does. The `config` API group treats a
+tenant's access model (roles, <Term id="policy">policies</Term>, groups, group <Term id="binding">bindings</Term>,
+<Term id="access-package">access packages</Term>, <Term id="invariant">guardrails</Term>, and
+<Term id="agreement">terms of use</Term>) as one JSON document keyed by name. You keep the document in version
+control, review changes as pull requests, apply the same file to staging and production, and let a pipeline fail
+when someone changed production by hand.
+
+People are not part of the document. Identities and their direct bindings are runtime state that changes every
+day, so they stay out of it.
+
+## The workflow
+
+<Steps>
+<Step>
+
+### Export
+
+`config.export` (`iam:config:read`, CLI `config-export`) writes a tenant's current model as a document. Use it
+once to start from what you have, or to copy staging's model to production.
+
+</Step>
+<Step>
+
+### Review
+
+Commit the document and review changes as pull requests like any other code.
+
+</Step>
+<Step>
+
+### Plan
+
+`config.plan` (CLI `config-plan`) compares the document with the tenant and lists every change it implies without
+writing anything: `create`, `update` (with the differing `fields`), `delete`, and `unchanged`. Read it before you
+apply, the way you read a Terraform plan.
+
+</Step>
+<Step>
+
+### Apply
+
+`config.apply` (`iam:config:apply`, CLI `config-apply`) makes the tenant match the document, in one transaction,
+and is audited as `config:apply`.
+
+</Step>
+<Step>
+
+### Guard against drift
+
+In CI, `config-plan --fail-on-drift` exits non-zero when production no longer matches the reviewed file, so a hand
+edit is noticed the same day.
+
+</Step>
+</Steps>
+
+<Tabs items={['API', 'CLI']}>
+<Tab value="API">
+
+```ts title="Staging to production"
+const document = await staging.api.config.export(credential, { tenantId: stagingTenant });
+
+const plan = await production.api.config.plan(credential, {
+  tenantId: productionTenant,
+  config: document,
+  prune: true,
+});
+console.log(
+  plan.summary, // { create, update, delete, unchanged }
+  plan.changes.filter((change) => change.action !== 'unchanged'),
+);
+
+await production.api.config.apply(credential, {
+  tenantId: productionTenant,
+  config: document,
+  prune: true,
+});
+```
+
+</Tab>
+<Tab value="CLI">
+
+```sh
+BETTER_IAM_TOKEN=... better-iam config-export --config better-iam.config.mjs --tenant TENANT_ID --output tenant.json
+BETTER_IAM_TOKEN=... better-iam config-plan --config better-iam.config.mjs --tenant TENANT_ID --input tenant.json --prune
+BETTER_IAM_TOKEN=... better-iam config-apply --config better-iam.config.mjs --tenant TENANT_ID --input tenant.json --prune
+```
+
+</Tab>
+</Tabs>
+
+## The document
+
+A document has `version: 1` and any subset of these kinds. Each kind is a list of items matched by name rather
+than ID, so the same file works in every environment even though IDs differ:
+
+| Kind            | Contents                                                                                                                                         |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `resourceTypes` | Tenant-defined resource types (with `permissions.mode: 'tenant-defined'`). `actions` are verbs.                                                  |
+| `policies`      | Named policy documents.                                                                                                                          |
+| `roles`         | Attached `policies` by name, plus a `permissions` list or an inline `document` (not both), and `inherits` by name.                              |
+| `groups`        | Groups with optional `members` as emails. When present, membership is made to match exactly.                                                     |
+| `bindings`      | Group to role, with every eligibility field (`eligible`, `maxActivationMs`, `requireJustification`, `requireMfa`, `requireApproval`, `approverGroup`, `managerApproval`) and `window`. |
+| `accessPolicy`  | The organization's [activation floors](/docs/guides/privileged-access/elevation#tenant-access-policy). `{}` clears them.                         |
+| `departments`   | The [org chart](/docs/guides/teams-and-departments) by `name` (matched ignoring case), with `code`, `description`, `parent` (a department name), `head` (an email), `costCenter`, and optional `members` as emails (when present, the department's people are made to match exactly). Needs `iam:departments:manage`. |
+| `teams`         | [Teams](/docs/guides/teams-and-departments) by `slug` (derived from `name` when left out), with `name`, `description`, `parent` (a team slug), `department` (a department name), `joinPolicy` (`closed` by default, or `request`), `memberManagement` (`maintainers` by default, or `admins`), `maintainers` and `members` as emails, `roles` by name (the team's standing role bindings, made to match exactly when present), and `syncGroups` (the groups team sync copies members from). Needs `iam:teams:*`. |
+| `packages`      | Access packages naming their `roles`, `groups`, and optional `autoAssign` rule, with `maxDurationMs`, `requireJustification`, `requestable`, `approverGroup`, and `managerApproval`. |
+| `agreements`    | [Terms of use](/docs/guides/governance/agreements) members must accept: `name`, `content`, `url`, `required` (default true), `reacceptAfterDays`. |
+| `invariants`    | [Access invariants](/docs/guides/governance/change-safety#access-invariants), guardrails such as "contractors never deploy": `name`, `description`, `subject`, `action`, `resource`, `expect`, `mode` (default `monitor`), `assumeMfa` (default true). |
+| `agents`        | [AI agents](/docs/guides/ai-agents) by name, with `sponsor` (an email), `description`, `purpose`, `model`, `provider`, `url`, `protocols`, `delegable`, `maxDelegatedSessionSeconds`, and `boundary`. Needs `iam:agents:*`. |
+| `inferenceModels` | The tenant's own [models](/docs/guides/inference), with `provider` by name, `upstreamModel`, prices, `tier`, limits, `fallbacks`, and `enabled`. Needs the `inference` option and `iam:inference:manage`. |
+| `inferenceBudgets` | Model budgets, with `subject` (`'tenant'`, `{ group }`, `{ identity: email }`, or `{ agent: name }`), `scope`, `period` (minute to month), and limits. Needs the `inference` option. |
+
+```json title="tenant.json"
+{
+  "version": 1,
+  "policies": [
+    {
+      "name": "Read documents",
+      "document": {
+        "version": 1,
+        "statements": [{ "effect": "allow", "actions": ["documents:read"], "resources": ["document/*"] }]
+      }
+    }
+  ],
+  "roles": [
+    { "name": "Reader", "policies": ["Read documents"] },
+    { "name": "Editor", "permissions": ["documents:write"], "inherits": ["Reader"] },
+    { "name": "Production admin", "permissions": ["deployments:*"] }
+  ],
+  "groups": [
+    { "name": "Engineering", "members": ["alice@example.com", "bob@example.com"] },
+    { "name": "Platform team", "members": ["carol@example.com"] }
+  ],
+  "bindings": [
+    { "group": "Engineering", "role": "Editor" },
+    {
+      "group": "Engineering",
+      "role": "Production admin",
+      "eligible": true,
+      "maxActivationMs": 7200000,
+      "requireJustification": true,
+      "requireMfa": true,
+      "requireApproval": true,
+      "approverGroup": "Platform team"
+    }
+  ],
+  "accessPolicy": { "requireMfa": true },
+  "invariants": [
+    {
+      "name": "Contractors never deploy",
+      "subject": { "attribute": { "name": "contractor", "value": true } },
+      "action": "deployments:create",
+      "resource": { "type": "environment", "id": "production" },
+      "expect": "deny",
+      "mode": "enforce"
+    }
+  ]
+}
+```
+
+### Names instead of IDs
+
+- Roles, groups, and policies can refer to items from the same document or already in the tenant. Role
+  inheritance is applied once every role of the document exists, so a parent and its child can be introduced
+  together.
+- Group `members` are emails, matched exactly when present; an unknown member email is a validation error.
+- In `bindings`, `approverGroup` names the approver group. In `packages`, `approverGroup` does the same, and
+  `autoAssign` rules list group names in `identity.groups`, team slugs in `identity.teams`, and department names in
+  `identity.departments` (teams and departments the document creates exist before its packages are saved).
+- An invariant's `subject` names groups and people portably: `{ "group": "Contractors" }` (the group may be
+  created by the same document), `{ "identity": "alice@example.com" }` (the person must exist),
+  `{ "attribute": { "name": "department", "value": "Sales" } }`, or `{ "everyone": true }`.
+- Agreements and invariants are matched by name regardless of case.
+- A team's or department's `parent` may come from the same document or already exist in the tenant. Unknown people,
+  roles, parents, or groups, and parent cycles, fail the plan with `INVALID_INPUT`. Teams and departments are saved
+  before packages, because package rules name them, and with `prune` they are deleted after packages, children before
+  parents.
+
+### What never belongs in the document
+
+Protected owner roles and policies, identities, their direct bindings, credentials (including agents' API keys),
+inference provider keys, delegations, and webhooks are never part of the document.
+
+For teams, the document describes only permanent, manually added members and standing role bindings. Temporary
+memberships, members that team sync copied in, join requests, and eligible, windowed, scheduled, temporary, or
+package-created bindings are runtime state: never exported, never removed. Naming a synced or temporary member in
+the document makes them a permanent manual member. A team's backing group (`team:{slug}`) never appears under
+`groups` or `bindings`, and department members' job titles are not part of the document. Who holds a package is runtime state, and so are a package rule's owner, revision, and approval.
+Exports list agreements, invariants, teams, departments, and the access policy only when the tenant has some.
+
+## How plan and apply work
+
+- **Omitted kinds are left alone.** A document without `groups` does not touch groups, so you can adopt
+  configuration as code one kind at a time.
+- **Pruning.** With `prune: true` (CLI `--prune`), items of a listed kind that the document does not name are
+  deleted. Use it once the file is the whole truth for a kind: removing a role from the file then removes it from
+  the tenant. Without it, apply only creates and updates.
+- **Authorization.** `plan` needs `iam:config:read`. `apply` needs `iam:config:apply` and authorizes each change
+  like the direct call (`iam:roles:create`, `iam:groups:update`, `iam:bindings:delete`, `iam:tenants:update` for
+  the access policy, `iam:agreements:manage`, `iam:invariants:manage`, and so on) under the caller's grant
+  authority.
+- **All or nothing.** A refusal or a validation error (an unknown action, a resource type still referenced by a
+  role, an unknown member email) rolls everything back. So does a <Term id="sod">separation-of-duties</Term>
+  conflict ([separation of duties](/docs/guides/authorization/separation-of-duties)) or an
+  [enforced invariant](/docs/guides/governance/change-safety#access-invariants) the apply would newly break.
+- **Invariants use the old rules.** Enforced invariants are checked around the whole apply against the
+  invariants as they were before it, so relaxing an invariant and making the change it forbade take two applies.
+- **Agreements.** A changed agreement `content` publishes a new version, so everyone accepts the new text. Other
+  agreement edits keep acceptances.
+- **Package rules.** Omitting `autoAssign` leaves a rule alone and `null` removes it. Apply does not reconcile and
+  does not pre-approve large changes: run `better-iam reconcile` afterwards.
+- **Audit.** The apply is recorded as `config:apply` with `prune`, the change summary, and `changed` (one entry per
+  change).
+
+## Drift checks in CI
+
+Sooner or later someone fixes an incident by editing production directly. A drift check makes sure that edit is
+noticed, and then either added to the file or reverted.
+
+`config-plan --fail-on-drift` prints the plan and exits non-zero with `CONFIG_DRIFT` when anything would be
+created, updated, or deleted, which turns it into a CI check or a nightly job. After an apply, run
+`check-invariants --fail-on-broken`, which evaluates the tenant's [access invariants](/docs/guides/governance/change-safety#access-invariants),
+so a pipeline also stops when a guardrail is broken.
+
+```yaml title=".github/workflows/iam.yml (excerpt)"
+- name: Production matches the reviewed file
+  run: better-iam config-plan --config better-iam.config.mjs --tenant "$TENANT_ID" --input tenant.json --fail-on-drift
+  env:
+    BETTER_IAM_TOKEN: ${{ secrets.BETTER_IAM_TOKEN }}
+```
+
+All three commands act as the session or API key in `BETTER_IAM_TOKEN`, so they are authorized and audited
+exactly like the console. `config-export` writes to standard output, or with `--output` to a new file (it refuses
+to overwrite one). Give the pipeline a [scoped API key](/docs/guides/privileged-access/lifecycle#api-key-hygiene)
+of a service account that holds only the `iam:config:*` and item permissions it needs.
+
+<Cards>
+  <Card title="config API reference" href="/docs/reference/api/config">
+    Signatures for export, plan, and apply.
+  </Card>
+  <Card title="CLI: config-plan" href="/docs/reference/cli#config-plan">
+    Flags for export, plan, and apply.
+  </Card>
+</Cards>

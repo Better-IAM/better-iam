@@ -1,0 +1,50 @@
+# root
+
+Root administrators run the platform itself: they create organizations, set plan limits, and help customers who are
+locked out. Their authority reaches every tenant, so it is a protected capability that only existing root
+administrators can grant or remove, and this group is where they do it. See
+[root administration](/docs/guides/concepts/tenants-and-identities#root-administration).
+
+## What root authority is
+
+Root authority is a protected flag (`rootAdmin`) on a human identity of the root tenant. It takes effect only in a
+user session with MFA, and it is checked against current storage on every use. A role named `root-admin`, a
+matching email, a linked account, or a token claim can never confer it.
+
+The first root administrator is created by [`iam.bootstrap()`](/docs/reference/api#bootstrap), and
+[`iam.recoverRoot()`](/docs/reference/api#recoverroot) lets the deployment operator create a new one when nobody
+can sign in as root any more; neither is an HTTP endpoint. Everyone after the first is added with
+[`setAdministrator`](#setadministrator). The last active root administrator is always protected, so the platform
+cannot be left without one.
+
+## listAdministrators
+
+Lists the identities that hold the root capability.
+
+- **Permission:** `iam:identities:read` on the root tenant; root administrators only.
+- **Audited as:** `iam:identities:read`.
+- **Errors:** `ACCESS_DENIED` for anyone but a root administrator in an MFA session; `INVALID_INPUT` when
+  `tenantId` is not the root tenant.
+
+Use it to review who holds platform-wide authority, for example in a quarterly access review. Identities are
+returned without credential material.
+
+## setAdministrator
+
+Grants the root capability to a person in the root tenant, or removes it.
+
+- **Permission:** `iam:root:grant` on the identity; root administrators only, with recent authentication.
+- **Audited as:** `iam:root:grant`.
+- **Errors:** `ACCESS_DENIED` for anyone but a root administrator in an MFA session; `RECENT_AUTH_REQUIRED` without
+  recent authentication; `INVALID_INPUT` when `tenantId` is not the root tenant, `enabled` is not a boolean, or the
+  identity is a service account; `NOT_FOUND` when the identity is not in the root tenant; `LAST_ROOT_ADMIN` when
+  removing the last active root administrator; `LAST_OWNER` when removing the capability from someone who is also
+  the root tenant's last active owner; `INVARIANT_VIOLATION` when the change would newly break an enforced access invariant.
+
+Only human identities (`kind: 'user'`) of the root tenant qualify. Every session the identity holds, including role sessions it assumed, is revoked in the same transaction, whether
+the capability is granted or removed. The person signs in again (with MFA) and gets a session that reflects the
+change, so no session keeps authority it was not issued with.
+
+```ts
+await iam.api.root.setAdministrator(rootCredential, { tenantId: rootTenantId, identityId, enabled: true });
+```

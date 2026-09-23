@@ -1,0 +1,278 @@
+---
+title: Deployment
+description: Runtime requirements, the betterIam() options every production instance sets, environment variables, and the deploy sequence with the CLI.
+icon: Rocket
+packages: ['better-iam', '@better-iam/server', '@better-iam/cli']
+sources: ['docs/deployment.md', 'packages/server/src/options.ts', 'packages/auth/src/service/base.ts', 'packages/cli/src/index.ts']
+---
+
+import { Database, KeyRound, Package, Plug, SlidersHorizontal } from 'lucide-react';
+
+A Better IAM deployment is your application process plus a database. There is no separate service to run:
+you construct one instance with `betterIam()`, mount its HTTP handler, run migrations at deploy time, and
+schedule a few worker jobs. This page covers the runtime, the options you must decide on, and the deploy
+sequence. The [configuration reference](/docs/operations/deployment/configuration) lists every option.
+
+## Runtime
+
+- **Node.js 22.12** or a newer supported LTS release. The CI matrix covers Node 22 and 24 on Windows and Linux.
+- **Database drivers:** each <Term id="adapter">storage adapter</Term> bundles its driver. SQLite uses a native
+  driver (`better-sqlite3`), libSQL uses `@libsql/client` (local files, embedded replicas, and remote Turso or sqld
+  databases), and PostgreSQL uses `pg`.
+- **No edge runtimes** for the complete authentication and protocol server. The OAuth issuer in particular needs
+  Node's HTTP interfaces (see [protocol mounts](/docs/operations/deployment/protocol-mounts)).
+
+## What every production instance sets
+
+Most options have safe defaults, but a few describe your deployment and have no sensible default. Configuration is
+validated once, when `betterIam()` runs, and invalid values throw `INVALID_CONFIG`. These are the options you
+cannot leave to defaults in production:
+
+<TypeTable
+  type={{
+    database: {
+      type: 'IamStore',
+      required: true,
+      description: 'A persistent storage adapter: PostgreSQL, SQLite, or libSQL. Never an in-memory database.',
+    },
+    secret: {
+      type: 'string',
+      required: true,
+      description: <>A stable, high-entropy deployment secret of at least 32 characters. It seals authenticator and webhook secrets and pending deliveries, keys one-time challenges, and derives the assertion key. Rotate it with <code>previousSecrets</code>, never by replacing it.</>,
+    },
+    baseURL: {
+      type: 'string',
+      required: true,
+      description: 'The public HTTPS URL of the deployment. HTTP is accepted only on localhost, 127.0.0.1, and [::1].',
+    },
+    trustedOrigins: {
+      type: 'string[]',
+      default: 'the baseURL origin',
+      description: 'Exact browser origins allowed to call the handler. Add your application origin when it differs from baseURL, for example app.example.com calling identity.example.com. The baseURL origin is always included.',
+    },
+    'authentication.sendEmail': {
+      type: '(message) => Promise<void>',
+      description: 'Delivers outbox email (invitations, verification, resets, notifications). Required by every email feature.',
+    },
+    'authentication.sendSms': {
+      type: '(message) => Promise<void>',
+      description: 'Delivers outbox SMS. Required by SMS passwordless sign-in and phone verification.',
+    },
+    'http.clientInfo': {
+      type: '(request) => SessionClientInfo',
+      description: 'Records the real client IP behind a proxy you control. IP allowlists, network blocks, IP-bound sessions, and new-sign-in notifications depend on it.',
+    },
+  }}
+/>
+
+Protocol keys are separate, explicit inputs: the OAuth provider's signing JWKs, its 32-byte encryption key and
+cookie keys, SAML signing and decryption keys, and the session-JWT keys in `sts.jwt`. No production signing key
+is ever generated inside a request handler, so supply each one from your secret store and keep it stable across
+replicas and restarts.
+
+```ts title="lib/iam.ts"
+import { betterIam } from 'better-iam';
+import { postgresAdapter } from 'better-iam/adapter-postgres';
+import { sendEmail, sendSms } from './delivery';
+
+export const iam = betterIam({
+  database: postgresAdapter({ connectionString: process.env.DATABASE_URL! }),
+  secret: process.env.BETTER_IAM_SECRET!,
+  // Only during a secret rotation: the old value(s), comma-separated.
+  previousSecrets: process.env.BETTER_IAM_PREVIOUS_SECRETS?.split(',').filter(Boolean),
+  baseURL: 'https://identity.example.com',
+  trustedOrigins: ['https://app.example.com'],
+  authentication: {
+    appName: 'Acme Cloud',
+    sendEmail,
+    sendSms,
+    passkeys: { rpID: 'example.com', rpName: 'Acme Cloud' },
+  },
+  http: {
+    // Trust this header only because your own proxy sets it.
+    clientInfo: (request) => ({
+      ip: request.headers.get('x-real-ip') ?? undefined,
+      userAgent: request.headers.get('user-agent') ?? undefined,
+    }),
+  },
+  observability: { metrics: { bearerToken: process.env.METRICS_TOKEN } },
+});
+```
+
+## Environment variables
+
+Better IAM reads configuration from your code, not from the environment. The variables below are the ones the
+CLI, the generated starter configuration, and the test suites use.
+
+| Variable | Used by | Purpose |
+| --- | --- | --- |
+| `BETTER_IAM_SECRET` | Starter configuration | The deployment `secret` (at least 32 characters). |
+| `BETTER_IAM_PREVIOUS_SECRETS` | Starter configuration, console | Comma-separated secrets being rotated out (`previousSecrets`). |
+| `BETTER_IAM_BASE_URL` | Starter configuration | The `baseURL` (defaults to `http://localhost:3000`). |
+| `DATABASE_URL` | Starter configuration (`postgres`) | The PostgreSQL connection string. |
+| `BETTER_IAM_DATABASE` | Starter configuration (`sqlite`) | The SQLite file (defaults to `./better-iam.db`). |
+| `BETTER_IAM_DATABASE_URL`, `BETTER_IAM_DATABASE_TOKEN` | Starter configuration (`libsql`) | The libSQL URL (defaults to `file:./better-iam.db`) and auth token. |
+| `BETTER_IAM_ROOT_EMAIL`, `BETTER_IAM_ROOT_NAME`, `BETTER_IAM_ROOT_PASSWORD` | `bootstrap`, `recover-root` | The root administrator to create. The name defaults to "Root administrator". |
+| `BETTER_IAM_TOKEN` | `config-*`, `analyze`, `report`, `mine-roles`, `check-invariants` | The session token or API key the command acts as. |
+| `BETTER_IAM_POSTGRES_URL`, `BETTER_IAM_POSTGRES_POOL_SIZE` | `pnpm test:postgres` | An isolated test database and the conformance pool size (default 3). |
+| `BENCH_IDENTITIES`, `BENCH_ITERATIONS` | `pnpm bench:scale` | Seeded identities (default 5000) and runs per operation (default 40). |
+
+## Deploy sequence
+
+The same few steps run the first time you deploy and, minus the one-time ones, on every release after that:
+
+<Steps>
+<Step>
+
+### Create the configuration (first time only)
+
+`better-iam init --database sqlite|postgres|libsql` writes a starter `better-iam.config.mjs` that reads the
+variables above. It refuses to overwrite an existing file. The CLI loads the default export of this trusted
+`.mjs` file as executable JavaScript: an options object, a factory returning one, or an instance already
+created with `betterIam()`.
+
+</Step>
+<Step>
+
+### Migrate
+
+`better-iam migrate` (or `iam.initialize()`) creates or upgrades the schema, runs plugin migrations, and
+backfills anything older releases left behind. Run it deliberately on every deploy, before the new release
+serves traffic. It is idempotent. See [Database operations](/docs/operations/deployment/database).
+
+</Step>
+<Step>
+
+### Bootstrap the root (once)
+
+`better-iam bootstrap` creates the <Term id="root">root tenant</Term> and its first root administrator, the account
+from which all administration starts. It runs only against an uninitialized installation. Supply `BETTER_IAM_ROOT_EMAIL`,
+`BETTER_IAM_ROOT_NAME`, and `BETTER_IAM_ROOT_PASSWORD` through the environment; passwords are never accepted on
+the command line. The result contains the root tenant and identity IDs and `mfaEnrollmentRequired: true`:
+enroll MFA before the account is used, because root authority requires an MFA session.
+
+</Step>
+<Step>
+
+### Check the deployment
+
+`better-iam doctor --strict` connects, reports the schema, storage settings, and findings, and exits non-zero
+(`DOCTOR_FINDINGS`) on any error or warning, which makes it a deployment gate.
+
+</Step>
+<Step>
+
+### Start the application and the workers
+
+Mount `iam.handler` (Fetch) or `iam.nodeHandler` (Node) under `basePath` (default `/api/iam`) and start the
+[scheduled jobs](/docs/operations/jobs). If you use the OAuth provider, Shared Signals, or SCIM outbound, also run
+their [protocol jobs](/docs/operations/jobs#protocol-jobs) in the application process.
+
+</Step>
+</Steps>
+
+```sh
+better-iam init --database postgres --config better-iam.config.mjs
+better-iam migrate --config better-iam.config.mjs
+better-iam bootstrap --config better-iam.config.mjs
+better-iam doctor --config better-iam.config.mjs --strict
+```
+
+`better-iam recover-root` uses the same three environment variables to create a new root administrator in the
+root tenant when nobody can sign in as root any more. It is recorded as `root:recover`, and the new account must
+enroll MFA too. Treat access to the configuration, the database credentials, and the ability to run
+`recover-root` as root-equivalent.
+
+## The CLI
+
+The `better-iam` CLI is how operators and schedulers act on a deployment without writing code: setting it up,
+running the recurring jobs, checking the audit log, moving data, and rotating secrets. It loads the same
+configuration file your application uses, so it always sees the same database and secret. Every command is listed
+with its flags in the [CLI reference](/docs/reference/cli).
+
+Most commands are **deployment operations**: they work on storage directly and need no
+<Term id="credential">credential</Term>, which is why the configuration file and database credentials must be
+protected like root. The tenant administration commands instead act as the session or API key in
+`BETTER_IAM_TOKEN`, so they are authorized and audited exactly like the same call from the console. Two commands,
+`init` and `audit-verify-archive`, touch no database at all.
+
+The 29 commands fall into five groups.
+
+### Setup and health
+
+| Command | What it does and when to use it |
+| --- | --- |
+| [`init`](/docs/reference/cli#init) | Writes a starter `better-iam.config.mjs` for SQLite, PostgreSQL, or libSQL. Run it once when you set up a deployment; it never overwrites a file. |
+| [`migrate`](/docs/reference/cli#migrate) | Creates or upgrades the schema and runs plugin migrations. Run it on every deploy, before the application starts. |
+| [`bootstrap`](/docs/reference/cli#bootstrap) | Creates the platform root tenant and its first root administrator from the environment. Run it once, on an empty installation. |
+| [`recover-root`](/docs/reference/cli#recover-root) | Creates another root administrator from the same variables, recorded as `root:recover`. Use it when nobody can sign in as root. |
+| [`doctor`](/docs/reference/cli#doctor) | Reports the schema, storage settings, and findings; `--strict` fails on any error or warning. Run it after deploys and as a deployment gate. |
+
+### Scheduled jobs
+
+| Command | What it does and when to use it |
+| --- | --- |
+| [`outbox`](/docs/reference/cli#outbox) | Delivers pending email, SMS, and webhook messages, then dispatches audit hooks. Run it every minute. |
+| [`purge`](/docs/reference/cli#purge) | Removes tenants deleted longer ago than the retention window and expires bindings, memberships, requests, and identities. Run it hourly. |
+| [`sweep`](/docs/reference/cli#sweep) | Deletes expired sessions, protocol artifacts, and old delivery records so storage stops growing with traffic. Run it beside `purge`. |
+| [`reconcile`](/docs/reference/cli#reconcile) | Assigns and removes rule-based access packages (birthright access). Run it every 15 minutes, after `purge`. |
+| [`digest`](/docs/reference/cli#digest) | Emails each organization's owners its access report when there is something to report. Run it daily. |
+| [`remind`](/docs/reference/cli#remind) | Emails people whose account or access ends within a week. Run it daily, beside `digest`. |
+| [`close-certifications`](/docs/reference/cli#close-certifications) | Closes and applies auto-closing certification campaigns past their due date. Run it hourly or daily. |
+| [`monitor-invariants`](/docs/reference/cli#monitor-invariants) | Evaluates every organization's access invariants and records breaks and restorations, so webhooks can alert. Run it hourly. |
+| [`audit-archive`](/docs/reference/cli#audit-archive) | Copies new audit events, verified, to the configured archive. Run it every few minutes. |
+
+[Scheduled jobs](/docs/operations/jobs) explains each job in detail.
+
+### Audit
+
+| Command | What it does and when to use it |
+| --- | --- |
+| [`audit-verify`](/docs/reference/cli#audit-verify) | Recomputes one tenant's audit hash chain from storage and fails when it does not verify. Use it for spot checks and during incidents. |
+| [`audit-export`](/docs/reference/cli#audit-export) | Writes one tenant's audit chain as JSON Lines to a new file, for a manual archive or an investigation. |
+| [`audit-prune`](/docs/reference/cli#audit-prune) | Deletes events older than `--retention-days` (365) and leaves a checkpoint so the rest still verifies. Use it to enforce audit retention after archiving. |
+| [`audit-verify-archive`](/docs/reference/cli#audit-verify-archive) | Verifies one tenant's archive directory written by `createJsonlAuditArchive`, without the database or a configuration file (it takes `--directory` and `--tenant`). Use it to prove the archive is complete and untampered. |
+
+### Storage and secrets
+
+| Command | What it does and when to use it |
+| --- | --- |
+| [`store-export`](/docs/reference/cli#store-export) | Writes every record to a JSON Lines snapshot. Use it for portable backups and migrations. |
+| [`store-import`](/docs/reference/cli#store-import) | Loads a snapshot into an empty database in one transaction. |
+| [`store-copy`](/docs/reference/cli#store-copy) | Copies the database into another configuration's empty database, for example SQLite to PostgreSQL. |
+| [`rotate-secrets`](/docs/reference/cli#rotate-secrets) | Re-seals stored values with the current secret during a secret rotation; `--dry-run` only counts. |
+
+### Tenant administration (acts as `BETTER_IAM_TOKEN`)
+
+| Command | What it does and when to use it |
+| --- | --- |
+| [`config-export`](/docs/reference/cli#config-export) | Writes a tenant's roles, policies, groups, resource types, and group bindings as JSON, to keep them in version control. |
+| [`config-plan`](/docs/reference/cli#config-plan) | Prints what applying a file would create, update, or delete; `--fail-on-drift` turns it into a CI check. |
+| [`config-apply`](/docs/reference/cli#config-apply) | Applies a file in one transaction; `--prune` also deletes items the file omits. |
+| [`analyze`](/docs/reference/cli#analyze) | Prints the tenant's access-analysis findings; `--fail-on high` fails a nightly job or a gate. |
+| [`report`](/docs/reference/cli#report) | Prints the access report: expiring identities and bindings, unused keys, live activations, pending requests. Pipe it into a ticket or chat channel nightly. |
+| [`mine-roles`](/docs/reference/cli#mine-roles) | Prints role-mining suggestions and peer outliers, for periodic role cleanup. |
+| [`check-invariants`](/docs/reference/cli#check-invariants) | Evaluates the tenant's invariants; `--fail-on-broken` fails CI after `config-apply`. |
+
+A failed command prints `CODE: message` and exits 1; unexpected failures print a generic message rather than
+internal details. Secrets are never accepted as command-line arguments.
+
+## Next steps
+
+<Cards>
+  <Card icon={<SlidersHorizontal />} title="Configuration reference" href="/docs/operations/deployment/configuration">
+    Every option, default, and validation rule.
+  </Card>
+  <Card icon={<Database />} title="Database operations" href="/docs/operations/deployment/database">
+    Migrations, durability, backups, and upgrades.
+  </Card>
+  <Card icon={<KeyRound />} title="Secrets and keys" href="/docs/operations/deployment/secrets">
+    Rotating the deployment secret without signing anyone out.
+  </Card>
+  <Card icon={<Plug />} title="Protocol mounts" href="/docs/operations/deployment/protocol-mounts">
+    OAuth, SAML, and SCIM in a host application.
+  </Card>
+  <Card icon={<Package />} title="Build and release" href="/docs/operations/deployment/releases">
+    Checks, packing, and publication.
+  </Card>
+</Cards>

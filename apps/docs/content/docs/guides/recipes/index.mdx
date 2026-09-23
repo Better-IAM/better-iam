@@ -1,0 +1,113 @@
+---
+title: Recipes
+description: Short, copy-ready solutions for common identity and access problems, from sharing and MFA rules to offboarding, plan limits, and audit archiving.
+icon: ChefHat
+packages: ['@better-iam/server']
+sources: ['docs/recipes.md']
+---
+
+import { Building, LifeBuoy, Share2, Smartphone, Timer, Wrench } from 'lucide-react';
+
+The guides explain how each feature works. Recipes start from a problem instead ("a customer requires MFA", "a
+contractor's access must end in March") and show the few calls that solve it, with the details that matter in
+production.
+
+Every recipe has the same shape: **the problem** in a sentence or two, **the solution** in plain words, then the
+code and the notes you need before you ship it. Each ends with a link to the guide that explains the feature in
+full.
+
+In the examples, `credential` is the caller's credential: `{ token }` for a session token or API key, or
+`{ headers }` for an incoming request. Every call is authorized for the caller, applied in one transaction, and
+audited, like the rest of the API. Unfamiliar terms are defined in the [glossary](/docs/reference/glossary).
+
+## Sharing and access questions
+
+- [Share a resource with relationships](/docs/guides/recipes/sharing-and-reviews#share-a-resource-with-relationships):
+  let people share their own folders without editing policies.
+- [Answer "who can?" and "what can they do?"](/docs/guides/recipes/sharing-and-reviews#answer-who-can-and-what-can-they-do):
+  explain access to reviewers with the real evaluator.
+- [Test a policy before saving it, and roll back a bad one](/docs/guides/recipes/sharing-and-reviews#test-a-policy-before-saving-it-and-roll-back-a-bad-one):
+  catch mistakes before they lock people out.
+- [Role hierarchy and business-hours access](/docs/guides/recipes/sharing-and-reviews#role-hierarchy-and-business-hours-access):
+  build roles on each other and limit when a binding applies.
+- [Project teams and start dates](/docs/guides/recipes/sharing-and-reviews#project-teams-and-start-dates):
+  memberships and bindings that start and end by themselves.
+- [Tell people how to get access instead of just "denied"](/docs/guides/recipes/sharing-and-reviews#tell-people-how-to-get-access-instead-of-just-denied):
+  offer step-up, terms, activation, or a package request.
+- [Guardrails, terms of use, and change previews](/docs/guides/recipes/sharing-and-reviews#guardrails-terms-of-use-and-change-previews):
+  invariants, impact previews, and agreements.
+
+## Sign-in and devices
+
+- [Require MFA or restrict sign-in methods for one organization](/docs/guides/recipes/sign-in-and-devices#require-mfa-or-restrict-sign-in-methods-for-one-organization):
+  tighten sign-in for one customer.
+- [Remember this device after MFA](/docs/guides/recipes/sign-in-and-devices#remember-this-device-after-mfa):
+  skip the code on a trusted browser for a bounded time.
+- [Devices, sign-out everywhere, and incident response](/docs/guides/recipes/sign-in-and-devices#devices-sign-out-everywhere-and-incident-response):
+  device lists, revoking sessions, and unlocking accounts.
+
+## Support and privacy
+
+- [Support: see the product as a member sees it](/docs/guides/recipes/support-and-privacy#support-see-the-product-as-a-member-sees-it):
+  bounded, audited "view as" sessions.
+- [Export everything stored about a person](/docs/guides/recipes/support-and-privacy#export-everything-stored-about-a-person):
+  answer data-subject access requests.
+- [Render the outbox's emails](/docs/guides/recipes/support-and-privacy#render-the-outboxs-emails):
+  send IAM's messages through your provider with your links.
+
+## Tenancy and limits
+
+- [Plan limits and usage](/docs/guides/recipes/tenancy-and-limits#plan-limits-and-usage): enforce what each SaaS
+  plan includes and meter usage.
+- [Bulk onboarding and directory attributes](/docs/guides/recipes/tenancy-and-limits#bulk-onboarding-and-directory-attributes):
+  create people in bulk and map directory data from SCIM.
+- [Move people over from another system](/docs/guides/recipes/tenancy-and-limits#move-people-over-from-another-system):
+  import organizations, people, and roles, and choose how each group signs in afterwards.
+- [Store data in libSQL or Turso](/docs/guides/recipes/tenancy-and-limits#store-data-in-libsql-or-turso): local
+  files, replicas, and remote databases.
+
+## Access lifecycle
+
+- [Just-in-time elevation instead of standing admin roles](/docs/guides/recipes/access-lifecycle#just-in-time-elevation-instead-of-standing-admin-roles):
+  eligible roles with justification, MFA, and approval.
+- [Contractors: schedule deactivation](/docs/guides/recipes/access-lifecycle#contractors-schedule-deactivation):
+  accounts that switch off on their end date.
+- [API key hygiene](/docs/guides/recipes/access-lifecycle#api-key-hygiene): label, expire, and revoke unused keys.
+- [Configuration as code](/docs/guides/recipes/access-lifecycle#configuration-as-code): review and apply roles and
+  policies from version control.
+- [Offboard a person](/docs/guides/recipes/access-lifecycle#offboard-a-person): remove all access in one step and
+  hand resources to a successor.
+
+## Operations
+
+- [Verify and archive the audit chain](/docs/guides/recipes/operations#verify-and-archive-the-audit-chain): prove
+  the audit log was not edited.
+- [Call a downstream service with a stateless assertion](/docs/guides/recipes/operations#call-a-downstream-service-with-a-stateless-assertion):
+  let other services trust who is calling.
+- [Observe latency and outcomes](/docs/guides/recipes/operations#observe-latency-and-outcomes): feed IAM spans to
+  your metrics.
+- [Webhooks: only denials, only some resources, and redelivery](/docs/guides/recipes/operations#webhooks-only-denials-only-some-resources-and-redelivery):
+  filter events and replay missed deliveries.
+
+## Browse by page
+
+<Cards>
+  <Card icon={<Share2 />} title="Sharing and access questions" href="/docs/guides/recipes/sharing-and-reviews">
+    Relationships, access reviews, policy testing, time-bound roles, access paths, and guardrails.
+  </Card>
+  <Card icon={<Smartphone />} title="Sign-in and devices" href="/docs/guides/recipes/sign-in-and-devices">
+    Per-organization MFA, remembered devices, and session control.
+  </Card>
+  <Card icon={<LifeBuoy />} title="Support and privacy" href="/docs/guides/recipes/support-and-privacy">
+    Impersonation, data-subject export, and email rendering.
+  </Card>
+  <Card icon={<Building />} title="Tenancy and limits" href="/docs/guides/recipes/tenancy-and-limits">
+    Plan limits, bulk onboarding, migrating from another system, and libSQL storage.
+  </Card>
+  <Card icon={<Timer />} title="Access lifecycle" href="/docs/guides/recipes/access-lifecycle">
+    Just-in-time elevation, expiring accounts, keys, configuration as code, and offboarding.
+  </Card>
+  <Card icon={<Wrench />} title="Operations" href="/docs/guides/recipes/operations">
+    Audit chain, assertions, observability, and webhooks.
+  </Card>
+</Cards>

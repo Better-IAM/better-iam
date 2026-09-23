@@ -1,0 +1,296 @@
+---
+title: Sharing and access questions
+description: Recipes for sharing with relationships, answering who can do what, testing and rolling back policies, time-bound roles, access paths, and guardrails.
+icon: Share2
+packages: ['@better-iam/server']
+sources: ['docs/recipes.md', 'docs/policies.md', 'docs/governance.md', 'docs/privileged-access.md', 'packages/server/src/api/policies.ts']
+---
+
+These recipes cover the day-to-day authorization work of a multi-tenant product: letting people share their own
+things, answering access questions for reviewers, changing policies without surprises, and shaping when access
+applies. `credential` is the caller's credential (`{ token }` or `{ headers }`), and every call is authorized,
+applied in one transaction, and audited like the rest of the API.
+
+## Share a resource with relationships
+
+**The problem:** people want to share a folder with a colleague or a team, and editing a
+<Term id="policy">policy</Term> for every share does not scale.
+
+**The solution:** use <Term id="relationship">relationships</Term> (relationship-based access control, ReBAC).
+Declare which relations a resource type supports, and write one <Term id="role">role</Term> that turns relations
+into permissions. From then on, sharing is creating one relationship: a record that says "this group is a viewer
+of this folder".
+
+```ts
+// In the betterIam() options: the resource types and the relations they support.
+permissions: {
+  resourceTypes: {
+    folder: { managed: true, actions: ['folders:read', 'folders:share'], relations: ['viewer', 'editor', 'owner'] },
+    file: { managed: true, parent: 'folder', actions: ['files:read'], relations: ['viewer'] },
+  },
+}
+
+// One role turns relations into permissions. Bind it to everyone once.
+const sharing = await iam.api.roles.create(credential, {
+  tenantId,
+  name: 'Sharing',
+  document: {
+    version: 1,
+    statements: [
+      { effect: 'allow', actions: ['folders:read'], resources: ['folder/*'],
+        conditions: { ArrayContains: { 'resource.relations': ['viewer', 'editor', 'owner'] } } },
+      { effect: 'allow', actions: ['files:read'], resources: ['file/*'],
+        conditions: { ArrayContains: { 'resource.parentRelations': ['viewer', 'editor', 'owner'] } } },
+      { effect: 'allow', actions: ['iam:relationships:create'], resources: ['iam/folder/*'],
+        conditions: { ArrayContains: { 'resource.relations': ['owner'] } } },
+    ],
+  },
+});
+await iam.api.bindings.create(credential, {
+  tenantId, roleId: sharing.id, subjectType: 'group', subjectId: everyone.id,
+});
+
+// Owners share their own folders; the server checks their `owner` relation on iam/folder/{id}.
+await iam.api.relationships.create(ownerCredential, {
+  tenantId, type: 'folder', id: 'plans', relation: 'viewer', subjectType: 'group', subjectId: designTeam.id,
+});
+```
+
+How it works:
+
+- A relationship binds an identity or a group to one resource under a declared relation. The relations the caller
+  holds reach policies as `resource.relations`, and relations on the parent resource as `resource.parentRelations`.
+  So the file statement lets anyone who can see a folder read its files.
+- `ArrayContains` matches when the caller holds any of the listed relations.
+- The third statement makes sharing self-service but safe: only people holding `owner` on a folder may create
+  relationships on it.
+
+See [Relationships](/docs/guides/authorization/relationships) and
+[`relationships.create`](/docs/reference/api/relationships#create).
+
+## Answer "who can?" and "what can they do?"
+
+**The problem:** a reviewer or support engineer asks "who can read this folder?" or "what can Alice do here?", and
+reading every role and policy by hand is slow and error-prone.
+
+**The solution:** ask the real evaluator. `policies.whoCan` lists the people who could perform one action on a
+resource, and `policies.effectiveActions` lists everything one person can do on it.
+
+```ts
+const { identities, total } = await iam.api.policies.whoCan(credential, {
+  tenantId,
+  action: 'folders:read',
+  resource: { type: 'folder', id: 'plans' },
+  assumeMfa: true,
+});
+const { allowed } = await iam.api.policies.effectiveActions(credential, {
+  tenantId,
+  identityId: alice.id,
+  resource: { type: 'folder', id: 'plans' },
+});
+// allowed: the sorted list of actions Alice may perform on the folder
+```
+
+- `whoCan` lists every active identity that could perform the action on the resource, with the decision reason, and
+  a `total`. Root administrators are not listed, because their override applies everywhere. It scales with the
+  directory size, so use it on review screens, not per request.
+- `effectiveActions` evaluates every catalog action (or up to 200 you pass) for one identity on one resource. It
+  returns the sorted `allowed` list plus a reason per action.
+- Both need `iam:policies:simulate` and evaluate a synthetic session. `assumeMfa: true` simulates an MFA session;
+  otherwise conditions on `principal.mfa` see `false`. The results are <Term id="advisory">advisory</Term> and
+  never grant anything.
+
+See [Authorization queries](/docs/guides/authorization/queries) and
+[`policies.whoCan`](/docs/reference/api/policies#whocan).
+
+## Test a policy before saving it, and roll back a bad one
+
+**The problem:** a policy edit can lock people out or open access too widely, and you only find out after saving
+it.
+
+**The solution:** test the unsaved document against a concrete request with `policies.test`. If a bad version gets
+through anyway, make an earlier version current again with `policies.restoreVersion`.
+
+```ts
+// candidate: the edited policy document, not saved yet
+const decision = await iam.api.policies.test(credential, {
+  tenantId,
+  document: candidate,
+  action: 'documents:write',
+  resource: 'document/alice-notes',
+  context: { 'principal.id': 'alice', 'principal.mfa': true },
+});
+if (!decision.allowed) console.warn('The candidate would deny this request:', decision.reason);
+
+// Later, if version 4 turned out to be wrong:
+await iam.api.policies.restoreVersion(credential, { tenantId, policyId, version: 3 });
+```
+
+- `policies.test` (`iam:policies:simulate`) validates the unsaved document against the catalog. It then evaluates
+  it for the action, the resource string, and a context you supply (at most 200 keys). Nothing is stored.
+- `policies.restoreVersion` (`iam:policies:update`) makes an earlier document current again as a new version; the
+  old document is re-validated against today's catalog. The protected owner policy cannot be restored this way.
+- `policies.listVersions` lists the versions you can restore.
+
+Try documents interactively in the [policy playground](/playground). See
+[Policies](/docs/guides/authorization/policies).
+
+## Role hierarchy and business-hours access
+
+**The problem:** roles often build on each other (every editor should also read), and some access should apply
+only during working hours.
+
+**The solution:** let one role inherit another instead of copying its permissions, and put an
+<Term id="access-window">access window</Term> on the <Term id="binding">binding</Term> that should only apply at
+certain times.
+
+```ts
+const viewer = await iam.api.roles.create(credential, {
+  tenantId,
+  name: 'Viewer',
+  permissions: ['documents:read'],
+});
+const editor = await iam.api.roles.create(credential, {
+  tenantId,
+  name: 'Editor',
+  permissions: ['documents:write'],
+  inherits: [viewer.id], // editors read too
+});
+// Support staff hold their role Monday to Friday, 08:00 to 18:00, Berlin time.
+await iam.api.bindings.create(credential, {
+  tenantId,
+  roleId: support.id,
+  subjectType: 'group',
+  subjectId: supportTeam.id,
+  window: { from: '08:00', to: '18:00', timeZone: 'Europe/Berlin', days: [1, 2, 3, 4, 5] }, // 0 is Sunday
+});
+```
+
+- `inherits` lists up to 20 roles whose grants this role includes; cycles and protected roles are refused.
+- A binding with a `window` applies only inside those hours in the named time zone; outside them it grants nothing.
+  Without `days`, the window applies every day. A window whose `to` is not after `from` wraps past midnight.
+
+See [Roles](/docs/guides/authorization/roles) and [Temporary access](/docs/guides/authorization/temporary-access).
+
+## Project teams and start dates
+
+**The problem:** a lot of access has a natural beginning and end, such as a three-month project or a contract that
+starts next quarter. Granting it by hand and remembering to remove it later is how standing access piles up.
+
+**The solution:** put the dates on the <Term id="grant">grant</Term> itself. A <Term id="group">group</Term>
+membership or a binding can start and end by itself.
+
+```ts
+// A three-month project membership that ends by itself.
+await iam.api.groups.addMember(credential, {
+  tenantId,
+  groupId: projectTeam.id,
+  identityId: alice.id,
+  expiresAt: Date.now() + 90 * 86400_000,
+});
+// Access that begins on the contract's first day and ends on its last.
+await iam.api.bindings.create(credential, {
+  tenantId,
+  roleId: contractor.id,
+  subjectType: 'identity',
+  subjectId: bob.id,
+  startsAt: Date.parse('2027-01-04T08:00:00Z'),
+  expiresAt: Date.parse('2027-06-30T18:00:00Z'),
+});
+```
+
+- A future `startsAt` makes the binding visible with its start date, but it grants nothing until then.
+- An `expiresAt` stops the grant at that instant; the [retention worker](/docs/operations/jobs#retention-worker)
+  removes the record later. An expiring group membership ends every grant and activation the membership carried.
+
+See [Temporary access](/docs/guides/authorization/temporary-access).
+
+## Tell people how to get access instead of just "denied"
+
+**The problem:** a bare "access denied" sends people to an administrator even when they could fix it themselves.
+
+**The solution:** when a check fails, call `accessPaths.find` to ask what the person could do about it:
+<Term id="step-up">step up</Term> to MFA, accept the terms of use, activate an
+<Term id="eligible-binding">eligible role</Term>, or request an <Term id="access-package">access package</Term>.
+Every option is verified by simulating it in a transaction that is rolled back, so the list never promises access
+that would still be refused.
+
+```ts
+const check = await iam.authorize({ token, tenantId, action: 'documents:delete', resource });
+if (!check.allowed) {
+  const { paths } = await iam.api.accessPaths.find(
+    { token },
+    { tenantId, action: 'documents:delete', resource },
+  );
+  for (const path of paths) {
+    if (path.kind === 'mfa') showStepUp();
+    if (path.kind === 'accept-agreements') showTerms(path.agreements); // then agreements.accept
+    if (path.kind === 'activate')
+      offerActivation(path.bindingId, path.role, path.requireJustification); // bindings.activate
+    if (path.kind === 'request-package') offerRequest(path.package); // packages.request
+  }
+  if (!paths.length) showAskAnAdministrator();
+}
+```
+
+- The call needs only the person's own ordinary session.
+- Activation and package options appear only when the person holds `iam:bindings:activate` or
+  `iam:packages:request` for them. Approval requirements are reported, so the UI can say "your request goes to an
+  approver".
+- Like `authorize`, a denial's `reason` is always `ACCESS_DENIED`, so the call does not reveal which rule refused.
+- An empty list means only an administrator can help. The `useAccessPaths` hook wraps the call for React and Vue.
+
+See [Access paths](/docs/guides/governance/access-paths).
+
+## Guardrails, terms of use, and change previews
+
+**The problem:** some rules must hold however roles are edited ("sales never approves payments"), some access
+should wait until people accept the rules, and every role edit risks a surprise.
+
+**The solution:** three governance features. An <Term id="invariant">invariant</Term> states a rule and refuses
+changes that break it. An <Term id="impact-preview">impact preview</Term> shows who gains or loses what before you
+edit. An <Term id="agreement">agreement</Term> records who accepted your terms, and a policy can require it.
+
+```ts
+// Sales may never approve payments, whatever roles say; refuse changes that would break this.
+// `department` must be a declared identity attribute.
+await iam.api.invariants.create(credential, {
+  tenantId,
+  name: 'Sales never approves payments',
+  subject: { attribute: { name: 'department', value: 'Sales' } },
+  action: 'payments:approve',
+  resource: { type: 'ledger', id: 'main' },
+  expect: 'deny',
+  mode: 'enforce',
+});
+// Before editing a role: who gains or loses what, and which invariants would break?
+const preview = await iam.api.impact.preview(credential, {
+  tenantId,
+  change: { role: { roleId, permissions: ['payments:read', 'payments:approve'] } },
+  resources: [{ type: 'ledger', id: 'main' }],
+});
+// Terms of use that policies can require (deny while principal.pendingAgreements > 0).
+await iam.api.agreements.create(credential, { tenantId, name: 'Acceptable use', content: '...' });
+```
+
+- **Invariants** with `mode: 'enforce'` are re-checked around every access-changing operation. A change that would
+  newly break one is refused with `INVARIANT_VIOLATION` (409) and rolled back. `monitor` mode only reports; schedule
+  [`monitor-invariants`](/docs/operations/jobs#certifications-and-invariants) to be alerted.
+- **Impact previews** apply the change with the real validation and permissions inside a transaction that is always
+  rolled back, and evaluate every holder before and after. `preview.identities` lists who gains and loses which
+  actions on each resource, and `preview.invariants.broken` the guardrails the change would break.
+- **Agreements** are enforced by an ordinary policy statement, for example a deny on `documents:*` while
+  `principal.pendingAgreements` is greater than 0. Members accept with `agreements.accept`.
+
+See [Change safety](/docs/guides/governance/change-safety) and [Terms of use](/docs/guides/governance/agreements).
+
+## Next steps
+
+<Cards>
+  <Card title="Sign-in and devices recipes" href="/docs/guides/recipes/sign-in-and-devices">
+    Per-organization MFA, remembered devices, and session control.
+  </Card>
+  <Card title="Authorization guides" href="/docs/guides/authorization/policies">
+    How policies, roles, and conditions are evaluated.
+  </Card>
+</Cards>

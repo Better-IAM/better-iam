@@ -1,0 +1,118 @@
+---
+title: Frequently asked questions
+description: Short, plain answers to the questions people ask before adopting Better IAM, with links to the details.
+icon: MessageCircleQuestionMark
+sources: ['README.md', 'packages/better-iam/package.json', 'packages/next/src/edge.ts']
+---
+
+## What it is
+
+<Accordions type="multiple">
+<Accordion title="Is Better IAM a hosted service?">
+
+No. It is a set of TypeScript packages that run inside your own application process and store their data in your
+own database. There is no Better IAM server to sign up for, and no identity data leaves your infrastructure unless
+you configure an integration (webhooks, SCIM, Shared Signals) that sends it somewhere.
+
+</Accordion>
+<Accordion title="How is it different from an authentication library?">
+
+Authentication libraries sign people in. Better IAM also decides what they may do once signed in, and it manages
+that access over time: organizations with their own directories and roles, JSON policies with conditions,
+just-in-time elevation, access reviews, an audit log that detects tampering, and enterprise federation (SSO, SCIM).
+If your application only needs sign-in for individual users, a smaller library is enough; see
+[Why it exists](/docs/guides#why-it-exists).
+
+</Accordion>
+<Accordion title="Is there an admin console?">
+
+The repository includes a reference console (`apps/console`, a Next.js application) with an administration panel
+and a multi-tenant cloud console built on the same public API. You can run it as is, or read it as a large example
+of building your own management screens with the [browser client](/docs/frameworks/client).
+
+</Accordion>
+<Accordion title="What license is it under?">
+
+Every package is MIT licensed and published to npm as `better-iam` and the `@better-iam/*` packages.
+
+</Accordion>
+</Accordions>
+
+## Running it
+
+<Accordions type="multiple">
+<Accordion title="Which databases does it support?">
+
+PostgreSQL, SQLite, and libSQL/Turso, through the bundled adapters. Anything else can be added by implementing the
+storage adapter contract, which comes with a conformance test suite. See [Storage adapters](/docs/operations/storage)
+and [Adapters and plugins](/docs/operations/extensions).
+
+</Accordion>
+<Accordion title="Which runtimes does it support? Does it run on the edge?">
+
+The server (`betterIam()`) needs Node.js 22.12 or newer: password hashing and the SQLite adapter use native modules.
+For edge runtimes, `better-iam/next/edge` provides what is safe to run there with Web Crypto alone: the Next.js
+middleware that redirects signed-out visitors, verification of service assertions, and verification of webhook
+signatures. The browser client and the React, Vue, and Svelte bindings run in any browser. See
+[Next.js middleware](/docs/frameworks/nextjs/middleware).
+
+</Accordion>
+<Accordion title="Do I need to run background jobs?">
+
+Yes, a few, on a schedule: delivering the email outbox, removing expired sessions and records, and optional
+governance jobs such as expiry reminders and certification deadlines. Each job is both an instance function and a
+CLI command, so you can run them from a worker or from cron. See [Scheduled jobs](/docs/operations/jobs).
+
+</Accordion>
+<Accordion title="Does every permission check hit the database?">
+
+Yes. Decisions are made from the current state in your database, not from a cache, so a revoked role or session
+stops working on the very next request. To keep pages fast, check many things at once with `authorizeMany` (up to
+50 checks in one call) and list what someone may access with `listAccessible` instead of checking items one by one.
+See [Reverse queries and batches](/docs/guides/authorization/queries).
+
+</Accordion>
+</Accordions>
+
+## Adopting it
+
+<Accordions type="multiple">
+<Accordion title="Can I import my existing users?">
+
+Yes. [`identities.createMany`](/docs/reference/api/identities#createmany) creates many people at once with their
+names, directory attributes, roles, and groups. It accepts a password only in plain text (it is hashed on the way
+in), so existing password hashes from another system are not imported: people can set a password through the reset
+flow, or sign in with a magic link, a passkey, or your enterprise identity provider. Directories that support SCIM
+can provision people automatically; see [SCIM](/docs/federation/scim). The
+[migration recipe](/docs/guides/recipes/tenancy-and-limits#move-people-over-from-another-system) walks through a
+complete move, including two traps with unverified addresses and federated sign-in.
+
+</Accordion>
+<Accordion title="Can people sign in with Google, GitHub, Microsoft, or our company's identity provider?">
+
+Yes. OAuth and OpenID Connect sign-in include presets for Google, GitHub, and Microsoft Entra ID, and any standard
+OIDC provider works. Organizations can also connect their own SAML identity provider. See
+[OAuth and OIDC sign-in](/docs/federation/oauth-sign-in) and [SAML](/docs/federation/saml).
+
+</Accordion>
+<Accordion title="Can Better IAM be the identity provider for my other applications?">
+
+Yes. The OAuth/OIDC provider in `better-iam/oauth` issues tokens to your other applications and to MCP servers, with
+consent screens, refresh tokens, and token verification helpers for your APIs. See
+[OAuth/OIDC provider](/docs/federation/oauth-provider).
+
+</Accordion>
+<Accordion title="Can I trust permission checks made in the browser?">
+
+No, and the API is designed around that. Browser checks (`Can`, `useAuthorize`, `authorizeMany`) are advisory: they
+decide what to show. Your server must enforce the decision with `iam.require` immediately before doing the protected
+work, using resource details loaded from your own storage.
+
+</Accordion>
+<Accordion title="How do I try policies without writing code?">
+
+Open the [policy playground](/playground). It runs the same policy engine as the server, in your browser, and shows
+which statement and condition made each decision.
+
+</Accordion>
+</Accordions>

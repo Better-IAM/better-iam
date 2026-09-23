@@ -1,0 +1,134 @@
+---
+title: Operations
+description: The production checklist for Better IAM, from runtime and secrets to storage, scheduled jobs, observability, and your security responsibilities.
+icon: Server
+packages: ['@better-iam/server', '@better-iam/cli']
+sources: ['docs/deployment.md', 'docs/security.md', 'packages/server/src/self-check.ts', 'packages/cli/src/index.ts']
+---
+
+import { Activity, CalendarClock, Database, HardDrive, KeyRound, Package, Plug, Puzzle, Rocket, ShieldCheck, SlidersHorizontal } from 'lucide-react';
+
+Better IAM runs inside your process and stores everything in your database, so production readiness is
+yours to arrange: a stable secret, a durable database, a handful of scheduled jobs, and the monitoring that
+tells you when one of them stops. This section covers each of those. Start with the checklist below, then
+follow the links for the details.
+
+## Production checklist
+
+<Steps>
+<Step>
+
+### Run a supported runtime
+
+Use Node.js 22.12 or a newer supported LTS release. The complete authentication and protocol server does
+not run on edge runtimes. See [Deployment](/docs/operations/deployment).
+
+</Step>
+<Step>
+
+### Configure the instance deliberately
+
+Set a stable, high-entropy `secret` (at least 32 characters), an HTTPS `baseURL`, the exact
+`trustedOrigins` your browser clients use, a persistent `database`, and the `sendEmail` / `sendSms` delivery
+callbacks. OAuth, SAML, and session-JWT keys are separate, explicit inputs. See the
+[configuration reference](/docs/operations/deployment/configuration).
+
+</Step>
+<Step>
+
+### Migrate on every deploy, bootstrap once
+
+Run `better-iam migrate` before the new release serves traffic. Bootstrap the platform <Term id="root">root</Term> exactly once,
+with `BETTER_IAM_ROOT_EMAIL`, `BETTER_IAM_ROOT_NAME`, and `BETTER_IAM_ROOT_PASSWORD` in the environment, and
+enroll MFA for that account before using it. See [Database operations](/docs/operations/deployment/database).
+
+</Step>
+<Step>
+
+### Make storage durable and back it up
+
+Keep SQLite on its defaults (write-ahead log, `synchronous = FULL`) and PostgreSQL on `synchronous_commit = on`.
+Back up the database and every key you configured. See [Storage adapters](/docs/operations/storage).
+
+</Step>
+<Step>
+
+### Schedule the jobs
+
+Deliver the <Term id="outbox">outbox</Term> and dispatch audit hooks every minute or so; run `purge`, `sweep`,
+`reconcile`, `digest`, `remind`, `close-certifications`, `monitor-invariants`, and `audit-archive` on their
+cadences. If you use the OAuth provider, Shared Signals, or SCIM outbound, also run their
+[protocol jobs](/docs/operations/jobs#protocol-jobs). See [Scheduled jobs](/docs/operations/jobs).
+
+</Step>
+<Step>
+
+### Observe it
+
+Probe `GET /api/iam/health` from your load balancer, scrape `/api/iam/metrics` with a bearer token of at least 24
+characters, feed `observability.onSpan` to your tracer, and pass `X-Request-Id` from your gateway so IAM's spans
+join your request logs. See [Observability](/docs/operations/observability).
+
+</Step>
+<Step>
+
+### Harden the edge
+
+Record real client IPs with `http.clientInfo` behind a proxy you control, and add request body limits and
+network rate limits at the ingress on top of the account-level limits. See
+[Security model](/docs/operations/security).
+
+</Step>
+<Step>
+
+### Gate deployments on `doctor`
+
+`better-iam doctor --strict` exits non-zero on any error or warning: a schema behind the release, no root
+tenant, risky durability, a placeholder secret, a missing email transport, or a job that is not running. Run it
+after every deploy so a broken release stops before it serves traffic.
+
+</Step>
+</Steps>
+
+```sh title="A typical deploy"
+better-iam migrate --config better-iam.config.mjs
+better-iam doctor --config better-iam.config.mjs --strict --retention-days 30
+```
+
+## In this section
+
+<Cards>
+  <Card icon={<Rocket />} title="Deployment" href="/docs/operations/deployment">
+    Runtime requirements, the options every production instance sets, environment variables, and the CLI.
+  </Card>
+  <Card icon={<SlidersHorizontal />} title="Configuration reference" href="/docs/operations/deployment/configuration">
+    Every `betterIam()` option with its default and validation rule.
+  </Card>
+  <Card icon={<Database />} title="Database operations" href="/docs/operations/deployment/database">
+    Migrations, durability, indexes, upgrades, backups, and PostgreSQL integration checks.
+  </Card>
+  <Card icon={<KeyRound />} title="Secrets and keys" href="/docs/operations/deployment/secrets">
+    What the deployment secret protects, `previousSecrets`, and staged rotation with `rotate-secrets`.
+  </Card>
+  <Card icon={<Plug />} title="Protocol mounts" href="/docs/operations/deployment/protocol-mounts">
+    Mounting OAuth, SAML, and SCIM next to the HTTP handler in a host application.
+  </Card>
+  <Card icon={<Package />} title="Build and release" href="/docs/operations/deployment/releases">
+    Checks, packing, packed smoke tests, synchronized versions, and publication prerequisites.
+  </Card>
+  <Card icon={<HardDrive />} title="Storage adapters" href="/docs/operations/storage">
+    PostgreSQL, SQLite, and libSQL/Turso, snapshots between databases, and `doctor`.
+  </Card>
+  <Card icon={<CalendarClock />} title="Scheduled jobs" href="/docs/operations/jobs">
+    Every worker job, its instance function, CLI command, and suggested cadence.
+  </Card>
+  <Card icon={<Activity />} title="Observability" href="/docs/operations/observability">
+    Spans, Prometheus metrics, health checks, and request IDs.
+  </Card>
+  <Card icon={<ShieldCheck />} title="Security model" href="/docs/operations/security">
+    Trust boundaries, root authority, authentication guarantees, and operator responsibilities.
+  </Card>
+  <Card icon={<Puzzle />} title="Adapters and plugins" href="/docs/operations/extensions">
+    The storage adapter contract, its conformance suite, and the plugin contract.
+  </Card>
+</Cards>

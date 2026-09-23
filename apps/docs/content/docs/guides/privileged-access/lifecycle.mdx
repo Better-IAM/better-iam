@@ -1,0 +1,223 @@
+---
+title: Access lifecycle
+description: Time-bound identities, temporary memberships, future-dated bindings, API key hygiene, and offboarding that removes all access in one call.
+icon: CalendarClock
+packages: ['@better-iam/server']
+sources:
+  - docs/privileged-access.md
+  - docs/policies.md
+  - docs/recipes.md
+  - docs/deployment.md
+  - packages/server/src/api/identities.ts
+  - packages/server/src/api/service-accounts.ts
+  - packages/server/src/lifecycle.ts
+---
+
+Access should end when the reason for it ends: a contract, a project, an integration, a job. In most systems it
+ends only when someone remembers to remove it, which is why old accounts and keys pile up. Better IAM lets you put
+the end date on the access itself when you grant it, shows you what nobody uses, and gives you one call that
+removes everything when a person leaves.
+
+## Time-bound identities
+
+Contractors, interns, auditors, and temporary integrations have a known last day. Instead of a calendar reminder
+to disable them, give the identity a deadline: `expiresAt` on `identities.create` or `identities.update` for
+people, and on `serviceAccounts.create` or `serviceAccounts.update` for
+<Term id="service-account">service accounts</Term>.
+
+```ts title="A contractor with an end date"
+await iam.api.identities.create(credential, {
+  tenantId,
+  email: 'contractor@example.com',
+  name: 'Contractor',
+  expiresAt: Date.parse('2027-03-31T00:00:00Z'),
+});
+
+// Who deactivates in the next 30 days?
+const expiring = await iam.api.identities.list(credential, {
+  tenantId,
+  expiresBefore: Date.now() + 30 * 86400_000,
+});
+
+// The contract was extended: move the deadline, or clear it with null.
+await iam.api.identities.update(credential, { tenantId, identityId, expiresAt: null });
+```
+
+What happens at the deadline:
+
+- **Immediately.** Every credential of the identity is refused from `expiresAt` on, even before any job runs.
+- **At the next purge.** The retention worker, `iam.purgeDeleted()` (CLI `purge`), disables the identity, revokes
+  its sessions, and ends its role <Term id="activation">activations</Term>. It records `identity:expire` with the
+  `kind` and `expiresAt` (actor `deployment-operator`). Schedule it nightly; see
+  [scheduling](/docs/guides/governance/scheduling).
+- **Before it happens.** `identities.list({ expiresBefore })` lists identities that end before a date, the
+  [access report](/docs/guides/privileged-access/access-report) shows them to administrators, and
+  [expiry reminders](/docs/guides/privileged-access/access-report#expiry-reminders) warn the person a week ahead.
+
+Clearing or extending the deadline is the only way to re-enable an expired identity, so nobody quietly turns a
+contractor back on. Changing the deadline of an owner or a root administrator needs the same protection as
+disabling them, and moving a deadline into the past is refused: disable the identity instead.
+
+<Callout type="info" title="The worker only catches up">
+  Expired identities and activations are refused at their next use whether or not the worker has run. The
+  schedule only affects how quickly statuses and reports catch up.
+</Callout>
+
+## Temporary and future-dated grants
+
+The same idea works for individual grants, when the person stays but a piece of their access should not. These are
+covered in detail under [temporary access](/docs/guides/authorization/temporary-access); in short:
+
+- **Temporary <Term id="binding">bindings</Term>.** `bindings.create({ ..., expiresAt })` grants a role until a
+  date (in the future, within ten years). `bindings.update` extends, shortens, or clears the end with `null`.
+- **Future-dated bindings.** `startsAt` makes a binding begin on a date. It is listed with its start but grants
+  nothing until then, so you can set up a new hire's access before their first day.
+- **Temporary memberships.** `groups.addMember({ ..., expiresAt })` makes a group membership end on a date, and
+  with it every grant and activation it carried. `groups.updateMember` extends, shortens, or clears the end, and
+  re-adding a lapsed member renews the membership.
+- **Packages.** An <Term id="access-package">access package</Term> assignment with an end date ends every binding
+  and membership it created at that time. See [access packages](/docs/guides/privileged-access/access-packages).
+
+```ts title="Project teams and start dates"
+// A three-month project membership that ends by itself.
+await iam.api.groups.addMember(credential, {
+  tenantId,
+  groupId: projectTeam.id,
+  identityId: alice.id,
+  expiresAt: Date.now() + 90 * 86400_000,
+});
+
+// Access that begins on the contract's first day and ends on its last.
+await iam.api.bindings.create(credential, {
+  tenantId,
+  roleId: contractor.id,
+  subjectType: 'identity',
+  subjectId: bob.id,
+  startsAt: Date.parse('2027-01-04T08:00:00Z'),
+  expiresAt: Date.parse('2027-06-30T18:00:00Z'),
+});
+```
+
+Expired grants stop applying at their end. The purge worker then deletes expired bindings, lapsed memberships,
+ended activations, and package assignments past their end, and marks pending access requests past their
+lifetime as expired, reporting each count (`expiredBindings`, `expiredMemberships`, and so on).
+
+## API key hygiene
+
+API keys let integrations call Better IAM as a service account (an identity for software rather than a person).
+Keys are easy to issue and easy to forget: after a year, nobody knows which ones are still used or what they may
+do. Three properties keep them reviewable:
+
+- **Labels.** A key carries a `name` (up to 128 characters) and a `description` (up to 512), so a review can tell
+  what each one is for.
+- **Last use.** A key records `lastUsedAt` when it authenticates a request (at most once a minute).
+  `credentials.list({ unusedForMs })` returns keys nobody used in that long, including keys never used since they
+  were issued, so you can find the ones to revoke.
+- **Scopes.** `scopes` is an allowlist of actions. It is compiled into a session policy that allows exactly those
+  actions on every resource, so an integration never holds more than it needs, whatever roles its service account
+  has. Pass either `scopes` or a full `policy`, not both.
+
+```ts title="Issue a labeled, scoped key and revoke unused ones"
+const key = await iam.api.credentials.create(credential, {
+  tenantId,
+  identityId: deployer.id,
+  name: 'github-actions',
+  description: 'Deploys from the release workflow',
+  scopes: ['deployments:create', 'deployments:read'],
+  expiresInSeconds: 90 * 86400,
+});
+// key.token is returned once: store it in the CI secret store now.
+
+// Keys nobody has used for 30 days, including keys never used since they were issued.
+const unused = await iam.api.credentials.list(credential, {
+  tenantId,
+  unusedForMs: 30 * 86400_000,
+});
+for (const item of unused)
+  await iam.api.credentials.revoke(credential, { tenantId, credentialId: item.id });
+```
+
+The key calls:
+
+- `credentials.create` issues a key for an active, unexpired service account (`INVALID_IDENTITY` otherwise). Keys
+  expire after 90 days by default (`expiresInSeconds`, from one minute to one year). It needs recent
+  authentication.
+- `credentials.list` lists keys with their labels, scopes, and last use; token material is never returned.
+- `credentials.update` relabels a key or moves its expiry (into the future, at most a year out) without changing
+  the token. Moving the expiry needs recent authentication and the right to use the key's issuing authority.
+- `credentials.rotate` issues a new token for the key and invalidates the old one. It keeps the label and expiry
+  but resets the usage history, so a rotated key shows up as unused until it is put to work.
+- `credentials.revoke` deletes a key at once. It needs recent authentication.
+
+The [access report](/docs/guides/privileged-access/access-report) lists unused and expiring keys, and the access
+analysis reports keys unused for its dormancy window as `stale-api-key` (see
+[access reviews](/docs/guides/authorization/reviews)).
+
+## Offboarding
+
+When someone leaves, their access is spread across role bindings, groups, packages, sessions, keys, relationships,
+and delegated authority. Removing it piece by piece is slow and easy to get wrong, and the things they owned still
+need an owner. `identities.offboard` does it in one transaction: it disables the person or service account,
+removes everything that granted them access, and hands what they owned to a successor.
+
+```ts title="Offboard a leaver"
+const summary = await iam.api.identities.offboard(credential, {
+  tenantId,
+  identityId: leaver.id,
+  reason: 'Left the company (HR-1234)',
+  successorId: manager.id, // takes over the resources and reports the leaver had
+});
+// summary: { identity, sessions, bindings, memberships, activations, packages, relationships,
+//            accessRequests, authorities, resourcesReassigned, resourcesOwned, reportsReassigned }
+
+// Later, after your retention period, remove the record itself:
+await iam.api.identities.delete(credential, { tenantId, identityId: leaver.id });
+```
+
+In that one transaction the call:
+
+1. Removes ownership (the protected Owner binding) when the identity is an owner.
+2. Ends its role activations.
+3. Revokes its [access package](/docs/guides/privileged-access/access-packages) assignments, with the bindings
+   and memberships they created, including automatic ones.
+4. Deletes its remaining role bindings (under the caller's authority, like `bindings.delete`) and group
+   memberships.
+5. Deletes its relationships, and cancels its pending access requests and package requests.
+6. Revokes the <Term id="authority">grant authorities</Term> it holds, so grants it issued as a delegated
+   administrator stop applying.
+7. Moves its reports to the successor, or leaves them without a manager when there is no successor. A successor
+   who reported to the leaver moves up to the leaver's own manager, and a report that would close a reporting
+   loop is left without a manager.
+8. Transfers ownership of the managed resources it owns to the successor (`resourcesReassigned`), or reports
+   them as `resourcesOwned` when there is no successor.
+9. Ends every session and API key of the identity.
+10. Disables the identity and records `identity:offboard` with the `reason`, `kind`, `successorId`, and the counts.
+
+The result counts everything it removed, which makes a good offboarding record for auditors.
+
+The rules:
+
+- It needs `iam:identities:update` and recent authentication. `reason` is required (up to 512 characters).
+- Nobody can offboard themselves. Root administrators are protected, the last owner is protected, and only an
+  owner or root can offboard an owner.
+- The successor must be another active identity of the tenant.
+- The identity stays as a disabled record, so the audit trail still names who they were. `identities.delete`
+  tombstones it later, after your retention period.
+
+The console offers offboarding on the member page.
+[Package rules](/docs/guides/privileged-access/automatic-assignment) never assign anything to a disabled identity,
+so a leaver who still matches a rule does not get access back.
+
+<Callout type="warn" title="Transfer package rules first">
+  Revoking a leaver's grant authorities also suspends any [package rule](/docs/guides/privileged-access/automatic-assignment#authority-and-ownership)
+  they own. Have another administrator take over their rules before offboarding them.
+</Callout>
+
+<Cards>
+  <Card title="identities.offboard" href="/docs/reference/api/identities#offboard">
+    Signature and result fields.
+  </Card>
+  <Card title="Access lifecycle recipes" href="/docs/guides/recipes/access-lifecycle">
+    Copy-ready calls for contractors, keys, and leavers.
+  </Card>
+</Cards>

@@ -1,0 +1,122 @@
+---
+title: Sign-in and devices
+description: Recipes for per-organization MFA and sign-in method rules, remembering trusted browsers after MFA, device lists, sign-out everywhere, and incident response.
+icon: Smartphone
+packages: ['@better-iam/server', '@better-iam/client']
+sources: ['docs/recipes.md', 'docs/security.md', 'docs/architecture.md', 'docs/deployment.md']
+---
+
+These recipes cover how people sign in and what happens to their sessions afterwards: tightening sign-in for one
+organization, sparing people a code on a browser they use every day, and ending sessions when something goes wrong.
+`credential` is the caller's credential (`{ token }` or `{ headers }`), and `client` is a browser client from
+`createIamClient`.
+
+## Require MFA or restrict sign-in methods for one organization
+
+**The problem:** one customer's security team requires MFA, or allows only <Term id="passkey">passkeys</Term> and
+their own identity provider, while your other customers do not.
+
+**The solution:** give that <Term id="tenant">tenant</Term> an authentication policy with
+`tenants.setAuthPolicy`. The rules apply to that one organization, without changing the deployment.
+
+```ts
+await iam.api.tenants.setAuthPolicy(credential, {
+  tenantId,
+  authPolicy: {
+    requireMfa: true,
+    allowedMethods: ['passkey', 'federated'],
+    sessionIdleTimeoutMs: 30 * 60_000,
+  },
+});
+```
+
+A tenant policy can only tighten the deployment's configuration. Existing <Term id="session">sessions</Term> are
+re-checked on their next request, so requiring MFA locks out sessions without MFA immediately.
+
+- Setting the policy needs `iam:tenants:update` and recent authentication. `authPolicy: null` removes it.
+- `allowedMethods` accepts `password`, `passwordless-email`, `passwordless-sms`, `passkey`, and `federated`. Method
+  restrictions are checked before any credential is examined, so a rejected method never reveals whether a password
+  was right.
+- `requireMfaForOwners` requires MFA from owners only. It protects the people who can change the policy first,
+  before you require it from everyone.
+- The same policy holds `sessionLifetimeMs`, `maxSessions`, `allowedIpRanges`, `trustedDeviceDays`,
+  `notifyNewSignIn`, `mfaEmailCodes`, `bindSessionsToIp`, password rules, and `allowImpersonation`.
+
+To apply a policy to every new organization, set `tenantDefaults.authPolicy` in the
+[configuration](/docs/operations/deployment/configuration#tenancy-and-catalog). See
+[Tenant policy](/docs/guides/authentication/tenant-policy).
+
+## Remember this device after MFA
+
+**The problem:** asking for an MFA code on every sign-in from the same laptop trains people to resent MFA, but
+skipping MFA defeats its purpose.
+
+**The solution:** let people remember a browser when they complete MFA, with `rememberDevice: true`. That browser
+skips the second factor for a bounded time, while a stolen password alone is still not enough anywhere else.
+
+```ts
+const outcome = await client.auth.signIn({ tenantId, email, password });
+if ('mfaRequired' in outcome) {
+  // The server sets the device cookie; API clients receive deviceToken in the body instead.
+  await client.auth.verifyMfa({
+    tenantId,
+    challenge: outcome.challenge,
+    code,
+    rememberDevice: true,
+  });
+}
+// Later sign-ins from this browser skip the code until the device expires or is forgotten.
+const devices = await client.auth.listTrustedDevices(); // for an "Your devices" page
+await client.auth.revokeTrustedDevice({ deviceId }); // forget one device
+await client.auth.revokeTrustedDevices(); // forget all of them
+```
+
+- Tenants set how long a device is remembered with `authPolicy.trustedDeviceDays` (0 disables it). The deployment
+  caps it with `authentication.trustedDeviceLifetimeMs` (30 days by default, one year at most).
+- A password, email, or factor change forgets every device.
+- Through the HTTP handler, the device token lives in its own HttpOnly `better-iam.device` cookie and is sent with
+  later sign-ins automatically, so the client only passes `rememberDevice: true` once.
+- Root administrators' browsers are never remembered. When an administrator revokes a person's sessions, that
+  person's remembered devices are forgotten too.
+
+See [MFA](/docs/guides/authentication/mfa) and [Sessions](/docs/guides/authentication/sessions).
+
+## Devices, sign-out everywhere, and incident response
+
+**The problem:** people want to see where they are signed in and end the session on a lost phone. During an
+incident, administrators need to cut off one account or a whole organization, and to unlock someone who tripped
+the rate limit.
+
+**The solution:** each case has one call. People manage their own sessions through `auth`; administrators use
+`identities` and `tenants`.
+
+```ts
+const sessions = await iam.api.auth.listSessions(credential); // each with client.userAgent / ip / label
+await iam.api.auth.revokeOtherSessions(credential); // the caller keeps this session
+await iam.api.identities.revokeSessions(adminCredential, { tenantId, identityId }); // one member
+await iam.api.tenants.revokeSessions(adminCredential, { tenantId }); // everyone else in the tenant
+await iam.api.identities.unlock(adminCredential, { tenantId, identityId }); // clear rate-limit lockouts
+```
+
+- `auth.listSessions` returns the caller's sessions with their client details, for a device list.
+  `auth.revokeOtherSessions` ends all the others and requires recent authentication.
+- `identities.revokeSessions` (`iam:identities:update`) ends one member's sessions without disabling the account,
+  and forgets their remembered devices. `tenants.revokeSessions` (`iam:tenants:update`) ends every session in the
+  tenant, keeping the caller's unless `includeSelf` is set. Both require recent authentication and are audited.
+- `identities.unlock` clears the rate-limit counters behind a person's sign-in, recovery, and MFA flows (audited as
+  `identity:unlock`). It never clears per-IP counters. Custom limiters support it by implementing `reset`.
+- Device lists show IP addresses only when the server knows them. Behind a proxy, set the `http.clientInfo` option
+  of `betterIam()`: a function that returns the request's real `ip`, `userAgent`, and a `label`.
+- For attacks from a known network, block it with `security.blockNetwork`; see the
+  [security model](/docs/operations/security#network-blocks-and-ip-bound-sessions).
+
+## Next steps
+
+<Cards>
+  <Card title="Support and privacy recipes" href="/docs/guides/recipes/support-and-privacy">
+    View as a member, data-subject export, and email rendering.
+  </Card>
+  <Card title="Tenant policy" href="/docs/guides/authentication/tenant-policy">
+    Every field of the per-organization authentication policy.
+  </Card>
+</Cards>

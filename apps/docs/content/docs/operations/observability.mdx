@@ -1,0 +1,196 @@
+---
+title: Observability
+description: Timing spans through observability.onSpan, built-in Prometheus metrics behind a bearer token, the health endpoint, request IDs, and what to alert on.
+icon: Activity
+packages: ['@better-iam/server']
+sources: ['docs/deployment.md', 'docs/recipes.md', 'packages/server/src/observe.ts', 'packages/server/src/metrics.ts', 'packages/server/src/http.ts']
+---
+
+An identity system is on the path of every request, so you need to know when it slows down, starts refusing
+people, or stops delivering mail. Better IAM reports on itself in three ways: a span for every unit of work, which
+you can send to any metrics library or tracer; an optional built-in Prometheus collector fed by those spans; and an
+unauthenticated health endpoint for load balancers. None of them needs an extra dependency.
+
+## Spans
+
+A span is one timed unit of work: a provisioning operation, an authorization check or
+<Term id="reverse-query">reverse query</Term>, an authentication call, or an HTTP request. Spans let you chart IAM
+latency and outcomes next to your own service. `observability.onSpan` receives each one after it completes.
+
+| Kind | Named by | Covers |
+| --- | --- | --- |
+| `operation` | The action, such as `iam:identities:create` | Every provisioning operation. |
+| `authorize`, `listAccessible` | The action asked about | Authorization checks and reverse queries (which resources the caller may act on). |
+| `authorizeMany` | `authorizeMany` | Batch checks. |
+| `auth` | The authentication method, such as `signIn` | Authentication calls. |
+| `http` | The route, such as `identities/create` | Requests through the HTTP handler, with `status` and `requestId`. |
+
+<TypeTable
+  type={{
+    kind: {
+      type: "'operation' | 'authorize' | 'authorizeMany' | 'listAccessible' | 'auth' | 'http'",
+      description: 'What was timed.',
+    },
+    name: {
+      type: 'string',
+      description: 'The action, authentication method, or request path. Unknown routes are named (unknown).',
+    },
+    tenantId: {
+      type: 'string',
+      description: 'The tenant, when known.',
+    },
+    outcome: {
+      type: "'ok' | 'denied' | 'error'",
+      description: 'denied covers 401, 403, and 429 refusals and advisory denials; anything else that throws is error.',
+    },
+    code: {
+      type: 'string',
+      description: 'The IamError code for denied and error outcomes, such as ACCESS_DENIED, RATE_LIMITED, or IP_NOT_ALLOWED.',
+    },
+    status: {
+      type: 'number',
+      description: 'The HTTP status, on http spans.',
+    },
+    requestId: {
+      type: 'string',
+      description: <>The caller's <code>X-Request-Id</code>, on http spans.</>,
+    },
+    durationMs: {
+      type: 'number',
+      description: 'Wall-clock duration of the unit of work.',
+    },
+  }}
+/>
+
+The handler must be synchronous and cheap. Exceptions it throws are ignored, so observability can never affect a
+request. Feed spans to a metrics library or tracer:
+
+```ts title="lib/iam.ts"
+observability: {
+  onSpan(span) {
+    latency.observe({ kind: span.kind, name: span.name, outcome: span.outcome }, span.durationMs);
+    if (span.outcome === 'denied') denials.inc({ code: span.code ?? '' });
+  },
+},
+```
+
+## Prometheus metrics
+
+When you already run Prometheus (or anything that scrapes its text format), you can skip wiring `onSpan` yourself.
+`observability.metrics` keeps Prometheus-style counters and histograms from the spans, in memory, without any
+extra dependency:
+
+| Metric | Type | Labels |
+| --- | --- | --- |
+| `better_iam_spans_total` | counter | `kind`, `name`, `outcome`, `code` |
+| `better_iam_span_duration_seconds` | histogram | `kind` (configurable `buckets`) |
+| `better_iam_http_requests_total` | counter | `path`, `status` |
+| `better_iam_outbox_messages` | gauge (with `gauges: true`) | `state`: `pending` or `failed` |
+| `better_iam_sessions_live` | gauge (with `gauges: true`) | `kind`: `user`, `api-key`, `role`, or `session-token` |
+
+The collector keeps no tenant labels. Names the caller controls (unknown
+routes, rejected input, made-up actions) collapse into `(invalid)` or `(unknown)`, and series beyond `maxSeries`
+(2000 per metric) collapse into `(other)`, so a hostile client cannot grow memory.
+
+<Tabs items={['Scrape endpoint', 'In code']}>
+<Tab value="Scrape endpoint">
+
+Set a `bearerToken` and point a scraper at `GET /api/iam/metrics` (under your `basePath`) with
+`Authorization: Bearer` followed by the token. Other requests get 401. The token is compared in constant time;
+`doctor` warns when it is shorter than 24 characters.
+
+```ts title="lib/iam.ts"
+observability: { metrics: { bearerToken: process.env.METRICS_TOKEN, gauges: true } },
+```
+
+```yaml title="prometheus.yml"
+scrape_configs:
+  - job_name: better-iam
+    metrics_path: /api/iam/metrics
+    scheme: https
+    authorization:
+      type: Bearer
+      credentials_file: /etc/prometheus/better-iam-token
+    static_configs:
+      - targets: ['identity.example.com']
+```
+
+With `gauges: true`, each scrape also reads the outbox and session collections to report the gauges at that
+moment. Leave it off for very large deployments.
+
+</Tab>
+<Tab value="In code">
+
+Without a `bearerToken`, metrics are programmatic only:
+
+```ts
+observability: { metrics: true },
+
+// Anywhere in your server:
+const text = iam.metrics?.render(); // Prometheus text exposition format
+const data = iam.metrics?.snapshot(); // { spans, durations, http }
+```
+
+`iam.metrics.reset()` clears the counters. `createMetrics(options)` from `better-iam/server` builds a standalone
+collector you can feed from your own `onSpan`.
+
+</Tab>
+</Tabs>
+
+Default histogram buckets are 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, and 10 seconds. With both
+`onSpan` and `metrics` set, every span reaches both.
+
+## Health checks
+
+`GET /api/iam/health` (under your `basePath`) is always available and needs no credential. It performs one
+database read by primary key, whose cost does not grow with the number of tenants, and reveals nothing else about
+the deployment:
+
+```json
+{ "status": "ok", "database": "ok", "latencyMs": 3, "time": 1790000000000 }
+```
+
+When the store fails, it answers 503 with `{ "status": "unavailable", "database": "error", "time": ... }`. Use it
+for load-balancer and orchestrator probes.
+
+## Request IDs
+
+Request IDs let you follow one request from your gateway's logs into IAM's spans. A plain `X-Request-Id` header (letters, digits, and `._:-`, at most 128 characters) is echoed on the response,
+success or error, and appears as `requestId` on the request's `http` span, so IAM latency and outcomes join your
+gateway's request logs. Other values are ignored. Browser clients on trusted origins can read the header through
+CORS.
+
+## What to watch
+
+Observe these signals and alert on the ones that matter to you:
+
+- authentication failures and rate-limit responses (`denied` spans with `RATE_LIMITED`, `IP_NOT_ALLOWED`,
+  `IP_BLOCKED`, or `SESSION_NETWORK_MISMATCH`);
+- denied and root-override audit events;
+- database busy errors (`STORAGE_BUSY`, 503);
+- outbox retries and abandoned deliveries (`better_iam_outbox_messages`, `doctor`'s `outbox-*` findings);
+- token issuance and revocation.
+
+Audit events are the other half of monitoring. Subscribe a <Term id="webhook">webhook</Term> or an in-process
+subscriber to
+`auth:signin:fail` for brute-force alerting, to `binding:*` for elevation, and filter by `outcomes: ['deny']` to
+feed a security information and event management system (SIEM). See [Webhooks](/docs/guides/events/webhooks) and
+the [observability recipes](/docs/guides/recipes/operations#observe-latency-and-outcomes).
+
+Public errors never expose SQL or raw protocol assertions, so error codes are safe to log and count. For storage
+latency, wrap the adapter with `instrumentStore` (see
+[Database operations](/docs/operations/deployment/database#measuring)).
+
+## Next steps
+
+<Cards>
+  <Card title="Scheduled jobs" href="/docs/operations/jobs">
+    The workers whose backlog the gauges and doctor findings report.
+  </Card>
+  <Card title="Doctor" href="/docs/operations/storage#doctor">
+    A one-shot health report for deploy gates and cron.
+  </Card>
+  <Card title="Security model" href="/docs/operations/security">
+    What the denial codes mean and which ones to alert on.
+  </Card>
+</Cards>

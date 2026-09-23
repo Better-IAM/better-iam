@@ -1,0 +1,168 @@
+---
+title: Operations recipes
+description: Recipes for verifying and archiving the audit chain, calling downstream services with stateless assertions, observing latency, and filtering and redelivering webhooks.
+icon: Wrench
+packages: ['@better-iam/server', '@better-iam/next']
+sources: ['docs/recipes.md', 'docs/events.md', 'docs/security.md', 'docs/deployment.md', 'packages/server/src/assertions.ts']
+---
+
+These recipes connect Better IAM to the rest of your infrastructure: proving the audit log is intact, letting other
+services trust who is calling, feeding your monitoring, and routing events to the systems that need them.
+`credential` is the caller's credential (`{ token }` or `{ headers }`).
+
+## Verify and archive the audit chain
+
+**The problem:** an audit log only proves something if you can show that nobody edited it.
+
+**The solution:** every tenant's audit records already form a hash chain, the
+<Term id="audit-chain">audit chain</Term>. Verify it with `audit.verify`, and copy it with `audit.export` to storage
+your database administrators cannot rewrite. A later tampering attempt then shows up against your copy.
+
+```ts
+const status = await iam.api.audit.verify(credential, { tenantId }); // { valid, checked, head, failure? }
+if (!status.valid) alert(`Audit chain broken at ${status.failure?.sequence}: ${status.failure?.reason}`);
+
+let from = 1;
+for (;;) {
+  const page = await iam.api.audit.export(credential, {
+    tenantId,
+    fromSequence: from,
+    limit: 5000,
+  });
+  await archive.append(page.body); // JSON Lines, in sequence order
+  if (!page.nextSequence) break;
+  from = page.nextSequence;
+}
+```
+
+```sh
+better-iam audit-verify --config better-iam.config.mjs --tenant TENANT_ID
+better-iam audit-export --config better-iam.config.mjs --tenant TENANT_ID --output audit.jsonl
+```
+
+- The chain (`sequence`, `previousHash`, `hash`) detects alteration, reordering, or removal by anyone who cannot
+  rewrite both the events and the chain head. Treat your exported heads as the reference.
+- Archives verify anywhere with `verifyAuditChain(events, { previousHash })` from `better-iam`, including in
+  browsers and workers.
+- The CLI commands read storage directly: they need no credential and record no audit event. `audit-export` refuses
+  to overwrite an existing file.
+- For a scheduled, verified, write-once copy, configure `auditArchive` and run
+  [`audit-archive`](/docs/operations/jobs#continuous-audit-archiving) instead of a hand-written loop.
+
+See [Audit chain](/docs/guides/events/audit-chain).
+
+## Call a downstream service with a stateless assertion
+
+**The problem:** a reporting service or an internal API needs to know who is calling, and in which tenant. It
+should not call IAM on every request or hold the deployment secret.
+
+**The solution:** issue an <Term id="assertion">assertion</Term> for that service with `assertions.issue`: a
+short-lived signed token that describes the caller for one named audience. The service checks it with
+`verifyAssertion` and a key derived from the secret.
+
+```ts
+// Issuer: the caller needs iam:assertions:create on iam/reports
+const { token } = await iam.api.assertions.issue(credential, {
+  tenantId,
+  audience: 'reports',
+  ttlSeconds: 120,
+});
+```
+
+```ts title="Downstream service"
+import { verifyAssertion } from 'better-iam';
+
+// Holds only the derived key (iam.assertionKey()), never the secret.
+// Throws INVALID_ASSERTION for a forged, expired, or wrong-audience token.
+const claims = verifyAssertion(token, { key: process.env.IAM_ASSERTION_KEY!, audience: 'reports' });
+// claims.sub, claims.tid, claims.roles, claims.groups, claims.mfa
+```
+
+From a Next.js server component: `await iamNext.assertion({ tenantId, audience: 'reports' })`.
+
+- Assertions are HS256 JSON Web Tokens describing the identity, tenant, session kind, MFA, sign-in method, role and
+  group IDs, and optional public claims. Issuing one is authorized and audited, so administrators decide which roles
+  may obtain tokens for which services.
+- They grant nothing inside IAM, cannot be exchanged for sessions, and cannot be revoked before they expire.
+  `ttlSeconds` is 10 seconds to one hour (five minutes by default); keep lifetimes short.
+- The service holding `iam.assertionKey()` cannot recover the secret, but treat the key as a shared secret. During
+  a secret rotation, give services `iam.assertionKeys()`; `verifyAssertion` accepts a list. See
+  [Secrets and keys](/docs/operations/deployment/secrets#assertion-keys).
+
+## Observe latency and outcomes
+
+**The problem:** you need IAM's latency, error rates, and denials in the same dashboards as the rest of your
+service, without adding a dependency.
+
+**The solution:** set `observability.onSpan`. It hands you one span per unit of work, with its kind, name,
+outcome, and duration, to feed any metrics library.
+
+```ts
+// In the betterIam() options:
+observability: {
+  onSpan(span) {
+    histogram.observe({ kind: span.kind, name: span.name, outcome: span.outcome }, span.durationMs);
+    if (span.outcome === 'denied') counter.inc({ code: span.code ?? '' });
+  },
+}
+```
+
+- Spans cover operations, authorization checks, authentication calls, and HTTP requests. `outcome` is `ok`,
+  `denied` (401, 403, and 429 refusals and advisory denials), or `error`, with the error `code`.
+- The handler must be synchronous and cheap; exceptions it throws are ignored.
+- For a ready-made Prometheus endpoint, set `observability.metrics` with a bearer token instead.
+
+See [Observability](/docs/operations/observability).
+
+## Webhooks: only denials, only some resources, and redelivery
+
+**The problem:** a SIEM wants only denied actions, not every event. And after an outage at the receiving end, you
+need to send the missed events again.
+
+**The solution:** filter the <Term id="webhook">webhook</Term> subscription with `outcomes` and `resources`, and
+use its delivery history to redeliver what failed.
+
+```ts
+const { webhook, secret } = await iam.api.webhooks.create(credential, {
+  tenantId,
+  url: 'https://siem.example.com/iam',
+  events: ['*'],
+  outcomes: ['deny'],
+  resources: ['iam/*'],
+});
+// Store `secret` for the endpoint now: it is returned only once.
+
+// After the SIEM was down: send every abandoned delivery again.
+const history = await iam.api.webhooks.listDeliveries(credential, {
+  tenantId,
+  webhookId: webhook.id,
+});
+for (const delivery of history.filter((item) => item.status === 'failed'))
+  await iam.api.webhooks.redeliver(credential, {
+    tenantId,
+    webhookId: webhook.id,
+    deliveryId: delivery.id,
+  });
+```
+
+- `outcomes` and `resources` (glob patterns over the event's `resourceId`) narrow a subscription beyond its event
+  patterns. `webhooks.update` changes them, and `null` clears them.
+- Endpoints must verify the HMAC signature and timestamp with `verifyWebhookSignature` before trusting a delivery.
+- `listDeliveries` returns the newest deliveries (100 by default) with attempts, timestamps, the last error, and a
+  `pending`, `delivered`, or `failed` status, never payloads.
+- `redeliver` queues the event again, rebuilt from the audit record and signed with the current secret. Endpoints
+  must still deduplicate by event `id`.
+- Deliveries leave through the outbox, so they need the [`outbox` job](/docs/operations/jobs#outbox-and-audit-hooks).
+
+See [Webhooks](/docs/guides/events/webhooks).
+
+## Next steps
+
+<Cards>
+  <Card title="Events and audit" href="/docs/guides/events">
+    Subscribers, webhooks, and the audit log in depth.
+  </Card>
+  <Card title="Background jobs" href="/docs/operations/jobs">
+    Scheduling the outbox, archive, and retention workers.
+  </Card>
+</Cards>

@@ -1,0 +1,175 @@
+---
+title: Terms of use
+description: Versioned agreements such as acceptable-use policies that members accept, with enforcement through ordinary policy statements.
+icon: Signature
+packages: ['@better-iam/server', '@better-iam/react', '@better-iam/vue']
+sources:
+  - docs/governance.md
+  - docs/policies.md
+  - packages/server/src/api/agreements.ts
+  - packages/react/src/index.tsx
+---
+
+Many organizations must show that people agreed to the rules before they got access: an acceptable-use policy,
+an NDA, data-handling rules for customer data. Emailing a PDF proves nothing, and tracking acceptance in a
+separate tool means access and agreement drift apart.
+
+<Term id="agreement">Agreements</Term> put the terms next to the access. An agreement is a versioned text a tenant
+asks its members to accept. Better IAM records who accepted which version and exposes that to every authorization
+decision, so enforcing it is an ordinary <Term id="policy">policy</Term> statement, such as "deny documents until
+the terms are accepted", that combines with everything else.
+
+## Publish an agreement
+
+`agreements.create` (`iam:agreements:manage`) publishes an agreement at version 1. Members are asked to accept
+it from then on.
+
+```ts
+await iam.api.agreements.create(credential, {
+  tenantId,
+  name: 'Acceptable use',
+  content: 'Use company systems for work. Report incidents within 24 hours.',
+  reacceptAfterDays: 365,
+});
+```
+
+<TypeTable
+  type={{
+    name: {
+      type: 'string',
+      description: 'The title members see, such as "Acceptable use". Policies refer to accepted agreements by this name. Unique per tenant, up to 100 characters.',
+      required: true,
+    },
+    content: {
+      type: 'string',
+      description: 'The text members accept, up to 50 000 characters. Line breaks and tabs are allowed, other control characters are not.',
+      required: true,
+    },
+    url: { type: 'string', description: 'An optional http(s) link to the full document, when the text is a summary.' },
+    required: {
+      type: 'boolean',
+      description: 'Required agreements count toward principal.pendingAgreements until accepted. Optional ones only appear in principal.agreements once accepted.',
+      default: 'true',
+    },
+    reacceptAfterDays: {
+      type: 'number',
+      description: 'Acceptance lapses after this many days (1 to 3650), for yearly re-acceptance. Without it, acceptance lasts until a new version.',
+    },
+  }}
+/>
+
+A tenant holds at most 50 agreements.
+
+### Manage agreements
+
+- `agreements.update` (`iam:agreements:manage`) edits an agreement. With `newVersion: true`, the change becomes
+  the next version and everyone must accept again; use it when the rules changed. Without it, for a typo fix,
+  existing acceptances stay valid. `reacceptAfterDays: null` removes the lapse.
+- `agreements.list` (`iam:agreements:read`) lists the tenant's agreements with their current version.
+- `agreements.status({ tenantId, agreementId })` (`iam:agreements:read`) reports who accepted the current version
+  and which active people still owe it (an outdated version, a lapsed acceptance, or none). Use it for compliance
+  reports and to chase people who have not accepted.
+- `agreements.delete` (`iam:agreements:manage`) removes an agreement together with its acceptances.
+
+## Accept
+
+Members accept for themselves, and need no permission for it:
+
+```ts
+const mine = await iam.api.agreements.listMine({ token }, { tenantId });
+for (const agreement of mine.filter((item) => item.required && !item.accepted))
+  await iam.api.agreements.accept(
+    { token },
+    { tenantId, agreementId: agreement.id, version: agreement.version },
+  );
+```
+
+- `agreements.listMine({ tenantId })` returns every agreement of the tenant with its text and whether the caller
+  has `accepted` its current version. Use it to show the terms.
+- `agreements.accept({ tenantId, agreementId, version })` records acceptance of the version the person was shown.
+  Passing the version means nobody accepts text they never saw: once the agreement changed, the call fails with
+  `VERSION_CONFLICT`. It is audited as `agreement:accept`.
+- Both need an ordinary session of the tenant. An administrator using <Term id="impersonation">impersonation</Term>
+  cannot accept for someone (`IMPERSONATION_RESTRICTED`), and <Term id="service-account">service accounts</Term>
+  accept nothing (nothing is pending for them).
+
+The console shows members the required agreements they owe at the top of every page with an "I accept" button,
+and its Terms of use page publishes, edits, and tracks them.
+
+### In React and Vue
+
+To show the same banner in your own application, use the `useAgreements` hook. It returns the person's
+`agreements`, the `pending` ones (required and not accepted in their current version), and an `accept` function
+that records acceptance and reloads.
+
+```tsx title="components/terms-banner.tsx"
+import { useAgreements } from 'better-iam/react';
+
+export function TermsBanner({ tenantId }: { tenantId: string }) {
+  const { pending, accept } = useAgreements({ tenantId });
+  if (!pending.length) return null;
+  return (
+    <div role="alert">
+      {pending.map((agreement) => (
+        <p key={agreement.id}>
+          {agreement.name} <button onClick={() => accept(agreement)}>I accept</button>
+        </p>
+      ))}
+    </div>
+  );
+}
+```
+
+The Vue composable of the same name, from `better-iam/vue`, accepts its input as a ref or getter and returns the
+same fields with the data as refs. Both take `enabled: false` to skip loading. See
+[React](/docs/frameworks/react) and [Vue](/docs/frameworks/vue).
+
+## Enforce with a policy
+
+Recording acceptance is only half the job; access should wait for it. Instead of a special switch, Better IAM
+gives policies two facts about each person, so you decide exactly which access depends on which terms. Every
+evaluation for a person in their own tenant carries these context keys:
+
+- `principal.agreements`: the names of the agreements accepted in their current version.
+- `principal.pendingAgreements`: how many required ones are still owed.
+
+A deny <Term id="statement">statement</Term> holds back access until every required agreement is accepted:
+
+```json title="Hold back documents until the terms are accepted"
+{
+  "effect": "deny",
+  "actions": ["documents:*"],
+  "resources": ["*"],
+  "conditions": { "NumericGreaterThan": { "principal.pendingAgreements": 0 } }
+}
+```
+
+A condition on an allow statement can grant something only to people who accepted an optional agreement, such
+as a beta program:
+
+```json
+{ "ArrayContains": { "principal.agreements": ["Beta program"] } }
+```
+
+When a person is denied because of pending terms, [access paths](/docs/guides/governance/access-paths) report an
+`accept-agreements` path listing what to accept.
+
+## Agreements as code
+
+Agreements are part of [configuration as code](/docs/guides/privileged-access/config-as-code): `name`,
+`content`, `url`, `required` (default true), and `reacceptAfterDays`, matched by name regardless of case. A
+changed `content` publishes a new version, so everyone accepts the new text; other edits keep acceptances.
+Changing them needs `iam:agreements:manage`.
+
+Publishing agreements is guarded by enforced <Term id="invariant">invariants</Term>
+([change safety](/docs/guides/governance/change-safety#access-invariants)). Members accepting agreements is not,
+so schedule the invariant monitor if an invariant depends on them.
+
+<Cards>
+  <Card title="agreements API reference" href="/docs/reference/api/agreements">
+    Every method with its HTTP route.
+  </Card>
+  <Card title="Policy conditions" href="/docs/guides/authorization/conditions">
+    Operators and context keys, including the agreement keys.
+  </Card>
+</Cards>

@@ -1,0 +1,507 @@
+---
+title: Advanced
+description: Step-up, API keys in route handlers, assertions and webhooks for other services, client refresh, the Pages Router, and background delivery in Next.js.
+icon: Settings2
+packages:
+  - '@better-iam/next'
+sources:
+  - docs/nextjs.md
+  - packages/next/README.md
+  - packages/next/src/index.ts
+  - packages/next/src/edge.ts
+  - packages/next/src/client.tsx
+  - packages/next/src/background.ts
+  - examples/nextjs/app/[org]/security/page.tsx
+  - examples/nextjs/app/reauth/page.tsx
+  - examples/nextjs/app/api/whoami/route.ts
+  - examples/nextjs/app/api/cron/route.ts
+  - examples/nextjs/app/providers.tsx
+---
+
+This page covers the parts of `@better-iam/next` that most applications add after the basics:
+
+- [Step-up](#step-up): demand a recent or multi-factor sign-in for sensitive pages.
+- [Service credentials](#service-credentials): accept API keys and assumed roles in route handlers.
+- [Keeping server components in sync](#keeping-server-components-in-sync) with sign-ins in the browser.
+- [Downstream services and webhooks](#downstream-services-and-webhooks): talk to other services both ways.
+- [Background work](#background-work): send email and webhooks on serverless hosts.
+- The [Pages Router](#pages-router).
+
+## Step-up
+
+A valid session only proves that someone signed in, possibly days ago and possibly on a shared computer. Pages that
+change security settings, show secrets, or lead to irreversible operations should also know that the person is
+present now and passed a second factor. <Term id="step-up">Step-up</Term> lets a guard demand that, and send the person to confirm who they
+are instead of refusing outright.
+
+`stepUp: { mfa?: true | 'fresh', maxAgeMs?: number }` works on `page`, `route`, `apiRoute`, `action`,
+`pages.withSession`, `pages.api`, and `requireSession`. Guards check it after authenticating and before
+authorizing, with `checkStepUp(session, requirement, now)`. You can also call that function yourself: it returns
+`null` when the session qualifies, or `{ code, reason, message, status: 403 }`.
+
+| Requirement | Satisfied by | Refused with |
+| --- | --- | --- |
+| `mfa: true` | A session that completed MFA, including one a remembered device let through, and impersonated or assumed-role sessions derived from one | `MFA_REQUIRED` (`reason=mfa`) |
+| `mfa: 'fresh'` | A user session that verified a factor itself | `MFA_REQUIRED`, or `IMPERSONATION_RESTRICTED` for impersonation |
+| `maxAgeMs` | `authenticatedAt` within the window (and not in the future) | `RECENT_AUTH_REQUIRED` (`reason=recent`), or `IMPERSONATION_RESTRICTED` |
+
+`mfa: 'fresh'` refuses sessions a remembered device satisfied, impersonated sessions, assumed roles, and API keys.
+Sessions from `links.switch` do not carry the remembered-device marker, so `'fresh'` cannot tell them apart.
+<Term id="impersonation">Impersonated</Term> sessions never satisfy a recency requirement, as on the server. An invalid requirement (an `mfa`
+other than `true`, `false`, or `'fresh'`, or a `maxAgeMs` that is not a positive finite number) throws a
+`TypeError` when you create the guard (for `requireSession` and `checkStepUp`, when they run).
+
+<Tabs items={['Protected page', 'Step-up page', 'lib/iam-next.ts']}>
+<Tab value="Protected page">
+
+```tsx title="app/[org]/security/page.tsx"
+import { iamNext } from '@/lib/iam-next';
+
+// A session older than five minutes, or without MFA, is sent to /reauth?next=...&reason=... first.
+export default iamNext.page(
+  async (_props: { params: Promise<{ org: string }> }, { session }) => (
+    <main>
+      <h1>Security settings</h1>
+      <p>You signed in at {new Date(session.session.authenticatedAt).toISOString()}.</p>
+    </main>
+  ),
+  { stepUp: { maxAgeMs: 5 * 60_000, mfa: true } },
+);
+```
+
+</Tab>
+<Tab value="Step-up page">
+
+```tsx title="app/reauth/page.tsx"
+import { ReauthenticateForm } from '@better-iam/next/client';
+import { iamNext } from '@/lib/iam-next';
+import { reauthenticate } from '../auth-actions';
+
+const reasons: Record<string, string> = {
+  recent: 'This page needs a recent sign-in. Confirm your password to continue.',
+  mfa: 'This page needs a second factor.',
+  impersonation: 'This page is unavailable while viewing as another member.',
+};
+
+export default async function Reauthenticate(props: {
+  searchParams: Promise<{ next?: string; reason?: string }>;
+}) {
+  const { next, reason } = await props.searchParams;
+  const session = await iamNext.requireSession({ returnTo: '/reauth' });
+  return (
+    <main>
+      <h1>Confirm it’s you</h1>
+      <p>{reasons[reason ?? 'recent'] ?? reasons.recent}</p>
+      <p>Signed in as {session.identity.email}.</p>
+      <ReauthenticateForm action={reauthenticate} {...(next ? { next } : {})} />
+    </main>
+  );
+}
+```
+
+</Tab>
+<Tab value="lib/iam-next.ts">
+
+```ts title="lib/iam-next.ts"
+export const iamNext = createIamNext(iam, { loginPath: '/login', stepUpPath: '/reauth' });
+```
+
+</Tab>
+</Tabs>
+
+Pages redirect to `stepUpPath` (or `stepUp.redirectTo`) with `?next=` and `?reason=` (`mfa`, `recent`, or
+`impersonation`). A `ReauthenticateForm` posting to `authActions().reauthenticate` there asks for the password and
+then the second factor when the account has one. That issues a new session with a fresh `authenticatedAt`, ends
+the session it replaced, and returns to `next`.
+
+The server has no in-place upgrade, so a new session is the only way to prove recency. The new cookie stays a
+browser-session cookie unless the form opts in with `keepSignedIn`. Route handlers, `apiRoute()`, and
+`pages.api()` answer 403 with the code, and `action()` returns it as an `ActionResult`.
+
+### Without a step-up page
+
+Without `stepUpPath`, page guards throw an `IamError` with the failure's `code`, `status`, and `reason`, whose
+`digest` is `BETTER_IAM_STEP_UP:<code>:<reason>`. Production builds pass only the digest to `error.tsx`, so match
+on that prefix there:
+
+```tsx title="app/error.tsx"
+'use client';
+
+export default function ErrorPage({ error }: { error: Error & { digest?: string } }) {
+  if (error.digest?.startsWith('BETTER_IAM_STEP_UP:'))
+    return <a href="/reauth">Confirm it’s you to continue</a>;
+  return <p>Something went wrong.</p>;
+}
+```
+
+`maxAgeMs` is independent of the server's `authentication.recentAuthenticationMs` (five minutes by default), which
+guards the server's own sensitive operations. Keep the two aligned when a page leads to such an operation. The
+`now` option of `createIamNext` replaces the clock for tests. See
+[Sessions](/docs/guides/authentication/sessions) for recent authentication on the server.
+
+## Service credentials
+
+Scripts, CI jobs, and other services call your routes with API keys, and administrators may act through an
+<Term id="role-assumption">assumed role</Term>. `route()` accepts only user sessions, so those callers need `apiRoute(handler, spec)`, the
+variant of `route()` for machine callers. It authenticates with `iam.authenticate`, so API keys and assumed-role
+sessions work as well as browser sessions (cookie or bearer).
+
+```ts title="app/api/whoami/route.ts"
+import { iamNext } from '@/lib/iam-next';
+
+export const runtime = 'nodejs';
+
+// Accepts browser sessions, API keys, and assumed roles; the handler sees a sanitized principal.
+export const GET = iamNext.apiRoute(
+  async (_request, { principal }) => ({
+    id: principal.identity.id,
+    name: principal.identity.name,
+    tenantId: principal.session.tenantId,
+    kind: principal.session.kind,
+    mfa: principal.session.mfa,
+  }),
+  { authorize: { action: 'reports:read' } },
+);
+```
+
+The handler receives `{ principal, params }`. `principal` (the <Term id="principal">principal</Term>) is an `IamPrincipal` copied field by field from the
+stored records, never the records themselves, so token hashes and session policies cannot leak into a response:
+
+| Part | Fields |
+| --- | --- |
+| `principal.identity` | `id`, `tenantId`, `name`, `email?`, `kind?` (`user` or `service`), `status?` |
+| `principal.session` | `id`, `tenantId` (the tenant the credential acts in), `kind` (`user`, `role`, or `api-key`), `mfa`, `method?`, `authenticatedAt`, `expiresAt`, `roleId?`, `impersonatorId?`, `trustedDeviceId?` |
+
+- **Tenant.** `authorize` defaults to the tenant the credential acts in: the role's tenant for an assumed role,
+  which can differ from the identity's tenant. Its callbacks receive `{ principal, params, request }`.
+- **Step-up.** API keys never have MFA, and their `authenticatedAt` is their creation time, so `stepUp` refuses
+  them for `mfa` and limits their age for `maxAgeMs`. Assumed roles inherit both from the session that assumed
+  them and never satisfy `mfa: 'fresh'`.
+- **Everything else** (the origin check for cookie mutations, JSON results, the error envelope) works as in
+  [`route()`](/docs/frameworks/nextjs/guards#route-handlers). `apiRoute()` needs an instance with
+  `authenticate()`, which `betterIam()` provides.
+
+API keys come from [`credentials.create`](/docs/reference/api/credentials#create), usually for a
+[service account](/docs/reference/api/service-accounts), and assumed-role sessions from
+[`roles.assume`](/docs/reference/api/roles#assume).
+
+## Keeping server components in sync
+
+A sign-in or sign-out can happen in the browser: through the typed client, a passkey ceremony, or a session that
+expired while the tab was open. It changes the cookie, but App Router server components that already rendered keep
+showing the old identity until the next navigation. `IamNextProvider` from `@better-iam/next/client` wraps
+`IamProvider` and calls `router.refresh()` whenever the signed-in identity changes, so layouts and pages re-render
+with the new cookie.
+
+```tsx title="app/providers.tsx"
+'use client';
+import type { ReactNode } from 'react';
+import { createIamClient } from '@better-iam/client';
+import { IamNextProvider, useSignOut } from '@better-iam/next/client';
+import type { BetterIam } from '@better-iam/server';
+
+const client = createIamClient<BetterIam>({
+  baseURL: typeof window === 'undefined' ? 'http://localhost' : window.location.origin,
+});
+type Session = Awaited<ReturnType<BetterIam['api']['auth']['getSession']>>;
+
+export function Providers(props: { initialSession: Session | null; children: ReactNode }) {
+  return (
+    <IamNextProvider client={client} initialSession={props.initialSession}>
+      {props.children}
+    </IamNextProvider>
+  );
+}
+
+/** Signing out here refreshes the server components through IamNextProvider. */
+export function SignOutButton() {
+  const signOut = useSignOut({ redirectTo: '/login' });
+  return (
+    <button type="button" onClick={() => void signOut()}>
+      Sign out
+    </button>
+  );
+}
+```
+
+- **Seed it from the server.** Pass `initialSession={await iamNext.sessionForClient()}` from the root layout, so
+  the first render needs no fetch and doesn't trigger a refresh. The refresh fires only when the identity changes
+  after that: sign-in, sign-out, an account switch, or an expired session noticed on focus.
+- **`useSignOut({ redirectTo })`** signs out through the session store, navigates with `router.replace` when
+  `redirectTo` is given, and refreshes, in one call.
+- **`useRouterSync()`** is the hook inside `IamNextProvider`, for a provider tree you assemble yourself.
+- **Re-exports.** The entry re-exports `useSession`, `useAuthorize`, `useAccessible`, `useIamClient`, and `Can`
+  from [`@better-iam/react`](/docs/frameworks/react), along with the auth forms.
+
+Server actions need none of this. Next re-renders the page after an action, and `getSession()` reads the cookies
+the action set.
+
+## Downstream services and webhooks
+
+Two helpers connect your app with other services in each direction: assertions carry the signed-in person's
+identity to a service you call, and webhooks tell your app about changes made somewhere else.
+
+### Assertions for other services
+
+Your Next.js app often calls other services (billing, reports, search) on the person's behalf. Forwarding the
+session token would let every service act as that person everywhere, and each would need the IAM database to
+check it. Instead, the app mints a short-lived signed <Term id="assertion">assertion</Term> for one audience, and the service verifies it
+offline with a key. `iamNext.assertion({ tenantId, audience, ttlSeconds?, claims? })` mints one about the current session
+from a server component or route handler, and returns `{ token, expiresAt, claims }`. The caller needs
+`iam:assertions:create` on `iam/{audience}`, so administrators decide which services each role may call.
+
+```ts title="app/api/reports/route.ts"
+export const runtime = 'nodejs';
+
+export const GET = iamNext.route(async (_request, { session }) => {
+  const { token } = await iamNext.assertion({ tenantId: session.session.tenantId, audience: 'reports' });
+  const response = await fetch('https://reports.internal/summary', {
+    headers: { authorization: `Bearer ${token}` },
+  });
+  return response.json();
+});
+```
+
+The receiving service needs only the derived key, `iam.assertionKey()`, kept in its environment. It verifies
+tokens offline with `withAssertion` or `verifyAssertionToken` from `@better-iam/next/edge`. Verification runs on
+Web Crypto, including in edge route handlers and middleware, and follows the server's `verifyAssertion` rules:
+HS256 only, the audience, the issuer when given, and the token's lifetime with 30 seconds of clock tolerance.
+
+```ts title="app/api/summary/route.ts (the downstream service)"
+import { withAssertion } from '@better-iam/next/edge';
+
+export const runtime = 'edge';
+export const GET = withAssertion(
+  { key: process.env.IAM_ASSERTION_KEY!, audience: 'reports', authorize: (claims) => claims.mfa },
+  async (request, { claims }) => Response.json({ tenant: claims.tid, user: claims.sub }),
+);
+```
+
+| Option | Meaning |
+| --- | --- |
+| `key` | `iam.assertionKey()` (64 hex characters), or the list from `iam.assertionKeys()` while the secret rotates |
+| `audience` | This service's audience; tokens for any other audience are rejected |
+| `issuer` | The IAM origin (`iss`), checked when set |
+| `toleranceSeconds` | Clock skew allowance, default 30 |
+| `authorize` | `withAssertion` only: extra checks after verification, such as `claims.mfa` or a role. Returning false answers 403 `ACCESS_DENIED` |
+
+A missing bearer token answers 401 `UNAUTHENTICATED`; a bad signature, audience, issuer, or lifetime answers 401
+`INVALID_ASSERTION` (the `AssertionError` that `verifyAssertionToken` throws). The claims are `iss`, `sub`, `aud`,
+`iat`, `exp`, `jti`, `tid` (the tenant), `kind`, `mfa`, `method?`, `impersonatorId?`, `name`, `email?`, `roles`,
+`groups`, and `ext?`. Keep the TTL short: the downstream service cannot see a revocation before the assertion
+expires. [Secrets](/docs/operations/deployment/secrets) covers rotating the key.
+
+### Receiving your own webhooks
+
+Changes also happen outside your pages: an administrator deletes an identity in the console, a SCIM connector
+deactivates someone, a certification revokes access. <Term id="webhook">Webhooks</Term> tell your application so it can clean up its own
+data. `createWebhookHandler({ secret, onEvent })` is a route handler for your deployment's webhooks that checks
+the signature and freshness before your code runs:
+
+```ts title="app/api/webhooks/iam/route.ts"
+import { createWebhookHandler } from '@better-iam/next/edge';
+
+export const POST = createWebhookHandler({
+  // During rotation, list the new and the previous secret.
+  secret: [process.env.IAM_WEBHOOK_SECRET!, process.env.IAM_WEBHOOK_SECRET_PREVIOUS!].filter(Boolean),
+  onEvent: async (event, delivery) => {
+    if (event.type === 'identity:delete') await removeProfile(event.resourceId);
+  },
+});
+```
+
+- **Signatures.** It verifies `X-Better-IAM-Signature` (`v1=<hex HMAC-SHA256>` over `{timestamp}.{body}`) against
+  every configured secret, so you can rotate by listing the new and the previous secret. Unsigned requests, and
+  requests whose signature matches no secret, answer 401 `INVALID_SIGNATURE`.
+- **Limits.** It rejects timestamps more than five minutes from the current time (`toleranceSeconds`, default
+  300) and bodies over 1 MiB (`maxBodyBytes`, 413 `PAYLOAD_TOO_LARGE`) before parsing. Methods other than POST
+  answer 405, and a body that is not a JSON event answers 400 `INVALID_INPUT`.
+- **Retries.** It answers 500 `HANDLER_FAILED` when `onEvent` throws, and Better IAM retries with exponential
+  backoff. Deliveries can repeat after a timeout, so make `onEvent` idempotent on `event.id` (or
+  `delivery.deliveryId`).
+- **Ordering.** Events carry `sequence` and `hash` from the <Term id="audit-chain">audit chain</Term>, so a consumer can detect gaps. `delivery`
+  holds `deliveryId`, `webhookId`, `event`, and `timestamp` from the delivery headers.
+
+`verifyWebhook({ secret, timestamp, body, signature, toleranceSeconds?, now? })` is the same check as the server's
+`verifyWebhookSignature`, on Web Crypto, for your own handlers. See [Webhooks](/docs/guides/events/webhooks) for
+subscriptions and [Audit chain](/docs/guides/events/audit-chain) for `sequence` and `hash`.
+
+## Background work
+
+Better IAM does not send email, SMS, or webhooks inside the request that caused them. It writes them to an <Term id="outbox">outbox</Term>
+in the same transaction, and events go to a dispatcher, so a slow mail provider never slows down or breaks a
+sign-in. Something then has to run the outbox and the dispatcher. On a long-lived Node server a `setInterval` is
+enough. On Vercel and other serverless hosts there is no process left running between requests, so turn on
+`dispatchAfterResponse`:
+
+```ts title="lib/iam-next.ts"
+// Email, SMS, webhooks, and events go out after each response (Next's after()).
+export const iamNext = createIamNext(iam, { dispatchAfterResponse: true });
+```
+
+Every in-process `client()` and `pages.client()` call, and every POST to the `handlers()` or `pages.handler()`
+mount, then schedules one dispatch that runs once the response has been sent. A sign-in code or reset email leaves
+within the same invocation, with no separate worker.
+
+- **Concurrency.** Runs are single-flight per instance, with the outbox and events on separate lanes, so a slow
+  event handler cannot hold up email. A call made during a run waits for it and triggers exactly one more. An
+  outbox run older than the server's 60-second claim lease no longer holds back new ones.
+- **Fallback.** Where `after()` cannot run (the Pages Router, or outside a request scope), the run starts
+  immediately without being awaited.
+- **Re-entrancy.** Inside an event handler or delivery callback, call `background.schedule()` rather than awaiting
+  `dispatch()`. Where `AsyncLocalStorage` is available (Next provides it on Node and edge), awaiting `dispatch()`
+  there resolves at once with `{ deferred: true }` and queues the follow-up run.
+
+`iamNext.background` also has `dispatch()`, which runs a pass now and resolves with
+`{ outbox?: { delivered, failed, abandoned, rounds }, events?: { dispatched } }`. Its `schedule()` queues a pass
+after the response and never throws. The `background` option of `createIamNext` takes:
+
+- `onError(error, task)`: receives failures nobody awaits (default `console.error`).
+- `after`: an `after()` override.
+- `outboxLimit`: messages per round, 1 to 1000 (default 100).
+- `maxRounds`: rounds per pass (default 10); another round runs only while the last one was full.
+
+### Scheduled jobs
+
+`background.cron(options)` covers everything interactive traffic does not trigger: retries with backoff, quiet
+periods, and the periodic jobs.
+
+```ts title="app/api/cron/route.ts"
+import { iamNext } from '@/lib/iam-next';
+
+export const runtime = 'nodejs';
+export const GET = iamNext.background.cron({
+  secret: process.env.CRON_SECRET,
+  tasks: {
+    purge: { retentionMs: 30 * 86_400_000 },
+    auditRetention: { retentionMs: 365 * 86_400_000 },
+    digest: true,
+    reminders: true,
+    outbox: true,
+    events: true,
+  },
+});
+```
+
+On Vercel, schedule it in `vercel.json`:
+
+```json title="vercel.json"
+{ "crons": [{ "path": "/api/cron", "schedule": "*/10 * * * *" }] }
+```
+
+| Task | Runs | Default |
+| --- | --- | --- |
+| `outbox` | Delivers queued outbox messages, repeated while batches come back full | on |
+| `events` | Dispatches pending events to plugins, `events.onEvent`, and subscribers | on |
+| `purge` | `purgeDeleted`: expires lapsed access and removes deleted tenants past retention (`{ retentionMs? }`) | off |
+| `auditRetention` | `pruneAudit` for every tenant that is not deleted, or the `tenants` you list (`{ retentionMs, tenants? }`) | off |
+| `digest` | `sendAccessDigest` with the options you pass | off |
+| `reminders` | `sendExpiryReminders` with the options you pass | off |
+
+- **Authentication.** The route requires `Authorization: Bearer <secret>` (Vercel Cron sends `CRON_SECRET` this
+  way; `secret` defaults to `process.env.CRON_SECRET`). It compares in constant time and refuses to run anything
+  when no secret is configured (500 `CRON_NOT_CONFIGURED`).
+- **Order.** Jobs run first, then the outbox drain and events, so the email a job queues leaves in the same run.
+- **Results.** Each task is isolated. The response lists per-task `results` and `errors`, and is 500 if any task
+  failed. Unexpected failures read `TASK_FAILED` without internal detail and go to `background.onError`.
+  `eventsWaitMs` (default 10 000) bounds how long the events task waits for a dispatch already running in the
+  process before failing with `BUSY`.
+
+[Jobs](/docs/operations/jobs) covers the same jobs for other hosts.
+
+## Pages Router
+
+Applications that still use `pages/` (or mix both routers) get the same guarantees through `iamNext.pages`. The
+Pages Router hands you Node `req`/`res` objects and `getServerSideProps` instead of server components, so these
+helpers take those shapes:
+
+| Helper | Use |
+| --- | --- |
+| `pages.handler()` | `pages/api/iam/[...path].ts`. It re-encodes bodies Next already parsed, so `bodyParser` can stay on; turn it off only for byte-exact protocol callbacks |
+| `pages.withSession(gssp, spec)` | `getServerSideProps`: a login redirect with `?next=`, `notFound` (or `authorize.redirectTo`) on denial, and the session in props |
+| `pages.api(handler, spec)` | API routes: session cookie or bearer session token, `stepUp`, `authorize`, the JSON error envelope, JSON results, and 204 for `undefined` |
+| `pages.client(req, res)` | The in-process typed client. Issued cookies are appended to `res`, so API routes can sign people in and out |
+| `pages.getSession(req)` | The session for any Node request with `headers`, or `null` |
+
+<Tabs items={['API mount', 'getServerSideProps', 'API route']}>
+<Tab value="API mount">
+
+```ts title="pages/api/iam/[...path].ts"
+import { iamNext } from '@/lib/iam-next';
+
+export default iamNext.pages.handler();
+```
+
+</Tab>
+<Tab value="getServerSideProps">
+
+```tsx title="pages/projects/[id].tsx"
+export const getServerSideProps = iamNext.pages.withSession(
+  async (context, { session }) => ({ props: { id: String(context.params?.id) } }),
+  {
+    authorize: {
+      action: 'projects:read',
+      resource: ({ params }) => ({ type: 'project', id: String(params.id) }),
+    },
+  },
+);
+
+export default function Project({ id, session }: { id: string; session: { identity: { name: string } } }) {
+  return (
+    <h1>
+      {id} for {session.identity.name}
+    </h1>
+  );
+}
+```
+
+</Tab>
+<Tab value="API route">
+
+```ts title="pages/api/projects/[id].ts"
+export default iamNext.pages.api(async (req, res, { session }) => ({ id: req.query.id }), {
+  authorize: {
+    action: 'projects:read',
+    resource: ({ req }) => ({ type: 'project', id: String(req.query.id) }),
+  },
+});
+```
+
+</Tab>
+</Tabs>
+
+- `withSession` redirects signed-out visitors to the login path with `?next=` (the resolved URL) and sessions that
+  must step up to the step-up page. It serializes the session through JSON, without its token hash, before adding
+  it to the props, because Next requires serializable props. Its `authorize` callbacks receive
+  `{ session, params, query }`, and `gssp` is optional.
+- `pages.api` applies the same origin check to cookie mutations as `route()`. Results are sent as JSON unless the
+  handler already responded.
+- `pages.handler()` accepts parsed JSON and form bodies and streams unparsed ones, up to 2 MiB.
+
+## Runtime notes
+
+These rules apply to every `@better-iam/next` helper, on this page and the others:
+
+- Route handlers that touch `iam` need `export const runtime = 'nodejs'`. The edge helpers run anywhere.
+- `iam.endpoint` gives `client()` the origin and base path. A custom `IamLike` without it can pass `baseURL` and
+  `basePath` options; otherwise the origin is derived from `x-forwarded-host` / `host`, and it must be one of the
+  server's trusted origins.
+- The helpers never cache across requests. Memoization is scoped to one render, and there is no module-level
+  session state.
+- Only `IamError` and `IamClientError` become responses or `ActionResult`s. Other errors and Next control flow
+  (`redirect()`, `notFound()`, `forbidden()`, `unauthorized()`) propagate unchanged in every wrapper;
+  `isNextControlError(error)` and `isAuthenticationError(error)` are exported for your own wrappers.
+
+## Next steps
+
+<Cards>
+  <Card title="Sessions" href="/docs/guides/authentication/sessions">
+    Recent authentication, lifetimes, and revocation on the server.
+  </Card>
+  <Card title="Jobs" href="/docs/operations/jobs">
+    The maintenance jobs `background.cron()` runs, for other hosts.
+  </Card>
+  <Card title="Webhooks" href="/docs/guides/events/webhooks">
+    Subscriptions, event types, and delivery retries.
+  </Card>
+</Cards>

@@ -1,0 +1,79 @@
+---
+title: Use the docs with AI
+description: Connect AI coding assistants to these docs through MCP, or give them the whole site as Markdown with llms.txt.
+icon: Bot
+---
+
+AI coding assistants write better Better IAM code when they can read the real reference instead of guessing
+method names. This site offers the same content to tools as it does to people, in three forms: an MCP server your
+assistant can query, plain-text indexes for one-shot context, and a Markdown version of every page.
+
+## Connect an assistant with MCP
+
+The [Model Context Protocol](https://modelcontextprotocol.io) lets an assistant call tools while it works. This site
+serves an MCP endpoint at `/api/mcp` (Streamable HTTP, no sign-in required, read-only) with five tools:
+
+| Tool | What it does |
+| --- | --- |
+| `search` | Full-text search over every page, the same index as the search dialog. |
+| `list_pages` | Lists every page with its URL and one-line description. |
+| `get_page` | Returns one page as Markdown, by URL (for example `/docs/guides/authorization/policies`). |
+| `lookup_api_method` | Returns the signature, HTTP route, permission, errors, and behaviour of one server API method, for example `groups.addMember`. |
+| `lookup_export` | Explains a function, hook, component, class, or constant a package exports, for example `useSession` or `@better-iam/core evaluatePolicy`, with its parameters and every entry point that exports it. |
+| `lookup_error_code` | Explains an `IamError` code (for example `ACCESS_DENIED`): what it means, why it happens, and how to handle it. |
+
+<Tabs items={['Claude Code', 'Cursor', 'VS Code']} groupId="mcp-client" persist>
+<Tab value="Claude Code">
+
+```bash
+claude mcp add --transport http better-iam-docs https://docs.example.com/api/mcp
+```
+
+</Tab>
+<Tab value="Cursor">
+
+```json title=".cursor/mcp.json"
+{
+  "mcpServers": {
+    "better-iam-docs": { "url": "https://docs.example.com/api/mcp" }
+  }
+}
+```
+
+</Tab>
+<Tab value="VS Code">
+
+```json title=".vscode/mcp.json"
+{
+  "servers": {
+    "better-iam-docs": { "type": "http", "url": "https://docs.example.com/api/mcp" }
+  }
+}
+```
+
+</Tab>
+</Tabs>
+
+Replace `https://docs.example.com` with the address where these docs are served (`http://localhost:4000` when you
+run them locally with `pnpm --filter @better-iam/docs dev`).
+
+## Give a model the whole site
+
+When a tool cannot call MCP, paste or fetch the site as plain text:
+
+| URL | Content | Use it for |
+| --- | --- | --- |
+| `/llms.txt` | An index: every page's title, URL, and description | Letting a model pick which pages to read |
+| `/llms-full.txt` | Every page as Markdown in one file | Loading everything into a long context window |
+| `/docs/<page>.md` | One page as Markdown | Quoting a single page precisely |
+
+Any docs URL also returns Markdown when the request asks for it with `Accept: text/markdown`, so agents that fetch
+pages get Markdown without special URLs. Each page's **Copy Markdown** button and **Open** menu (with shortcuts to
+open the page in an AI chat) use the same Markdown.
+
+## Keep answers accurate
+
+The reference pages, and the MCP lookup tools, are generated from the code (method names, signatures, routes, and
+error codes) with hand-written explanations on top, so they match the version of Better IAM these docs were built
+from. When an assistant's answer disagrees with your installed version, trust the TypeScript types in your editor:
+every server method is typed end to end from the `betterIam()` instance.

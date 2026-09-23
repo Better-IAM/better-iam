@@ -1,0 +1,316 @@
+---
+title: React
+description: IamProvider, useSession, useAuthorize, Can, and self-service hooks for rendering React UI from the signed-in session and advisory decisions.
+icon: Atom
+packages:
+  - '@better-iam/react'
+sources:
+  - packages/react/src/index.tsx
+  - packages/react/src/store.ts
+  - packages/react/README.md
+  - README.md
+---
+
+`@better-iam/react` connects React components to the [typed client](/docs/frameworks/client). Calling the client
+from components works, but every component would then fetch the <Term id="session">session</Term> on its own, keep its own loading state,
+and miss a sign-out that happened elsewhere on the page. This package keeps one session for the whole tree,
+re-renders every component that depends on it when it changes, batches permission checks, and re-runs them when a
+different person signs in.
+
+It runs in the browser, so it splits the work with your server framework:
+
+- **Sessions on the server and guards.** The hooks never enforce anything. Guard pages and mutations with a
+  server integration such as [Next.js](/docs/frameworks/nextjs) or [React Router](/docs/frameworks/react-router).
+- **Cross-site checks.** The client sends the `X-Better-IAM` header the IAM API requires; your own routes are
+  checked by the server integration.
+- **Hydration.** Pass the session your server loaded as `initialSession`, and the first browser render matches
+  the server's HTML without a request ([why it matters](#iamprovider)).
+
+| Export | What it does | Use it to |
+| --- | --- | --- |
+| [`IamProvider`](#iamprovider) | Holds the client and one session store for the tree; loads the session on mount or starts from a server-rendered one | Wrap the app once |
+| [`useSession()`](#usesession) | The current session and its status, plus `refresh`, `signOut`, and `setSession` | Show who is signed in, sign out, apply a sign-in |
+| `useIamClient()` | The client passed to the provider | Call any API method from a component |
+| [`useAuthorize()`](#authorization-hooks) | Several advisory decisions in one `authorizeMany` call, with `allowed(action, resource?)` | Decide which menu items and buttons to render |
+| [`Can`](#authorization-hooks) | Renders its children only when one action is allowed, with `fallback` and `loading` | Gate one element on one permission |
+| [`useAccessible()`](#authorization-hooks) | The managed resources of a type the person may act on | Render a list of what someone can open |
+| [`useAgreements()`](#useagreements) | The person's terms of use, the pending ones, and `accept` | Block the app until required terms are accepted |
+| [`useAccessPaths()`](#useaccesspaths) | Whether an action is allowed and, if not, what the person can do about it | Build a "request access" screen |
+| `createSessionStore`, `isUnauthenticated` | The framework-agnostic session store and its error test | Use the store outside React |
+
+It requires React 18.2 or later. Everything it returns is <Term id="advisory">advisory</Term> UI state: it decides what to render, and the
+server still enforces every operation. Next.js applications use
+[`IamNextProvider`](/docs/frameworks/nextjs/advanced#keeping-server-components-in-sync), which wraps `IamProvider`,
+and [React Router](/docs/frameworks/react-router) applications use this package for their components.
+
+## Install
+
+```npm
+npm i @better-iam/react @better-iam/client
+```
+
+With the umbrella package, import from `better-iam/react` and `better-iam/client`.
+
+## Setup
+
+<Steps>
+<Step>
+
+### Create the client once
+
+Create the client outside render (at module scope, or in `useState` with an initializer). The provider creates its
+session store from the first client it receives, so a new client on every render would leave the hooks and the
+store talking to different objects.
+
+```ts title="src/iam-client.ts"
+import { createIamClient } from '@better-iam/client';
+import type { iam } from '../server/iam.js';
+
+export const client = createIamClient<typeof iam>({ baseURL: 'https://app.example.com' });
+```
+
+</Step>
+<Step>
+
+### Wrap the app in `IamProvider`
+
+The provider holds the session for everything rendered inside it. Without `initialSession`, it loads the session
+once on mount.
+
+```tsx title="src/app.tsx"
+import { IamProvider } from '@better-iam/react';
+import { client } from './iam-client';
+
+export function App() {
+  return (
+    <IamProvider client={client}>
+      <Workspace tenantId="…" />
+    </IamProvider>
+  );
+}
+```
+
+</Step>
+<Step>
+
+### Read the session and decisions
+
+`useSession` returns the signed-in person, `useAuthorize` asks for this screen's permissions in one call,
+`useAccessible` lists the projects the person may read, and `Can` shows one link only when it is allowed.
+
+```tsx title="src/workspace.tsx"
+import { Can, useAccessible, useAuthorize, useSession } from '@better-iam/react';
+import type { client } from './iam-client';
+
+export function Workspace({ tenantId }: { tenantId: string }) {
+  const { status, session, signOut } = useSession<typeof client>();
+  const { allowed } = useAuthorize({
+    tenantId,
+    checks: [{ action: 'projects:manage', resource: { type: 'project', id: 'website' } }],
+  });
+  const { resources } = useAccessible({ tenantId, action: 'projects:read', type: 'project' });
+
+  if (status === 'loading') return <p>Loading…</p>;
+  if (status !== 'authenticated') return <a href="/login">Sign in</a>;
+  return (
+    <>
+      <p>
+        {session.identity.name} <button onClick={() => void signOut()}>Sign out</button>
+      </p>
+      <ul>
+        {resources.map((project) => (
+          <li key={project.id}>{project.resourceId}</li>
+        ))}
+      </ul>
+      {allowed('projects:manage', { type: 'project', id: 'website' }) && <button>Manage</button>}
+      <Can tenantId={tenantId} action="iam:identities:create" fallback={null}>
+        <a href="/invite">Invite a member</a>
+      </Can>
+    </>
+  );
+}
+```
+
+</Step>
+</Steps>
+
+Hooks rendered outside `IamProvider` throw `Better IAM hooks must be rendered inside <IamProvider>`.
+
+## IamProvider
+
+<TypeTable
+  type={{
+    client: {
+      type: 'IamClient',
+      description: <>The typed client. Create it once, outside render.</>,
+      required: true,
+    },
+    initialSession: {
+      type: 'Session | null',
+      description: <>A session rendered on the server. <code>null</code> means known signed-out. Omit it to load the session on mount.</>,
+    },
+    refreshOnFocus: {
+      type: 'boolean',
+      description: <>Reload the session when the window regains focus or the tab becomes visible.</>,
+      default: 'true',
+    },
+    refreshIntervalMs: {
+      type: 'number',
+      description: <>Reload the session on a fixed interval, in milliseconds.</>,
+      default: 'off',
+    },
+    children: {
+      type: 'ReactNode',
+      description: <>The tree that can use the hooks and <code>Can</code>.</>,
+    },
+  }}
+/>
+
+Why `initialSession` matters: without it, the provider starts in `loading` and fetches the session after the page
+appears, so a server-rendered page first shows a "loading" or signed-out state and then changes. With it, the first
+render already knows who is signed in, makes no request, and matches the markup the server produced, so React
+hydrates without a mismatch. Server-rendering frameworks pass the session their server loaded:
+`iamNext.sessionForClient()` in Next.js, `iamRouter.sessionData(args)` in React Router.
+
+Focus refresh exists because sessions end outside the page: they expire, or are revoked from another device or
+by an administrator. Reloading when the tab becomes visible again brings the UI back in line with the server.
+
+## useSession
+
+`useSession<typeof client>()` returns the session snapshot, typed from the client, plus actions.
+
+| Member | Value |
+| --- | --- |
+| `status` | `loading`, `authenticated`, `unauthenticated`, or `error` |
+| `session` | `{ identity, session, ... }` from `auth.getSession`, or `null` |
+| `error` | The last error; unauthenticated states keep the server's error so its code can be shown |
+| `isAuthenticated` | `status === 'authenticated'` |
+| `refresh()` | Reloads the session; concurrent calls share one request |
+| `signOut()` | Signs out on the server, then clears the local session even if that call failed |
+| `setSession(session)` | Replaces the local session, for example right after a sign-in response |
+
+After signing in through the client, hand the new session to the store so every hook updates at once:
+
+```tsx
+import { useIamClient, useSession } from '@better-iam/react';
+import type { client as appClient } from './iam-client';
+
+export function useSignIn(tenantId: string) {
+  const client = useIamClient<typeof appClient>();
+  const { setSession } = useSession<typeof appClient>();
+  return async (email: string, password: string) => {
+    const result = await client.auth.signIn({ tenantId, email, password });
+    if ('token' in result) setSession(await client.auth.getSession());
+    else startMfa(result.challenge); // see the typed client's sign-in flows
+  };
+}
+```
+
+`useIamClient<T>()` returns the client passed to the provider, typed as you declare it.
+
+## Authorization hooks
+
+`useAuthorize({ tenantId, checks, enabled? })` sends all its checks in one `authorizeMany` call, so a toolbar with
+ten permission-dependent buttons costs one request instead of ten. It re-runs when the checks or the signed-in
+identity change (a different person must never see the previous person's buttons), and a session refresh for the
+same identity does not re-run it.
+
+| Member | Value |
+| --- | --- |
+| `status` | `idle`, `loading`, `ready`, or `error` |
+| `results` | `{ action, resource, allowed, reason }[]` |
+| `error` | The transport or server error, if the call failed |
+| `allowed(action, resource?)` | The decision for one check; `false` until results arrive. The resource defaults to `iam/{tenantId}` |
+| `refresh()` | Runs the checks again |
+
+When the session is `unauthenticated`, every check resolves to denied with `reason: 'UNAUTHENTICATED'` without a
+request. `enabled: false` holds the query.
+
+`Can` wraps one check for rendering:
+
+```tsx
+<Can
+  tenantId={tenantId}
+  action="projects:delete"
+  resource={{ type: 'project', id }}
+  fallback={<span>Read only</span>}
+  loading={<Spinner />}
+>
+  <DeleteButton />
+</Can>
+```
+
+It renders `loading` while the decision is pending, `children` when allowed, and `fallback` otherwise. Without a
+`resource`, it checks the tenant itself.
+
+`useAccessible({ tenantId, action, type, limit?, offset?, enabled? })` wraps the
+<Term id="reverse-query">reverse query</Term> ([how it works](/docs/guides/authorization/queries)) for managed resource types. It returns `status`,
+`resources` (each with `id`, `type`, `resourceId`, `attributes`, and optional `ownerId`, `parentType`,
+`parentId`), `total`, `error`, and `refresh()`. Signed out, it settles to an empty list.
+
+## Self-service hooks
+
+These two hooks let people resolve their own access problems without waiting for an administrator: accepting
+terms that policies require, and finding out what would let them perform an action they were denied.
+
+### useAgreements
+
+`useAgreements({ tenantId, enabled? })` lists the signed-in person's terms of use, or <Term id="agreement">agreements</Term> (`agreements.listMine`). Each
+agreement has `id`, `name`, `content`, `url?`, `version`, `required`, `accepted`, `acceptedAt?`, and
+`acceptedVersion?`. `pending` holds the required agreements not accepted in their current version: render their
+text and an accept button before the rest of the app when policies hold back access until acceptance.
+`accept(agreement)` records acceptance of the version the person was shown, then reloads.
+
+```tsx
+const { pending, accept } = useAgreements({ tenantId });
+if (pending.length)
+  return (
+    <article>
+      <h2>{pending[0].name}</h2>
+      <div>{pending[0].content}</div>
+      <button onClick={() => void accept(pending[0])}>Accept</button>
+    </article>
+  );
+```
+
+See [Agreements](/docs/guides/governance/agreements) for how policies require them.
+
+### useAccessPaths
+
+`useAccessPaths({ tenantId, action, resource, enabled? })` answers "how do I get access?" for an action the
+person may be denied (`accessPaths.find`). It returns `allowed`, `reason`, and, when denied, the self-service
+`paths` the server verified would allow the person:
+
+| `kind` | What the person can do |
+| --- | --- |
+| `mfa` | Sign in again with a second factor |
+| `accept-agreements` | Accept the listed `agreements` (`id`, `name`, `version`) |
+| `activate` | Activate an <Term id="eligible-binding">eligible role</Term>: `bindingId`, `role` (`id`, `name`), `requireApproval`, `requireJustification`, `requireMfa`, `maxActivationMs?` |
+| `request-package` | Request an <Term id="access-package">access package</Term>: `package` (`id`, `name`, `description?`) and `requireJustification` |
+
+An empty `paths` list means the person has to ask an administrator. Call `refresh()` after they take a path.
+[Access paths](/docs/guides/governance/access-paths) explains how the server finds them, and
+[Just-in-time elevation](/docs/guides/privileged-access/elevation) covers activation.
+
+## The session store
+
+The provider keeps its session in a framework-agnostic store that it creates for you and does not expose. Create
+your own with `createSessionStore` when code outside React, such as a plain script, needs session state.
+`createSessionStore` and `isUnauthenticated` are re-exported from
+[`@better-iam/client/session`](/docs/frameworks/client#session-store), with the `SessionClient`, `SessionOf`,
+`SessionSnapshot`, `SessionStatus`, and `SessionStore` types. The hooks read the provider's store through
+`useSyncExternalStore`, and you can subscribe to a store of your own the same way.
+
+## Next steps
+
+<Cards>
+  <Card title="Next.js" href="/docs/frameworks/nextjs">
+    Server guards and `IamNextProvider`, which wraps `IamProvider` for the App Router.
+  </Card>
+  <Card title="React Router" href="/docs/frameworks/react-router">
+    Guarded loaders and actions, with these hooks in the browser.
+  </Card>
+  <Card title="Typed client" href="/docs/frameworks/client">
+    Every API method, error codes, and passkey helpers.
+  </Card>
+</Cards>

@@ -1,0 +1,438 @@
+---
+title: HTTP and configuration
+description: How the HTTP handler serves authentication - routes, cookies, CSRF and Origin checks, rate limits, headers, request IDs - plus every authentication option and email template.
+icon: Globe
+packages: ['@better-iam/server', '@better-iam/auth', '@better-iam/client']
+sources:
+  - docs/authentication.md
+  - docs/deployment.md
+  - packages/server/src/http.ts
+  - packages/auth/src/types.ts
+  - packages/auth/src/rate-limit.ts
+  - packages/auth/src/templates.ts
+---
+
+Browsers do not call `iam.api` directly; they talk to the HTTP handler. The handler turns the API into JSON
+endpoints and adds what a browser-facing identity service needs: session cookies, protection against cross-site
+request forgery (CSRF), CORS for trusted origins, rate-limit hints, and request IDs. This page describes that
+behaviour, then lists every deployment option that shapes authentication.
+
+## Mount the handler
+
+`iam.handler` is a Fetch-style `(request: Request) => Promise<Response>` function for runtimes and frameworks built
+on web standards. `iam.nodeHandler` is the same handler for Node's `http` module. Mount one of them at the base path
+(`/api/iam` by default).
+
+```ts
+import { createServer } from 'node:http';
+import { iam } from './iam';
+
+// Node.js
+createServer(iam.nodeHandler).listen(3000);
+
+// Fetch-style runtimes and route handlers
+export const POST = (request: Request) => iam.handler(request);
+export const GET = (request: Request) => iam.handler(request); // health and metrics
+```
+
+The [framework integrations](/docs/frameworks) mount it for you and add typed helpers.
+
+## Routes
+
+The HTTP API mirrors `iam.api` one to one, so anything your server can call, a browser client can call too,
+subject to the same authorization. Every operation is a `POST` with a JSON body:
+
+| Route | Calls |
+| --- | --- |
+| `POST {basePath}/auth/{method}` | An `api.auth` method, such as `auth/signIn` or `auth/verifyMfa`. |
+| `POST {basePath}/{group}/{method}` | A provisioning method, such as `identities/invite`. |
+| `POST {basePath}/authorize`, `/authorizeMany`, `/listAccessible` | The authorization queries: one decision, a batch of up to 50, and the resources a caller may act on. |
+| `POST {basePath}/plugins/{pluginId}/{path}` | A plugin endpoint. |
+| `GET {basePath}/health` | A database check that answers only up (`200`) or down (`503`). |
+| `GET {basePath}/metrics` | Prometheus metrics, for the configured bearer token only. See [observability](/docs/operations/observability). |
+
+`/health` and `/metrics` are the only `GET` endpoints. Other methods fail with `METHOD_NOT_ALLOWED` (405), unknown
+routes with `NOT_FOUND`, and request bodies over 64 KiB with `PAYLOAD_TOO_LARGE` (413).
+
+The router maps endpoints explicitly. Routes that people use before they hold a session need no credential: the
+sign-in ceremonies (password, passwordless, MFA challenge, and passkey), `signUp`, email verification, password
+reset, email-change confirmation, and four provisioning methods (`tenants.lookup`, `domains.discover`, and the two
+`acceptInvitation` methods). `sts.assumeRoleWithWebIdentity` is public too, because the external OpenID Connect
+token it exchanges is its credential. Every other route needs a session, API key, or role token. Deployment
+capabilities such as `bootstrap`, `recoverRoot`, raw storage, and session-issuance primitives are never routed.
+
+### The response envelope
+
+Every answer has the same shape, so one piece of client code can handle all of them. A success is
+`{ "data": … }`. A failure is `{ "error": { "code", "message" } }` with the error's HTTP status, plus
+`retryAfterMs` for rate-limited requests. Branch on `code`, never on `message`; the
+[error reference](/docs/reference/errors) lists every code. The typed client unwraps the envelope and throws
+`IamClientError` with `code`, `status`, `retryAfterMs`, and `requestId`.
+
+## Cookies
+
+A session token kept in JavaScript can be stolen by any script injected into your page. The handler keeps the
+browser's session in an `HttpOnly` cookie instead, which scripts cannot read, so your pages never handle the token.
+
+**The session cookie** is `better-iam.session`, or `__Host-better-iam.session` over HTTPS. It is `HttpOnly`,
+`Secure` over HTTPS, `SameSite=Lax` (or `Strict` with `http.cookieSameSite: 'strict'`), and `Path=/`, with no parent
+domain. Loopback HTTP development uses the non-prefixed name.
+
+- These routes set it when they return a session: `auth/signIn`, `auth/verifyMfa`, `auth/confirmMfa`,
+  `auth/recoverMfa`, `auth/finishPasswordless`, `auth/finishPasskeyAuthentication`, `auth/finishPasskeyMfa`,
+  `auth/reauthenticate`, `tenants/acceptInvitation`, `identities/acceptInvitation`, and `links/switch`.
+- `auth/signOut` clears it, even when the sign-out itself is refused (for example because the session already
+  lapsed or is presented from another network).
+- `roles/assume` and `identities/impersonate` return their token in the body only. Replacing the cookie would
+  strand the person's own session in that browser.
+
+**Persistence.** The cookie normally lasts as long as the session (`Max-Age` equal to its remaining lifetime). A
+request that issues a session may send `X-Better-IAM-Persistent: 0` to receive a browser-session cookie instead,
+which disappears when the browser closes while the server session keeps its own lifetime. This is the console's
+unticked "keep me signed in". `http.persistentCookies: false` makes browser-session cookies the default, and
+`X-Better-IAM-Persistent: 1` opts back in.
+
+**The device cookie** `better-iam.device` (`__Host-` prefixed over HTTPS, HttpOnly) holds a
+["remember this device"](/docs/guides/authentication/mfa#remember-this-device) token. A response carrying a
+`deviceToken` sets it, the handler injects it into later `auth/signIn` and `auth/finishPasswordless` bodies that do
+not carry their own, and `auth/revokeTrustedDevices` clears it.
+
+## CSRF and Origin checks
+
+A browser attaches cookies to cross-site requests automatically, so a malicious page could otherwise make a
+signed-in person's browser call your API. The handler blocks this with three checks on every `POST`:
+
+1. The body must be JSON (`Content-Type: application/json`) and the request must carry `X-Better-IAM: 1`. Plain
+   HTML forms and simple cross-site requests cannot set either, so they fail with `CSRF_REJECTED`.
+2. A request that carries cookies must carry an `Origin` header (`CSRF_REJECTED` otherwise).
+3. Any `Origin` must exactly match a trusted origin: `baseURL`'s origin or an entry of `trustedOrigins` (exact
+   origins only). Others fail with `UNTRUSTED_ORIGIN`.
+
+For a trusted origin, responses carry CORS headers (`Access-Control-Allow-Origin` set to that origin, credentials
+allowed, and `Retry-After` and `X-Request-Id` exposed), so a browser client on another trusted origin can read error
+codes. `OPTIONS` preflights answer `204`. A refused origin gets no CORS headers.
+
+The typed client sends the JSON content type and `X-Better-IAM: 1` on every call. Send them yourself when you call
+the API with `fetch` or `curl`.
+
+## Bearer tokens
+
+Servers, scripts, and mobile apps usually send a token explicitly instead of relying on cookies.
+`Authorization: Bearer <token>` works for every route: session tokens, API keys, assumed-role tokens, and
+impersonation tokens. A bearer credential takes precedence over the cookie and never touches cookies: a
+bearer-authenticated request neither sets nor clears the browser's session cookie. Bearer requests without cookies
+need no `Origin`, but still need the JSON content type and `X-Better-IAM: 1`.
+
+## Headers and request IDs
+
+Identity responses must never be cached by a proxy or leak through a `Referer` header. Every JSON response
+carries `Cache-Control: no-store`, `X-Content-Type-Options: nosniff`, and `Referrer-Policy: no-referrer`.
+
+Request IDs tie a browser error to your logs. Send a plain `X-Request-Id` (letters, digits, and `._:-`, at most 128
+characters) and the handler echoes it on the response, success or error, and records it as `requestId` on the
+request's `http` observability span. The client can generate one for every call:
+
+```ts
+const client = createIamClient<typeof iam>({
+  requestId: true, // or () => myTraceId()
+  onUnauthenticated: () => router.push('/login'),
+});
+
+try {
+  await client.identities.invite({ tenantId, email });
+} catch (error) {
+  if (error instanceof IamClientError) reportToSupport(error.code, error.requestId);
+}
+```
+
+`onUnauthenticated` fires for exactly the codes that mean the session can no longer be used, `UNAUTHENTICATED` and
+`SESSION_NETWORK_MISMATCH`, so you can send people to the login page in one place. Credential failures such as a
+wrong password never trigger it.
+
+## Rate limits
+
+Rate limits stop password guessing, credential stuffing, and code brute-forcing. Sign-in, recovery, and MFA flows
+count attempts in persisted counters, so limits hold across restarts and across processes that share the database.
+
+```ts title="iam.ts"
+authentication: {
+  rateLimits: {
+    attempts: 10, // ordinary flows such as password sign-in
+    sensitiveAttempts: 5, // MFA, recovery, and delivery requests
+    windowMs: 15 * 60_000,
+    ipAttempts: 50, // per client IP across every flow of a tenant; 0 (the default) turns it off
+  },
+},
+```
+
+<TypeTable
+  type={{
+    attempts: {
+      type: 'number',
+      default: '10',
+      description: <>Attempts per window for ordinary flows, such as password sign-in and passkey sign-in with an email. 1 to 100,000.</>,
+    },
+    sensitiveAttempts: {
+      type: 'number',
+      default: '5',
+      description: <>Attempts per window for sensitive flows: MFA codes, recovery codes, passwordless and verification requests, and other deliveries. 1 to 100,000.</>,
+    },
+    windowMs: {
+      type: 'number',
+      default: '900000 (15 minutes)',
+      description: <>The window length, from one second to 24 hours. A refused caller is told to retry after this long.</>,
+    },
+    ipAttempts: {
+      type: 'number',
+      default: '0',
+      description: <>Attempts per window from one client IP across every authentication flow of a tenant, on top of the per-account limits. Stops password spraying across many accounts. Needs recorded IPs; size it for the largest office behind one NAT. 0 turns it off.</>,
+    },
+    limiter: {
+      type: 'RateLimiter',
+      description: <>Where counters live. The default stores durable counters in the IAM database. Supply one backed by Redis or similar with <code>consume()</code> and, optionally, <code>reset()</code>.</>,
+    },
+  }}
+/>
+
+- **Per account and per challenge.** Counters are kept per address or identity, and second-factor attempts are also
+  counted per sign-in challenge and per person, so a correct password does not buy a fresh budget of code guesses.
+- **Per IP.** With `ipAttempts`, IPv6 clients are counted per /64 network and IPv4-mapped addresses as IPv4, so
+  rotating addresses does not earn fresh counters.
+- **Passkey discovery** (sign-in without an email) is counted per client address with ten times the ordinary
+  allowance, because login pages start one on every visit.
+- **Tenants tighten** the limits with their policy's `maxAttempts`; they can never raise them.
+- **Refusals** fail with `RATE_LIMITED` (429). The error body carries `retryAfterMs`, the response adds
+  `Retry-After` in seconds, and `IamClientError.retryAfterMs` exposes it. With `retryRateLimited: true` the client
+  retries once after the server's wait when it is short (five seconds by default, `{ maxWaitMs }` to change).
+- **Unlocking.** `identities.unlock` clears one person's counters; it never clears a network's counter.
+
+`createMemoryRateLimiter()` from `better-iam/auth` keeps counters in process memory for single-process deployments
+and tests. Network-level controls still belong at your ingress: apply request and body limits there too, especially
+to the public lookups.
+
+## Client details
+
+Sessions record the client they were issued to (IP, user agent, and a device label), and several features judge
+the IP: tenant allowlists, session binding, network blocks, per-IP rate limits, and new sign-in notices. By default
+the handler records only the `User-Agent` header, because a client IP is only trustworthy when your own proxy sets
+it. Supply `http.clientInfo` to read it:
+
+```ts title="iam.ts"
+http: {
+  clientInfo: (request) => ({
+    // Only trust a header your own proxy or load balancer sets and overwrites.
+    ip: request.headers.get('x-real-ip') ?? undefined,
+    userAgent: request.headers.get('user-agent') ?? undefined,
+    label: request.headers.get('x-device-name') ?? undefined,
+  }),
+},
+```
+
+Values are trimmed and bounded, and nothing about the client is ever trusted for authorization. Framework
+integrations that pass the incoming request's headers as the credential derive the same client details, so server
+actions and route handlers are judged like direct HTTP calls. For sessions you create with direct
+`iam.api.auth.*` calls, wrap the call in `iam.auth.withClient(info, fn)`.
+
+<Callout type="warn" title="Never trust X-Forwarded-For blindly">
+  Anyone can send an `X-Forwarded-For` header. Read the client IP only from a header your own proxy sets, or an
+  attacker can choose the address your allowlists and blocks judge.
+</Callout>
+
+## Configuration reference
+
+Everything on the authentication pages is configured in three places of the `betterIam(options)` object: a few
+top-level options, the `authentication` block, and the `http` block. This reference lists them together.
+
+### Top-level options
+
+| Option | Purpose |
+| --- | --- |
+| `baseURL` | Where the service is reached. HTTPS is required outside `localhost`, `127.0.0.1`, and `[::1]`. Its origin is always trusted. |
+| `basePath` | Where the handler serves the API (`/api/iam` by default). |
+| `trustedOrigins` | Additional exact origins allowed to call the API with cookies, and to host passkey ceremonies. |
+| `secret` | The deployment secret (at least 32 characters). It seals MFA secrets and deliveries and keys token digests. |
+| `previousSecrets` | Up to five secrets being rotated out; see [secrets](/docs/operations/deployment/secrets). |
+
+### `authentication`
+
+<TypeTable
+  type={{
+    sendEmail: {
+      type: '(message: DeliveryMessage) => Promise<void>',
+      description: <>Delivers email from the outbox: verification, reset, magic links, codes, notices, invitations. Required by every email feature. Called at least once per message; deduplicate by <code>message.id</code>.</>,
+    },
+    sendSms: {
+      type: '(message: DeliveryMessage) => Promise<void>',
+      description: <>Delivers SMS codes and phone verification. Required by <code>passwordlessSms</code>.</>,
+    },
+    emailPassword: {
+      type: 'boolean',
+      default: 'true',
+      description: <>Password sign-in, reset, and self-registration. <code>false</code> turns them off.</>,
+    },
+    passwordlessEmail: {
+      type: 'boolean',
+      default: 'false',
+      description: <>Magic links and one-time codes by email.</>,
+    },
+    passwordlessSms: {
+      type: 'boolean',
+      default: 'false',
+      description: <>One-time codes by SMS to verified phone numbers.</>,
+    },
+    signUpEnabled: {
+      type: 'boolean',
+      default: 'false',
+      description: <>Lets people register themselves in an existing, non-root tenant with <code>auth.signUp</code>.</>,
+    },
+    requireEmailVerification: {
+      type: 'boolean',
+      default: 'signUpEnabled',
+      description: <>Unverified people cannot sign in, and their sessions stop working (<code>EMAIL_UNVERIFIED</code>).</>,
+    },
+    sessionLifetimeMs: {
+      type: 'number',
+      default: '7 days',
+      description: <>Absolute session lifetime, one minute to 30 days. Tenants can shorten it.</>,
+    },
+    sessionIdleTimeoutMs: {
+      type: 'number',
+      default: '24 hours or the lifetime',
+      description: <>A session unused for this long ends. One minute up to the lifetime. Tenants can shorten it.</>,
+    },
+    recentAuthenticationMs: {
+      type: 'number',
+      default: '5 minutes',
+      description: <>How recently a session must have been established for sensitive operations, one second to 15 minutes.</>,
+    },
+    trustedDeviceLifetimeMs: {
+      type: 'number',
+      default: '30 days',
+      description: <>How long "remember this device" may skip MFA, up to one year. <code>0</code> disables the feature.</>,
+    },
+    signInNotifications: {
+      type: 'boolean',
+      default: 'false',
+      description: <>Email people about sessions from unfamiliar clients (<code>new-sign-in</code>). Tenants override it with <code>notifyNewSignIn</code>.</>,
+    },
+    failedSignInAlerts: {
+      type: 'number',
+      default: '0',
+      description: <>Email a person once when this many attempts have failed since their last sign-in (<code>sign-in-failures</code>), 1 to 1,000. <code>0</code> turns it off. Needs <code>sendEmail</code>.</>,
+    },
+    mfaEmailCodes: {
+      type: 'boolean',
+      default: 'false',
+      description: <>Let people without an authenticator answer MFA with an emailed code. Tenants override it.</>,
+    },
+    rateLimits: {
+      type: 'RateLimitOptions',
+      description: <><code>attempts</code>, <code>sensitiveAttempts</code>, <code>windowMs</code>, <code>ipAttempts</code>, and <code>limiter</code>; see Rate limits above.</>,
+    },
+    requireMfa: {
+      type: '(tenant, identity) => boolean | Promise<boolean>',
+      description: <>Requires MFA for whoever it returns true for, in addition to root administrators, enrolled people, and tenant policies.</>,
+    },
+    passkeys: {
+      type: '{ rpID: string; rpName?: string }',
+      description: <>Enables passkeys. <code>rpID</code> must match every trusted origin; <code>rpName</code> defaults to <code>appName</code>.</>,
+    },
+    passwordPolicy: {
+      type: 'PasswordPolicyOptions',
+      description: <>Deployment-wide screening: <code>blockCommonPasswords</code>, <code>isBreached</code>, and <code>check</code>.</>,
+    },
+    maxDeliveryAttempts: {
+      type: 'number',
+      default: '25',
+      description: <>Outbox messages are abandoned after this many failed deliveries, 1 to 1,000.</>,
+    },
+    appName: {
+      type: 'string',
+      default: "'Better IAM'",
+      description: <>Your product name, used as the authenticator app label and the default passkey relying-party name.</>,
+    },
+    now: {
+      type: '() => number',
+      description: <>Replaces the clock, for deterministic tests.</>,
+    },
+  }}
+/>
+
+### `http`
+
+<TypeTable
+  type={{
+    clientInfo: {
+      type: '(request: Request) => { ip?, userAgent?, label? } | undefined',
+      description: <>Derives the client details recorded on sessions. Without it, only the <code>User-Agent</code> is recorded.</>,
+    },
+    cookieSameSite: {
+      type: "'lax' | 'strict'",
+      default: "'lax'",
+      description: <><code>lax</code> also sends the cookies on top-level navigations from other sites, such as a link in an email. <code>strict</code> limits them to first-party requests.</>,
+    },
+    persistentCookies: {
+      type: 'boolean',
+      default: 'true',
+      description: <>Whether session cookies outlive the browser by default. The <code>X-Better-IAM-Persistent</code> header overrides it per sign-in.</>,
+    },
+  }}
+/>
+
+## Email and SMS templates
+
+Better IAM never sends mail itself, so you keep your own provider, sender domain, and branding. It queues a
+message in the <Term id="outbox">delivery outbox</Term> with a `template` name and a `payload`, and your
+`sendEmail` or `sendSms` callback renders and delivers it.
+
+| Template | Channel | Sent for | Payload |
+| --- | --- | --- | --- |
+| `verify-email` | email | Sign-up and `requestEmailVerification` | `token` |
+| `password-reset` | email | `requestPasswordReset` and administrator resets | `token` |
+| `email-change` | email (new address) | `requestEmailChange` | `token` |
+| `magic-link` | email | `startPasswordless` with `kind: 'magic-link'` | `token` |
+| `code` | email or SMS | `startPasswordless` with `kind: 'code'` | `token` (six digits) |
+| `phone-verify` | SMS | `startPhoneVerification` | `token` (six digits) |
+| `mfa-code` | email | `requestMfaCode` | `code` |
+| `new-sign-in` | email | A session from an unfamiliar client | `sessionId`, `time`, `method`, `userAgent`, `ip`, `label` |
+| `sign-in-failures` | email | The failed-attempt streak reached `failedSignInAlerts` | `attempts`, `time`, `ip`, `userAgent` |
+| `owner-invitation` | email | `tenants.create` | `token`, `tenantId`, `tenantName` |
+| `member-invitation` | email | `identities.invite` | `token`, `tenantId`, `tenantName`, `inviterName` |
+
+The governance features add `certification-review` and `certification-reminder`. Payloads are sealed in the outbox
+and handed to your callback decrypted, and the message's top-level `tenantId` names the tenant.
+
+`renderDeliveryMessage(message, { appName, links })` from `better-iam/auth/templates` turns any of the built-in
+templates into `{ subject, text, html }`, with HTML escaping. The subpath has no native dependencies, so it also
+suits email workers and edge runtimes. You supply link builders for your own pages; a missing builder falls back to
+the raw token, and templates it does not know (such as `phone-verify`, plugin templates, or newer features) return
+`undefined` so your callback can render them itself.
+
+```ts title="iam.ts"
+import { renderDeliveryMessage } from 'better-iam/auth/templates';
+
+const origin = 'https://app.example.com';
+
+authentication: {
+  sendEmail: async (message) => {
+    const tenant = message.tenantId;
+    const rendered = renderDeliveryMessage(message, {
+      appName: 'Acme Cloud',
+      links: {
+        invitation: ({ kind, tenantId, token }) => `${origin}/join?kind=${kind}&tenant=${tenantId}&token=${token}`,
+        passwordReset: ({ token }) => `${origin}/reset?tenant=${tenant}&token=${token}`,
+        verifyEmail: ({ token }) => `${origin}/verify?tenant=${tenant}&token=${token}`,
+        emailChange: ({ token }) => `${origin}/email?tenant=${tenant}&token=${token}`,
+        magicLink: ({ token, destination }) =>
+          `${origin}/magic?tenant=${tenant}&token=${token}&to=${encodeURIComponent(destination)}`,
+        account: ({ tenantId }) => `${origin}/${tenantId}/account`, // "Review your account" on security notices
+      },
+    });
+    if (!rendered) throw new Error(`Unknown template ${message.template}`); // the outbox retries later
+    await mailer.send({ to: message.to, ...rendered });
+  },
+},
+```
+
+Delivery is at least once and happens outside the write transaction, after commit. Deduplicate by `message.id`,
+and never log tokens or payloads. See [data and consistency](/docs/guides/concepts/data-and-consistency#side-effects-leave-through-the-outbox).

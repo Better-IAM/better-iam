@@ -1,0 +1,24 @@
+---
+title: Packages
+description: The publishable Better IAM packages with their subpath exports, runtime dependencies, and peer dependencies.
+icon: Package
+sources: ['packages/*/package.json']
+---
+
+The workspace publishes one package per concern, plus the umbrella `better-iam` package that depends on all of them
+and re-exports each as a subpath. Every package is ESM, ships TypeScript declarations, and requires Node.js 22.12 or
+newer. Pick individual packages when a service needs only part of the platform; see
+[Installation](/docs/guides/installation) for the subpath map.
+
+<PackageTable />
+
+## How the packages depend on each other
+
+Arrows point from a package to the workspace packages it depends on (generated from the manifests; the umbrella
+package, which depends on all of them, is omitted). Browser-side packages (`client`, `react`, `vue`, `svelte`)
+never depend on `server` or `auth`, so they never pull server code or native modules into a bundle.
+
+<PackageGraph />
+
+`@better-iam/core` has no dependencies and runs in any JavaScript runtime, which is why the
+[policy playground](/playground) can evaluate policies in your browser with the same engine the server uses.

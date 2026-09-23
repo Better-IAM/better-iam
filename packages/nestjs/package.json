@@ -1,0 +1,73 @@
+{
+  "name": "@better-iam/nestjs",
+  "version": "0.1.0",
+  "description": "Composable authentication, identity provisioning, and tenant-scoped access management.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Better IAM contributors",
+  "homepage": "https://github.com/Better-IAM/better-iam/tree/main/packages/nestjs#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Better-IAM/better-iam.git",
+    "directory": "packages/nestjs"
+  },
+  "bugs": {
+    "url": "https://github.com/Better-IAM/better-iam/issues"
+  },
+  "keywords": [
+    "iam",
+    "authentication",
+    "authorization",
+    "access-control",
+    "rbac",
+    "abac",
+    "multi-tenant",
+    "nestjs"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./testing": {
+      "types": "./dist/testing.d.ts",
+      "import": "./dist/testing.js"
+    }
+  },
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsc -b"
+  },
+  "dependencies": {
+    "@better-iam/core": "workspace:*",
+    "@better-iam/server": "workspace:*"
+  },
+  "peerDependencies": {
+    "@nestjs/common": "^11.0.0 || ^12.0.0",
+    "@nestjs/core": "^11.0.0 || ^12.0.0",
+    "reflect-metadata": "^0.1.13 || ^0.2.0",
+    "rxjs": "^7.1.0"
+  },
+  "devDependencies": {
+    "@nestjs/common": "^12.0.4",
+    "@nestjs/core": "^12.0.4",
+    "@nestjs/platform-express": "^12.0.4",
+    "@nestjs/platform-fastify": "^12.0.4",
+    "@nestjs/testing": "^12.0.4",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.2"
+  }
+}

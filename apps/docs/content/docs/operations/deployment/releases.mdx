@@ -1,0 +1,111 @@
+---
+title: Build and release
+description: How a Better IAM release is checked, packed, smoke-tested as installed tarballs, versioned in lockstep, and prepared for publication.
+icon: Package
+sources: ['docs/deployment.md', 'package.json', 'scripts/release-version.mjs', 'scripts/pack.mjs', 'scripts/packed-smoke.mjs', 'scripts/check-packed-types.mjs', 'scripts/validate-packages.mjs', '.github/workflows/release.yml']
+---
+
+Better IAM ships as a set of workspace packages under `packages/*` that are always released together at one
+version. A release proves three things before anything leaves the repository: the source passes every check, the
+packed tarballs install and work in a fresh consumer, and their TypeScript exports resolve. This page is for
+maintainers cutting a release from the monorepo.
+
+## Release procedure
+
+<Steps>
+<Step>
+
+### Set the version
+
+```sh
+node scripts/release-version.mjs 1.4.0
+```
+
+`release-version.mjs` writes the version (`MAJOR.MINOR.PATCH`, optionally with a pre-release suffix) into every
+package's `package.json`. Then update the changelog and reinstall to refresh the lockfile.
+
+</Step>
+<Step>
+
+### Run the checks
+
+```sh
+pnpm check
+```
+
+`pnpm check` runs the type checks (the workspace build plus the client, application, Next.js, NestJS, SvelteKit,
+middleware, and React Router type suites and the console), the test suite, and package validation.
+Package validation requires every package to be publishable, MIT licensed, public on npm, and at the same version,
+checks that every export target exists, and runs `publint`.
+
+</Step>
+<Step>
+
+### Pack
+
+```sh
+pnpm pack:all
+```
+
+Every package is packed into `artifacts/`. Nothing is published.
+
+</Step>
+<Step>
+
+### Smoke-test the packed packages
+
+```sh
+node scripts/packed-smoke.mjs   # or: pnpm test:packed
+pnpm check:packed-types
+```
+
+The packed smoke test installs all tarballs into a fresh consumer, with the native builds for `argon2` and
+`better-sqlite3` allowed. It then verifies exports, native dependencies, migrations, and bootstrap: it imports the
+umbrella package, runs a SQLite migration, bootstraps a root, and runs `better-iam --help`. The packed type check
+runs `attw` (Are the Types Wrong) on each tarball with the ESM-only profile, so exports resolve under both ESM and
+bundler resolution.
+
+</Step>
+</Steps>
+
+## PostgreSQL before a release
+
+The default suite skips PostgreSQL-only cases. Run them against an isolated database before tagging:
+
+```sh
+BETTER_IAM_POSTGRES_URL=postgres://localhost/better_iam_test pnpm test:postgres
+```
+
+See [Database operations](/docs/operations/deployment/database#postgresql-integration-checks) for how the suite
+isolates its cases.
+
+## Publication
+
+All packages are MIT licensed and publish publicly to npm. `.github/workflows/release.yml` publishes a release:
+
+```sh
+node scripts/release-version.mjs 1.4.0
+# update CHANGELOG.md, pnpm install, pnpm check, commit
+git tag v1.4.0
+git push origin main v1.4.0
+```
+
+The workflow checks that the tag matches the package versions, reruns the checks and the packed smoke tests, then
+runs `pnpm publish -r --provenance`, so every tarball carries an npm provenance attestation. Pre-release versions
+(`1.4.0-beta.0`) publish under the `next` dist-tag.
+
+<Callout type="info" title="Registry credentials">
+The workflow reads an `NPM_TOKEN` repository secret: an npm granular or automation token with publish rights on
+`better-iam` and the `@better-iam` scope. Never commit registry credentials to the repository.
+</Callout>
+
+## Next steps
+
+<Cards>
+  <Card title="Deployment" href="/docs/operations/deployment">
+    How an application deploys a released version.
+  </Card>
+  <Card title="Changelog" href="/docs/reference/changelog">
+    What changed in each release.
+  </Card>
+</Cards>

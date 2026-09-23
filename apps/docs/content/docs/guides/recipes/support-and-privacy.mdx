@@ -1,0 +1,131 @@
+---
+title: Support and privacy
+description: Recipes for letting support staff view the product as a member, exporting everything stored about a person, and rendering the outbox's emails.
+icon: LifeBuoy
+packages: ['@better-iam/server', '@better-iam/auth']
+sources: ['docs/recipes.md', 'docs/security.md', 'docs/architecture.md', 'packages/auth/src/templates.ts']
+---
+
+These recipes cover the work around your users rather than their access: helping them when something looks wrong,
+answering data-subject requests, and sending the emails Better IAM queues in your own style. `credential` is the
+caller's credential (`{ token }` or `{ headers }`).
+
+## Support: see the product as a member sees it
+
+**The problem:** a member reports "I can't open the Q3 report", and support cannot reproduce it without seeing
+what that member sees. Asking for their password is unacceptable, and broad support access would hide the member's
+real permissions.
+
+**The solution:** let support open an <Term id="impersonation">impersonation</Term> ("view as")
+<Term id="session">session</Term> as the member with `identities.impersonate`. The session is bounded in time,
+needs a stated reason, and is audited.
+
+```ts
+// Once per organization, by an owner:
+await iam.api.tenants.setAuthPolicy(ownerCredential, {
+  tenantId,
+  authPolicy: { allowImpersonation: true },
+});
+// Support staff hold a role with iam:identities:read and iam:identities:impersonate.
+const viewAs = await iam.api.identities.impersonate(supportCredential, {
+  tenantId,
+  identityId,
+  reason: 'Ticket 1234: cannot open the Q3 report',
+  durationMs: 30 * 60_000,
+});
+// viewAs.token authenticates as the member; viewAs.session.impersonatorId names the agent.
+await iam.api.auth.signOut({ token: viewAs.token }); // or let it expire
+```
+
+The session can read and act as the member within their permissions. It cannot do anything that needs recent
+authentication, assume roles, grant OAuth consent, or impersonate further. To keep support away from sensitive
+product actions, add a deny statement with the condition `{ "Bool": { "principal.impersonated": true } }`.
+
+- Every audit record and webhook body carries `impersonatorId`. The member sees the session in their own session
+  list, and the token is returned in the body only, never as a cookie.
+- Opening one needs recent authentication, an ordinary session of the agent's own, and a reason; it is audited as
+  `identity:impersonate`. Owners, root administrators, service accounts, and the caller themselves cannot be
+  impersonated.
+- `durationMs` is one minute to eight hours (one hour by default). The session never outlives the agent's own
+  session, and ends the moment the agent signs out or is disabled.
+- The console's member page offers "View as" with a banner and a stop button when the policy is on.
+
+See [Impersonation](/docs/guides/authentication/impersonation) and the
+[security model](/docs/operations/security#impersonation).
+
+## Export everything stored about a person
+
+**The problem:** a person exercises their right of access under privacy law, or an investigation needs one
+account's complete footprint. Collecting it collection by collection misses things.
+
+**The solution:** `identities.export` returns everything stored about one <Term id="identity">identity</Term> as a
+single bundle.
+
+```ts
+const bundle = await iam.api.identities.export(adminCredential, { tenantId, identityId });
+// identity, sessions, mfa, passkeys, externalIdentities, bindings, groups, relationships,
+// accessRequests, boundaries, grantAuthorities, links, scim, and audit (when the caller may read it)
+```
+
+- The call needs recent authentication and `iam:identities:read` on the identity. Each export is audited as
+  `identity:export`.
+- Secrets never leave: sessions come without token hashes, and MFA and passkeys are reported by enrolment and
+  identifier only.
+- The `audit` section (the newest 5000 events the identity performed) is included only when the caller also holds
+  `iam:audit:read`; `auditIncluded` says whether it was.
+
+To erase the person afterwards, use [`identities.delete`](/docs/reference/api/identities#delete). It leaves a
+tombstone without email or secrets, so audit records stay resolvable.
+
+## Render the outbox's emails
+
+**The problem:** Better IAM queues invitations, password resets, verification links, and security notices in its
+<Term id="outbox">outbox</Term>, but your mail provider sends them, and their links must point at your application.
+
+**The solution:** in your `authentication.sendEmail` callback, call `renderDeliveryMessage`. It turns a queued
+message into a subject, plain text, and HTML, with links built by your own functions.
+
+```ts
+import { renderDeliveryMessage } from 'better-iam/auth/templates';
+
+// In the betterIam() options:
+authentication: {
+  sendEmail: async (message) => {
+    const rendered =
+      renderDeliveryMessage(message, {
+        appName: 'Acme Cloud',
+        links: {
+          invitation: ({ kind, tenantId, token }) => `https://acme.example/join?kind=${kind}&tenant=${tenantId}&token=${token}`,
+          passwordReset: ({ tenantId, token }) => `https://acme.example/reset?tenant=${tenantId}&token=${token}`,
+          verifyEmail: ({ tenantId, token }) => `https://acme.example/verify?tenant=${tenantId}&token=${token}`,
+        },
+      }) ?? renderOwnTemplate(message); // your renderer for access-digest, expiry-reminder, and the rest
+    if (!rendered) throw new Error(`Unknown template ${message.template}`); // the outbox retries it
+    await mailer.send({ to: message.to, subject: rendered.subject, text: rendered.text, html: rendered.html });
+  },
+},
+```
+
+- Built-in templates: `verify-email`, `password-reset`, `email-change`, `magic-link`, `code`, `mfa-code`,
+  `new-sign-in`, `sign-in-failures`, `certification-review`, `certification-reminder`, `owner-invitation`, and
+  `member-invitation`.
+- For any other template, `renderDeliveryMessage` returns `undefined`. That covers plugin templates and templates
+  such as `access-digest`, `expiry-reminder`, `activation-request`, and `activation-decided`. Render those from the
+  message's `payload` yourself, as `renderOwnTemplate` does above. Throwing makes the outbox retry the message, so
+  throw only for templates you really cannot send.
+- `links` also accepts `emailChange`, `magicLink`, `account` (the person's account page, used by security
+  notices), and `certification` (a campaign's review page). A missing link builder falls back to the raw token.
+- Delivery is at least once, so deduplicate by message `id`, and never log tokens or payloads.
+
+See [Scheduled jobs](/docs/operations/jobs#outbox-and-audit-hooks) for how the outbox retries.
+
+## Next steps
+
+<Cards>
+  <Card title="Tenancy and limits recipes" href="/docs/guides/recipes/tenancy-and-limits">
+    Plan limits, bulk onboarding, and libSQL storage.
+  </Card>
+  <Card title="Impersonation" href="/docs/guides/authentication/impersonation">
+    How "view as" sessions are bounded and audited.
+  </Card>
+</Cards>

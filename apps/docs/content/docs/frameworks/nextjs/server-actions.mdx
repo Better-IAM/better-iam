@@ -1,0 +1,396 @@
+---
+title: Server actions and forms
+description: Call Better IAM from Next.js server actions with the in-process client, guard mutations with action(), and drop in sign-in, step-up, and reset forms.
+icon: Zap
+packages:
+  - '@better-iam/next'
+sources:
+  - docs/nextjs.md
+  - packages/next/README.md
+  - packages/next/src/index.ts
+  - packages/next/src/auth-actions.ts
+  - packages/next/src/auth-types.ts
+  - packages/next/src/forms.tsx
+  - examples/nextjs/app/login/actions.ts
+  - examples/nextjs/app/login/page.tsx
+  - examples/nextjs/app/forgot/page.tsx
+  - examples/nextjs/app/reset/page.tsx
+  - examples/nextjs/app/[org]/notes/actions.ts
+  - examples/nextjs/app/[org]/notes/notes-form.tsx
+---
+
+Server actions are where Next.js lets you change cookies, so they are where people sign in, sign out, step up,
+and mutate data. `@better-iam/next` gives you three layers:
+
+- `iamNext.client()`: the full typed API, bound to the current request and running in process.
+- `iamNext.action(fn, spec)`: a guard that turns IAM failures into a serializable result for `useActionState`.
+- `iamNext.authActions()` and the forms in `@better-iam/next/client`: complete authentication flows that work
+  with JavaScript disabled.
+
+## The in-process client
+
+Why not call `iam.api.auth.signIn` directly from the action? It would verify the password and return a session
+token, but nothing would reach the browser. The session cookie, its attributes (host prefix, `HttpOnly`,
+`SameSite`, lifetime), and the remembered-device cookie are set by the IAM HTTP handler. `iamNext.client()` runs
+each call through that handler, in process, and copies what it sets onto your response.
+
+`iamNext.client()` returns `createIamClient<typeof iam>` whose transport is `iam.handler` in the same process.
+For each call it:
+
+1. copies the caller's `cookie`, `authorization`, `user-agent`, `accept-language`, and forwarding headers
+   (`x-forwarded-for`, `x-forwarded-host`, `x-forwarded-proto`, `x-real-ip`);
+2. sets `Origin` to the IAM origin (`iam.endpoint.origin`, from `baseURL`) and sends JSON with `X-Better-IAM: 1`,
+   which satisfies the server's CSRF boundary;
+3. writes every `Set-Cookie` the handler returns (session, trusted device, sign-out clearing) through
+   `cookies().set`.
+
+```ts title="app/account/actions.ts"
+'use server';
+import { iamNext } from '@/lib/iam-next';
+
+// Any IAM call from an action: cookies the server issues are written with cookies().set.
+export async function revokeOtherDevices() {
+  await iamNext.client().auth.revokeOtherSessions();
+}
+```
+
+This makes sign-in, MFA, sign-out, password change, and trusted-device flows work as `<form action>` without
+client JavaScript. Rate limits, tenant authentication policies, session metadata (`clientInfo`), and audit events
+behave exactly as they do for browser calls. Next checks the `Origin` of the incoming server action POST itself,
+so the forwarded cookie cannot be replayed cross-site. Failures reject with an `IamClientError` carrying the
+server's `code`.
+
+<Callout type="warn" title="Cookie writes need an action or a route handler">
+  Next only allows cookie writes in server actions and route handlers. A server component can call read-only
+  methods, such as `iamNext.client().identities.list(...)`. A method that issues a cookie throws an error naming
+  the cookie ("could not update the ... cookie; call this method from a server action or route handler").
+</Callout>
+
+`iamNext.clearSessionCookie()` expires the session cookie in the current response. Sign-out calls it when the
+server no longer knows the presented session, so a stale cookie does not linger.
+
+## Guarded mutations
+
+`iamNext.action(fn, spec)` requires a session, optionally a [step-up](/docs/frameworks/nextjs/advanced#step-up),
+and optionally an <Term id="action">action</Term>, then calls `fn(session, ...args)`. It returns an `ActionResult`:
+`{ ok: true, data }` or `{ ok: false, error: { code, message } }`, so IAM failures reach the form instead of an
+error boundary.
+
+<Tabs items={['actions.ts', 'form.tsx']}>
+<Tab value="actions.ts">
+
+```ts title="app/projects/[id]/actions.ts"
+'use server';
+import { revalidatePath } from 'next/cache';
+import { iamNext } from '@/lib/iam-next';
+
+export const rename = iamNext.action(
+  async (session, _previous: unknown, form: FormData) => {
+    const id = String(form.get('id'));
+    await db.projects.rename(id, String(form.get('name')));
+    revalidatePath(`/projects/${id}`);
+    return { id };
+  },
+  {
+    authorize: {
+      action: 'projects:write',
+      resource: ({ args: [, form] }) => ({ type: 'project', id: String(form.get('id')) }),
+    },
+  },
+);
+```
+
+</Tab>
+<Tab value="form.tsx">
+
+```tsx title="app/projects/[id]/rename-form.tsx"
+'use client';
+import { useActionState } from 'react';
+import { rename } from './actions';
+
+export function RenameForm({ id }: { id: string }) {
+  const [state, formAction, pending] = useActionState(rename, null);
+  return (
+    <form action={formAction}>
+      <input type="hidden" name="id" value={id} />
+      <input name="name" />
+      <button disabled={pending}>Rename</button>
+      {state?.ok === false && (
+        <p role="alert">
+          {state.error.code}: {state.error.message}
+        </p>
+      )}
+    </form>
+  );
+}
+```
+
+</Tab>
+</Tabs>
+
+- **Codes you will see.** `UNAUTHENTICATED` (no session), `MFA_REQUIRED`, `RECENT_AUTH_REQUIRED`, or
+  `IMPERSONATION_RESTRICTED` (step-up), `ACCESS_DENIED`, `RATE_LIMITED`, and validation codes.
+- **Your own failures.** Throw an `IamError` (from `@better-iam/core`, or `better-iam/core`) inside `fn`, for
+  example `new IamError('INVALID_INPUT', 'Write something first', 400)`, to report it the same way.
+- **Everything else propagates.** Other errors, even with a `code` field, and `redirect()` or other Next control
+  flow thrown by `fn` are rethrown unchanged.
+- **Argument order.** Pass the handler first and the spec second, so TypeScript infers the arguments from the
+  handler's annotations and checks the `resource` callback against them. `authorize` callbacks receive
+  `{ session, args }`.
+
+Server actions never redirect or interrupt on an IAM failure, and they need no `Origin` check of their own.
+
+## Auth forms
+
+Signing in is rarely one request. A password may lead to an authenticator code, an emailed code, a recovery code,
+or first-time enrollment. A reset needs an email step and a link step, and an invitation may require MFA before
+the first session. Writing those flows as server actions means carrying the pending challenge between steps without
+leaking secrets, redirecting only to safe paths, and keeping every step usable without JavaScript.
+`iamNext.authActions(options)` returns server actions that do this, and `@better-iam/next/client` has a form for
+each. Export the actions from a `'use server'` module and pass them to the forms.
+
+<Steps>
+<Step>
+
+### Export the actions
+
+```ts title="app/auth-actions.ts"
+'use server';
+import { iamNext } from '@/lib/iam-next';
+
+const auth = iamNext.authActions({ afterSignIn: '/dashboard', discover: true });
+export const signIn = auth.signIn;
+export const reauthenticate = auth.reauthenticate;
+export const requestPasswordReset = auth.requestPasswordReset;
+export const resetPassword = auth.resetPassword;
+export const signUp = auth.signUp;
+export const verifyEmail = auth.verifyEmail;
+export const acceptInvitation = auth.acceptInvitation;
+export async function signOut() {
+  await auth.signOut();
+}
+```
+
+Export each action as its own `const`: Next registers every export of a `'use server'` module as an action.
+`signOut` is wrapped because it takes no state.
+
+</Step>
+<Step>
+
+### Render the forms
+
+```tsx title="app/login/page.tsx"
+import Link from 'next/link';
+import { SignInForm } from '@better-iam/next/client';
+import { signIn } from '../auth-actions';
+
+export default async function Login(props: {
+  searchParams: Promise<{ next?: string; org?: string; reset?: string }>;
+}) {
+  const { next, org, reset } = await props.searchParams;
+  return (
+    <main>
+      <h1>Sign in</h1>
+      {reset && <p>Your password was changed. Sign in with the new one.</p>}
+      <SignInForm action={signIn} org={org} keepSignedIn passwordless {...(next ? { next } : {})} />
+      <Link href="/forgot">Forgot your password?</Link>
+    </main>
+  );
+}
+```
+
+</Step>
+<Step>
+
+### Add the other pages
+
+<Tabs items={['Forgot password', 'Reset link', 'Step-up', 'Sign out']}>
+<Tab value="Forgot password">
+
+```tsx title="app/forgot/page.tsx"
+import { PasswordResetRequestForm } from '@better-iam/next/client';
+import { requestPasswordReset } from '../auth-actions';
+
+export default function Forgot() {
+  return <PasswordResetRequestForm action={requestPasswordReset} org="acme" />;
+}
+```
+
+</Tab>
+<Tab value="Reset link">
+
+```tsx title="app/reset/page.tsx"
+import { PasswordResetForm } from '@better-iam/next/client';
+import { resetPassword } from '../auth-actions';
+
+// The page a password-reset email links to: /reset?tenantId=...&token=...
+export default async function Reset(props: {
+  searchParams: Promise<{ tenantId?: string; token?: string }>;
+}) {
+  const { tenantId, token } = await props.searchParams;
+  if (!tenantId || !token) return <p>This reset link is incomplete.</p>;
+  return <PasswordResetForm action={resetPassword} tenantId={tenantId} token={token} />;
+}
+```
+
+</Tab>
+<Tab value="Step-up">
+
+```tsx title="app/reauth/page.tsx"
+import { ReauthenticateForm } from '@better-iam/next/client';
+import { iamNext } from '@/lib/iam-next';
+import { reauthenticate } from '../auth-actions';
+
+// The page stepUp guards redirect to (stepUpPath), with ?next= and ?reason=.
+export default async function Reauthenticate(props: {
+  searchParams: Promise<{ next?: string; reason?: string }>;
+}) {
+  const { next } = await props.searchParams;
+  await iamNext.requireSession({ returnTo: '/reauth' });
+  return <ReauthenticateForm action={reauthenticate} {...(next ? { next } : {})} />;
+}
+```
+
+</Tab>
+<Tab value="Sign out">
+
+```tsx title="app/sign-out-button.tsx"
+import { signOut } from './auth-actions';
+
+// A plain form: works in server components and without client JavaScript.
+export function SignOutButton() {
+  return (
+    <form action={signOut}>
+      <button type="submit">Sign out</button>
+    </form>
+  );
+}
+```
+
+</Tab>
+</Tabs>
+
+</Step>
+</Steps>
+
+### The actions
+
+Each action moves through steps; the submit button the person presses sends an `intent` field that picks the
+next one.
+
+| Action | Steps and intents | Finishes with |
+| --- | --- | --- |
+| `signIn` | `password` or `send-code` then `code` (emailed sign-in code); then `mfa`, `email-code`, `recovery`, or `enroll` for the second factor; `cancel` starts over | A redirect to a safe `next` (or `afterSignIn`); after enrollment, the `done` step shows the recovery codes once |
+| `reauthenticate` | `password`, then the same second-factor intents | A redirect to `next`; the replaced session is ended |
+| `requestPasswordReset` | Email (and organization) | The `sent` step, with the same notice whether or not the account exists |
+| `resetPassword` | `tenantId` and `token` from the email link, the new password, an optional confirmation | A redirect to `loginPath?reset=1` |
+| `signUp` / `verifyEmail` | Self-registration (`authentication.signUpEnabled`) / the email link | `sent`, or a redirect to `loginPath?registered=1` / `?verified=1` |
+| `acceptInvitation` | `kind` `member` or `owner`, `tenantId`, `token`, name, password, then enrollment when the tenant requires MFA | A redirect to `next` |
+| `signOut` | None | Clears the cookie, also when the server no longer knows the session, and redirects to the login path |
+
+Every action except `signOut` takes `(previousState, formData)` and returns an `AuthFormState`:
+
+| Field | Meaning |
+| --- | --- |
+| `step` | `credentials`, `mfa`, `enroll`, `code-sent`, `sent`, or `done` |
+| `error` | `{ code, message, field?, retryAfterMs? }`: the server's code, the offending form field, and the wait for `RATE_LIMITED` |
+| `mfa` | The pending challenge: `tenantId`, `challenge`, `enrollmentRequired`, `emailCodeAvailable`, `passkeyAvailable`, and while enrolling `enrollment: { secret, uri }` |
+| `recoveryCodes` | Shown once after enrolling an authenticator |
+| `notice` | A short status, for example "We sent a code to ada@example.com" |
+| `values` | Non-secret inputs to refill the form: `email`, `org`, `tenantId`, `name` |
+| `next`, `keepSignedIn` | The safe return path and the "keep me signed in" choice, carried through later steps |
+
+Passwords, codes, session tokens, and session records never enter the state. The MFA challenge travels in hidden
+fields rather than server memory, which is what lets a form with JavaScript disabled post its second step. The
+server still validates every challenge, so a forged field only ever fails. Every redirect goes through
+`safeRedirectPath`.
+
+- **Organization.** The actions find the tenant from a `tenantId` field, an `org` slug (`tenants.lookup`), your
+  `resolveTenant(form)`, or, with `discover: true`, the verified domain of the email (`domains.discover`).
+- **Keeping a session.** "Keep me signed in" (`keepSignedIn`) sends `X-Better-IAM-Persistent`, so the cookie lasts
+  or ends with the browser. Step-up keeps a browser-session cookie as one unless the form opts in. "Remember this
+  device" (`rememberDevice`) on the authenticator step returns a device cookie that later sign-ins present
+  automatically.
+- **Error text.** `messages` overrides the text for any error code or notice.
+
+<TypeTable
+  type={{
+    afterSignIn: {
+      type: 'string',
+      description: <>Where a completed sign-in goes when the form carries no safe <code>next</code>.</>,
+      default: "'/'",
+    },
+    afterSignOut: {
+      type: 'string',
+      description: <>Where <code>signOut</code> goes.</>,
+      default: 'the loginPath option',
+    },
+    loginPath: {
+      type: 'string',
+      description: <>The sign-in page, where password reset, sign-up, and email verification end.</>,
+      default: 'the loginPath option',
+    },
+    resolveTenant: {
+      type: '(form: FormData) => Promise' + '<' + 'string | null>',
+      description: <>Picks a submission's tenant instead of the <code>tenantId</code> and <code>org</code> fields. <code>null</code> means an unknown organization.</>,
+    },
+    discover: {
+      type: 'boolean',
+      description: <>With no <code>tenantId</code> or <code>org</code> field, find the tenant from the email's verified domain.</>,
+      default: 'false',
+    },
+    messages: {
+      type: 'Partial' + '<' + 'Record' + '<' + 'string, string>>',
+      description: <>Replaces messages by error code (<code>INVALID_CREDENTIALS</code>, <code>RATE_LIMITED</code>, ...) and notices by key (<code>SIGN_IN_CODE_SENT</code>, <code>MFA_CODE_SENT</code>, <code>PASSWORD_RESET_SENT</code>, <code>VERIFICATION_SENT</code>, <code>INVITATION_ACCEPTED</code>). Notices fill in <code>{'{email}'}</code>.</>,
+    },
+    redirect: {
+      type: '(url: string) => never',
+      description: <>Performs redirects.</>,
+      default: 'redirect() from next/navigation',
+    },
+  }}
+/>
+
+### The forms
+
+Each form renders the fields and steps of the action it is paired with, so a page only passes the action and a few
+props:
+
+| Form | Props besides `action` |
+| --- | --- |
+| `SignInForm` | `next`, `org`, `tenantId`, `email`, `showOrganization` (default true unless `tenantId` or `org` is given), `keepSignedIn` (offer the checkbox), `passwordless` (offer an emailed sign-in code) |
+| `ReauthenticateForm` | `next`, `keepSignedIn` (whether the new cookie outlives the browser session; off by default) |
+| `PasswordResetRequestForm` | `org`, `tenantId` |
+| `PasswordResetForm` | `tenantId`, `token` |
+| `SignUpForm` | `tenantId`, `next` |
+| `InvitationForm` | `tenantId`, `token`, `kind` (`member` or `owner`), `next` |
+
+Every form also takes `labels` (override any default English string) and `className`.
+
+The forms render unstyled semantic HTML with hooks for your CSS: `<form data-better-iam="sign-in" data-step="mfa">`
+and `<div data-field="code">`. Labels are bound, errors are tied to their field with `aria-invalid` and
+`aria-describedby` and announced with `role="alert"`, notices use `role="status"`, and the first field of each
+step takes focus. Alternative steps are named submit buttons (`name="intent"`), so a form works with JavaScript
+disabled, and `useActionState` keeps it in place when JavaScript is on.
+
+Each form has a `*View` twin (`SignInFormView`, `ReauthenticateFormView`, ...) that takes
+`{ state, formAction, pending }` instead of `action`, for your own container or for tests.
+
+<Callout type="info" title="Passkeys need the browser">
+  Passkey sign-in and passkey MFA run the WebAuthn ceremony in the browser, so the server actions cannot do them.
+  Use [`better-iam/client/passkeys`](/docs/frameworks/client#passkeys) with the typed client for those.
+</Callout>
+
+## Next steps
+
+<Cards>
+  <Card title="Organizations in the URL" href="/docs/frameworks/nextjs/organizations">
+    Send people to the right organization's sign-in with `?org=`.
+  </Card>
+  <Card title="Step-up" href="/docs/frameworks/nextjs/advanced#step-up">
+    The re-authentication page `ReauthenticateForm` belongs on.
+  </Card>
+  <Card title="MFA" href="/docs/guides/authentication/mfa">
+    Every second-factor path the sign-in form can take.
+  </Card>
+</Cards>

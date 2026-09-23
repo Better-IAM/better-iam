@@ -1,0 +1,69 @@
+{
+  "name": "@better-iam/nuxt",
+  "version": "0.1.0",
+  "description": "Composable authentication, identity provisioning, and tenant-scoped access management.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Better IAM contributors",
+  "homepage": "https://github.com/Better-IAM/better-iam/tree/main/packages/nuxt#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Better-IAM/better-iam.git",
+    "directory": "packages/nuxt"
+  },
+  "bugs": {
+    "url": "https://github.com/Better-IAM/better-iam/issues"
+  },
+  "keywords": [
+    "iam",
+    "authentication",
+    "authorization",
+    "access-control",
+    "rbac",
+    "abac",
+    "multi-tenant",
+    "nuxt",
+    "nuxt-module"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "main": "./dist/module.js",
+  "types": "./dist/module.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/module.d.ts",
+      "import": "./dist/module.js"
+    },
+    "./h3": {
+      "types": "./dist/h3.d.ts",
+      "import": "./dist/h3.js"
+    }
+  },
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsc -b"
+  },
+  "dependencies": {
+    "@better-iam/client": "workspace:*",
+    "@better-iam/core": "workspace:*",
+    "@better-iam/vue": "workspace:*",
+    "@nuxt/kit": "^4.5.2"
+  },
+  "peerDependencies": {
+    "nuxt": "^3.14.0 || ^4.0.0",
+    "vue": "^3.3.0"
+  },
+  "devDependencies": {
+    "@nuxt/schema": "^4.5.2",
+    "vue": "^3.5.40"
+  }
+}

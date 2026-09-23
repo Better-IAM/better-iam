@@ -1,0 +1,459 @@
+[
+ {
+  "name": "better-iam",
+  "directory": "packages/better-iam",
+  "version": "0.1.0",
+  "description": "Umbrella package: installs every package and exposes them as subpath imports.",
+  "exports": [
+   "better-iam",
+   "better-iam/core",
+   "better-iam/auth",
+   "better-iam/auth/templates",
+   "better-iam/server",
+   "better-iam/session-tokens",
+   "better-iam/oauth",
+   "better-iam/saml",
+   "better-iam/scim",
+   "better-iam/adapter-postgres",
+   "better-iam/adapter-sqlite",
+   "better-iam/adapter-libsql",
+   "better-iam/client",
+   "better-iam/cli",
+   "better-iam/client/passkeys",
+   "better-iam/projects",
+   "better-iam/react",
+   "better-iam/next",
+   "better-iam/next/edge",
+   "better-iam/next/client",
+   "better-iam/nestjs",
+   "better-iam/nestjs/testing",
+   "better-iam/vue",
+   "better-iam/svelte",
+   "better-iam/svelte/kit",
+   "better-iam/middleware",
+   "better-iam/express",
+   "better-iam/hono",
+   "better-iam/fastify",
+   "better-iam/react-router",
+   "better-iam/client/session",
+   "better-iam/mcp",
+   "better-iam/a2a"
+  ],
+  "internalDependencies": [
+   "@better-iam/core",
+   "@better-iam/auth",
+   "@better-iam/server",
+   "@better-iam/oauth",
+   "@better-iam/saml",
+   "@better-iam/scim",
+   "@better-iam/adapter-postgres",
+   "@better-iam/adapter-sqlite",
+   "@better-iam/adapter-libsql",
+   "@better-iam/client",
+   "@better-iam/cli",
+   "@better-iam/projects",
+   "@better-iam/react",
+   "@better-iam/next",
+   "@better-iam/nestjs",
+   "@better-iam/vue",
+   "@better-iam/svelte",
+   "@better-iam/middleware",
+   "@better-iam/react-router",
+   "@better-iam/mcp",
+   "@better-iam/a2a"
+  ],
+  "dependencies": [],
+  "peerDependencies": [
+   "@nestjs/common",
+   "@nestjs/core",
+   "next",
+   "react",
+   "vue",
+   "svelte",
+   "@sveltejs/kit",
+   "react-router"
+  ]
+ },
+ {
+  "name": "@better-iam/a2a",
+  "directory": "packages/a2a",
+  "version": "0.1.0",
+  "description": "Agent2Agent (A2A) support: IAM-attested agent cards, card verification and discovery, and authorization for A2A servers.",
+  "exports": [
+   "@better-iam/a2a"
+  ],
+  "internalDependencies": [
+   "@better-iam/core"
+  ],
+  "dependencies": [],
+  "peerDependencies": []
+ },
+ {
+  "name": "@better-iam/adapter-libsql",
+  "directory": "packages/adapter-libsql",
+  "version": "0.1.0",
+  "description": "libSQL / Turso storage adapter.",
+  "exports": [
+   "@better-iam/adapter-libsql"
+  ],
+  "internalDependencies": [
+   "@better-iam/core"
+  ],
+  "dependencies": [
+   "@libsql/client"
+  ],
+  "peerDependencies": []
+ },
+ {
+  "name": "@better-iam/adapter-postgres",
+  "directory": "packages/adapter-postgres",
+  "version": "0.1.0",
+  "description": "PostgreSQL storage adapter.",
+  "exports": [
+   "@better-iam/adapter-postgres"
+  ],
+  "internalDependencies": [
+   "@better-iam/core"
+  ],
+  "dependencies": [
+   "kysely",
+   "pg"
+  ],
+  "peerDependencies": []
+ },
+ {
+  "name": "@better-iam/adapter-sqlite",
+  "directory": "packages/adapter-sqlite",
+  "version": "0.1.0",
+  "description": "SQLite storage adapter (better-sqlite3).",
+  "exports": [
+   "@better-iam/adapter-sqlite"
+  ],
+  "internalDependencies": [
+   "@better-iam/core"
+  ],
+  "dependencies": [
+   "kysely",
+   "better-sqlite3"
+  ],
+  "peerDependencies": []
+ },
+ {
+  "name": "@better-iam/auth",
+  "directory": "packages/auth",
+  "version": "0.1.0",
+  "description": "Passwords, sessions, MFA, passkeys, magic links, recovery, and delivery templates.",
+  "exports": [
+   "@better-iam/auth",
+   "@better-iam/auth/templates"
+  ],
+  "internalDependencies": [
+   "@better-iam/core"
+  ],
+  "dependencies": [
+   "argon2",
+   "otplib",
+   "@simplewebauthn/server"
+  ],
+  "peerDependencies": []
+ },
+ {
+  "name": "@better-iam/cli",
+  "directory": "packages/cli",
+  "version": "0.1.0",
+  "description": "The `better-iam` command line: migrations, bootstrap, audits, config as code, jobs.",
+  "exports": [
+   "@better-iam/cli"
+  ],
+  "internalDependencies": [
+   "@better-iam/core",
+   "@better-iam/server",
+   "@better-iam/client",
+   "@better-iam/adapter-sqlite",
+   "@better-iam/adapter-postgres"
+  ],
+  "dependencies": [],
+  "peerDependencies": []
+ },
+ {
+  "name": "@better-iam/client",
+  "directory": "packages/client",
+  "version": "0.1.0",
+  "description": "Typed browser client with session store and passkey helpers.",
+  "exports": [
+   "@better-iam/client",
+   "@better-iam/client/passkeys",
+   "@better-iam/client/session"
+  ],
+  "internalDependencies": [
+   "@better-iam/core"
+  ],
+  "dependencies": [
+   "@simplewebauthn/browser"
+  ],
+  "peerDependencies": []
+ },
+ {
+  "name": "@better-iam/core",
+  "directory": "packages/core",
+  "version": "0.1.0",
+  "description": "Models, the policy engine, the storage contract, the audit chain, and shared errors.",
+  "exports": [
+   "@better-iam/core",
+   "@better-iam/core/conformance"
+  ],
+  "internalDependencies": [],
+  "dependencies": [],
+  "peerDependencies": []
+ },
+ {
+  "name": "@better-iam/mcp",
+  "directory": "packages/mcp",
+  "version": "0.1.0",
+  "description": "Tool-level authorization for Model Context Protocol servers: Better IAM credentials, agents and OAuth tokens.",
+  "exports": [
+   "@better-iam/mcp"
+  ],
+  "internalDependencies": [
+   "@better-iam/core"
+  ],
+  "dependencies": [],
+  "peerDependencies": []
+ },
+ {
+  "name": "@better-iam/middleware",
+  "directory": "packages/middleware",
+  "version": "0.1.0",
+  "description": "Framework-neutral middleware core with Express, Hono, and Fastify adapters.",
+  "exports": [
+   "@better-iam/middleware",
+   "@better-iam/middleware/express",
+   "@better-iam/middleware/hono",
+   "@better-iam/middleware/fastify"
+  ],
+  "internalDependencies": [
+   "@better-iam/client",
+   "@better-iam/core"
+  ],
+  "dependencies": [],
+  "peerDependencies": []
+ },
+ {
+  "name": "@better-iam/nestjs",
+  "directory": "packages/nestjs",
+  "version": "0.1.0",
+  "description": "NestJS module, guard, decorators, and testing utilities.",
+  "exports": [
+   "@better-iam/nestjs",
+   "@better-iam/nestjs/testing"
+  ],
+  "internalDependencies": [
+   "@better-iam/core",
+   "@better-iam/server"
+  ],
+  "dependencies": [],
+  "peerDependencies": [
+   "@nestjs/common",
+   "@nestjs/core",
+   "reflect-metadata",
+   "rxjs"
+  ]
+ },
+ {
+  "name": "@better-iam/next",
+  "directory": "packages/next",
+  "version": "0.1.0",
+  "description": "Next.js App Router helpers: guarded pages, routes, actions, and edge checks.",
+  "exports": [
+   "@better-iam/next",
+   "@better-iam/next/edge",
+   "@better-iam/next/client"
+  ],
+  "internalDependencies": [
+   "@better-iam/client",
+   "@better-iam/core",
+   "@better-iam/react"
+  ],
+  "dependencies": [],
+  "peerDependencies": [
+   "next",
+   "react"
+  ]
+ },
+ {
+  "name": "@better-iam/nuxt",
+  "directory": "packages/nuxt",
+  "version": "0.1.0",
+  "description": "Nuxt module and h3 helpers.",
+  "exports": [
+   "@better-iam/nuxt",
+   "@better-iam/nuxt/h3"
+  ],
+  "internalDependencies": [
+   "@better-iam/client",
+   "@better-iam/core",
+   "@better-iam/vue"
+  ],
+  "dependencies": [
+   "@nuxt/kit"
+  ],
+  "peerDependencies": [
+   "nuxt",
+   "vue"
+  ]
+ },
+ {
+  "name": "@better-iam/oauth",
+  "directory": "packages/oauth",
+  "version": "0.1.0",
+  "description": "OAuth/OIDC authorization server, resource-server helpers, and Shared Signals.",
+  "exports": [
+   "@better-iam/oauth"
+  ],
+  "internalDependencies": [
+   "@better-iam/core",
+   "@better-iam/auth"
+  ],
+  "dependencies": [
+   "oauth4webapi",
+   "oidc-provider",
+   "jose"
+  ],
+  "peerDependencies": []
+ },
+ {
+  "name": "@better-iam/projects",
+  "directory": "packages/projects",
+  "version": "0.1.0",
+  "description": "Reference tenant-scoped Projects plugin.",
+  "exports": [
+   "@better-iam/projects"
+  ],
+  "internalDependencies": [
+   "@better-iam/core"
+  ],
+  "dependencies": [],
+  "peerDependencies": []
+ },
+ {
+  "name": "@better-iam/react",
+  "directory": "packages/react",
+  "version": "0.1.0",
+  "description": "React provider, hooks, and permission-gated components.",
+  "exports": [
+   "@better-iam/react"
+  ],
+  "internalDependencies": [
+   "@better-iam/client",
+   "@better-iam/core"
+  ],
+  "dependencies": [],
+  "peerDependencies": [
+   "react"
+  ]
+ },
+ {
+  "name": "@better-iam/react-router",
+  "directory": "packages/react-router",
+  "version": "0.1.0",
+  "description": "React Router (framework mode) middleware, guarded loaders, and actions.",
+  "exports": [
+   "@better-iam/react-router"
+  ],
+  "internalDependencies": [
+   "@better-iam/middleware"
+  ],
+  "dependencies": [],
+  "peerDependencies": [
+   "react-router"
+  ]
+ },
+ {
+  "name": "@better-iam/saml",
+  "directory": "packages/saml",
+  "version": "0.1.0",
+  "description": "SAML 2.0 service provider with tenant-managed connections.",
+  "exports": [
+   "@better-iam/saml"
+  ],
+  "internalDependencies": [
+   "@better-iam/core",
+   "@better-iam/auth"
+  ],
+  "dependencies": [
+   "@node-saml/node-saml",
+   "@xmldom/xmldom"
+  ],
+  "peerDependencies": []
+ },
+ {
+  "name": "@better-iam/scim",
+  "directory": "packages/scim",
+  "version": "0.1.0",
+  "description": "SCIM 2.0 inbound provisioning and outbound provisioning to applications.",
+  "exports": [
+   "@better-iam/scim"
+  ],
+  "internalDependencies": [
+   "@better-iam/core",
+   "@better-iam/auth"
+  ],
+  "dependencies": [],
+  "peerDependencies": []
+ },
+ {
+  "name": "@better-iam/server",
+  "directory": "packages/server",
+  "version": "0.1.0",
+  "description": "The `betterIam()` factory: tenants, identities, authorization, governance, HTTP API.",
+  "exports": [
+   "@better-iam/server",
+   "@better-iam/server/assertions",
+   "@better-iam/server/session-tokens"
+  ],
+  "internalDependencies": [
+   "@better-iam/core",
+   "@better-iam/auth"
+  ],
+  "dependencies": [
+   "jose"
+  ],
+  "peerDependencies": []
+ },
+ {
+  "name": "@better-iam/svelte",
+  "directory": "packages/svelte",
+  "version": "0.1.0",
+  "description": "Svelte stores and SvelteKit hooks, guards, and actions.",
+  "exports": [
+   "@better-iam/svelte",
+   "@better-iam/svelte/kit"
+  ],
+  "internalDependencies": [
+   "@better-iam/client",
+   "@better-iam/core",
+   "@better-iam/middleware"
+  ],
+  "dependencies": [],
+  "peerDependencies": [
+   "@sveltejs/kit",
+   "svelte"
+  ]
+ },
+ {
+  "name": "@better-iam/vue",
+  "directory": "packages/vue",
+  "version": "0.1.0",
+  "description": "Vue plugin, composables, and the `IamCan` component.",
+  "exports": [
+   "@better-iam/vue"
+  ],
+  "internalDependencies": [
+   "@better-iam/client"
+  ],
+  "dependencies": [],
+  "peerDependencies": [
+   "vue"
+  ]
+ }
+]

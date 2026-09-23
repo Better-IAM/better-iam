@@ -1,0 +1,146 @@
+---
+title: Lifecycle events
+description: Every access lifecycle event, from role activations and offboarding to package rules and invariants, with what it means and the metadata it carries.
+icon: ListTree
+packages: ['@better-iam/server']
+sources:
+  - docs/events.md
+  - docs/policies.md
+  - docs/privileged-access.md
+  - packages/server/src/api/bindings.ts
+  - packages/server/src/api/certifications.ts
+  - packages/server/src/api/access-requests.ts
+  - packages/server/src/lifecycle.ts
+---
+
+Operations are audited under their permission names, such as `iam:bindings:create` or `iam:identities:update`.
+That tells you _which call_ ran. The access lifecycle features also record events of their own that tell you
+_what happened to someone's access_: a role was elevated, a request was approved, an account expired, a package
+rule held back a risky change. These are the events to route to alerting, ticketing, and compliance reporting.
+
+All of them are ordinary audit events. They land in the tenant's <Term id="audit-chain">audit chain</Term>, reach
+in-process [subscribers](/docs/guides/events#in-process-subscribers), and can be sent to a
+<Term id="webhook">webhook</Term> ([webhooks](/docs/guides/events/webhooks)) by pattern, such as `binding:*`,
+`identity:*`, or `package:auto-*`.
+
+```ts title="Route lifecycle events to an operations channel"
+await iam.api.webhooks.create(credential, {
+  tenantId,
+  url: 'https://ops.example.com/hooks/iam',
+  events: ['binding:*', 'identity:*', 'package:*', 'invariant:*'],
+  description: 'Access lifecycle alerts',
+});
+```
+
+Events recorded by scheduler jobs carry the actor `deployment-operator` instead of a person. Events with outcome
+`deny` report a problem rather than a refused request.
+
+## Elevation
+
+An <Term id="eligible-binding">eligible binding</Term> gives someone the right to take a role for a limited time;
+an <Term id="activation">activation</Term> is one such period. These events follow
+[just-in-time elevation](/docs/guides/privileged-access/elevation). Subscribe to
+`binding:*` to know whenever someone holds privileged access and why.
+
+| Event                          | What happened, and why you would care                                                                                                             | Metadata                                                                              |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| `binding:activate`             | A member activated an eligible binding and now holds the role. Alert on it to see every elevation as it happens, with the stated reason.             | `activationId`, `roleId`, `expiresAt`, `justification`                                |
+| `binding:activation-requested` | Activation needs approval and a request was recorded. Use it to page approvers or open a ticket; `expiresAt` is when the request lapses.         | `activationId`, `roleId`, `expiresAt` (lapse), `requestedDurationMs`, `justification` |
+| `binding:activation-approved`  | An approver granted a request and the role is live until `expiresAt`. Keep it as evidence of two-person control.                                  | `activationId`, `roleId`, `identityId`, `expiresAt`, `note`                           |
+| `binding:activation-denied`    | An approver refused a request. Tell the requester, or watch for repeated refusals.                                                               | `activationId`, `roleId`, `identityId`, `note`                                        |
+| `binding:deactivate`           | An activation ended early: the holder stepped down, withdrew a request (`cancelled`), or an administrator ended it (`revoked`). A `revoked` activation often means incident response. | `activationId`, `roleId`, `identityId`, `cancelled`, `revoked`                        |
+
+## Identities
+
+These events follow accounts through their [lifecycle](/docs/guides/privileged-access/lifecycle): expiry,
+offboarding, and data exports. Subscribe to `identity:*` to deprovision people in other systems at the same moment.
+
+| Event                      | What happened, and why you would care                                                                                                                                        | Metadata                                                             |
+| -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| `identity:expire`          | The purge worker disabled a person or service account past its `expiresAt` (actor `deployment-operator`). Use it to close the contractor's accounts in other systems too.   | `kind`, `expiresAt`                                                  |
+| `identity:offboard`        | `identities.offboard` disabled someone and removed their access in one transaction. Trigger downstream deprovisioning and keep the counts as offboarding evidence.          | `reason`, `kind`, `successorId`, and the counts of everything removed |
+| `identity:export`          | A data-subject export of someone's stored data was produced. Privacy teams track these requests.                                                                           | `kind`, `auditIncluded`                                              |
+| `identity:expiry-reminder` | `sendExpiryReminders` emailed a person that some of their access ends soon (actor `deployment-operator`). The item keys make sure nothing is reminded twice.                | `count`, `earliest`, `items` (item keys)                             |
+
+## Organization
+
+These events record organization-wide access settings and the digest sent to owners.
+
+| Event                  | What happened, and why you would care                                                                                                                                      | Metadata                               |
+| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------- |
+| `tenant:access-policy` | `tenants.setAccessPolicy` changed the organization's floors for activation (length, justification, MFA, approval). Loosened floors deserve a second look.                   | `accessPolicy`                         |
+| `tenant:access-digest` | `sendAccessDigest` emailed the owners their access digest (actor `deployment-operator`). The digest job reads it back to send at most one digest per 20 hours. | `recipients` and the finding counts    |
+
+## Access packages
+
+An <Term id="access-package">access package</Term> bundles roles and group memberships that are granted together. These events follow
+[access packages](/docs/guides/privileged-access/access-packages) assigned by hand or requested by members.
+
+| Event                       | What happened, and why you would care                                                                                                         | Metadata                                                                                                                              |
+| --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `package:assign`            | `packages.assign` granted a package. `skipped` lists groups the person already had for longer; `replacedAutomatic` means a rule-based assignment became manual. | `packageId`, `packageName`, `identityId`, `bindings`, `memberships`, `skipped`, `expiresAt`, `justification`, `replacedAutomatic` |
+| `package:revoke`            | `packages.revoke` removed an assignment and exactly the records it created.                                                                    | `packageId`, `packageName`, `identityId`, `bindings`, `memberships`                                                                   |
+| `package:request`           | A member asked for a requestable package. Notify approvers or open a ticket; `lapsesAt` is when the request expires.                           | `requestId`, `packageId`, `packageName`, `lapsesAt`, `desiredExpiresAt`, `justification`                                              |
+| `package:request-approved`  | An approver granted a request, and the package was assigned under their authority.                                                             | `requestId`, `packageId`, `identityId`, `assignmentId`, `bindings`, `memberships`, `skipped`, `expiresAt`, `note`                     |
+| `package:request-denied`    | An approver refused a request.                                                                                                                 | `requestId`, `packageId`, `identityId`, `note`                                                                                        |
+| `package:request-cancelled` | The requester withdrew a pending request.                                                                                                      | `requestId`, `packageId`                                                                                                              |
+| `package:extend`            | `packages.extend` moved the end of an assignment and everything it created. Lengthening is a new grant, so reviewers may want to see it.       | `packageId`, `packageName`, `identityId`, `previousExpiresAt`, `expiresAt`                                                            |
+
+## Package rules
+
+A _package rule_ (`autoAssign`) gives a package to everyone who matches it; the reconciler applies it. These events
+follow [automatic assignment](/docs/guides/privileged-access/automatic-assignment). Subscribe to `package:auto-*`
+and alert on the `deny` ones: they mean a rule needs a person's attention.
+
+| Event                    | What happened, and why you would care                                                                                                                                             | Metadata                                                                                                                                                                    |
+| ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `package:auto-rule`      | A rule was set, changed, taken over (`owner`), re-authored by a contents change, or cleared (actor: the administrator). Rule changes can grant access to many people at once.     | `packageId`, `packageName`, `change`, `revision`, `ownerId`, `previousOwnerId`, `authorityId`, `include`, `exclude`, `graceMs`, `maxGrants`, `maxRemovals`, `kept`          |
+| `package:auto-confirm`   | Held-back rule changes were approved for a day (actor: the confirmer or `deployment-operator`). This is the human sign-off on a large change.                                     | `packageId`, `packageName`, `grants`, `removals`, `until`                                                                                                                   |
+| `package:auto-assign`    | The reconciler assigned, refreshed, or restored an automatic assignment (actor `deployment-operator`). `matchedBy` says which clause matched.                                     | `trigger`, `revision`, `ownerId`, `requestedBy`, `identityId`, `mode`, `reason`, `bindings`, `memberships`, `removedBindings`, `removedMemberships`, `skipped`, `matchedBy` |
+| `package:auto-ending`    | An automatic holder stopped matching and the grace period started. Access ends at `endsAt` unless they match again.                                                             | `trigger`, `identityId`, `endsAt`, `graceMs`                                                                                                                                |
+| `package:auto-revoke`    | The reconciler removed an automatic assignment, because the person no longer matches or the rule was cleared.                                                                    | `trigger`, `identityId`, `reason` (`no-longer-matches` or `rule-cleared`), `bindings`, `memberships`                                                                        |
+| `package:auto-failed`    | A change could not be applied, for example because of a separation-of-duties conflict. Recorded once per new problem, outcome `deny`.                                           | `identityId`, `change`, `code`, `message`                                                                                                                                   |
+| `package:auto-suspended` | A rule stopped adding access: the rule is invalid, the owner is inactive, their authority was revoked, or they lack rights. Outcome `deny`; someone must take the rule over.     | `reason`, `detail`                                                                                                                                                          |
+| `package:auto-resumed`   | A suspended rule runs again.                                                                                                                                                      | `previousReason`                                                                                                                                                            |
+| `package:auto-braked`    | An unattended run held back more grants or removals than the rule allows. Outcome `deny`; someone with the rights to assign the package must confirm or fix the rule.            | `direction`, `planned`, `threshold`                                                                                                                                         |
+
+## Governance
+
+These events come from the [governance](/docs/guides/governance) features: <Term id="invariant">invariants</Term>
+(guardrails checked on a schedule), <Term id="agreement">agreements</Term> (terms of use),
+[configuration as code](/docs/guides/privileged-access/config-as-code),
+<Term id="certification">certification campaigns</Term> (periodic access reviews), and
+<Term id="access-request">access requests</Term> for roles. Keep them for audits; alert on `invariant:broken`.
+
+| Event                      | What happened, and why you would care                                                                                                                                                         | Metadata                                                                                  |
+| -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| `invariant:broken`         | `checkInvariants` found an _access invariant_ (a rule such as "contractors never approve payments") newly failing or with new violators. Outcome `deny`, actor `deployment-operator`. Page someone. | `name`, `mode`, `violations` (identity IDs), `error` when it could not be evaluated       |
+| `invariant:restored`       | `checkInvariants` found a previously failing invariant passing again (actor `deployment-operator`). Close the alert.                                                                         | `name`, `mode`                                                                            |
+| `agreement:accept`         | A member accepted a version of a terms-of-use agreement with `agreements.accept`. This is the acceptance record auditors ask for.                                                            | `name`, `version`                                                                         |
+| `config:apply`             | A configuration document was applied. Compare `changed` with the reviewed pull request.                                                                                                     | `prune`, the change summary (`create`, `update`, `delete`, `unchanged`), `changed`        |
+| `certification:review`     | A manager recorded decisions on their items of a _certification campaign_ (a periodic keep-or-revoke review) with `certifications.review`.                                                  | `recorded`, `keep`, `revoke`                                                              |
+| `certification:remind`     | `certifications.remind` emailed reviewers who still have undecided items.                                                                                                                  | `reminded`, `pending`                                                                     |
+| `certification:auto-close` | `closeOverdueCertifications` closed and applied a due campaign (actor `deployment-operator`). Each removed binding is also recorded as `iam:bindings:delete`.                                | the outcome counts: `kept`, `revoked`, `already-removed`, `revocation-failed`             |
+| `access-request:approve`   | A reviewer approved a role access request, creating or refreshing the bindings.                                                                                                            | `requesterId`, `roleIds`, `bindingIds`                                                    |
+| `access-request:deny`      | A reviewer denied a role access request.                                                                                                                                                   | `requesterId`, `roleIds`                                                                  |
+
+## Audit and delivery
+
+These events concern the audit log itself, sign-in failures, and webhook testing.
+
+| Event              | What happened, and why you would care                                                                                                                                                     | Metadata                                                          |
+| ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| `audit:prune`      | `pruneAudit` deleted the oldest part of a tenant's audit chain and left this checkpoint so the rest still verifies (actor `deployment-operator`). Archive before you prune.                 | `deleted`, `before`, `prunedThroughSequence`, `prunedThroughHash` |
+| `auth:signin:fail` | A wrong password, factor, or recovery code was presented for a real account. Recorded in its own transaction, so it survives the refused sign-in. Use it for brute-force alerting.          | `reason`, `ip`, `userAgent`                                       |
+| `webhook:ping`     | Not an audit event: `webhooks.ping` sends it to one endpoint so you can test delivery end to end.                                                                                         | none                                                              |
+
+## Next steps
+
+<Cards>
+  <Card title="Webhooks" href="/docs/guides/events/webhooks">
+    Subscribe an endpoint to these events, with filters and signatures.
+  </Card>
+  <Card title="Scheduling" href="/docs/guides/governance/scheduling">
+    The scheduled jobs behind the events recorded by deployment-operator.
+  </Card>
+</Cards>

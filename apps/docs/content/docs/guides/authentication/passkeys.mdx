@@ -1,0 +1,227 @@
+---
+title: Passkeys
+description: Register passkeys, sign in with them (including discoverable autofill sign-in), use them as a second factor, and let people name and manage them.
+icon: FingerprintPattern
+packages: ['@better-iam/auth', '@better-iam/client']
+sources:
+  - docs/authentication.md
+  - docs/security.md
+  - packages/auth/src/service/passkeys.ts
+  - packages/client/src/passkeys.ts
+---
+
+Passwords and one-time codes can be typed into a convincing fake login page. <Term id="passkey">Passkeys</Term>
+cannot: they are WebAuthn credentials, a key pair kept on a device or synced by a platform account, and the browser
+only uses them on your own site. They also verify the person on the device (with biometrics or a PIN), so one
+passkey is both factors at once.
+
+In Better IAM a passkey can sign a person in on its own, and satisfies MFA when it does, or it can answer the second
+step of a password or passwordless sign-in.
+
+## Configure
+
+WebAuthn ties every passkey to a **relying party**: the site it may be used on, identified by a domain (the RP ID).
+Set it under `authentication.passkeys`:
+
+```ts title="iam.ts"
+export const iam = betterIam({
+  baseURL: 'https://app.example.com',
+  trustedOrigins: ['https://admin.example.com'],
+  authentication: {
+    passkeys: { rpID: 'example.com', rpName: 'Acme Cloud' },
+  },
+  // ...
+});
+```
+
+- `rpID` must match every trusted origin: each origin's hostname must equal it or be a subdomain of it.
+  Construction fails with `INVALID_CONFIG` otherwise.
+- `rpName` is the name authenticators show; it defaults to `authentication.appName` ("Better IAM" by default).
+- Without `passkeys`, every passkey call fails with `FEATURE_DISABLED`.
+
+In the browser, import the WebAuthn helpers from `better-iam/client/passkeys`, a separate entry point so the core
+client does not bundle them:
+
+| Helper | What it does |
+| --- | --- |
+| `startRegistration` | Asks the authenticator to create a passkey from server-issued registration options. |
+| `startAuthentication` | Asks the authenticator to sign server-issued options with an existing passkey; `useBrowserAutofill: true` offers passkeys in the username field. |
+| `browserSupportsWebAuthn` | Whether the browser supports passkeys at all, so you can hide the button when it does not. |
+| `browserSupportsWebAuthnAutofill` | Whether the browser can offer passkeys through autofill. |
+| `platformAuthenticatorIsAvailable` | Whether the device has a built-in authenticator (such as a fingerprint reader). |
+| `WebAuthnAbortService` | Cancels a waiting ceremony, for example an autofill request you want to restart. |
+
+## Register a passkey
+
+People add passkeys from their account page, while signed in with a recently authenticated session. Recent
+authentication stops someone who finds an unlocked laptop from adding their own passkey to the account.
+
+<Steps>
+<Step>
+
+### Get registration options
+
+`auth.beginPasskeyRegistration` creates a one-time challenge and the WebAuthn options that describe the passkey to
+create.
+
+```ts
+import { startRegistration } from 'better-iam/client/passkeys';
+
+const { challengeId, options } = await client.auth.beginPasskeyRegistration();
+```
+
+The options require a discoverable credential (resident key) and user verification, request no attestation, and
+exclude the passkeys the person already has. The challenge is bound to this session and valid for five minutes.
+
+</Step>
+<Step>
+
+### Run the browser ceremony
+
+The browser shows its passkey dialog, the person confirms with their fingerprint, face, or PIN, and the
+authenticator creates the key pair.
+
+```ts
+const response = await startRegistration({ optionsJSON: options });
+```
+
+</Step>
+<Step>
+
+### Finish and name it
+
+`auth.finishPasskeyRegistration` sends the authenticator's response back, with an optional name the person will
+recognize later in their list.
+
+```ts
+const { id, name } = await client.auth.finishPasskeyRegistration({
+  challengeId,
+  response,
+  name: 'Work laptop', // optional, at most 64 characters
+});
+```
+
+The server verifies the challenge, origin, RP ID, and user verification, then stores the public key. Without a
+name, the passkey is labeled from what the authenticator reports about itself: "This device" for a built-in
+authenticator, "Phone" for a cross-device (hybrid) one, "Security key" for USB, NFC, or Bluetooth keys, and
+"Passkey" otherwise. Registration is audited as `auth:passkey:create` with the name.
+
+</Step>
+</Steps>
+
+A credential is unique for the relying party across the whole installation, including across tenant accounts:
+registering the same credential twice fails with `PASSKEY_EXISTS`.
+
+## Sign in with a passkey
+
+Signing in with a passkey takes two calls around the browser ceremony. `auth.beginPasskeyAuthentication` issues a
+challenge and the options for the browser, and `auth.finishPasskeyAuthentication` verifies the signed response and
+issues a session that has already passed MFA (`method: 'passkey'`). The tenant's `allowedMethods` must include
+`passkey`.
+
+<Tabs items={['Discoverable (autofill)', 'With an email']}>
+<Tab value="Discoverable (autofill)">
+
+Without an `email`, the options name no credential. The authenticator offers whatever discoverable passkey it holds
+for your relying party, through the browser's passkey picker or autofill, and the server finds the account from
+the credential itself.
+
+```tsx
+// <input name="email" autoComplete="username webauthn" /> on the login form enables autofill.
+import { browserSupportsWebAuthnAutofill, startAuthentication } from 'better-iam/client/passkeys';
+
+if (await browserSupportsWebAuthnAutofill()) {
+  const { challengeId, options } = await client.auth.beginPasskeyAuthentication({ tenantId });
+  const response = await startAuthentication({ optionsJSON: options, useBrowserAutofill: true });
+  await client.auth.finishPasskeyAuthentication({ tenantId, challengeId, response });
+}
+```
+
+</Tab>
+<Tab value="With an email">
+
+When your login form asks for the email first, pass it along: the options then list that person's passkeys, so
+the browser only offers theirs.
+
+```ts
+import { startAuthentication } from 'better-iam/client/passkeys';
+
+const { challengeId, options } = await client.auth.beginPasskeyAuthentication({
+  tenantId,
+  email: 'alice@example.com',
+});
+const response = await startAuthentication({ optionsJSON: options });
+await client.auth.finishPasskeyAuthentication({ tenantId, challengeId, response });
+```
+
+An unknown or inactive address fails with `INVALID_CREDENTIALS`.
+
+</Tab>
+</Tabs>
+
+- The sign-in challenge is valid for five minutes. An autofill request can wait longer than that, so start a fresh
+  one before it expires (the console refreshes after four minutes).
+- Discovery names nobody, so it is rate limited per client address, with ten times the ordinary allowance, because
+  login pages start one on every visit.
+- A discovered passkey that is not registered in this organization, a user handle that does not match the account,
+  or a failed verification is refused with `INVALID_PASSKEY`.
+- The server checks the challenge, origin, RP ID, user verification, the signature, and the signature counter, and
+  records the passkey's `lastUsedAt`.
+
+## Passkeys as a second factor
+
+People who still sign in with a password can use their passkey as the second step, which is faster than typing a
+code and cannot be phished. When a password or passwordless sign-in returns `mfaRequired` with
+`passkeyAvailable: true` (the person has at least one passkey), `auth.beginPasskeyMfa` issues WebAuthn options
+bound to that sign-in challenge, and `auth.finishPasskeyMfa` verifies the response and issues the session:
+
+```ts
+const { challengeId, options } = await client.auth.beginPasskeyMfa({ tenantId, challenge: result.challenge });
+const response = await startAuthentication({ optionsJSON: options });
+const session = await client.auth.finishPasskeyMfa({
+  tenantId,
+  challengeId,
+  response,
+  rememberDevice: true, // optional; see "remember this device"
+});
+```
+
+The assertion is verified like a passkey sign-in (challenge, origin, RP ID, user verification, signature, counter)
+and bound to the pending sign-in challenge, which must still be open and belong to the same person
+(`INVALID_CHALLENGE` otherwise). Both challenges are consumed together. The session keeps the method of the first
+factor, such as `password`. Without a registered passkey, `beginPasskeyMfa` fails with `FEATURE_DISABLED`.
+
+## Manage passkeys
+
+People collect passkeys on several devices over time, and need to recognize and remove old ones, such as the
+passkey on a phone they sold. Three calls back an account page:
+
+- `auth.listPasskeys` returns the caller's passkeys, newest first, without key material (fields below).
+- `auth.renamePasskey` gives a passkey a label the person recognizes, such as "YubiKey 5C". Audited as
+  `auth:passkey:rename`.
+- `auth.deletePasskey` removes one. It needs recent authentication, ends every session of the person, and is
+  audited as `auth:passkey:delete`.
+
+```ts
+const passkeys = await client.auth.listPasskeys();
+await client.auth.renamePasskey({ id: passkeys[0].id, name: 'YubiKey 5C' });
+await client.auth.deletePasskey({ id: passkeys[1].id });
+```
+
+Each listed passkey carries:
+
+| Field | Meaning |
+| --- | --- |
+| `id`, `name` | The passkey's ID and label (at most 64 characters). |
+| `createdAt`, `lastUsedAt` | When it was registered, and last used to sign in or answer MFA. |
+| `deviceType` | `singleDevice` (bound to one authenticator) or `multiDevice` (synced). |
+| `backedUp` | Whether the credential is backed up, as reported at registration. |
+| `transports` | How the browser can reach the authenticator (`internal`, `hybrid`, `usb`, `nfc`, `ble`). |
+| `aaguid` | The authenticator model identifier, when the authenticator reports one. |
+
+Removing the last passkey is refused with `LAST_AUTHENTICATOR` unless the person has another way to sign in: a
+password, or a verified email or phone number with passwordless sign-in enabled. That keeps people from locking
+themselves out.
+
+`auth.mfaStatus()` reports how many passkeys a person has, and `tenants.usage` counts people with an authenticator
+or a passkey as MFA-enrolled.

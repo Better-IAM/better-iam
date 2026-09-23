@@ -1,0 +1,135 @@
+---
+title: Impersonation
+description: Audited "view as" sessions that let support staff see exactly what a member sees, restricted to what both people may do and visible everywhere.
+icon: VenetianMask
+packages: ['@better-iam/server', '@better-iam/auth']
+sources:
+  - docs/authentication.md
+  - docs/security.md
+  - packages/server/src/api/identities.ts
+  - packages/server/src/operations.ts
+  - packages/auth/src/service/base.ts
+---
+
+Support teams often need to see what a customer sees: a missing button, a permission that does not apply, a page
+that fails for one person. Asking for their password is unsafe, and granting yourself their roles changes their
+access. <Term id="impersonation">Impersonation</Term> solves this with a short-lived session that acts as the
+member, while every action stays attributed to the administrator behind it.
+
+Impersonation is off by default. It is designed to be hard to misuse: it is opt-in per organization, needs a
+recorded reason, cannot do anything sensitive, never exceeds the administrator's own rights, and is visible to
+the member, to policies, and in every audit record.
+
+## Enable it for a tenant
+
+An organization turns impersonation on in its [authentication policy](/docs/guides/authentication/tenant-policy),
+and grants `iam:identities:impersonate` to the people allowed to use it:
+
+```ts
+await iam.api.tenants.setAuthPolicy(ownerCredential, {
+  tenantId,
+  authPolicy: { ...currentPolicy, allowImpersonation: true },
+});
+```
+
+`setAuthPolicy` replaces the whole policy, so carry the existing fields over. Without `allowImpersonation`, every
+impersonation attempt in the tenant fails with `FEATURE_DISABLED`.
+
+## Start a "view as" session
+
+`identities.impersonate` opens a session as a member and returns its token. Call it from your support tooling
+when an administrator chooses a member and states why:
+
+```ts
+const { token, session, identity } = await iam.api.identities.impersonate(adminCredential, {
+  tenantId,
+  identityId: memberId,
+  reason: 'Ticket 4821: export button missing',
+  durationMs: 30 * 60_000, // one minute to eight hours; one hour by default
+});
+```
+
+The call succeeds only when all of these hold:
+
+- the administrator holds `iam:identities:impersonate` on the member and authenticated recently;
+- the administrator acts through an **ordinary session of their own**, not an impersonation or assumed-role
+  session (`IMPERSONATION_RESTRICTED`);
+- a `reason` of up to 512 characters is given;
+- the member is an active person who is neither the administrator, an owner, nor a root administrator (owners and
+  root administrators fail with `ACCESS_DENIED`; service accounts cannot be impersonated);
+- if the member requires MFA, the administrator's own session passed MFA (`MFA_REQUIRED`);
+- the tenant's IP allowlist and network blocks allow the administrator's address.
+
+Each impersonation is audited as `identity:impersonate` with the reason, the new session ID, and its expiry.
+
+<Callout type="warn" title="The token is returned in the body only">
+  The HTTP handler never sets the impersonation token as a cookie. Replacing the administrator's own session cookie
+  would strand their real session in that browser. Keep the token in memory in a separate context, such as a
+  dedicated tab or window, and send it as a bearer token.
+</Callout>
+
+```ts title="support/view-as.ts"
+import { createIamClient } from 'better-iam/client';
+import type { iam } from './iam';
+
+// A client that acts as the member for as long as the token lives.
+const viewAs = createIamClient<typeof iam>({ token: () => impersonationToken });
+const { results } = await viewAs.authorizeMany({ tenantId, checks });
+```
+
+## What the session can do
+
+An impersonation session acts as the member, with the method `impersonation`: requests made with its token are
+evaluated as the member's <Term id="principal">principal</Term>. Every authorization decision made through it is
+allowed only when **both** the member and the impersonating administrator may perform the action. Support staff
+therefore cannot use a more privileged member's session to act, or to grant themselves lasting access, beyond
+their own role. Reverse queries (`listAccessible`) list only what both could reach. An action the member could
+perform but the administrator could not is refused like any other denial (`ACCESS_DENIED`).
+
+It **cannot**:
+
+- perform anything that requires recent authentication: password, email, factor, device, session, and ownership
+  changes (`IMPERSONATION_RESTRICTED`);
+- re-authenticate, so it can never become recent;
+- assume roles, grant OAuth consent, or impersonate anyone else.
+
+It inherits the administrator's MFA state (`principal.mfa`) but carries no fresh factor time (`principal.mfaTime`
+is absent), and it does not count toward the member's `maxSessions` cap. What an administrator does through it is
+not recorded as the member's own access usage.
+
+## How long it lasts
+
+The session lasts `durationMs` (one hour by default, eight hours at most) and never beyond the administrator's
+own session. It ends the moment:
+
+- its duration passes or the administrator's session expires;
+- the administrator signs out, or their session is revoked;
+- the administrator is disabled or deleted;
+- the session itself signs out, or is revoked like any other session.
+
+## Who can see it
+
+Impersonation is never hidden:
+
+| Where | What it shows |
+| --- | --- |
+| Audit records | Every record the session produces carries `impersonatorId` beside the member's `actorId`. Webhook events carry it too. |
+| Policies | `principal.impersonated` is `true` and `principal.impersonatorId` names the administrator. |
+| Assertions | Signed caller tokens for your other services, issued with `assertions.issue`, carry `impersonatorId`. |
+| The member | The session appears in their own `auth.listSessions`, and `auth.listSecurityEvents` names the administrator. |
+
+Policies can use this to keep certain actions out of reach of support entirely, whatever the member's roles
+allow. An <Term id="explicit-deny">explicit deny</Term> like this one overrides every allow:
+
+```ts
+{
+  effect: 'deny',
+  actions: ['billing:*'],
+  resources: ['*'],
+  conditions: { Bool: { 'principal.impersonated': true } },
+}
+```
+
+The framework integrations recognize impersonation too: a page that demands a fresh second factor or recent
+authentication redirects an impersonation session to your step-up page with `reason=impersonation`. See
+[Next.js guards](/docs/frameworks/nextjs/guards).

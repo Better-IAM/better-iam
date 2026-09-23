@@ -1,0 +1,152 @@
+---
+title: Types
+description: The core TypeScript types of Better IAM, what each one represents, and their exact fields, generated from the published declarations.
+icon: FileType
+sources: ['packages/core/src/index.ts', 'packages/core/src/policy.ts', 'packages/server/src/options.ts', 'packages/auth/src/types.ts']
+---
+
+You will meet a handful of types over and over: the policy document you write, the decision you get back, the
+request you pass to `iam.require`, and the tenant, identity, and session records the API returns. This page
+explains what each one represents and when you handle it, followed by its exact fields.
+
+<Callout title="Always in sync with the code">
+  The tables are generated from the packages' `.d.ts` files every time the site builds, so field names,
+  optionality, and doc comments match the code you install. Select a type in a table to see its full definition.
+</Callout>
+
+## Policy documents
+
+A <Term id="policy">policy</Term> is a JSON document you store with `policies.create` or attach to a role. It holds
+up to 128 <Term id="statement">statements</Term>; each statement allows or denies some actions on some resource
+patterns, optionally only when its <Term id="condition">conditions</Term> hold. Better IAM validates every document
+with `validatePolicy` before storing it and again before evaluating it, so a malformed or hand-edited document can
+never change a decision. See [Policies](/docs/guides/authorization/policies) and try documents in the
+[playground](/playground).
+
+<auto-type-table cwd path="../../packages/core/dist/policy.d.ts" name="PolicyDocument" />
+
+`PolicyStatement` is one rule. `effect` is `allow` or `deny`; `actions` and `resources` are glob patterns where `*`
+matches any run of characters and `?` exactly one; `conditions` maps an operator (such as `StringEquals`) to the
+context keys it tests. `sid` is an optional name that shows up in decision traces.
+
+<auto-type-table cwd path="../../packages/core/dist/policy.d.ts" name="PolicyStatement" />
+
+### Decisions
+
+A `Decision` is the answer to "may this principal perform this action on this resource?". `allowed` is the verdict,
+`reason` says why: the policy engine's `allowed`, `explicit-deny`, `no-grant`, or `boundary-deny`, or a platform
+reason decided before any policy is read, such as `TENANT_INACTIVE` (the tenant is suspended), `TENANT_MISMATCH`
+(the credential belongs to another tenant), `ROOT_OVERRIDE` (a platform root administrator), `IMPERSONATOR_DENIED`
+(a "view as" session asked for more than the administrator may do), or `CREDENTIAL_AUTHORITY_REVOKED`. `matched`
+lists the statements that matched. Server calls strip `matched` before
+returning decisions to callers so they do not leak policy contents.
+
+<auto-type-table cwd path="../../packages/core/dist/policy.d.ts" name="Decision" />
+
+## Authorization requests
+
+`AuthorizationRequest` is what you pass to `iam.authorize` (which returns a `Decision`) and `iam.require` (which
+throws `ACCESS_DENIED` instead). It names the tenant, the action, and the resource, and carries the caller's
+credential: pass the incoming request's `headers` (which contain the session cookie or bearer token) or a raw
+`token`. Load the resource's identity from your own trusted storage, never from the request body.
+
+<auto-type-table cwd path="../../packages/server/dist/options.d.ts" name="AuthorizationRequest" />
+
+`CredentialInput` is the first argument of every `iam.api` method: who is calling. The same shape is embedded in
+`AuthorizationRequest`.
+
+<auto-type-table cwd path="../../packages/core/dist/index.d.ts" name="CredentialInput" />
+
+## Tenants
+
+A <Term id="tenant">tenant</Term> is an account in the tenant tree: the platform root, an organization, or a project
+inside one. `type` must be allowed as a child of the parent's type by the `hierarchy` option, `slug` is the sign-in
+alias people type to find their organization, and `status` controls whether anyone can sign in (suspension is
+inherited by every descendant). The policy objects configure how people sign in and how elevated access works in
+that tenant. See [Tenants and identities](/docs/guides/concepts/tenants-and-identities).
+
+<auto-type-table cwd path="../../packages/core/dist/index.d.ts" name="Tenant" />
+
+### Authentication policy
+
+`TenantAuthPolicy` lets one organization tighten sign-in without changing your deployment: require MFA (for
+everyone or only owners), restrict sign-in methods, shorten session lifetimes and idle timeouts, cap concurrent
+sessions, enforce password rules and history, limit sign-in to IP ranges, bind sessions to the network they started
+on, and control whether support staff may impersonate members. Set it with
+[`tenants.setAuthPolicy`](/docs/reference/api/tenants#setauthpolicy); the
+[tenant policy guide](/docs/guides/authentication/tenant-policy) explains every field.
+
+<auto-type-table cwd path="../../packages/core/dist/index.d.ts" name="TenantAuthPolicy" />
+
+### Access policy
+
+`TenantAccessPolicy` sets minimum rules for <Term id="eligible-binding">just-in-time elevation</Term> in a tenant,
+which individual bindings cannot weaken: a maximum activation length and whether activations always need a
+justification, MFA, or an approval (and how long an approval stays usable). Set it with
+[`tenants.setAccessPolicy`](/docs/reference/api/tenants#setaccesspolicy). See
+[Just-in-time elevation](/docs/guides/privileged-access/elevation).
+
+<auto-type-table cwd path="../../packages/core/dist/index.d.ts" name="TenantAccessPolicy" />
+
+## Identities and sessions
+
+API responses never include credential material: identities are returned as `PublicIdentity` and sessions as
+`SafeSession`, without password hashes or token hashes.
+
+### PublicIdentity
+
+A person or <Term id="service-account">service account</Term> in one tenant, as the API returns it. `kind` tells
+people (`user`) from machines (`service`); `owner` marks tenant owners; `attributes` holds the typed directory
+attributes you declared (department, title, and so on), which policies read as `principal.{name}`; `expiresAt`
+schedules automatic deactivation.
+
+<auto-type-table cwd path="../../packages/server/dist/utils.d.ts" name="PublicIdentity" />
+
+### SafeSession
+
+A signed-in session without its secret token. It records how and when the person authenticated (`method`, `mfa`),
+when it expires, the device it belongs to, and, for support sessions, who is impersonating. Use it to show "where
+you are signed in" lists and to decide whether to ask for step-up authentication.
+
+<auto-type-table cwd path="../../packages/auth/dist/types.d.ts" name="SafeSession" />
+
+### Sign-in results
+
+`auth.signIn` and the other sign-in methods return a `SessionResult` when the person is fully signed in, or an
+`MfaRequired` challenge when a second factor is still needed. The challenge tells you which factors are available
+(an enrolled authenticator, an emailed code, a passkey) so your UI can offer the right one. See
+[Multi-factor authentication](/docs/guides/authentication/mfa).
+
+<auto-type-table cwd path="../../packages/auth/dist/types.d.ts" name="SessionResult" />
+
+<auto-type-table cwd path="../../packages/auth/dist/types.d.ts" name="MfaRequired" />
+
+## Audit events
+
+An `AuditEvent` records one thing that happened in a tenant: an API call (allowed or denied), a failed sign-in, or an
+access-lifecycle change such as a role activation. It is what `audit.list` returns and what
+`iam.events.subscribe` handlers receive, and webhooks deliver the same fields with `action` renamed to `type`.
+`action` says what happened (`iam:roles:create`, `binding:activate`), `actorId` who did it, `resourceId` what it was
+done to, and `outcome` whether it was allowed. In an <Term id="impersonation">impersonation</Term> session,
+`impersonatorId` names the administrator while `actorId` stays the member. `sequence`, `previousHash`, and `hash`
+place the event in the tenant's tamper-evident <Term id="audit-chain">audit chain</Term>. See
+[Events and audit](/docs/guides/events) for every event name.
+
+<auto-type-table cwd path="../../packages/core/dist/index.d.ts" name="AuditEvent" />
+
+### Stored records
+
+The storage models, for adapter and plugin authors. Hash fields exist only here and are never returned by the API.
+
+<Accordions type="single">
+<Accordion title="Identity">
+
+<auto-type-table cwd path="../../packages/core/dist/index.d.ts" name="Identity" />
+
+</Accordion>
+<Accordion title="Session">
+
+<auto-type-table cwd path="../../packages/core/dist/index.d.ts" name="Session" />
+
+</Accordion>
+</Accordions>

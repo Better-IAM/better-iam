@@ -1,0 +1,73 @@
+{
+  "name": "@better-iam/next",
+  "version": "0.1.0",
+  "description": "Composable authentication, identity provisioning, and tenant-scoped access management.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Better IAM contributors",
+  "homepage": "https://github.com/Better-IAM/better-iam/tree/main/packages/next#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Better-IAM/better-iam.git",
+    "directory": "packages/next"
+  },
+  "bugs": {
+    "url": "https://github.com/Better-IAM/better-iam/issues"
+  },
+  "keywords": [
+    "iam",
+    "authentication",
+    "authorization",
+    "access-control",
+    "rbac",
+    "abac",
+    "multi-tenant",
+    "nextjs",
+    "next"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./edge": {
+      "types": "./dist/edge.d.ts",
+      "import": "./dist/edge.js"
+    },
+    "./client": {
+      "types": "./dist/client.d.ts",
+      "import": "./dist/client.js"
+    }
+  },
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsc -b"
+  },
+  "dependencies": {
+    "@better-iam/client": "workspace:*",
+    "@better-iam/core": "workspace:*",
+    "@better-iam/react": "workspace:*"
+  },
+  "peerDependencies": {
+    "next": "^15.0.0",
+    "react": "^19.0.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.1.0",
+    "next": "^15.5.0",
+    "react": "^19.1.0"
+  }
+}

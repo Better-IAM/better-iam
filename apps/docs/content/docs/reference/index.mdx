@@ -1,0 +1,54 @@
+---
+title: Reference
+description: Generated reference for the server API, package exports, the CLI, error codes, packages, and the changelog, extracted from the repository.
+icon: Code
+---
+
+import { Braces, History, OctagonAlert, Package, PackageOpen, SquareTerminal } from 'lucide-react';
+
+Everything in this section is generated from the repository by `apps/docs/scripts/generate.mjs`, so it matches the
+code it documents: method names and signatures come from the built TypeScript declarations and a live
+`betterIam()` instance, error codes from every `IamError` thrown in `packages/*/src`, CLI usage from the CLI's own
+help text, and packages from the workspace manifests.
+
+<Cards>
+  <Card icon={<Braces />} title="Server API" href="/docs/reference/api">
+    Every `iam.api` group and method with its HTTP route, credential requirement, and TypeScript signature.
+  </Card>
+  <Card icon={<PackageOpen />} title="Package exports" href="/docs/reference/exports">
+    Every function, hook, component, and class the packages export, what it does, and the guide that uses it.
+  </Card>
+  <Card icon={<SquareTerminal />} title="CLI" href="/docs/reference/cli">
+    The `better-iam` command line: migrations, bootstrap, audits, configuration as code, and scheduled jobs.
+  </Card>
+  <Card icon={<OctagonAlert />} title="Error codes" href="/docs/reference/errors">
+    Every stable `IamError` code grouped by HTTP status, with example messages.
+  </Card>
+  <Card icon={<Package />} title="Packages" href="/docs/reference/packages">
+    The publishable packages, their subpath exports, and dependencies.
+  </Card>
+  <Card icon={<History />} title="Changelog" href="/docs/reference/changelog">
+    Every notable change, newest first.
+  </Card>
+</Cards>
+
+## Machine-readable docs
+
+The site serves its content for tools and language models as well as for people:
+
+| URL | Content |
+| --- | --- |
+| `/llms.txt` | An index of every page with its description |
+| `/llms-full.txt` | Every page as Markdown in one file |
+| `/docs/<page>.md` | One page as Markdown (also served for `Accept: text/markdown`) |
+| `/api/search?query=…` | The search index behind the search dialog, as JSON |
+| `/api/mcp` | An MCP server with search, page, API-method, export, and error-code tools; see [Use the docs with AI](/docs/reference/ai) |
+| `/openapi.json` | The OpenAPI 3.1 description of the HTTP API |
+
+## Regenerating
+
+```bash
+pnpm build                                  # declarations the API catalog is read from
+pnpm --filter @better-iam/docs generate     # data + generated pages (API, exports, errors, CLI, glossary)
+node apps/docs/scripts/check-content.mjs    # validate every page and link
+```

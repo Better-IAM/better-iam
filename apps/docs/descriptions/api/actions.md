@@ -1,0 +1,59 @@
+# actions
+
+Actions are the names that roles and policies allow or deny, such as `iam:groups:update` or `documents:write`. The
+[permission catalog](/docs/guides/authorization/catalog) holds every action that exists: the built-in `iam:*`
+actions, the actions your configuration and plugins declare, and, when the deployment sets
+`permissions.mode: 'tenant-defined'`, actions a tenant registers itself. Stored policies may only name actions in the
+catalog, so a typo fails with `INVALID_ACTION` instead of silently granting nothing. This group lists the catalog and
+manages the tenant's own entries.
+
+## Tenant-defined actions
+
+A tenant action is always namespaced under one of the tenant's own
+[resource types](/docs/reference/api/resource-types) as `{type}:{verb}`, for example `contract:approve` under a
+`contract` type. Register the type first; `resourceTypes.register` can create its actions in the same call.
+Registering an action grants nothing: it only makes the name available to roles and policies. Platform actions cannot
+be registered, renamed, or removed through this group.
+
+## list
+
+Lists every action the tenant can use in policies: platform actions first, then the tenant's own.
+
+- **Permission:** `iam:actions:read` on the tenant.
+- **Audited as:** `iam:actions:read`.
+
+Each entry has a `name`, a `source` of `platform` or `tenant`, and the `resourceType` it belongs to when it was
+declared under one. Tenant actions also carry their `description`. Use it to populate policy and role editors.
+
+## register
+
+Adds a `{type}:{verb}` action under one of the tenant's resource types.
+
+- **Permission:** `iam:actions:create` on the tenant.
+- **Audited as:** `iam:actions:create`.
+- **Errors:** `CATALOG_LOCKED` (403) when the deployment does not allow tenant-defined actions; `INVALID_ACTION` when
+  the name is not `{type}:{verb}`, collides with a platform action or namespace, or its type is not a tenant-defined
+  resource type; `CONFLICT` when the action already exists.
+
+The verb starts with a letter and uses letters, digits, `_`, or `-`. The description is optional, at most 512
+characters.
+
+```ts
+await iam.api.actions.register(credential, {
+  tenantId,
+  name: 'contract:countersign',
+  description: 'Countersign a contract after legal review',
+});
+```
+
+## unregister
+
+Removes a tenant-defined action from the catalog.
+
+- **Permission:** `iam:actions:delete` on the tenant.
+- **Audited as:** `iam:actions:delete`.
+- **Errors:** `NOT_FOUND` when the tenant has no action by that name (platform actions included);
+  `RESOURCE_IN_USE` while a stored policy or inline role document names the action exactly.
+
+Remove the action from every policy and role first; the check exists so no stored document is left naming an action
+that no longer exists. Wildcard patterns such as `contract:*` do not count as references.

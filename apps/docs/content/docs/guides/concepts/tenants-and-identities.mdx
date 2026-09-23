@@ -1,0 +1,408 @@
+---
+title: Tenants and identities
+description: Tenant trees, isolated identity directories, invitations, sign-in aliases, root administration, account linking, and what suspension and deletion do.
+icon: Users
+packages: ['@better-iam/server', '@better-iam/auth']
+sources:
+  - docs/architecture.md
+  - docs/security.md
+  - packages/server/src/api/tenants.ts
+  - packages/server/src/api/identities.ts
+  - packages/server/src/flows.ts
+  - packages/server/src/lifecycle.ts
+---
+
+A multi-tenant product has to keep each customer's people, permissions, and data apart, while still letting you,
+the platform operator, run everything. Better IAM models each customer as a **tenant**, the equivalent of an AWS
+account: many people sign in to it, each with their own <Term id="identity">identity</Term>,
+<Term id="credential">credentials</Term>, and <Term id="binding">role bindings</Term>. Tenants form a tree, and
+each one keeps its own directory of identities.
+
+This page explains how the tree is shaped, how people get into a tenant, who administers the platform, how one
+person can move between tenants, and what happens when tenants and identities are suspended or deleted.
+
+## Tenant trees
+
+A tree lets you mirror how your customers are organized. The platform sits at the top, each customer organization
+below it, and each organization's projects or workspaces below that. Every level is a full tenant with its own
+members and access model, so an organization can give a contractor access to one project without touching the
+others.
+
+Every installation has one <Term id="root">root tenant</Term>, created by `bootstrap`. Below it, tenants nest by
+type. The default hierarchy is `root → organization → project`, with a maximum depth of eight. You can define
+your own types with the `hierarchy` option:
+
+```ts title="iam.ts"
+export const iam = betterIam({
+  // ...
+  hierarchy: {
+    types: {
+      root: { allowedChildren: ['organization'] },
+      organization: { allowedChildren: ['workspace', 'project'] },
+      workspace: { allowedChildren: ['project'] },
+      project: { allowedChildren: [] },
+    },
+    maxDepth: 8, // 1 to 100
+  },
+});
+```
+
+The hierarchy must define `root`, every allowed child must be a defined type, and nothing may list `root` as a
+child. Runtime ancestry traversal rejects cycles.
+
+A tenant's `status` is one of:
+
+| Status | Meaning |
+| --- | --- |
+| `pending` | Created, waiting for its owner to accept the invitation. |
+| `active` | In use. Sign-in and authorization require the tenant **and every ancestor** to be active. |
+| `suspended` | Temporarily unavailable, together with its whole subtree. |
+| `deleted` | Tombstoned; purged after the retention window. |
+
+<Callout type="info" title="Parents do not grant access to children">
+  No parent membership implicitly grants access to a descendant tenant. People act in the tenant their identity
+  belongs to; reaching another tenant takes platform-controlled <Term id="role-assumption">role assumption</Term>
+  or root authority.
+</Callout>
+
+### Creating an organization
+
+When a new customer signs up, or a customer adds a project, you create a child tenant. `tenants.create` creates it
+under a parent and invites its first owner. It requires `iam:tenants:create` on the parent, recent authentication,
+and a valid <Term id="authority">grant authority</Term>: the new owner's powers are delegated from it. The
+child type must be allowed under the parent's type (`INVALID_HIERARCHY`), and the tree must stay within `maxDepth`
+(`MAX_DEPTH`).
+
+```ts
+const { tenant, invitationId } = await iam.api.tenants.create(adminCredential, {
+  parentId: rootTenantId,
+  type: 'organization',
+  name: 'Acme',
+  ownerEmail: 'owner@acme.example',
+  slug: 'acme', // optional sign-in alias
+});
+// tenant.status === 'pending'
+```
+
+The new tenant starts `pending`. Its owner enrolls through a single-use `owner-invitation` email sent through the
+encrypted outbox, so the creator never sees the invitation secret. Organization creation therefore needs an email
+delivery callback (`DELIVERY_REQUIRED` otherwise). The owner accepts with the public
+`tenants.acceptInvitation({ tenantId, token, name, password })`. That creates their identity with a verified
+email, sets up the protected Owner role, activates the tenant (audited as `tenant:activate`), and signs them in,
+subject to any MFA requirement.
+
+Invitations last `onboarding.invitationLifetimeMs` (24 hours by default). When an owner does not get around to
+accepting in time, or the invitation went to the wrong address:
+
+- `tenants.resendInvitation` sends a fresh link with a new lifetime; the earlier link stops working.
+- `tenants.listInvitations` shows the tenant's owner invitations and whether each was consumed or revoked.
+- `tenants.revokeInvitation` cancels an invitation so its link can no longer be used.
+
+`tenantDefaults` in the server options (`limits` and `authPolicy`, validated at construction) are stamped on every
+tenant `tenants.create` creates, so a SaaS plan applies from the first sign-in.
+
+### Plan limits
+
+SaaS plans usually cap how much a customer can create. Root administrators set plan limits on a tenant with
+`tenants.setLimits` (audited as `tenant:limits`; `null` clears them):
+
+```ts
+await iam.api.tenants.setLimits(rootCredential, {
+  tenantId,
+  limits: { identities: 25, serviceAccounts: 5, webhooks: 3 },
+});
+```
+
+The keys are `identities` (members), `serviceAccounts`, `groups`, `roles`, `policies`, `resources` (registered
+managed resources), and `webhooks`. Every creation path checks the limit inside its transaction and fails with
+`LIMIT_EXCEEDED`, including invitations accepted later, self-registration, federation,
+<Term id="scim">SCIM</Term>, and bulk creation.
+Deleted tombstones do not count.
+
+`tenants.usage` reports the tenant's current counts, active sessions, how many people have MFA, and its limits.
+Call it to render a plan page or to meter usage for billing.
+
+## Finding a tenant at sign-in
+
+Every sign-in names a tenant, because the same email address can belong to separate identities in different
+tenants. People do not know tenant IDs, so two public lookups let a login screen find the tenant from something
+they do know.
+
+**Aliases.** A tenant may carry a globally unique `slug`: 1 to 63 lowercase letters, digits, or hyphens, starting
+and ending with a letter or digit.
+`tenants.lookup({ slug })` resolves an active tenant without a credential, like an AWS account alias. Suspended,
+pending, and deleted tenants, and tenants under an inactive ancestor, are not resolvable. A slug is claimed in the
+same transaction as the tenant (`tenants.create`, `bootstrap`) or changed with `tenants.setSlug` (recent
+authentication; `null` releases it). A taken slug fails with `SLUG_TAKEN`, and a purged tenant releases its slug.
+
+```ts
+const { tenantId } = await client.tenants.lookup({ slug: 'acme' });
+await client.auth.signIn({ tenantId, email, password });
+```
+
+<Callout type="warn" title="Aliases are public">
+  Tenant aliases are discovery data by design. Apply ingress rate limits to `tenants.lookup` and never encode
+  secrets in an alias.
+</Callout>
+
+**Sign-in addresses and regions.** An alias can also be an address. With the `hosts` option, Acme signs in at
+`acme.signin.example.com` (or a custom hostname it verified, such as `login.acme.com`), and every request there is
+pinned to Acme. With the `regions` option, each organization has a <Term id="home-region">home region</Term>, and
+sign-in for it is sent to that region's deployment. See
+[sign-in addresses and regions](/docs/operations/deployment/hosts-and-regions).
+
+**Email domains.** An organization can claim a domain with `domains.add` (`iam:domains:create`), prove control
+with a DNS TXT record, and mark it verified with `domains.verify`. The public `domains.discover({ email })` then
+returns the owning tenant with its alias, accepted sign-in methods, and MFA requirement, which is how "use your
+work email" works. A verified domain belongs to exactly one tenant, and consumer mailbox providers cannot be
+claimed. See [enterprise onboarding](/docs/federation/enterprise-onboarding).
+
+## Identity directories
+
+Each customer should control its own people: who is a member, how they sign in, and what they may do, without
+seeing or affecting anyone else's. So every identity belongs to exactly one tenant.
+
+An identity's normalized email is unique **within** its tenant; another tenant may hold an entirely separate
+identity with the same email. Credentials, external-provider subjects, MFA factors, recovery challenges, and
+sessions are all tenant-scoped, and tenant identities stay separate even when accounts are explicitly linked.
+
+An identity has:
+
+- a `kind`: `user` for people, `service` for machines;
+- a `status`: `active`, `disabled`, or `deleted` (a tombstone: a record kept without email or secrets so audit
+  history still resolves);
+- the `owner` and `rootAdmin` flags;
+- optional typed `attributes` declared by `permissions.identityAttributes`, which policies read as
+  `principal.{name}` (see [resources and catalog](/docs/guides/concepts/resources-and-catalog#identity-attributes));
+- an optional `managerId` (another active identity of the tenant) and an optional `expiresAt`, which schedules
+  deactivation for contractors and temporary accounts.
+
+## Adding people to a tenant
+
+People join an existing tenant in three ways. Pick the one that matches who knows the person's details and who
+should choose their password.
+
+| Way | Call | When to use it |
+| --- | --- | --- |
+| Administrator creates the identity | `identities.create` creates one person; `identities.createMany` creates up to 100 at once | Migrations and bulk onboarding. Needs `iam:identities:create`. `createMany` applies attributes, roles, and groups under the caller's authority, atomically: one failure rejects the batch. A password is optional; without one, send a reset email with `identities.requestPasswordReset` so the person can choose it. |
+| Self-registration | `auth.signUp` lets a visitor create their own account | Open products where anyone may join a tenant. Only when `authentication.signUpEnabled` is on (off by default), and never in the root tenant. See [sign-in methods](/docs/guides/authentication/sign-in-methods#self-registration). |
+| Member invitation | `identities.invite` sends the invitation; `identities.acceptInvitation` redeems it | The usual way to add a colleague. The person proves they own the address and chooses their own password; roles and groups are applied at acceptance. |
+
+### Member invitations
+
+Invitations let an administrator decide **what** a new member gets while the member decides their own password.
+Nobody else ever handles it, and the invitee proves they control the address by following the link.
+
+<Steps>
+<Step>
+
+### Invite
+
+`identities.invite` records the invited email with optional roles and groups, stores only a hash of the token,
+and queues a `member-invitation` delivery.
+
+```ts
+const invitation = await iam.api.identities.invite(adminCredential, {
+  tenantId,
+  email: 'alice@example.com',
+  roleIds: [editorRoleId],
+  groupIds: [designGroupId],
+});
+```
+
+The inviter needs `iam:identities:create`, plus `iam:bindings:create` on each role and `iam:groups:update` on each
+group, so an invitation can never grant more than the inviter could bind directly. Protected owner roles cannot
+be invited into (`PROTECTED_RESOURCE`).
+
+</Step>
+<Step>
+
+### Accept
+
+Your invitation page calls the public `identities.acceptInvitation` with the token from the email link.
+
+```ts
+const result = await client.identities.acceptInvitation({ tenantId, token, password });
+if ('mfaRequired' in result) {
+  // continue with the second factor; see the MFA guide
+}
+```
+
+Acceptance creates the identity with a verified email and applies the bindings under the inviter's grant
+authority, which is re-validated at that moment. A revoked authority or a revoked invitation makes the token
+useless (`INVITATION_INVALID`). Separation-of-duties rules are checked, the acceptance is audited as
+`identity:invitation:accept`, and the first session is issued subject to the tenant's MFA requirements.
+
+</Step>
+<Step>
+
+### Manage
+
+- `identities.listInvitations` shows the tenant's member invitations, who sent each, and whether it was consumed
+  or revoked.
+- `identities.resendInvitation` sends a fresh link with a new lifetime when the first one expired or got lost; the
+  earlier link stops working.
+- `identities.revokeInvitation` cancels an invitation that should no longer be accepted.
+
+</Step>
+</Steps>
+
+## Root administration
+
+Someone has to run the platform itself: create organizations, set plan limits, and help when a customer is locked
+out. That power belongs to **root administrators**. Because it reaches every tenant, it is guarded more tightly
+than anything else.
+
+Root authority is a protected boolean capability on a human identity in the root tenant. It is validated from
+current storage on every use and requires an MFA user session. A role called `root-admin`, a matching email, a
+linked account, or a JWT claim cannot confer it, and ordinary root-tenant accounts do not inherit it.
+
+Root overrides policy restrictions across tenants, but not malformed input, expired credentials, CSRF,
+signature validation, or resource ownership validation. Actions taken through the override are audited with
+`rootOverride`.
+
+| Operation | What it does |
+| --- | --- |
+| `iam.bootstrap({ email, name, password, rootName?, slug? })` | Creates the root tenant and the first root administrator. Runs only against an uninitialized installation (`ALREADY_INITIALIZED` otherwise) and is audited as `root:bootstrap`. |
+| `iam.recoverRoot({ email, name, password })` | A deployment-operator command that creates a new root administrator when the existing ones are locked out, audited as `root:recover`. Use an email the root tenant does not use yet (`IDENTITY_EXISTS` otherwise); it fails with `NOT_INITIALIZED` before bootstrap. |
+| `root.setAdministrator({ tenantId, identityId, enabled })` | Grants or removes the capability (`iam:root:grant`, root only, recent authentication). Only human identities of the root tenant qualify, and the identity's sessions are revoked. |
+| `root.listAdministrators({ tenantId })` | Lists root administrators; root only. |
+
+Both `bootstrap` and `recoverRoot` return `mfaEnrollmentRequired: true`: a new root administrator enrolls an
+authenticator on first sign-in, because root always requires MFA. The last active root administrator cannot be
+removed, disabled, or deleted (`LAST_ROOT_ADMIN`).
+
+<Callout type="warn" title="Protect the deployment">
+  Access to configuration, database credentials, and the ability to run recovery are root-equivalent
+  capabilities. `bootstrap` and `recoverRoot` are never HTTP endpoints; run them from the CLI.
+</Callout>
+
+### Owners
+
+Owners are the people who control a tenant: its protected Owner role allows every action in the tenant, and they
+are the ones who can change its policies and transfer ownership. Owner role definitions cannot be edited, and
+ownership moves only through `identities.setOwner`, which grants or removes the Owner role for a member. Only an
+owner or a root administrator may call it, with recent authentication. The last active owner of a tenant is
+protected (`LAST_OWNER`). Only another owner of the same tenant, or root, can change an
+owner's sign-in address or trigger their password reset; owners cannot be impersonated.
+
+## Account linking
+
+Some people belong to several organizations: a consultant working for two clients, or a founder who also has a
+personal workspace. Because identities are per tenant, that person has several separate accounts. **Account
+linking** lets them switch between those accounts from one place, like an account switcher, without merging them.
+
+Linking is opt-in (`onboarding: { mode: 'linked' }`); otherwise it fails with `LINKING_DISABLED`. A link never
+merges roles, credentials, or profiles, and it supplies no cross-tenant permission: each account keeps its own
+password, factors, and roles.
+
+- **Create.** `links.create({ targetCredential })` links the caller's account to the account whose credential
+  they present, proving they control both. It needs recent authentication on **both** accounts. Only
+  ordinary user sessions of two different tenants can link, and root administrators never can
+  (`INVALID_LINK`). Audited as `identity:link`.
+- **List.** `links.list` returns the current identity's linked accounts (name, email, tenant name and alias)
+  for a switcher UI.
+- **Switch.** `links.switch({ linkId, targetCredential })` needs a valid link plus a recently authenticated
+  credential for the target, then creates a fresh target session. This deliberately enforces the target's MFA
+  without treating the link as a reusable bearer credential. Audited as `identity:switch`.
+- **Revoke.** `links.revoke({ linkId })` removes a link the person no longer wants; either side may call it, with
+  recent authentication. Audited as `identity:unlink`.
+
+An organization's creator can also link their existing account to the new owner identity while accepting the
+owner invitation, by passing `linkCredential` to `tenants.acceptInvitation`.
+
+Federation uses a separate, stricter mapping: `(tenant, provider, issuer, subject)` to an identity. A verified
+email from a provider may provision a new account, but an email that already belongs to an identity fails with
+`ACCOUNT_LINK_REQUIRED`, and the application must complete an explicit, verified linking flow. No email-only
+association is ever performed. See [OAuth sign-in](/docs/federation/oauth-sign-in).
+
+## Suspension, deletion, and moves
+
+Customers stop paying, reorganize, or leave, and people change jobs. These operations take access away cleanly:
+suspension is reversible and immediate, deletion keeps an audit trail and removes data only after a retention
+window, and moves keep the tree's rules intact.
+
+### Tenants
+
+| Change | Call | Semantics |
+| --- | --- | --- |
+| Suspend | `tenants.setStatus({ status: 'suspended' })` | Inherited at authentication and authorization time by the whole subtree. Existing sessions in the subtree, and role sessions sourced from it, are removed. |
+| Reactivate | `tenants.setStatus({ status: 'active' })` | The parent must be active. Removed sessions are **not** restored; people sign in again. |
+| Delete | `tenants.setStatus({ status: 'deleted' })` | Needs `iam:tenants:delete`. Tombstones the subtree, stamps `deletedAt` to start the retention window, and revokes its sessions. Audit records remain. |
+| Purge | `iam.purgeDeleted({ retentionMs })` or the `purge` CLI command | Removes tombstoned tenants past the retention window (30 days by default). Plugin-owned records go through plugin `purge` callbacks in the same transaction; slugs and domain claims are released. |
+| Rename | `tenants.update({ name })` | Recent authentication and `iam:tenants:update`. |
+| Move | `tenants.reparent({ parentId })` | Additionally requires authority in the new parent, an active new-parent ancestry, a permitted child type, and depth and cycle checks. Delegation chains keep their original grant authorities. Audited as `tenant:reparent`. |
+
+Status changes, renames, and moves require recent authentication. The root tenant cannot be suspended, deleted, or
+moved, a pending tenant can only be deleted, and deleted tenants cannot be changed (`INVALID_TRANSITION`).
+
+### Identities
+
+| Change | Call | Semantics |
+| --- | --- | --- |
+| Disable or enable | `identities.setStatus` | Disabling revokes every session. An identity past its `expiresAt` cannot be re-enabled until the expiry is extended or cleared (`INVALID_TRANSITION`). |
+| Scheduled deactivation | `expiresAt` on create or update (in the future, within ten years; `null` clears it) | For contractors and temporary accounts. Past that time the server refuses the identity's sessions and keys for operations and authorization checks; the purge worker then disables it and records `identity:expire`. |
+| Offboard | `identities.offboard` | Disables the identity and removes its access in one transaction. See [lifecycle](/docs/guides/privileged-access/lifecycle). |
+| Delete | `identities.delete`, `serviceAccounts.delete` | See below. |
+
+Delete an identity when the person or integration is gone for good and you no longer need their record active.
+`identities.delete` (and `serviceAccounts.delete`) removes a person or service account under
+`iam:identities:delete` with recent authentication. In one transaction, it removes or revokes the identity's
+sessions, API keys, factors, passkeys, bindings, group memberships, <Term id="boundary">boundaries</Term>,
+external identity mappings, pending access requests, and links, and revokes the delegated authorities the identity
+issued. A tombstone with `status: 'deleted'`, no email, and no secrets remains so audit records stay resolvable. The last active owner and the last root administrator are protected, and
+`identities.list` omits tombstones unless `includeDeleted` is set.
+
+Other administrative operations on people:
+
+- `identities.update` renames a member, replaces declared attributes, or changes the email. An email change needs
+  recent authentication; the address becomes unverified, sessions are revoked, and `identity:email-change` is
+  audited.
+- `identities.export` answers a data-subject access request, such as one under the GDPR. It needs recent
+  authentication and `iam:identities:read` on the identity, and returns everything the tenant stores about the
+  person as JSON: the public identity, sessions without token hashes, MFA enrollment and passkey identifiers, external
+  provider subjects, effective bindings, groups, relationships, access requests, boundaries, grant authorities,
+  links, SCIM links, and, when the caller also holds `iam:audit:read`, the audit events the identity performed.
+  Each export is audited as `identity:export`.
+- `identities.revokeSessions` ends one identity's sessions without disabling it, and `tenants.revokeSessions`
+  ends every session in a tenant. See [sessions](/docs/guides/authentication/sessions#listing-and-ending-sessions).
+- `identities.unlock` clears rate-limit lockouts and `identities.requestPasswordReset` queues a reset email. See
+  [recovery](/docs/guides/authentication/recovery).
+- `identities.impersonate` opens an audited "view as" session. See
+  [impersonation](/docs/guides/authentication/impersonation).
+
+## Identities and service accounts
+
+Integrations, scheduled jobs, and other services need to call your API without a person signing in. Give them a
+<Term id="service-account">service account</Term> rather than a shared human login: it has its own roles, its own audit trail, and keys you can
+rotate or revoke without affecting anyone.
+
+Service accounts are identities with `kind: 'service'`. They live in the same directory, are managed under the
+same `iam:identities:*` actions, and receive roles the same way, but they authenticate differently.
+`serviceAccounts.create` creates one, `serviceAccounts.update` changes its name, description, attributes, or
+expiry, `serviceAccounts.setStatus` disables or re-enables it, and `serviceAccounts.delete` removes it and its keys.
+
+| | People (`kind: 'user'`) | Service accounts (`kind: 'service'`) |
+| --- | --- | --- |
+| Created with | `identities.create`, `createMany`, `invite`, `auth.signUp`, federation, SCIM | `serviceAccounts.create({ tenantId, name, description?, expiresAt? })` |
+| Credential | User sessions from a sign-in ceremony | API keys from `credentials.create`, sent as `Authorization: Bearer` |
+| Email, password, MFA | Yes | None |
+| Expiry | Optional `expiresAt` | Optional `expiresAt`; keys expire too (90 days by default) |
+| Seen by policies as | `principal.kind: 'user'`, `principal.sessionKind: 'user'` | `principal.kind: 'service'`, `principal.sessionKind: 'api-key'` |
+| Impersonation | Possible when the tenant allows it | Never |
+
+API keys are labeled, can be scoped to a list of actions or a session policy, record `lastUsedAt`, and keep the
+ceiling of the authority that issued them. Rotation invalidates the old key transactionally.
+`credentials.list({ unusedForMs })` finds keys nobody uses. See
+[sign-in methods](/docs/guides/authentication/sign-in-methods#service-accounts-and-api-keys).
+
+## Next steps
+
+<Cards>
+  <Card title="Resources and catalog" href="/docs/guides/concepts/resources-and-catalog">
+    The actions and resource types that roles and policies are written against.
+  </Card>
+  <Card title="Authentication" href="/docs/guides/authentication">
+    How the identities in a tenant sign in, and what their sessions carry.
+  </Card>
+</Cards>

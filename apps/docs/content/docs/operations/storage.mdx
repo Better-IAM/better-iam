@@ -1,0 +1,278 @@
+---
+title: Storage adapters
+description: Choose and configure the PostgreSQL, SQLite, or libSQL/Turso adapter, move a deployment between databases with snapshots, and read what doctor reports.
+icon: HardDrive
+packages: ['@better-iam/adapter-postgres', '@better-iam/adapter-sqlite', '@better-iam/adapter-libsql', '@better-iam/core', '@better-iam/cli']
+sources: ['docs/deployment.md', 'docs/extensions.md', 'docs/recipes.md', 'packages/adapter-postgres/src/index.ts', 'packages/adapter-sqlite/src/index.ts', 'packages/adapter-libsql/src/index.ts', 'packages/core/src/snapshot.ts', 'packages/server/src/self-check.ts', 'packages/cli/src/index.ts']
+---
+
+Better IAM stores everything through one small contract, `IamStore`, and ships three reference
+<Term id="adapter">storage adapters</Term> that implement it on top of a shared `RecordStore` base. They behave identically: the same strict filters, the same
+code-point ordering, the same serialized transactions. Pick the database for its operational properties, and move
+between them later with a snapshot if your needs change.
+
+| Adapter | Use it for | Driver (bundled) |
+| --- | --- | --- |
+| PostgreSQL | Production deployments with sustained concurrent writes or large datasets; several application instances. | `pg` |
+| SQLite | Single-host deployments, development, and tests. | `better-sqlite3` (native) |
+| libSQL | Local files, encrypted files, embedded replicas, and remote Turso or sqld databases. | `@libsql/client` |
+
+## Configure an adapter
+
+Create the adapter and pass it to `betterIam({ database })`. Each adapter takes only the settings its database
+needs:
+
+<Tabs items={['PostgreSQL', 'SQLite', 'libSQL / Turso']} groupId="database">
+<Tab value="PostgreSQL">
+
+```ts title="lib/iam.ts"
+import { postgresAdapter } from 'better-iam/adapter-postgres';
+
+const database = postgresAdapter({
+  connectionString: process.env.DATABASE_URL!,
+  poolSize: 10,
+});
+```
+
+<TypeTable
+  type={{
+    connectionString: {
+      type: 'string',
+      required: true,
+      description: 'Where the database is: a postgres:// or postgresql:// connection string, usually from DATABASE_URL.',
+    },
+    poolSize: {
+      type: 'number',
+      default: '10',
+      description: 'How many connections each instance opens, 1 to 100. Size it to the request concurrency of one instance, and keep the total across instances within the server connection limit.',
+    },
+    lockTimeoutMs: {
+      type: 'number',
+      default: '5000',
+      description: 'How long a transaction waits for a pool connection and for the serializing lock, 1 to 60000. A transaction that cannot get the lock in time fails with STORAGE_BUSY (503), which clients can retry, instead of hanging. Raise it if long transactions such as large imports time out.',
+    },
+  }}
+/>
+
+Transactions serialize through a transaction-scoped advisory lock, which also covers other adapter instances
+against the same database. Keep `synchronous_commit` on, and run `VACUUM ANALYZE iam_records` after a bulk import.
+`describe()` reports the server version, `synchronous_commit`, the database size, and the lock timeout.
+
+</Tab>
+<Tab value="SQLite">
+
+```ts title="lib/iam.ts"
+import { sqliteAdapter } from 'better-iam/adapter-sqlite';
+
+const database = sqliteAdapter({ filename: './iam.db' });
+```
+
+<TypeTable
+  type={{
+    filename: {
+      type: 'string',
+      required: true,
+      description: 'The database file, or :memory: for tests (everything is lost when the process exits). URI filenames (file:) are not supported.',
+    },
+    busyTimeoutMs: {
+      type: 'number',
+      default: '5000',
+      description: "How long to wait for another process's writer lock before failing with STORAGE_BUSY, 0 to 60000. Raise it when several processes (the application, workers, and the CLI) share one file.",
+    },
+    journalMode: {
+      type: "'wal' | 'delete'",
+      default: "'wal'",
+      description: 'wal lets readers proceed during a write and commits with one sequential flush. Switch to delete, the classic rollback journal, only on file systems without shared-memory support such as network shares. Ignored for :memory:.',
+    },
+    durability: {
+      type: "'full' | 'normal'",
+      default: "'full'",
+      description: 'full flushes every commit, so a committed revocation survives power loss. normal in WAL mode can lose the last commits on power loss or an OS crash (never the database) in exchange for much cheaper writes. Keep full with journalMode delete.',
+    },
+  }}
+/>
+
+The adapter serializes operations per canonical filename within the process, and SQLite's own `BEGIN IMMEDIATE`
+lock coordinates other processes with a bounded wait. It caches prepared statements, so writes stay cheap.
+`describe()` reports the journal mode, synchronous level, file size, free space, and whether the database is in
+memory.
+
+</Tab>
+<Tab value="libSQL / Turso">
+
+```ts title="lib/iam.ts"
+import { libsqlAdapter } from 'better-iam/adapter-libsql';
+
+const database = libsqlAdapter({
+  url: 'libsql://name-org.turso.io',
+  authToken: process.env.TURSO_AUTH_TOKEN,
+});
+```
+
+<TypeTable
+  type={{
+    url: {
+      type: 'string',
+      required: true,
+      description: 'Which database to open: :memory:, file:./iam.db, a plain path, or a remote libsql:, https:, or wss: URL for Turso or sqld.',
+    },
+    authToken: {
+      type: 'string',
+      description: 'The bearer token a remote database requires, such as a Turso database token.',
+    },
+    encryptionKey: {
+      type: 'string',
+      description: 'Encrypts a local database file at rest. Keep it with your other keys: the file cannot be opened without it.',
+    },
+    syncUrl: {
+      type: 'string',
+      description: 'Turns the local file into an embedded replica of this remote URL, so the process reads from a local copy while the remote database stays the source of truth.',
+    },
+    syncInterval: {
+      type: 'number',
+      description: 'How often, in seconds, an embedded replica syncs with the remote.',
+    },
+    busyTimeoutMs: {
+      type: 'number',
+      default: '5000',
+      description: "How long local file operations wait for another connection's lock before failing with STORAGE_BUSY, 0 to 60000.",
+    },
+  }}
+/>
+
+Transactions serialize per database within the process and take the writer lock (`BEGIN IMMEDIATE`) before any
+read; remote servers queue write transactions themselves. `@libsql/client` compiles each statement on every call,
+so local libSQL writes cost more than the SQLite adapter's.
+
+</Tab>
+</Tabs>
+
+Every adapter is also available as its own package (`@better-iam/adapter-postgres`,
+`@better-iam/adapter-sqlite`, `@better-iam/adapter-libsql`). Durability, indexes, and upgrade windows are covered
+in [Database operations](/docs/operations/deployment/database). To write your own adapter, see
+[Adapters and plugins](/docs/operations/extensions#adapter-contract).
+
+## Snapshots and moving between databases
+
+Deployments often start on SQLite and outgrow it, or need a portable backup that does not depend on one database's
+tooling. `store-export`, `store-import`, and `store-copy` move a whole deployment between databases and adapters,
+for example from SQLite to PostgreSQL. They are deployment operations that work on storage directly and need no
+credential.
+
+<Tabs items={['Copy directly', 'Through a file']}>
+<Tab value="Copy directly">
+
+```sh
+better-iam store-copy --config better-iam.config.mjs --target-config target.config.mjs
+better-iam migrate --config target.config.mjs
+```
+
+`store-copy` copies the configured database into the empty database of `--target-config` (which must be a
+different configuration file) in one step: one read transaction on the source and one write transaction on the
+target, so the copy is consistent and all-or-nothing.
+
+</Tab>
+<Tab value="Through a file">
+
+```sh
+better-iam store-export --config better-iam.config.mjs --output snapshot.jsonl
+better-iam store-import --config target.config.mjs --input snapshot.jsonl
+better-iam migrate --config target.config.mjs
+```
+
+`store-export` writes every record to a new file (it never overwrites one, and creates it readable only by its
+owner): a header line, one line per record, and a trailer with counts. `store-import` migrates the schema of the
+configured database, which must hold no records yet, and loads the snapshot in one transaction.
+
+</Tab>
+</Tabs>
+
+- **Consistency.** The export reads in one transaction, so the snapshot is consistent, but that also holds the
+  write lock until it finishes. Schedule large exports accordingly.
+- **All or nothing.** A truncated or corrupt snapshot, a count that disagrees with the trailer, or a record the
+  database refuses rolls the whole import back.
+- **Verbatim records.** Password hashes, sessions, encrypted secrets, and audit chains stay valid as long as the
+  target configuration uses the same `secret`.
+- **After loading,** run `migrate` with the target configuration to apply plugin migrations. On PostgreSQL, follow
+  a bulk import with `VACUUM ANALYZE iam_records`.
+
+<Callout type="warn" title="Protect snapshots like the database">
+A snapshot holds credential hashes and encrypted secrets. Store and transfer it with the same care as the database
+and its secret.
+</Callout>
+
+The same operations are available in code as `exportStore`, `importStore`, and `copyStore` from
+`better-iam/core`:
+
+```ts
+import { copyStore } from 'better-iam/core';
+import { postgresAdapter } from 'better-iam/adapter-postgres';
+import { sqliteAdapter } from 'better-iam/adapter-sqlite';
+
+const source = sqliteAdapter({ filename: './iam.db' });
+const target = postgresAdapter({ connectionString: process.env.DATABASE_URL! });
+await target.migrate();
+const summary = await copyStore(source, target); // { records, collections: { [name]: count } }
+```
+
+## Doctor
+
+Many deployment mistakes are silent: a schema one migration behind, a placeholder secret, a scheduler that stopped
+weeks ago. `doctor` looks for them in one read-only pass, so you can run it after every deploy and on a schedule.
+`better-iam doctor` connects to the configured database and prints a JSON report with:
+
+- the Node version, whether the root is initialized, and the number of chained tenants and audit events;
+- the adapter's own view under `storage` (`IamStore.describe()`): schema version, applied migrations with their
+  times, record counts per collection, and settings such as SQLite's journal mode, synchronous level, and file
+  size, or PostgreSQL's server version and `synchronous_commit`;
+- `findings` from `iam.selfCheck()`, the same check your application can run in code.
+
+```sh
+better-iam doctor --config better-iam.config.mjs --strict --retention-days 30
+```
+
+- `doctor` exits 0 whenever it can connect, including to a database without the IAM schema. `--strict` exits
+  non-zero (`DOCTOR_FINDINGS`) on any error or warning, for example as a deployment gate.
+- Pass the `--retention-days` your sweep uses (default 30), or `deliveryRetentionMs` and `graceMs` to `selfCheck`,
+  so the backlog is judged the same way the sweep would.
+- The checks only read. `selfCheck({ cap })` bounds how many records each backlog check counts (default 1000).
+- Each finding has a stable `check` name, a `severity`, a `message`, and a `fix`. `ok` is false when any finding
+  is an error.
+
+| Check | Severity | What it means |
+| --- | --- | --- |
+| `schema-behind` | error | The database lacks a migration of this release. Run `migrate`. |
+| `not-bootstrapped` | error | No root tenant exists yet. |
+| `sqlite-durability` | error | SQLite runs a rollback journal at `durability: 'normal'`, which a power failure can corrupt. |
+| `unreadable-secrets` | error | Stored values open with no configured secret. See [Secrets and keys](/docs/operations/deployment/secrets). |
+| `in-memory-database` | warning | Everything is lost when the process exits. |
+| `postgres-async-commit` | warning | PostgreSQL runs with `synchronous_commit = off`. |
+| `weak-secret` | warning | The secret looks like a placeholder or has little variety. |
+| `weak-metrics-token` | warning | The metrics bearer token is shorter than 24 characters. |
+| `no-email-transport` | warning | No `sendEmail` transport is configured. |
+| `secret-rotation-pending`, `secret-rotation-unverified` | warning | A secret rotation is not finished. |
+| `sweep-backlog` | warning | Records have been due for the retention sweep for more than two days. |
+| `purge-not-running` | warning | Expired bindings, memberships, or challenges are more than a day old. |
+| `outbox-stalled` | warning | Outbox messages have waited more than 15 minutes. |
+| `outbox-abandoned` | warning | Messages were abandoned in the last day after repeated failures. |
+| `audit-hooks-stalled` | warning | Audit events have waited more than 15 minutes for plugins, subscribers, or `onEvent`. Dispatch them in the process that registers subscribers. |
+| `audit-archive-behind` | warning | A tenant has unarchived audit events older than a day. |
+| `previous-secrets-configured` | info | `previousSecrets` can be removed. |
+| `storage-undescribed` | info | The adapter cannot describe itself, so migrations were not checked. |
+
+The job-related warnings are the fastest way to notice a scheduler that stopped; see
+[Scheduled jobs](/docs/operations/jobs).
+
+## Next steps
+
+<Cards>
+  <Card title="Database operations" href="/docs/operations/deployment/database">
+    Migrations, durability, indexes, and backups.
+  </Card>
+  <Card title="Adapters and plugins" href="/docs/operations/extensions#adapter-contract">
+    Write an adapter for another database and prove it with the conformance suite.
+  </Card>
+  <Card title="Scheduled jobs" href="/docs/operations/jobs">
+    The workers behind the job-related doctor findings.
+  </Card>
+</Cards>

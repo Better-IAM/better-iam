@@ -1,0 +1,294 @@
+---
+title: Automatic assignment
+description: Birthright access with package rules that grant a package to every matching identity and remove it from holders who stop matching.
+icon: RefreshCw
+packages: ['@better-iam/server', '@better-iam/cli']
+sources:
+  - docs/policies.md
+  - docs/deployment.md
+  - docs/events.md
+  - packages/server/src/package-rules.ts
+  - packages/server/src/api/packages.ts
+  - packages/server/src/lifecycle.ts
+---
+
+Much access follows directly from who someone is: everyone in engineering needs the engineering tools, every
+service account needs the integration profile, everyone with a verified company address needs the intranet. This
+is <Term id="birthright">birthright access</Term>. Granting it by hand means tickets for every joiner, and people
+who change teams keep what they no longer need.
+
+A _package rule_ automates it. You attach a rule (`autoAssign`) to an
+<Term id="access-package">access package</Term>. The package is then given to every active identity that
+matches the rule and taken away from automatic holders who stop matching. Joiners get their access without a
+ticket, and movers lose what no longer fits.
+
+```ts title="Everyone in engineering gets the engineering kit"
+await iam.api.packages.update(credential, {
+  tenantId,
+  packageId: engineeringKit.id,
+  autoAssign: {
+    include: [{ StringEquals: { 'principal.kind': 'user', 'principal.department': 'engineering' } }],
+    graceMs: 14 * 86400_000,
+  },
+});
+```
+
+Set a rule with `autoAssign` on `packages.create` or `packages.update`.
+
+## Write a rule
+
+A rule is `{ include, exclude?, graceMs?, maxGrants?, maxRemovals? }`. It uses the policy
+[condition language](/docs/guides/authorization/conditions): each clause is a <Term id="condition">condition</Term>
+block, and an identity matches when any `include` clause matches (clauses are ORed). A matching `exclude` clause
+overrides that, and types are strict.
+
+```ts title="Rule examples"
+// Everyone in engineering (people, not service accounts)
+{ include: [{ StringEquals: { 'principal.kind': 'user', 'principal.department': 'engineering' } }] }
+
+// Direct members of a group
+{ include: [{ ArrayContains: { 'identity.groups': '<groupId>' }, StringEquals: { 'principal.kind': 'user' } }] }
+
+// Every service account
+{ include: [{ StringEquals: { 'principal.kind': 'service' } }] }
+
+// A verified email domain, except contractors, and except two named people
+{
+  include: [{ StringEqualsIgnoreCase: { 'identity.emailDomain': 'acme.com' }, Bool: { 'identity.emailVerified': true } }],
+  exclude: [{ Bool: { 'principal.contractor': true } }, { StringEquals: { 'principal.id': ['id1', 'id2'] } }],
+}
+```
+
+<TypeTable
+  type={{
+    include: {
+      type: 'Conditions[]',
+      description: '1 to 10 condition blocks. An identity matches when any of them matches.',
+      required: true,
+    },
+    exclude: {
+      type: 'Conditions[]',
+      description: 'Up to 10 condition blocks. An identity matching any of them never gets the package, even if an include clause matches.',
+    },
+    graceMs: {
+      type: 'number',
+      description: 'How long an automatic holder keeps the package after they stop matching, up to 90 days. Without it, they lose it at the next run.',
+    },
+    maxGrants: {
+      type: 'number',
+      description: 'The most new grants an unattended run may make for this package before it holds back and waits for confirmation.',
+      default: '100',
+    },
+    maxRemovals: {
+      type: 'number',
+      description: 'The most removals an unattended run may make for this package before it holds back and waits for confirmation.',
+      default: '25',
+    },
+  }}
+/>
+
+### Keys a rule may test
+
+A rule describes the person, never a session or a request, so it can only test facts about the identity:
+
+| Key                      | Type     | Meaning                                                                                                  |
+| ------------------------ | -------- | -------------------------------------------------------------------------------------------------------- |
+| `principal.id`           | string   | The identity ID, for naming specific people.                                                             |
+| `principal.kind`         | string   | `user` for people, `service` for service accounts.                                                       |
+| `principal.owner`        | boolean  | Whether the identity is an owner of the tenant.                                                          |
+| `principal.<attribute>`  | declared | Any attribute declared in `permissions.identityAttributes` (such as `department`), meaning exactly what it means in policies. |
+| `identity.email`         | string   | The email address.                                                                                       |
+| `identity.emailDomain`   | string   | The email domain, lower-case.                                                                            |
+| `identity.emailVerified` | boolean  | Whether the address is verified.                                                                         |
+| `identity.managerId`     | string   | The manager's identity ID, for "everyone who reports to X".                                              |
+| `identity.groups`        | array    | The person's group memberships that no access package created.                                          |
+| `identity.teams`         | array    | The IDs of the [teams](/docs/guides/teams-and-departments) the person belongs to and of every team above them. |
+| `identity.departments`   | array    | The ID of the person's department and of every department above it.                                    |
+
+`identity.groups` leaves out package-created memberships so rules never chain onto another package or keep
+themselves alive, and a rule may not name a group its own package grants. `principal.groups` is refused. For the
+same reason a team membership that team sync copied from a group counts in `identity.teams` only while the person
+is in that group by a membership no package created.
+
+```ts title="Everyone in Engineering and its sub-departments, and everyone in the SRE team"
+{
+  include: [
+    { StringEquals: { 'principal.kind': 'user' }, ArrayContains: { 'identity.departments': engineeringId } },
+    { StringEquals: { 'principal.kind': 'user' }, ArrayContains: { 'identity.teams': sreTeamId } },
+  ],
+}
+```
+
+### Rule constraints
+
+- A missing attribute never satisfies an operator, negated ones included. Test absence with
+  `Exists: { 'principal.department': false }`.
+- There are no request or resource keys, no policy variables, and no IP operators. `DateBefore` and `DateAfter`
+  apply to declared string attributes.
+- Keys that describe a session or a grant are refused, because a rule is evaluated without any session: for
+  example `principal.mfa`, `principal.mfaTime`, `principal.authTime`, `principal.roles`, and
+  `principal.sessionTags.*`.
+- Empty clauses are refused. "Everyone" is spelled out, for example `Exists: { 'principal.id': true }`.
+- A rule is at most 16 384 bytes.
+
+### Preview before saving
+
+A rule can grant access to hundreds of people at once, so look before you save.
+`packages.previewAutoAssign({ tenantId, packageId?, autoAssign?, sample? })` evaluates a stored or candidate rule
+without changing anything:
+
+- it lists the keys you may use, with their types and operators;
+- it counts who `matching` the rule, who is `excluded`, and who is `frozen` (disabled or expired), with a `sample`
+  of matches and the clause each matched by (`matchedBy`);
+- for an existing package, it shows what a run would change (`plan`, `changes`) and whether the
+  [safety brake](#safety-brake) would trip;
+- it warns when a clause does not test `principal.kind` (it then also matches service accounts) or tests an email
+  without `identity.emailVerified`: administrator-set and SCIM-provisioned addresses are unverified.
+
+## Authority and ownership
+
+A rule grants access without anyone clicking "assign", so it must never grant more than a real administrator
+could. Each rule therefore has an _owner_: whoever last set it or changed the package's roles or groups.
+
+- The owner needs everything assigning by hand needs: `iam:packages:assign`, `iam:bindings:create` on each role,
+  `iam:groups:update` on each group, the right to use the authorities behind the groups' bindings, and a
+  <Term id="authority">grant authority</Term>. Role sessions and impersonation are refused.
+- Automatic bindings are issued under the owner's grant authority, bounded by its chain, and every run re-checks
+  the owner's status, authority, and rights before adding anything.
+- When the owner is disabled, offboarded, or demoted, or their authority is revoked, the rule is _suspended_
+  (`package:auto-suspended`). Nobody new is added, people who stop matching are still removed, and bindings
+  under a revoked authority stop granting at once.
+- Another administrator takes over by saving the rule again. The holders' bindings are then re-issued under the
+  new authority.
+
+<Callout type="idea" title="Own production rules through a service account">
+  Own production rules through a managed service account and configuration as code, and transfer rules before
+  offboarding their owner.
+</Callout>
+
+## When reconciliation runs
+
+<Term id="reconciliation">Reconciliation</Term> compares every rule with the directory and makes the changes: assigning the package to new
+matches and removing it from holders who stopped matching. It runs:
+
+- right after `identities.create`, `createMany`, `update`, and `setStatus`, and `serviceAccounts.create` and
+  `update`, so a new or changed identity gets its packages at once;
+- right after team and department changes made through their APIs: members added, removed, re-timed, approved, or
+  leaving; teams created, moved, re-synced, or deleted; people placed, moved, imported, or unassigned; departments
+  moved or deleted; and `departments.syncManagers`;
+- after a rule is saved, up to 200 changes (the response carries the `reconcile` result);
+- on demand with `packages.reconcile({ tenantId, packageId?, confirm?, limit? })`, which administrators use to
+  apply a rule now (console: Reconcile now);
+- as the scheduler job `iam.reconcilePackages()` or CLI `better-iam reconcile`.
+
+The scheduled job is required, not optional: SCIM provisioning, invitations, federated sign-in attributes, group
+membership changes, and expiry reach package rules only through it. Each change is its own transaction, and a
+second run over an unchanged directory writes nothing.
+
+```sh title="Every 15 minutes, after purge"
+better-iam reconcile --config better-iam.config.mjs --fail-on-attention
+```
+
+The CLI applies at most `--limit` (1000) changes per organization per run; `truncated: true` means run it again.
+`--tenant` and `--package` scope it. It prints the result as JSON:
+
+- `assigned`, `refreshed`, `restored`, `ending`, and `revoked` count the changes made;
+- `stale` counts planned changes skipped because the directory moved in between (they are retried next run);
+- `failed`, `suspended`, and `braked` list what needs a person's attention.
+
+`--fail-on-attention` exits non-zero (`RECONCILE_ATTENTION`) when a change failed, was held back, or a rule is
+suspended, so your scheduler can alert. The command is a deployment operation: it needs no credential and no email
+transport.
+
+## Removal and grace
+
+People who change teams often need a few days to hand over. By default an automatic holder who stops matching
+loses the package at the next run. With `graceMs` (at most 90 days) the assignment, and exactly the records it
+created, end at a set time instead:
+
+- the person gets the [expiry reminder](/docs/guides/privileged-access/access-report#expiry-reminders);
+- access ends at that time even if no run happens;
+- matching again before then restores it;
+- the purge worker sweeps it afterwards.
+
+Only what the assignment created is removed.
+
+## Interplay with manual assignments
+
+Rules and administrators can both assign the same package. The rules for how they meet:
+
+- A rule never touches manual assignments. `packages.assign` turns an automatic assignment into a manual one
+  (`replacedAutomatic: true`).
+- `packages.revoke` and `packages.extend` refuse automatic assignments while the rule exists. To take the package
+  away from one person, exclude them in the rule instead.
+- `maxDurationMs` cannot be combined with a rule. `requireJustification` is satisfied with "Automatic: matches
+  the package rule".
+- A pending request is cancelled when the package is assigned automatically.
+- Disabled and expired identities are frozen: never assigned or removed by a rule. Offboarding and deletion
+  remove their assignments.
+- A <Term id="sod">separation-of-duties</Term> conflict in prevent mode skips that identity (see
+  [separation of duties](/docs/guides/authorization/separation-of-duties)). It is reported in `failed`, audited
+  once, and retried later, and never fails a run or an identity update.
+- A record removed by hand comes back while the person matches, so certify the rule rather than the binding.
+- Content changes update every automatic holder, while manual holders keep what they were given.
+- Clearing the rule (`autoAssign: null`) removes the automatic holders at the next run, or keeps them as manual
+  assignments with `keepAutomaticAssignments: true` (at most 5000).
+- A package with holders cannot be deleted, and a group, team, or department a rule names cannot be deleted.
+
+## Safety brake
+
+A mistyped attribute value can make a rule match everyone, or nobody. So that one bad edit cannot grant or remove
+access across the whole organization unattended, unattended runs (the scheduler, and `packages.reconcile` without
+`confirm`) hold back more than `maxGrants` (100) new grants or `maxRemovals` (25) removals per package, and record
+`package:auto-braked`.
+
+Someone with the rights to assign the package by hand reviews the change and releases it for a day:
+
+<Tabs items={['API', 'CLI']}>
+<Tab value="API">
+
+```ts
+await iam.api.packages.reconcile(credential, { tenantId, packageId, confirm: true });
+```
+
+</Tab>
+<Tab value="CLI">
+
+```sh
+better-iam reconcile --config better-iam.config.mjs --tenant TENANT_ID --package PACKAGE_ID --confirm
+```
+
+</Tab>
+</Tabs>
+
+The console offers the same as "Confirm held changes". A save through the API pre-approves its own planned counts
+for a day, because the person saving just saw them; configuration apply does not. A rule that no longer validates
+(an attribute declaration removed from the deployment, a group gone) is suspended with nothing assigned or
+removed.
+
+## Configuration as code
+
+Rules can live in a [configuration document](/docs/guides/privileged-access/config-as-code). Documents carry
+`autoAssign` with group names (not IDs) in `identity.groups`, team slugs in `identity.teams`, and department
+names in `identity.departments`. Omitting `autoAssign` leaves the rule alone and
+`null` removes it. Owner, revision, and approval are runtime state and never synced, and apply does not
+reconcile: run `better-iam reconcile` afterwards.
+
+## Audit
+
+Rules act on their own, so their events are how you see what they did. Subscribe a webhook to `package:auto-*` and
+alert on the ones with outcome `deny`: they need a person.
+
+| Event                    | Actor                                   | What happened, and why you would care                                                        |
+| ------------------------ | --------------------------------------- | -------------------------------------------------------------------------------------------- |
+| `package:auto-rule`      | The administrator                       | A rule was set, changed, taken over, re-authored by a contents change, or cleared. Review rule changes like code changes. |
+| `package:auto-confirm`   | The confirmer, or `deployment-operator` | Held-back changes were approved for a day. This is the human sign-off on a large change.      |
+| `package:auto-assign`    | `deployment-operator`                   | The reconciler assigned, refreshed, or restored an automatic assignment. Trigger downstream onboarding. |
+| `package:auto-ending`    | `deployment-operator`                   | An automatic holder stopped matching and the grace period started.                          |
+| `package:auto-revoke`    | `deployment-operator`                   | The reconciler removed an automatic assignment. Trigger downstream deprovisioning.           |
+| `package:auto-failed`    | `deployment-operator`                   | A change could not be applied, such as a separation-of-duties conflict; once per new problem. |
+| `package:auto-suspended` | `deployment-operator`                   | A rule stopped adding access, for example because its owner left. Someone must take it over. |
+| `package:auto-resumed`   | `deployment-operator`                   | A suspended rule runs again.                                                                 |
+| `package:auto-braked`    | `deployment-operator`                   | An unattended run held back more grants or removals than the rule allows. Review and confirm, or fix the rule. |
+
+The [lifecycle events](/docs/guides/events/lifecycle-events) page lists the metadata of each.

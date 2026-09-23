@@ -1,0 +1,395 @@
+---
+title: Typed client
+description: createIamClient gives browser and Node code a typed API inferred from your server instance, with a session store and passkey helpers.
+icon: Globe
+packages:
+  - '@better-iam/client'
+sources:
+  - packages/client/src/index.ts
+  - packages/client/src/session.ts
+  - packages/client/src/passkeys.ts
+  - packages/client/README.md
+  - README.md
+  - docs/authentication.md
+---
+
+`@better-iam/client` is the browser-safe way to call Better IAM. It depends on no server runtime. You import your
+configured server instance **as a type**, so the client knows every API group, method, input, and result, while
+database and authentication code stay out of the browser bundle. Every framework integration builds on
+it, and the server-side helpers use the same client with an in-process transport.
+
+Why not `fetch` the HTTP API yourself? You could, but you would repeat the wire format on every call: the route
+for each method, the JSON envelope, the `X-Better-IAM` header the server requires, cookie credentials, and error
+parsing. You would also lose the types, which are inferred from your own server instance, so a renamed method or a
+wrong input fails at compile time instead of in production.
+
+The client only makes calls. It does not read sessions inside your server's request handlers, guard routes, or
+check where incoming requests come from; a [server integration](/docs/frameworks) does those.
+
+| Export | Entry | What it does |
+| --- | --- | --- |
+| `createIamClient<typeof iam>(options)` | `@better-iam/client` | Creates the typed client: `client.{group}.{method}(input)` for every API method, plus `authorize`, `authorizeMany`, `listAccessible`, and `$request` |
+| `IamClientError` (alias `ClientError`) | `@better-iam/client` | The error every failed call throws, with the server's stable `code`, the HTTP `status`, and retry details |
+| `createSessionStore(client, { initial? })` | `@better-iam/client/session` | A framework-agnostic store for the current session, which the React, Vue, and Svelte bindings share |
+| `isUnauthenticated(error)` | `@better-iam/client/session` | True when an error means "no usable session" (401 or 403) rather than a transport failure |
+| Passkey helpers | `@better-iam/client/passkeys` | The browser side of WebAuthn registration and sign-in, kept out of the main entry so importing the client does not bundle them |
+
+The umbrella package exposes the same entries as `better-iam/client`, `better-iam/client/session`, and
+`better-iam/client/passkeys`. The client also exports types: `ClientOptions` (the options below),
+`ClientCallOptions` (per-call options), `IamClient<typeof iam>` (the client's full type, for props and context),
+`ClientApi` (the per-group method map), and `ClientTransport` (the `$request` escape hatch).
+
+## Install
+
+```npm
+npm i @better-iam/client
+```
+
+Or install the umbrella package, `better-iam`, and import from `better-iam/client`.
+
+## Setup
+
+<Steps>
+<Step>
+
+### Serve the IAM HTTP API
+
+The client talks to the IAM handler mounted in your application, `/api/iam` by default. Each framework page
+shows how to mount it: [Next.js](/docs/frameworks/nextjs), [Nuxt](/docs/frameworks/nuxt),
+[SvelteKit](/docs/frameworks/sveltekit), [React Router](/docs/frameworks/react-router),
+[NestJS](/docs/frameworks/nestjs), or [Express, Hono, and Fastify](/docs/frameworks/node). A plain Node server
+can use `createServer(iam.nodeHandler)`.
+
+</Step>
+<Step>
+
+### Create one client
+
+Import the server instance with `import type`, so nothing from it reaches the bundle, and create the client once
+for the application.
+
+```ts title="lib/iam-client.ts"
+import { createIamClient } from '@better-iam/client';
+import type { iam } from './iam.js';
+
+export const client = createIamClient<typeof iam>({
+  baseURL: 'https://identity.example.com',
+  onUnauthenticated: () => router.push('/login'), // lapsed or revoked session, never a wrong password
+  retryRateLimited: true, // retry once after the server's Retry-After when it is short
+  requestId: true, // X-Request-Id on every call; IamClientError.requestId for support tickets
+});
+```
+
+</Step>
+<Step>
+
+### Call the API
+
+Each API method hangs off its group, and inputs and results are typed. A login screen might resolve the
+organization, sign in, and then ask which buttons and projects to show:
+
+```ts
+const { tenantId } = await client.tenants.lookup({ slug: 'acme' }); // public alias discovery for login screens
+await client.auth.signIn({ tenantId, email, password });
+const current = await client.auth.getSession();
+
+const { results } = await client.authorizeMany({
+  tenantId,
+  checks: [{ action: 'projects:manage', resource: { type: 'project', id } }],
+});
+const { resources } = await client.listAccessible({
+  tenantId,
+  action: 'projects:read',
+  type: 'project',
+});
+const accounts = await client.links.list(); // linked identities in other organizations, for an account switcher
+```
+
+</Step>
+</Steps>
+
+## Calling the API
+
+The client mirrors `iam.api`: `client.{group}.{method}(input, options?)`. Server methods take a credential as
+their first argument; the client drops it, because the browser's <Term id="credential">credential</Term> is the <Term id="session">session</Term> cookie (or the
+bearer `token` you configure). Everything else about a method's input and result is inferred from
+`typeof iam`.
+
+- **Top-level checks.** `client.authorize`, `client.authorizeMany`, and `client.listAccessible` take their input
+  directly, without the credential fields.
+- **Methods without input.** `auth` methods that take no input, such as `getSession`, `signOut`, `listSessions`,
+  `revokeOtherSessions`, `listPasskeys`, `beginPasskeyRegistration`, `regenerateRecoveryCodes`, `disableMfa`,
+  `listTrustedDevices`, `revokeTrustedDevices`, and `mfaStatus`, take only the call options.
+- **Per-call options.** The last argument is `{ signal?, headers? }`: an `AbortSignal` to cancel the call, and
+  headers merged over the configured ones.
+- **Plugin routes.** `client.$request<Result>('plugins/my-plugin/action', input)` calls any path relative to the
+  IAM `basePath`.
+
+Every request is `POST {baseURL}{basePath}/{group}/{method}` with the input as a JSON body,
+`Content-Type: application/json`, and `X-Better-IAM: 1`. The last two are always set, because the server's CSRF
+(cross-site request forgery) boundary requires them. JSON mutations must carry `X-Better-IAM: 1`, and cookie
+requests must also come from an exact trusted `Origin`. A page on another site cannot add custom headers to a
+plain form post, so it cannot make the browser call the API with your visitor's cookies.
+
+Requests use `credentials: 'include'` (so the session cookie goes along), `redirect: 'error'`, and
+`cache: 'no-store'`. The server answers `{ data }` or `{ error: { code, message } }`, and the client returns
+`data` or throws. The [HTTP API guide](/docs/guides/authentication/http) covers the wire format, cookies, and
+trusted origins.
+
+### Sign-in flows
+
+`auth.signIn` returns either a session (`'token' in result`) or an MFA challenge
+(`{ mfaRequired: true, challenge, enrollmentRequired, emailCodeAvailable?, passkeyAvailable? }`). Finish the
+challenge with a method it allows: an authenticator code, first-time enrollment, an emailed code
+(`requestMfaCode`), or a [passkey](#passkeys).
+
+```ts
+const result = await client.auth.signIn({ tenantId, email, password });
+if ('mfaRequired' in result) {
+  if (result.enrollmentRequired) {
+    // First sign-in that must enroll an authenticator.
+    const { uri } = await client.auth.beginMfa({ tenantId, challenge: result.challenge });
+    showQrCode(uri);
+    await client.auth.confirmMfa({ credential: { tenantId, challenge: result.challenge }, code });
+  } else {
+    await client.auth.verifyMfa({ tenantId, challenge: result.challenge, code });
+  }
+}
+```
+
+During an authenticated session, enroll with `client.auth.beginMfa()` and `client.auth.confirmMfa({ code })`.
+[MFA](/docs/guides/authentication/mfa) lists every second-factor path, and
+[Sign-in methods](/docs/guides/authentication/sign-in-methods) covers passwordless and federated sign-in.
+
+- **Invitations.** Member invitations are redeemed without a session:
+  `client.identities.acceptInvitation({ tenantId, token, name, password })` creates the account, applies the
+  invited roles, and signs the person in.
+- **Browser-session cookies.** The session cookie normally lasts as long as the session. Send
+  `X-Better-IAM-Persistent: 0` on the call that issues a session, for example
+  `client.auth.signIn(input, { headers: { 'x-better-iam-persistent': '0' } })`, to get a cookie that ends when the
+  browser closes ("keep me signed in" left unticked).
+- **Bearer sessions.** For service or bearer sessions, pass `token: () => currentToken`. The client sends it as
+  `Authorization: Bearer` and never writes tokens to browser storage.
+
+## Options
+
+<TypeTable
+  type={{
+    baseURL: {
+      type: 'string',
+      description: <>The application's origin. It must be an absolute HTTP(S) URL without credentials, query, or fragment. Required outside a browser.</>,
+      default: 'location.origin in a browser',
+    },
+    basePath: {
+      type: 'string',
+      description: <>Where the IAM handler is mounted: an absolute path without a trailing slash.</>,
+      default: "'/api/iam'",
+    },
+    token: {
+      type: 'string | (() => string | undefined | Promise<string | undefined>)',
+      description: <>A bearer token for service or bearer sessions, sent as <code>Authorization: Bearer</code>. It is read on every call and never stored. It must be 16 to 512 characters of letters, digits, <code>_</code>, and <code>-</code>, or the call fails with <code>INVALID_TOKEN</code>.</>,
+    },
+    headers: {
+      type: 'HeadersInit | (() => HeadersInit | Promise' + '<' + 'HeadersInit>)',
+      description: <>Headers added to every request. Per-call headers override them; <code>Content-Type</code> and <code>X-Better-IAM</code> are always set by the client.</>,
+    },
+    fetch: {
+      type: 'typeof fetch',
+      description: <>The Fetch implementation. The server helpers pass one that calls <code>iam.handler</code> in process.</>,
+      default: 'globalThis.fetch',
+    },
+    onUnauthenticated: {
+      type: '(error: IamClientError) => void',
+      description: <>Called once per request the server refused because the presented session can no longer be used: exactly <code>UNAUTHENTICATED</code> (lapsed, revoked, or missing session) and <code>SESSION_NETWORK_MISMATCH</code> (a network-bound session used from another network). It runs after the error is raised; a hook that throws never changes what the caller sees.</>,
+    },
+    retryRateLimited: {
+      type: 'boolean | { maxWaitMs?: number }',
+      description: <>Retry a <code>RATE_LIMITED</code> response once after the server's <code>retryAfterMs</code> when that wait is at most <code>maxWaitMs</code>. Longer waits surface the error unchanged. Aborting the call's signal during the wait rejects at once with the signal's reason, without a second request.</>,
+      default: 'false (maxWaitMs 5000 when enabled)',
+    },
+    requestId: {
+      type: 'boolean | (() => string)',
+      description: <>Send <code>X-Request-Id</code> on every request. The server echoes it and records it on its <code>http</code> spans, and the client exposes it as <code>IamClientError.requestId</code>. <code>true</code> generates one per request with <code>crypto.randomUUID()</code>; a function supplies your own, which must be 1 to 128 characters of letters, digits, <code>.</code>, <code>_</code>, <code>:</code>, and <code>-</code>.</>,
+      default: 'false',
+    },
+  }}
+/>
+
+`onUnauthenticated` deliberately ignores credential failures such as `INVALID_CREDENTIALS` and codes the server
+also raises during sign-in or step-up (`MFA_REQUIRED`, `EMAIL_UNVERIFIED`, `IP_BLOCKED`, and others). The client
+cannot tell those apart from a dead session, and a trip to the login page in the middle of a <Term id="step-up">step-up</Term> would lose
+the person's work. Handle them per call.
+
+## Errors
+
+Every refusal from the server, and every problem the client detects itself, is an `IamClientError` (also exported
+as `ClientError`). It preserves the server's stable code, so your UI can branch on it, and never exposes the raw
+response body. Network failures and aborted calls reject with Fetch's own error (such as a `TypeError` or an
+`AbortError`) unchanged.
+
+| Field | Meaning |
+| --- | --- |
+| `code` | The server's error code (`INVALID_CREDENTIALS`, `ACCESS_DENIED`, `RATE_LIMITED`, ...), or a client code below |
+| `message` | The server's message |
+| `status` | The HTTP status; `0` for errors raised before a request was sent |
+| `retryAfterMs` | For `RATE_LIMITED`: how long to wait, from the error body or the `Retry-After` header |
+| `requestId` | The `X-Request-Id` the request carried, when `requestId` is enabled |
+
+```ts
+import { IamClientError } from '@better-iam/client';
+
+try {
+  await client.auth.signIn({ tenantId, email, password });
+} catch (error) {
+  if (error instanceof IamClientError && error.code === 'RATE_LIMITED')
+    showMessage(`Try again in ${Math.ceil((error.retryAfterMs ?? 0) / 1000)} seconds`);
+  else throw error;
+}
+```
+
+The client raises its own codes for problems it detects:
+
+- `INVALID_CONFIG`: a bad `baseURL`, `basePath`, or `requestId`, or no Fetch implementation.
+- `INVALID_TOKEN`: a bearer `token` that is not 16 to 512 letters, digits, `_`, and `-`.
+- `INVALID_PATH`: a route segment that is not a plain name.
+- `INVALID_INPUT`: input that is not serializable JSON.
+- `INVALID_RESPONSE`: a response body that is not the IAM envelope.
+- `HTTP_ERROR`: a non-2xx response without an error envelope.
+
+The [error reference](/docs/reference/errors) lists the server's codes.
+
+## Session store
+
+A UI needs one shared answer to "who is signed in?" that every component sees and that updates everywhere at once
+after a sign-in, a sign-out, or an expired session. `@better-iam/client/session` holds that answer. The React, Vue,
+and Svelte bindings subscribe to it, and it works with plain scripts or any other framework.
+
+```ts title="session.ts"
+import { createIamClient } from '@better-iam/client';
+import { createSessionStore } from '@better-iam/client/session';
+import type { iam } from './iam.js';
+
+const client = createIamClient<typeof iam>();
+const store = createSessionStore(client); // pass { initial: session } or { initial: null } after server rendering
+
+store.subscribe(() => {
+  const { status, session, error } = store.getSnapshot();
+  render(status === 'authenticated' ? session.identity.name : status);
+});
+await store.refresh();
+```
+
+| Member | Does |
+| --- | --- |
+| `getSnapshot()` | `{ status, session, error, updatedAt }`; `status` is `loading`, `authenticated`, `unauthenticated`, or `error` |
+| `subscribe(listener)` | Calls `listener` on every change; returns the unsubscribe function |
+| `refresh()` | Reloads the session from the server; concurrent calls share one request |
+| `signOut()` | Signs out on the server, then clears the local session even if the server call failed (the failure is still thrown to the caller) |
+| `set(session)` | Replaces the local session, for example right after a sign-in response |
+
+Without `initial`, the store starts as `loading`; `initial: null` means known signed-out. A refresh that fails
+with a 401 or 403 moves to `unauthenticated` and keeps the server's error, so its code can be shown. Any other
+failure is a transport error: the status becomes `error` and the last known session is kept.
+`isUnauthenticated(error)` applies the same rule, and also recognizes the server's own errors when a store runs on
+the server with an in-process client. The module exports the types `SessionClient`, `SessionOf`,
+`SessionSnapshot`, `SessionStatus`, and `SessionStore`.
+
+## Passkeys
+
+A <Term id="passkey">passkey</Term> ceremony has two halves. The server issues a challenge (options) and later verifies the signed response;
+the browser asks the authenticator (a phone, a security key, Touch ID, Windows Hello) to create or use a
+credential in between. `@better-iam/client/passkeys` provides the browser half by re-exporting these helpers from
+`@simplewebauthn/browser`:
+
+| Helper | What it does |
+| --- | --- |
+| `startRegistration({ optionsJSON })` | Runs the browser's "create a passkey" prompt with the options from `auth.beginPasskeyRegistration` and returns the response to send to `auth.finishPasskeyRegistration` |
+| `startAuthentication({ optionsJSON, useBrowserAutofill? })` | Runs the "use a passkey" prompt with options from `beginPasskeyAuthentication` or `beginPasskeyMfa`. With `useBrowserAutofill`, the prompt waits in the username field's autofill list instead of opening a dialog (the page needs an input with `autocomplete="username webauthn"`) |
+| `browserSupportsWebAuthn()` | Whether the browser supports passkeys at all; check it before showing passkey buttons |
+| `browserSupportsWebAuthnAutofill()` | Whether passkeys can be offered through autofill (resolves to a boolean) |
+| `platformAuthenticatorIsAvailable()` | Whether the device has a built-in authenticator, a good moment to suggest "add a passkey" |
+| `WebAuthnAbortService` | Cancels a pending ceremony (`cancelCeremony()`), for example a waiting autofill request before a button-started one |
+
+It also exports the `RegistrationResponseJSON`, `AuthenticationResponseJSON`,
+`PublicKeyCredentialCreationOptionsJSON`, and `PublicKeyCredentialRequestOptionsJSON` types.
+
+<Tabs items={['Register', 'Sign in', 'Second factor']}>
+<Tab value="Register">
+
+Registration needs a recently authenticated session.
+
+```ts
+import { startRegistration } from '@better-iam/client/passkeys';
+
+const challenge = await client.auth.beginPasskeyRegistration();
+const response = await startRegistration({ optionsJSON: challenge.options });
+await client.auth.finishPasskeyRegistration({
+  challengeId: challenge.challengeId,
+  response,
+  name: 'Work laptop', // optional
+});
+```
+
+</Tab>
+<Tab value="Sign in">
+
+Without an `email`, the options name no credential and the authenticator's discoverable passkey picks the
+account, which is what browser autofill uses.
+
+```ts
+import { startAuthentication } from '@better-iam/client/passkeys';
+
+const begun = await client.auth.beginPasskeyAuthentication({ tenantId }); // or { tenantId, email }
+const response = await startAuthentication({
+  optionsJSON: begun.options,
+  useBrowserAutofill: true, // omit for a button-triggered ceremony
+});
+await client.auth.finishPasskeyAuthentication({
+  tenantId,
+  challengeId: begun.challengeId,
+  response,
+});
+```
+
+</Tab>
+<Tab value="Second factor">
+
+A registered passkey can answer the MFA challenge of a password sign-in (`passkeyAvailable: true`).
+
+```ts
+import { startAuthentication } from '@better-iam/client/passkeys';
+
+const begun = await client.auth.beginPasskeyMfa({ tenantId, challenge: result.challenge });
+const response = await startAuthentication({ optionsJSON: begun.options });
+await client.auth.finishPasskeyMfa({
+  tenantId,
+  challengeId: begun.challengeId,
+  response,
+  rememberDevice: true, // optional
+});
+```
+
+</Tab>
+</Tabs>
+
+[Passkeys](/docs/guides/authentication/passkeys) covers relying-party configuration, discovery, and passkey
+management (`listPasskeys`, `renamePasskey`, `deletePasskey`).
+
+<Callout type="warn" title="The server decides">
+  The server authenticates and authorizes every call the client makes. Permission results from `authorize`,
+  `authorizeMany`, and `listAccessible` are <Term id="advisory">advisory</Term>: use them to decide what to show, and enforce on the server.
+</Callout>
+
+## Next steps
+
+<Cards>
+  <Card title="React" href="/docs/frameworks/react">
+    `IamProvider` and hooks on top of this client.
+  </Card>
+  <Card title="Vue" href="/docs/frameworks/vue">
+    The Vue plugin and composables.
+  </Card>
+  <Card title="API reference" href="/docs/reference/api">
+    Every group and method the client can call.
+  </Card>
+</Cards>

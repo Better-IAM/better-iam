@@ -1,0 +1,227 @@
+---
+title: Tenancy and limits
+description: Recipes for SaaS plan limits and usage metering, bulk onboarding with directory attributes from SCIM, moving people over from another login system, and storing data in libSQL or Turso.
+icon: Building
+packages: ['@better-iam/server', '@better-iam/scim', '@better-iam/adapter-libsql']
+sources: ['docs/recipes.md', 'docs/architecture.md', 'docs/protocols.md', 'packages/core/src/index.ts', 'packages/adapter-libsql/src/index.ts', 'packages/server/src/api/identities.ts', 'packages/server/src/api/tenants.ts']
+---
+
+These recipes cover running Better IAM as the identity layer of a multi-tenant SaaS product: enforcing what each
+plan includes, bringing whole teams in at once, and choosing where the data lives. `credential` is the caller's
+credential (`{ token }` or `{ headers }`).
+
+## Plan limits and usage
+
+**The problem:** your pricing plans include a number of seats, webhooks, or roles, and the limit has to hold on every
+path that creates a record, not only in your own signup form.
+
+**The solution:** set plan limits on the <Term id="tenant">tenant</Term> with `tenants.setLimits`. They are checked
+inside every creation transaction, and `tenants.usage` reports the current counts for dashboards and billing.
+
+```ts
+await iam.api.tenants.setLimits(rootCredential, {
+  tenantId,
+  limits: { identities: 25, webhooks: 5 },
+});
+const usage = await iam.api.tenants.usage(credential, { tenantId });
+// usage: identities, mfaEnrolled, serviceAccounts, groups, roles, policies, resources,
+// relationships, webhooks, activeSessions, and the limits
+```
+
+Creation past a limit fails with `LIMIT_EXCEEDED` on every path, including invitation acceptance, SCIM, and bulk
+creation.
+
+- Only root administrators set limits, and each change is audited as `tenant:limits`. `limits: null` removes them.
+- Limits cover members (`identities`), `serviceAccounts`, `groups`, `roles`, `policies`, registered `resources`,
+  and `webhooks`. Deleted tombstones do not count.
+- The check also covers self-registration and federation, and invitations accepted after the limit was reached.
+- `tenants.usage` reports the current counts, how many members enrolled MFA, the active sessions, and the limits,
+  for dashboards and metering.
+- To give every new organization a default plan, set `tenantDefaults.limits` in the
+  [configuration](/docs/operations/deployment/configuration#tenancy-and-catalog). It is stamped on every tenant that
+  `tenants.create` creates.
+
+See [Tenants and identities](/docs/guides/concepts/tenants-and-identities).
+
+## Bulk onboarding and directory attributes
+
+**The problem:** a new customer arrives with a spreadsheet of fifty people, or with an identity provider that should
+keep their directory in sync. Your policies need facts about those people, such as each person's department.
+
+**The solution:** create people in bulk, with attributes and roles, using `identities.createMany`. For a directory
+that changes, let <Term id="scim">SCIM</Term> provision people and map the enterprise directory into the same
+declared attributes with `mapAttributes`.
+
+```ts
+await iam.api.identities.createMany(credential, {
+  tenantId,
+  identities: rows.map((row) => ({
+    email: row.email,
+    name: row.name,
+    attributes: { department: row.department },
+    roleIds: [editor.id],
+  })),
+});
+```
+
+```ts title="iam.ts"
+import { createScimService } from 'better-iam/scim';
+
+// SCIM: map the enterprise extension to declared identity attributes.
+const scim = createScimService({
+  ...iam.protocolHost,
+  mapAttributes: ({ title, enterprise }) => ({
+    ...(title ? { title } : {}),
+    ...(typeof enterprise?.department === 'string' ? { department: enterprise.department } : {}),
+  }),
+});
+iam.useProtocol(scim);
+```
+
+- `identities.createMany` creates up to 100 identities in one transaction, applying attributes, roles, and groups
+  under the caller's authority. Plan limits and password rules apply as for single creation.
+- Attributes must be declared in `permissions.identityAttributes`. They reach policies as `principal.department`
+  and so on.
+- SCIM stores the enterprise user extension (`department`, `costCenter`, `manager`, and the rest) as provisioned.
+  `mapAttributes` turns it into declared attributes, which the host validates, so the directory drives policy
+  conditions. The extension's manager also becomes the person's manager for approvals.
+
+See [SCIM](/docs/federation/scim) and [Tenants and identities](/docs/guides/concepts/tenants-and-identities).
+
+## Move people over from another system
+
+**The problem:** you are replacing an existing login system, either your own users table or a hosted provider, and
+the people in it must keep their organization and their access without signing up again.
+
+**The solution:** recreate the organizations first, import people in batches with the old user ID kept as an
+attribute, then let each group of people in the way that matches how they sign in today. Credentials themselves do
+not move: no API accepts a password hash, and passkeys and authenticator apps are registered with the system that
+issued them. What moves is who people are, where they belong, and what they may do.
+
+<Steps>
+<Step>
+
+### Recreate organizations
+
+Create one <Term id="tenant">tenant</Term> per organization with `tenants.create`, which emails the organization's
+owner an invitation. A new tenant stays `pending` until that owner accepts, and members cannot be created in a
+pending tenant, so send these invitations first and import each organization once it is active. Create the roles
+its people need with `roles.create`, or apply them from
+[configuration as code](/docs/guides/privileged-access/config-as-code).
+
+</Step>
+<Step>
+
+### Import people in batches
+
+Declare an attribute for the old ID, then create people 100 at a time. Results come back in the order you sent them,
+so you can record which new identity replaced which old user.
+
+```ts title="iam.ts"
+export const iam = betterIam({
+  // ...
+  permissions: { identityAttributes: { legacyId: 'string' } },
+});
+```
+
+```ts title="migrate.ts"
+for (let start = 0; start < users.length; start += 100) {
+  const batch = users.slice(start, start + 100);
+  const { identities } = await iam.api.identities.createMany(credential, {
+    tenantId,
+    identities: batch.map((user) => ({
+      email: user.email,
+      name: user.name,
+      attributes: { legacyId: user.id },
+      roleIds: [user.isAdmin ? adminRoleId : memberRoleId],
+    })),
+  });
+  // identities[i] replaces batch[i]: keep the mapping for your own tables.
+  await saveMapping(batch.map((user, i) => [user.id, identities[i]!.id]));
+}
+```
+
+The caller needs `iam:identities:create` in the tenant and, to hand out roles, the right to grant each one and an
+active grant authority there; see [`createMany`](/docs/reference/api/identities#createmany). Each batch is one
+transaction: if any entry fails, nobody in that batch is created, so a script that stops can resume at the batch
+that failed. A batch that contains an address already imported fails with `IDENTITY_EXISTS`,
+so skip people you have already mapped when you re-run.
+
+</Step>
+<Step>
+
+### Let people in
+
+Imported accounts are active, have no password, and have an unverified email. Choose how each group signs in:
+
+| People who today | Do this |
+| --- | --- |
+| Sign in with a password | Turn on magic links (`passwordlessEmail`), so they sign in with their address and the address becomes verified; or send each a reset link with [`identities.requestPasswordReset`](/docs/reference/api/identities#requestpasswordreset). |
+| Sign in with Google, GitHub, Microsoft, or their company's identity provider | Do not import them. Connect the [provider](/docs/federation/oauth-sign-in) and let their first sign-in create the account with a verified email. |
+| Are managed by their company's directory | Let the directory create and update them through [SCIM](/docs/federation/scim). |
+
+<Callout type="warn" title="Two traps">
+  The public "forgot password" flow sends nothing to an unverified address, so imported people cannot reset a
+  password on their own until they have signed in once with a magic link or an administrator's reset link.
+  And an imported account blocks federated sign-in for the same address: accounts are never merged by email, so
+  the first sign-in through a provider fails with `ACCOUNT_LINK_REQUIRED` until the person signs in another way
+  and [links the provider](/docs/federation/oauth-sign-in#link-an-existing-account).
+</Callout>
+
+</Step>
+<Step>
+
+### Switch over
+
+Sessions from the old system do not carry over, so everyone signs in once after the switch. Before you announce
+it, compare `tenants.usage` for each tenant with the old system's counts, and spot-check a few people with
+[`policies.effectiveActions`](/docs/guides/authorization/reviews#what-can-a-person-do) to confirm their roles came
+across.
+
+</Step>
+</Steps>
+
+See [Tenants and identities](/docs/guides/concepts/tenants-and-identities) and
+[sign-in methods](/docs/guides/authentication/sign-in-methods#magic-links-and-one-time-codes).
+
+## Store data in libSQL or Turso
+
+**The problem:** you want SQLite's simplicity, but the database must be reachable from several regions or
+serverless instances, or you want a local replica close to the application.
+
+**The solution:** use the libSQL <Term id="adapter">storage adapter</Term>. One set of options covers local files,
+encrypted files, embedded replicas, and remote Turso or sqld databases.
+
+```ts title="iam.ts"
+import { betterIam } from 'better-iam';
+import { libsqlAdapter } from 'better-iam/adapter-libsql';
+
+const iam = betterIam({
+  // ...
+  database: libsqlAdapter({
+    url: 'libsql://name-org.turso.io',
+    authToken: process.env.TURSO_AUTH_TOKEN,
+  }),
+});
+```
+
+- `url` also accepts `file:./iam.db`, a plain path, `:memory:`, and `https:` or `wss:` URLs. `syncUrl` with a local
+  file makes an embedded replica, and `encryptionKey` encrypts a local file.
+- Remote servers queue write transactions themselves. Locally, transactions run one at a time and take the writer
+  lock before any read.
+- Local libSQL writes cost more than the SQLite adapter's, because `@libsql/client` compiles each statement on every
+  call.
+
+See [Storage adapters](/docs/operations/storage) for every option, and for moving an existing deployment with
+`store-copy`.
+
+## Next steps
+
+<Cards>
+  <Card title="Access lifecycle recipes" href="/docs/guides/recipes/access-lifecycle">
+    Just-in-time elevation, expiring accounts, keys, and offboarding.
+  </Card>
+  <Card title="SCIM" href="/docs/federation/scim">
+    Connections, attribute mapping, and group sync.
+  </Card>
+</Cards>

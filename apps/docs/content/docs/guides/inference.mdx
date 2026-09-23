@@ -1,0 +1,298 @@
+---
+title: Model access and budgets
+description: Decide who may call which AI models, cap what people, teams, and agents spend, meter every call, and keep provider keys away from callers with a gateway.
+icon: Cpu
+status: new
+packages: ['@better-iam/server']
+sources:
+  - docs/inference.md
+  - packages/server/src/api/inference.ts
+---
+
+Once people and agents call AI models from your product, three questions come up quickly: who may use the expensive
+models, how do you stop one runaway agent from spending the month's budget overnight, and who holds the provider API
+keys. Answering them in each application means scattered keys and spend you only see on the invoice. Better IAM
+answers them in one place: model access is an ordinary authorization decision, budgets cap tokens and cost per
+tenant, group, person, or agent, every call is metered, and a gateway lets any Better IAM credential call models
+without ever seeing a provider key.
+
+It works for people, service accounts, and [AI agents](/docs/guides/ai-agents), including agents acting on a person's
+behalf. Turn it on with the `inference` option:
+
+```ts title="iam.ts"
+export const iam = betterIam({
+  // ...
+  inference: {
+    usageRetentionDays: 90, // per-call usage records (1 to 3650)
+    allowCustomBaseUrls: false, // only root administrators may point providers at custom URLs
+  },
+});
+```
+
+The option adds the resource type `model` and the action `inference:invoke` to the permission catalog, the
+[`inference` API group](/docs/reference/api/inference), and `iam.inference`, the server-side runtime with the gateway.
+
+## Providers and models
+
+A **provider** is an upstream account: `anthropic`, `openai`, or `openai-compatible` (any endpoint that speaks the
+OpenAI Chat Completions API, such as vLLM or a router). Its API key is sealed with the deployment secret, never
+returned, and opened only inside the server when the gateway calls the provider; administrators see its last four
+characters.
+
+```ts
+const anthropic = await iam.api.inference.createProvider(admin, {
+  tenantId,
+  name: 'Anthropic',
+  kind: 'anthropic',
+  apiKey: process.env.ANTHROPIC_API_KEY!,
+});
+```
+
+Creating and changing providers needs a recent sign-in. A custom `baseUrl` (required for `openai-compatible`) sends the
+key to that address, so only a root administrator may set one unless the deployment sets
+`inference.allowCustomBaseUrls`, and it must be https. Replace a key with `updateProvider({ apiKey })`;
+`iam.rotateSecrets()` re-seals provider keys when the deployment secret changes.
+
+A **model** is published under a public name that callers use and policies name (`model/{name}`), served by a provider
+as its `upstreamModel`:
+
+```ts
+await iam.api.inference.createModel(admin, {
+  tenantId,
+  name: 'opus',
+  providerId: anthropic.id,
+  upstreamModel: 'claude-opus-5-5',
+  tier: 'frontier',
+  family: 'claude',
+  inputPricePerMTok: 5,
+  outputPricePerMTok: 25,
+  cachedInputPricePerMTok: 0.5,
+});
+```
+
+Models are inherited: define providers and models once on the root tenant and every organization sees them. An
+organization may publish its own model under the same name, which takes precedence for it, and `enabled: false` stops
+every call to a model at once.
+
+Providers have bad days. `fallbacks` (up to five model names, in order) keeps calls going when one does: when a model's
+provider cannot be reached or answers 429, 500, 502, 503, 504, or 529 (overloaded), the gateway tries the next
+fallback. A fallback is used only if the caller may call it (access and budgets are checked like any call) and it
+speaks the same wire format. The failed attempt is metered with no tokens against the model asked for, and the answer
+against the model that served it; responses name that model in `x-better-iam-model` and the one asked for in
+`x-better-iam-fallback-from`.
+
+```ts
+await iam.api.inference.updateModel(admin, {
+  tenantId,
+  name: 'opus',
+  fallbacks: ['opus-eu', 'sonnet'],
+});
+```
+
+## Who may call which model
+
+Model access is a policy decision: `inference:invoke` on `model/{name}`. The model's attributes are available to
+conditions as `resource.provider` (the provider's display name, such as `Anthropic`), `resource.providerKind`
+(`anthropic`, `openai`, or `openai-compatible`; use it to match a kind of provider), `resource.upstreamModel`,
+`resource.tier`, `resource.family`, `resource.contextWindow`, `resource.inputPricePerMTok`,
+`resource.outputPricePerMTok`, and `resource.enabled`.
+
+```json title="Small models for everyone, the frontier model only with MFA"
+{
+  "version": 1,
+  "statements": [
+    {
+      "effect": "allow",
+      "actions": ["inference:invoke"],
+      "resources": ["model/*"],
+      "conditions": { "StringEquals": { "resource.tier": "small" } }
+    },
+    {
+      "effect": "allow",
+      "actions": ["inference:invoke"],
+      "resources": ["model/opus"],
+      "conditions": { "Bool": { "principal.mfa": true } }
+    }
+  ]
+}
+```
+
+<TryInPlayground
+  grants={[
+    {
+      version: 1,
+      statements: [
+        {
+          sid: 'SmallModels',
+          effect: 'allow',
+          actions: ['inference:invoke'],
+          resources: ['model/*'],
+          conditions: { StringEquals: { 'resource.tier': 'small' } },
+        },
+        {
+          sid: 'FrontierWithMfa',
+          effect: 'allow',
+          actions: ['inference:invoke'],
+          resources: ['model/opus'],
+          conditions: { Bool: { 'principal.mfa': true } },
+        },
+      ],
+    },
+  ]}
+  action="inference:invoke"
+  resource="model/opus"
+  context={{ 'principal.id': 'usr_alice', 'principal.mfa': false, 'resource.tier': 'frontier' }}
+>
+  Try the model policy in the playground
+</TryInPlayground>
+
+The playground opens with Alice asking for the frontier model without MFA, which is refused: neither statement
+applies. Set `principal.mfa` to `true` and the second statement allows it; set `resource.tier` to `small` and the
+first one does.
+
+Principal keys work as usual, so a delegated agent session can use only the models the person may use, within the
+delegation's scope. Delegated sessions are never MFA-verified (`principal.mfa` is false), so a statement like the second
+one never admits an agent acting for a person. `inference.listMine` lists the enabled models the caller may use (for a model picker), and
+`inference.check` answers whether the caller may invoke a model right now, budgets included.
+
+## Budgets
+
+A budget caps tokens (`maxTokens`), cost (`maxCostUsd`), the number of calls (`maxRequests`), or any mix of them, per
+`minute`, `hour`, `day`, or `month` (UTC windows). A `minute` budget on requests or tokens is a true rate limit, for
+example 60 calls a minute for an agent that might loop. It needs at least one of the three,
+`alertAtPercent` applies to each limit it sets, and `null` clears a limit on update:
+
+| `subjectType` | Covers                                                                                                                                                      |
+| ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `tenant`      | Every call made in the tenant.                                                                                                                              |
+| `group`       | Calls by the group's members.                                                                                                                               |
+| `identity`    | One identity, always as one pool. For a person, their own calls and those of agents acting for them; for an agent, its own key and every delegated session. |
+
+For `tenant` and `group` budgets, `scope: 'shared'` (the default) makes one pool for everyone covered, and
+`scope: 'each'` gives everyone covered the full amount (for example, one million tokens a day per person). `models`
+limits a budget to some model name patterns.
+
+```ts
+await iam.api.inference.setBudget(admin, {
+  tenantId,
+  name: 'Daily per person',
+  subjectType: 'tenant',
+  scope: 'each',
+  period: 'day',
+  maxTokens: 1_000_000,
+  alertAtPercent: 80,
+});
+await iam.api.inference.setBudget(admin, {
+  tenantId,
+  name: 'Triage agent',
+  subjectType: 'identity',
+  subjectId: agent.id,
+  period: 'month',
+  maxCostUsd: 200,
+});
+```
+
+A call is refused with `BUDGET_EXCEEDED` when a covering budget is spent, or when the call's estimate would not fit in
+what is left. The gateway estimates from the request (its size in bytes divided by four, plus its output limit:
+`max_tokens`, `max_completion_tokens`, or `max_output_tokens`); `inference.check` and `iam.inference.authorize` use the `estimatedTokens` you pass (0 when
+omitted). The first refusal in a window is audited as
+`inference:budget-exceeded`, and crossing `alertAtPercent` is audited once per window as `inference:budget-alert`, so
+a webhook can alert on either. Cost is metered in micro-dollars: tokens times the model's price per million tokens.
+
+## The gateway
+
+The gateway lets any Better IAM credential call models without holding a provider key. It relays each provider's own
+wire format, streaming included, changing only what it must:
+
+- Anthropic Messages, `POST /v1/messages`, for models on an `anthropic` provider, and token counting,
+  `POST /v1/messages/count_tokens` (checked like a call but not metered, since it costs nothing);
+- OpenAI Chat Completions, `POST /v1/chat/completions`, Responses, `POST /v1/responses`, and Embeddings,
+  `POST /v1/embeddings`, for `openai` and `openai-compatible` providers;
+- and `GET /v1/models`, which lists the models the caller may use (OpenAI's format, or Anthropic's when the request
+  carries `anthropic-version`).
+
+The gateway answers `{basePath}/v1/...`, so mount it on a catch-all route:
+
+```ts title="app/ai/[...path]/route.ts (Next.js)"
+const gateway = iam.inference.gateway({ basePath: '/ai' });
+export const POST = gateway;
+export const GET = gateway;
+// Hono: app.all('/ai/*', (c) => gateway(c.req.raw));
+```
+
+Point an SDK at it with a Better IAM credential as the API key:
+
+```ts
+import Anthropic from '@anthropic-ai/sdk';
+
+const client = new Anthropic({
+  baseURL: 'https://app.example.com/ai',
+  apiKey: agentKeyOrDelegatedToken,
+});
+await client.messages.create({
+  model: 'opus',
+  max_tokens: 1024,
+  messages: [{ role: 'user', content: 'Hi' }],
+});
+```
+
+For each request the gateway authenticates the caller (a bearer token or `x-api-key`), checks `inference:invoke` and
+the budgets, swaps the public model name for the upstream one, sends the request with the sealed key, streams the
+answer back, and meters the tokens the provider reports. It swaps the model name back in the answer (except in
+streams) and asks OpenAI streams to report usage (`stream_options.include_usage`). It also holds each answer to the
+model's `maxOutputTokens`: a larger `max_tokens`, `max_completion_tokens`, or `max_output_tokens` is lowered, and a
+request without one gets it (`max_completion_tokens` for `openai` Chat Completions, `max_tokens` for `anthropic` and
+`openai-compatible`, `max_output_tokens` on `/v1/responses`); embeddings and token counts have none. Everything else
+passes through.
+
+Responses API conversations are stored at the provider under the organization's key, so without a check any caller
+could continue any other caller's conversation by its id. The gateway records who created each response it relays.
+`previous_response_id` must name one of the caller's own responses (the same person, through the same agent if an
+agent is acting); any other id gets 404 `RESPONSE_NOT_FOUND` and never reaches the provider. The `conversation`
+parameter and `background: true` are refused with 400 `UNSUPPORTED_PARAMETER`, because their state and usage stay out
+of the gateway's sight. Built-in tools that the provider bills separately from tokens (web search, file search, code
+interpreter) are not metered.
+
+Refusals use each API's own error shape: 401; 403 (`ACCESS_DENIED`, `MODEL_DISABLED`); 404 (`RESPONSE_NOT_FOUND`); 413
+(`TOO_LARGE`); 429 (`BUDGET_EXCEEDED`, with `Retry-After` until the window resets); 400 (`WRONG_FORMAT`) when a model
+is called in the other provider's format, and 400 (`UNSUPPORTED_PARAMETER`); and 502 (`UPSTREAM_UNAVAILABLE`). The provider's own errors pass through with their status.
+Relayed responses carry `x-better-iam-request-id` and `x-better-iam-model`.
+
+### Keeping your own gateway
+
+An existing gateway can use Better IAM for the decision and the metering only. It calls `inference.check` with the
+caller's credential and receives a single-use `ticket` (valid one hour) when the call is allowed, makes the call
+itself, then redeems the ticket with the token counts through `inference.record`, using its own service account key
+with `iam:inference:record`. The call is metered as the caller the check saw, even if that caller's session has ended
+since, so a short session cannot make an allowed call escape its budgets or a delegation's spending cap. In-process code can use `iam.inference.authorize(credential, { model })`, which returns
+either `{ denied }` or a permit `{ principal, tenantId, check, upstreamModel, provider: { id, kind, baseUrl, apiKey } }`
+with the opened provider key (never expose it), and then `iam.inference.record(permit, usage)`. When the deployment
+has [billing](/docs/guides/billing), every metered call, through either path, also lands in the spend ledger on the
+built-in `inference` meter.
+
+## Usage reports
+
+`inference.usage` (with `iam:inference:read`) adds up calls between `from` and `to` by `identity`, `agent`, `model`, or
+`day`, with requests, errors, token counts, and cost. `inference.myUsage` shows a caller their own usage and the
+standing of every budget that covers them (tokens, cost, and requests used and remaining), and `inference.listBudgets`
+shows the current window of each shared pool.
+Usage records are kept for `usageRetentionDays` and budget counters 35 days past their window; `iam.sweepExpired()`
+deletes them after that.
+
+| Action                 | Allows                                                     |
+| ---------------------- | ---------------------------------------------------------- |
+| `inference:invoke`     | Calling a model (`model/{name}`).                          |
+| `iam:inference:manage` | Managing providers, models, and budgets.                   |
+| `iam:inference:read`   | Listing providers, models, and budgets, and usage reports. |
+| `iam:inference:record` | Metering calls for others with check tickets (gateways).   |
+
+## Next steps
+
+<Cards>
+  <Card title="AI agents" href="/docs/guides/ai-agents">
+    Accounts for agents with a sponsor, a ceiling, and delegated sessions.
+  </Card>
+  <Card title="Inference API" href="/docs/reference/api/inference">
+    Providers, models, budgets, checks, and usage.
+  </Card>
+</Cards>

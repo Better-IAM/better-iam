@@ -1,0 +1,102 @@
+# config
+
+Configuration as code: export a tenant's access model as one JSON document, review changes to it, and apply it
+the same way to staging and production. Hand-edited roles drift between environments and nobody can say who
+changed what; a document in version control gives you pull-request review, a dry run before every change, and a
+pipeline check that fails when someone edits production by hand. See
+[configuration as code](/docs/guides/privileged-access/config-as-code).
+
+## The configuration document
+
+A document has `version: 1` and any of these lists, each keyed by name (never by ID), so the same file works in
+every environment:
+
+| Key | What it holds |
+| --- | --- |
+| `policies` | Policies with their documents. |
+| `roles` | Roles with attached policy names, an inline `permissions` list or `document`, and inherited role names. |
+| `groups` | Groups, optionally with `members` as email addresses (membership is then made to match exactly). |
+| `bindings` | Group role bindings, with eligibility, activation rules, approver group, and access window. |
+| `resourceTypes` | Tenant-defined resource types (only with `permissions.mode: 'tenant-defined'`). |
+| `packages` | Access packages with their roles, groups, request settings, and optional automatic-assignment rule. |
+| `accessPolicy` | The tenant's activation floors for eligible bindings (`{}` clears them). |
+| `invariants` | Access invariants, naming groups by name and people by email. |
+| `agreements` | Terms-of-use agreements; a content change publishes a new version everyone accepts again. |
+| `departments` | [Departments](/docs/reference/api/departments) by name, with `code`, `parent` (a name), `head` and `members` (emails), and `costCenter`. |
+| `teams` | [Teams](/docs/reference/api/teams) by `slug`, with `parent` (a slug), `department` (a name), join settings, `maintainers` and `members` (emails), and the `roles` they hold as standing bindings. |
+
+Runtime state stays out of the document: identities, their direct role bindings, credentials, webhooks, who
+holds which package, temporary team memberships, and join requests. Team backing groups (`team:{slug}`) never appear
+under `groups` or `bindings`: a team's access is its `roles` list. The protected Owner role and policy are never exported or changed.
+
+## How planning and pruning work
+
+Only the kinds a document lists are compared. A kind the document leaves out is left alone, so a file with just
+`roles` never touches groups. Within a listed kind, items are matched by name and reported as `create`, `update`
+(with the changed `fields`, `before`, and `after`), or `unchanged`. Items of a listed kind that the document omits
+are deleted only when you pass `prune: true`. References between items (a role's policies, a binding's group and
+role, a package's roles) must exist in the document or in the tenant after the apply, or the plan fails with
+`INVALID_INPUT` naming the problem.
+
+## apply
+
+Applies a configuration document to the tenant in one transaction, and returns the changes it made.
+
+- **Permission:** `iam:config:apply` on the tenant, plus the permission of the equivalent direct call for every
+  change (for example `iam:roles:create` on the tenant, `iam:policies:update` on the policy,
+  `iam:bindings:create` on the role, `iam:groups:update` on the group, `iam:tenants:update` for the access
+  policy). New roles, policies, and bindings are created under your grant authority.
+- **Audited as:** `iam:config:apply`, and `config:apply` with metadata `prune`, the change counts, and `changed`
+  (one line per change).
+- **Errors:** `INVALID_INPUT` for a malformed document or an unknown reference; `INVALID_POLICY` or
+  `INVALID_ACTION` for a policy document storage would reject; `ACCESS_DENIED` naming the first change you are not
+  allowed to make; `GRANT_AUTHORITY_REQUIRED` when something must be created and you hold no grant authority;
+  `LIMIT_EXCEEDED` when a create exceeds the tenant's plan limits; `SOD_CONFLICT` when the result gives someone
+  roles a [separation-of-duties rule](/docs/guides/authorization/separation-of-duties) forbids together;
+  `INVARIANT_VIOLATION` when it would newly break an enforced access invariant.
+
+Every change is authorized exactly like the direct API call, so the document can never do more than you could do
+by hand, and one failure rolls everything back: the tenant is never left half-applied. Changes run in dependency
+order: policies, roles, and groups are created before the bindings and packages that name them, and are deleted
+only after those are gone. Changing a group binding's eligibility or activation rules replaces the binding, which
+ends its current activations.
+
+Always [`plan`](#plan) first and review the result. The `config-apply` [CLI command](/docs/reference/cli#config-apply)
+runs this call from a pipeline.
+
+```ts
+const document = JSON.parse(await readFile('tenant.json', 'utf8'));
+const plan = await iam.api.config.plan(credential, { tenantId, config: document });
+if (plan.summary.delete === 0) {
+  const result = await iam.api.config.apply(credential, { tenantId, config: document });
+  console.log(result.summary); // { create: 2, update: 1, delete: 0, unchanged: 14 }
+}
+```
+
+## export
+
+Returns the tenant's roles, policies, groups, bindings, and the other configuration kinds as a document that
+`plan` and `apply` accept.
+
+- **Permission:** `iam:config:read` on the tenant.
+- **Audited as:** `iam:config:read`.
+
+Use it to bootstrap version control from a tenant configured by hand, or to copy one environment's model into
+another. Group members are exported as lowercase email addresses (members without an email are left out), a role
+whose inline document was written as a `permissions` list is exported as that list again, and `invariants`,
+`agreements`, `departments`, and `teams` appear only when the tenant has some. The `config-export` [CLI command](/docs/reference/cli#config-export) writes it to a
+file.
+
+## plan
+
+Shows, without writing anything, every change `apply` would make for a configuration document.
+
+- **Permission:** `iam:config:read` on the tenant.
+- **Audited as:** `iam:config:read`.
+- **Errors:** `INVALID_INPUT` for a malformed document (wrong `version`, duplicate names, more than 1000 items in a
+  list) or an unknown reference.
+
+The result lists each change with its kind, name, and action, and a `summary` with counts per action. Planning
+does not check whether you may make each change; `apply` does. Run it in CI on every pull request, and use the
+`config-plan` [CLI command](/docs/reference/cli#config-plan) with `--fail-on-drift` in a nightly job to catch
+changes someone made by hand.

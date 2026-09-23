@@ -1,0 +1,141 @@
+---
+title: Organizations in the URL
+description: Serve each organization under its own /[org] path with requireTenantSession, and send visitors from other organizations to the right sign-in.
+icon: Building
+packages:
+  - '@better-iam/next'
+sources:
+  - docs/nextjs.md
+  - packages/next/README.md
+  - packages/next/src/index.ts
+  - examples/nextjs/app/[org]/layout.tsx
+  - examples/nextjs/app/[org]/page.tsx
+  - examples/nextjs/app/login/page.tsx
+---
+
+Multi-tenant applications often put the organization in the path: `/acme/projects`, `/globex/settings`. The
+path segment is the organization's alias (its slug), and every page below it should run in that organization's
+<Term id="tenant">tenant</Term>. Two things can go wrong without help: an unknown or deactivated alias renders a broken page instead of a
+404, and a person signed in to Acme who follows a link to `/globex` sees Globex pages rendered around an Acme
+session. `iamNext.requireTenantSession({ slug })` handles both: it resolves the alias and requires a session in
+that tenant, sending everyone else to sign in to the right organization.
+
+## The organization layout
+
+Put it in `app/[org]/layout.tsx`, and every page below gets the resolved tenant.
+
+```tsx title="app/[org]/layout.tsx"
+import type { ReactNode } from 'react';
+import Link from 'next/link';
+import { iamNext } from '@/lib/iam-next';
+import { signOut } from '../auth-actions';
+
+export default async function OrgLayout(props: {
+  params: Promise<{ org: string }>;
+  children: ReactNode;
+}) {
+  const { org } = await props.params;
+  // Unknown aliases 404; visitors signed in elsewhere go to /login?org=...&next=...
+  const { tenant, session } = await iamNext.requireTenantSession({ slug: org });
+  return (
+    <>
+      <header>
+        <Link href={`/${org}`}>
+          <strong>{tenant.name}</strong>
+        </Link>
+        <form action={signOut}>
+          <span>{session.identity.name} </span>
+          <button type="submit">Sign out</button>
+        </form>
+      </header>
+      {props.children}
+    </>
+  );
+}
+```
+
+`requireTenantSession({ slug, headers?, returnTo?, redirectTo? })` returns `{ tenant, session }`, where `tenant`
+is `{ tenantId, name, type, slug }`.
+
+- **Resolution.** The alias goes through [`tenants.lookup`](/docs/reference/api/tenants#lookup), which finds
+  active tenants with active ancestors only. Unknown or inactive aliases call `notFound()`.
+- **Wrong organization.** A visitor who is signed out, or signed in to a different organization, is redirected to
+  `/login?org={slug}&next=...` (or `redirectTo`). The login page can pre-select the organization or offer the
+  account switcher.
+- **Return path.** `?next=` is `returnTo`, or the path the [middleware](/docs/frameworks/nextjs/middleware)
+  forwarded, so a deep link survives sign-in.
+
+To resolve an alias without requiring a session, for example on a public landing page, use
+`iamNext.tenant(slug)`. It returns the same summary, or `null` when the alias does not exist or is inactive.
+
+## Pages below the layout
+
+Wrap each page with `iamNext.page` as well: Next.js keeps layouts across client-side navigations instead of
+re-rendering them, and the page needs the session anyway. Below the layout, the session's tenant is the
+organization's tenant, which is also the default tenant for `authorize`.
+
+```tsx title="app/[org]/page.tsx"
+import { iamNext } from '@/lib/iam-next';
+
+export default iamNext.page(async (_props: { params: Promise<{ org: string }> }, { session }) => {
+  const tenantId = session.session.tenantId;
+  const document = { type: 'document', id: 'roadmap' };
+  const access = await iamNext.can({
+    tenantId,
+    checks: [
+      { action: 'documents:read', resource: document },
+      { action: 'documents:write', resource: document },
+      { action: 'iam:identities:read' },
+    ],
+  });
+  return (
+    <main>
+      <h1>Welcome, {session.identity.name}</h1>
+      <iamNext.Can action="documents:write" resource={document} fallback={<p>Read-only.</p>}>
+        <p>You may edit the roadmap.</p>
+      </iamNext.Can>
+      <pre>{JSON.stringify(access, null, 2)}</pre>
+    </main>
+  );
+});
+```
+
+The layout's `requireTenantSession` and the page's `page()` share one session lookup, because the no-argument
+session read is memoized per request.
+
+## The login page
+
+The redirect carries `?org=` and `?next=`. Pass both to the sign-in form: `org` fills (or replaces) the
+organization field, and `next` is where a completed sign-in returns.
+
+```tsx title="app/login/page.tsx"
+import { SignInForm } from '@better-iam/next/client';
+import { signIn } from '../auth-actions';
+
+export default async function Login(props: { searchParams: Promise<{ next?: string; org?: string }> }) {
+  const { next, org } = await props.searchParams;
+  return <SignInForm action={signIn} next={next} org={org} keepSignedIn passwordless />;
+}
+```
+
+Other ways to find the organization at sign-in:
+
+- **Email domain.** `iamNext.authActions({ discover: true })` finds the tenant from the verified domain of the
+  email (`domains.discover`) when the form carries no `tenantId` or `org`. See
+  [Enterprise onboarding](/docs/federation/enterprise-onboarding) for verified domains.
+- **Your own rule.** `authActions({ resolveTenant: async (form) => ... })` picks the tenant from the submission.
+- **Account switcher.** A person with linked <Term id="identity">identities</Term> in several organizations can list them with
+  [`links.list`](/docs/reference/api/links#list) and switch with [`links.switch`](/docs/reference/api/links#switch).
+  Identities in different tenants stay separate, even when linked; see
+  [Tenants and identities](/docs/guides/concepts/tenants-and-identities).
+
+## Next steps
+
+<Cards>
+  <Card title="Server actions and forms" href="/docs/frameworks/nextjs/server-actions">
+    The `SignInForm` and `authActions` options the login page uses.
+  </Card>
+  <Card title="Middleware" href="/docs/frameworks/nextjs/middleware">
+    Forward the requested path so deep links survive sign-in.
+  </Card>
+</Cards>

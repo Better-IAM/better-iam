@@ -1,0 +1,467 @@
+# tenants
+
+Tenants are the isolated organizations, projects, and other units your platform serves, arranged in a tree under
+one root tenant. Each tenant keeps its own directory of identities and its own roles, policies, and audit trail,
+like an AWS account. This group creates child tenants and invites their first owners, renames, moves, suspends,
+and deletes them, and sets the per-tenant controls: the public sign-in alias, the authentication policy, the
+elevation floors, plan limits, and the permission boundary. See
+[tenants and identities](/docs/guides/concepts/tenants-and-identities) for the model.
+
+## The tenant tree
+
+Every installation has one root tenant, created by `bootstrap`, and every other tenant has a parent.
+`hierarchy.types` in the server options decides which tenant types may be created under which (the default is
+`root → organization → project`), and `hierarchy.maxDepth` how deep the tree may grow (eight levels, counting the
+root, by default). A type that is not an allowed child fails with `INVALID_HIERARCHY`, and a tree that would grow
+too deep with `MAX_DEPTH`.
+
+| Status | Meaning | Can become |
+| --- | --- | --- |
+| `pending` | Created by [`create`](#create), waiting for its owner to accept the invitation. | `active` when the owner accepts, or `deleted`. |
+| `active` | In use. Sign-in and authorization need the tenant and every ancestor to be active. | `suspended` or `deleted`. |
+| `suspended` | Unusable together with its whole subtree; its sessions have ended. | `active` or `deleted`. |
+| `deleted` | Tombstoned with `deletedAt`; removed by the retention worker after the retention window. | Nothing. |
+
+**Who can act on a tenant.** Authorization always happens inside the tenant a call names. You need a session of
+that tenant (your own account in it, or a role assumed into it through a
+[trust](/docs/guides/authorization/temporary-access)), or you must be a root administrator: administering a parent
+grants nothing in its children. While the tenant or any ancestor is not `active`, every decision inside it is
+refused except a root administrator's. In practice:
+
+- [`create`](#create) and [`listChildren`](#listchildren) are checked in the parent, so an organization's
+  administrators can create and list projects under their own organization.
+- A pending tenant's owner invitations can be listed, re-sent, or revoked only by a root administrator until the
+  owner accepts.
+- Only a root administrator can reactivate or delete a suspended tenant. Suspending or deleting your own tenant ends
+  your own session too.
+- Most changes also need recent authentication, which temporary credentials such as role sessions never have.
+
+**Aliases.** A tenant may carry a `slug`, unique across the installation, that sign-in pages resolve with the
+public [`lookup`](#lookup) so people can type an organization name instead of a tenant ID. Email-domain discovery
+is the other way to find a tenant; see [`domains.discover`](/docs/reference/api/domains#discover).
+
+## Addresses and regions
+
+With the `hosts` option, an alias is also an address: `acme` signs in at `acme.signin.example.com` (or whatever
+pattern you configure), and organizations can verify custom hostnames with the
+[`hostnames`](/docs/reference/api/hostnames) group. With the `regions` option, every tenant has a home region: its
+own `region`, or its nearest ancestor's. Sign-in for a tenant homed in another region is answered with
+`WRONG_REGION` and its sign-in URL there, so people land on the deployment that holds their organization. See
+[sign-in addresses and regions](/docs/operations/deployment/hosts-and-regions).
+
+## Tenant policies and limits
+
+A tenant carries its own controls on top of the deployment's configuration:
+
+| Field | Set with | Who may set it | What it does |
+| --- | --- | --- | --- |
+| `authPolicy` | [`setAuthPolicy`](#setauthpolicy) | `iam:tenants:update` | Sign-in rules. It can only tighten the deployment's configuration. |
+| `accessPolicy` | [`setAccessPolicy`](#setaccesspolicy) | `iam:tenants:update` | Minimum rules for activating [eligible bindings](/docs/guides/privileged-access/elevation). |
+| `limits` | [`setLimits`](#setlimits) | Root only | The most records of each kind the tenant may hold, for SaaS plans. |
+| `boundary` | [`setBoundary`](#setboundary) | Root only, or the creator at [`create`](#create) | A ceiling on every permission in the tenant and its descendants. |
+
+`tenantDefaults` in the server options stamps `limits` and `authPolicy` on every tenant `create` makes, so a plan
+applies from the first sign-in. Each setter replaces the whole value, so read the tenant with [`get`](#get) and
+carry the other fields over; `null` clears a policy or the limits. Nothing is cached: sessions are revalidated
+against the policy on every use, and limits are checked inside every creating transaction.
+
+The authentication policy fields (see [tenant authentication policy](/docs/guides/authentication/tenant-policy)
+for how each is enforced):
+
+| Field | Allowed values and effect |
+| --- | --- |
+| `requireMfa`, `requireMfaForOwners` | Everyone, or only owners, must complete MFA. |
+| `allowedMethods` | One or more of `password`, `passwordless-email`, `passwordless-sms`, `passkey`, `federated`. |
+| `sessionLifetimeMs`, `sessionIdleTimeoutMs` | One minute to 30 days; the idle timeout may not exceed the lifetime. |
+| `maxSessions` | 1 to 100 concurrent sessions per person; the oldest ends when another is issued. |
+| `maxAttempts` | 1 to 100,000 authentication attempts per rate-limit window. |
+| `minPasswordLength`, `passwordMinClasses`, `passwordHistory`, `passwordMaxAgeDays` | 12 to 128 characters; 2 to 4 character classes; 1 to 24 remembered passwords; 1 to 3,650 days. |
+| `passwordRejectPersonalInfo` | Refuse passwords that contain the person's name or email address. |
+| `trustedDeviceDays` | 0 to 365 days that "remember this device" may skip MFA; 0 turns it off. |
+| `allowedIpRanges`, `bindSessionsToIp` | Addresses or CIDR blocks sessions may be issued and used from; a session usable only from the address it was issued to. |
+| `allowImpersonation`, `notifyNewSignIn`, `mfaEmailCodes` | Allow "view as" sessions; email people about sign-ins from unfamiliar clients; offer emailed MFA codes to people without an authenticator. |
+
+Plan limits take the keys `identities` (people, active and disabled), `serviceAccounts`, `groups`, `roles`,
+`policies`, `resources` (registered managed resources), and `webhooks`, each a whole number from 0 to
+1,000,000,000. A missing key means no limit. Creation past a limit fails with `LIMIT_EXCEEDED` on every path:
+administration, accepted invitations, self-registration, federation, SCIM, and bulk creation.
+
+## acceptInvitation
+
+Redeems an owner invitation: creates the first owner of a pending tenant, activates the tenant, and signs the owner
+in.
+
+- **Permission:** None: public. The token from the `owner-invitation` email is the proof.
+- **Audited as:** `tenant:activate`, with the new owner as the actor.
+- **Errors:** `INVITATION_INVALID` when the tenant is not pending, the token is unknown, used, revoked, or expired,
+  or the creator's grant authority has been revoked; `TENANT_INACTIVE` when an ancestor is not active;
+  `INVALID_INPUT` for a missing name; `WEAK_PASSWORD` or `BREACHED_PASSWORD` when the password fails the password
+  rules. With `linkCredential`: `LINKING_DISABLED` unless linked onboarding is on, `RECENT_AUTH_REQUIRED`,
+  `PROTECTED_IDENTITY` for a root administrator, `INVALID_LINK` for anything but an ordinary user session, and
+  `ACCESS_DENIED` unless the credential belongs to the person who created the tenant.
+
+The owner's email counts as verified. Acceptance creates the protected Owner policy and role, binds the role to the
+owner under the grant authority reserved when the tenant was created, marks the invitation consumed, and sets the
+tenant `active`. The result is the owner's public identity plus either `{ token, session }` or an MFA challenge
+when the tenant's policy (for example from `tenantDefaults`) requires MFA. Over HTTP, a response that issues a
+session also sets the session cookie.
+
+Pass `linkCredential`, the creator's own recently authenticated session, to
+[link](/docs/reference/api/links#create) the creator's existing account to the new owner account in the same step
+so they can switch between them. It requires `onboarding: { mode: 'linked' }` in the server options.
+
+```ts
+const result = await client.tenants.acceptInvitation({
+  tenantId: params.tenant,
+  token: params.token,
+  name: form.name,
+  password: form.password,
+});
+```
+
+## create
+
+Creates a child tenant in the `pending` state under a parent and emails an invitation to its first owner.
+
+- **Permission:** `iam:tenants:create` on the parent tenant, with recent authentication, and an active grant
+  authority in the parent.
+- **Audited as:** `iam:tenants:create`, in the parent tenant's log.
+- **Errors:** `INVALID_HIERARCHY` when `type` is not an allowed child of the parent's type; `MAX_DEPTH` when the
+  parent is already at the deepest level; `DELIVERY_REQUIRED` without an email delivery callback; `SLUG_TAKEN` or
+  `INVALID_INPUT` for a slug in use or badly formed; `GRANT_AUTHORITY_REQUIRED` without an active grant authority,
+  or `ACCESS_DENIED` when `authorityId` is not one of yours; `INVALID_POLICY` or `INVALID_ACTION` for an invalid
+  boundary; `INVALID_INPUT` for a `region` the deployment does not know, or one other than its own when regions
+  keep separate databases; `RECENT_AUTH_REQUIRED`.
+
+The new tenant receives `tenantDefaults` (limits and authentication policy), the optional `slug`, and an optional
+`boundary`. In a multi-region deployment, `region` sets its home region; without it the tenant inherits its
+parent's, and an organization directly under the (region-less) root is homed in the region that creates it. A grant authority is reserved for the future owner as a child of yours (or of `authorityId`, one of
+your own authorities in the parent). That keeps the owner within your authority chain: if your authority is
+revoked, the invitation can no longer be accepted and the owner's grants stop applying. The token goes only into
+the `owner-invitation` email; the result has the tenant, the invitation ID, and the owner's address.
+
+Nobody but a root administrator can act inside the tenant until the owner accepts. If they never do, a root
+administrator can re-send or revoke the invitation, or delete the tenant.
+
+```ts
+const { tenant, invitationId } = await iam.api.tenants.create(credential, {
+  parentId: rootTenantId,
+  type: 'organization',
+  name: 'Acme',
+  ownerEmail: 'owner@acme.example',
+  slug: 'acme',
+});
+// tenant.status === 'pending' until the owner accepts
+```
+
+## get
+
+Returns a tenant with its status, parent, alias, policies, limits, and boundary.
+
+- **Permission:** `iam:tenants:read` on the tenant.
+- **Audited as:** `iam:tenants:read`.
+- **Errors:** `NOT_FOUND` when the tenant does not exist.
+
+Read it before calling a setter, because each setter replaces its whole value.
+
+## listChildren
+
+Lists the direct children of a tenant, whatever their status.
+
+- **Permission:** `iam:tenants:read` on the tenant.
+- **Audited as:** `iam:tenants:read`.
+
+Pending, suspended, and deleted children are included until they are purged. Only direct children are returned;
+walking further down needs access to each child, which a root administrator has everywhere.
+
+## listInvitations
+
+Lists a tenant's owner invitations without their tokens.
+
+- **Permission:** `iam:tenants:read` on the tenant.
+- **Audited as:** `iam:tenants:read`.
+
+Each invitation shows the invited email, the grant authority reserved for the owner, when it was created and
+expires, and whether it was `consumed` or `revoked`. While the tenant is pending, only a root administrator can
+read them (see [the tenant tree](#the-tenant-tree)).
+
+## lookup
+
+Resolves a tenant's public alias, or an address it signs in at, to its ID, name, and type, so a sign-in page can ask
+for an organization name instead of a tenant ID.
+
+- **Permission:** None: public.
+- **Errors:** `NOT_FOUND` when no active tenant has that alias or address, including pending, suspended, and
+  deleted tenants and tenants under an inactive ancestor; `WRONG_REGION` (421) when another region serves the
+  organization; `INVALID_INPUT` for a malformed slug.
+
+Pass `slug` (matched case-insensitively) or `host`, such as `acme.signin.example.com` or a verified custom hostname.
+With organization addresses or regions configured, the result also names the organization's home `region` and its
+canonical `signInUrl`. `WRONG_REGION` carries the region and the sign-in URL there (`location`), so a global sign-in
+page can redirect. `slug` is empty only for an organization without an alias, found by its custom hostname.
+
+It is not audited. Aliases are discovery data by design, so apply ingress rate limits to this route and never put
+anything secret in an alias.
+
+```ts
+try {
+  const { tenantId } = await client.tenants.lookup({ slug: 'acme' });
+  await client.auth.signIn({ tenantId, email, password });
+} catch (error) {
+  if (error instanceof IamClientError && error.code === 'WRONG_REGION' && error.location)
+    location.assign(error.location); // the organization signs in in another region
+  else throw error;
+}
+```
+
+## reparent
+
+Moves a tenant, with its whole subtree, under a different parent.
+
+- **Permission:** `iam:tenants:update` on the tenant being moved, with recent authentication, plus a grant
+  authority in the new parent (a root administrator always has one).
+- **Audited as:** `iam:tenants:update` and `tenant:reparent` (with the old and new parent).
+- **Errors:** `INVALID_TRANSITION` for the root tenant, a pending tenant, or a deleted one; `INVALID_INPUT` when it
+  is already under that parent; `TENANT_INACTIVE` when the new parent or one of its ancestors is not active;
+  `INVALID_HIERARCHY` when the type is not allowed under the new parent, or the new parent is inside the tenant's
+  own subtree; `MAX_DEPTH` when the moved subtree would end up too deep; `NOT_FOUND` for an unknown parent.
+
+Use it when a customer reorganizes, for example to move a project to another organization. Delegation chains are
+not rewritten: grants inside the moved tenant keep the grant authorities they were issued under. Boundaries of the
+new ancestors apply from the next request, because boundaries are read from the ancestry at evaluation time.
+
+```ts
+await iam.api.tenants.reparent(rootCredential, { tenantId: projectId, parentId: otherOrganizationId });
+```
+
+## resendInvitation
+
+Sends an owner invitation again with a new token and a fresh lifetime; the earlier link stops working.
+
+- **Permission:** `iam:tenants:update` on the invitation, with recent authentication.
+- **Audited as:** `iam:tenants:update`.
+- **Errors:** `CONFLICT` when the invitation was already accepted or revoked; `DELIVERY_REQUIRED` without an email
+  delivery callback; `NOT_FOUND` when the invitation is not in this tenant; `RECENT_AUTH_REQUIRED`.
+
+Use it when the owner's email expired or got lost: expired invitations can be resent, and the invitation keeps the
+grant authority reserved for the owner. While the tenant is pending, only a root administrator can call it.
+
+## revokeInvitation
+
+Cancels an owner invitation so its link can no longer be used.
+
+- **Permission:** `iam:tenants:update` on the invitation, with recent authentication.
+- **Audited as:** `iam:tenants:update`.
+- **Errors:** `CONFLICT` when the invitation was already accepted or revoked; `NOT_FOUND` when it is not in this
+  tenant; `RECENT_AUTH_REQUIRED`.
+
+The tenant stays pending. A pending tenant can only be activated through its owner invitation, and a revoked
+invitation cannot be re-sent, so to invite a different owner, delete the tenant with [`setStatus`](#setstatus) and
+create it again.
+
+## revokeSessions
+
+Signs everyone out of a tenant at once, keeping your own session unless you pass `includeSelf`.
+
+- **Permission:** `iam:tenants:update` on the tenant, with recent authentication.
+- **Audited as:** `iam:tenants:update` and `tenant:revoke-sessions` (with the count and `includeSelf`).
+- **Errors:** `RECENT_AUTH_REQUIRED`.
+
+Use it for incident response. It ends every session of the tenant, role sessions assumed from it into other
+tenants, and "view as" sessions opened through an ended session. It does not distinguish session kinds, so
+service-account API keys of the tenant, which are stored as sessions, end too and must be issued again. Remembered
+devices are forgotten as well, so the next sign-in needs the second factor again; you keep yours unless
+`includeSelf`. Child tenants are not affected. The result's `revoked` is the number of sessions ended.
+
+## setAccessPolicy
+
+Sets organization-wide floors for just-in-time activation that every eligible binding in the tenant must meet.
+
+- **Permission:** `iam:tenants:update` on the tenant, with recent authentication.
+- **Audited as:** `iam:tenants:update` and `tenant:access-policy` (with the new policy).
+- **Errors:** `INVALID_INPUT` for an unknown field, a non-boolean flag, or a value out of range;
+  `INVALID_TRANSITION` for a deleted tenant; `RECENT_AUTH_REQUIRED`.
+
+The fields are `maxActivationMs` (one minute to seven days), `requireJustification`, `requireMfa`,
+`requireApproval`, and `approvalLifetimeMs` (how long a request waits for a decision, five minutes to thirty days;
+one day when unset). A binding's effective rules are its own settings tightened by the policy: a flag applies when
+either sets it, and the maximum activation is the smaller of the two, so adopting a floor later tightens existing
+bindings without editing them. The call replaces the whole policy; `null` clears it, and flags set to `false` are
+dropped. See [tenant access policy](/docs/guides/privileged-access/elevation#tenant-access-policy).
+
+```ts
+await iam.api.tenants.setAccessPolicy(credential, {
+  tenantId,
+  accessPolicy: {
+    maxActivationMs: 4 * 3_600_000,
+    requireJustification: true,
+    requireMfa: true,
+  },
+});
+```
+
+## setAuthPolicy
+
+Sets the tenant's authentication policy: MFA, allowed sign-in methods, session lifetimes, password rules, network
+restrictions, and impersonation.
+
+- **Permission:** `iam:tenants:update` on the tenant, with recent authentication.
+- **Audited as:** `iam:tenants:update` and `tenant:auth-policy` (with the new policy).
+- **Errors:** `INVALID_INPUT` for an unknown field or an out-of-range value, or for an `allowedIpRanges` that
+  leaves out your own address when you set it on your own tenant; `INVALID_TRANSITION` for a deleted tenant;
+  `RECENT_AUTH_REQUIRED`.
+
+The policy can only tighten the deployment's configuration; the fields are listed under
+[Tenant policies and limits](#tenant-policies-and-limits). It replaces the whole policy, so carry the existing
+fields over, and `null` clears it. It applies to existing sessions on their next use: requiring MFA locks out
+sessions that did not complete it, and sessions issued from outside a new IP allowlist stop working. The
+self-lockout guard checks both the address your session was issued from and the address of this request, so you
+cannot cut yourself off from your own organization.
+
+```ts
+const tenant = await iam.api.tenants.get(credential, { tenantId });
+await iam.api.tenants.setAuthPolicy(credential, {
+  tenantId,
+  authPolicy: { ...tenant.authPolicy, requireMfa: true, sessionIdleTimeoutMs: 30 * 60_000 },
+});
+```
+
+## setBoundary
+
+Sets a root-controlled permissions boundary on a tenant, capping what anyone in it or in any tenant below it may
+do.
+
+- **Permission:** `iam:boundaries:update` on the tenant, with recent authentication, and you must be a root
+  administrator.
+- **Audited as:** `iam:boundaries:update`.
+- **Errors:** `ACCESS_DENIED` for anyone but root; `INVALID_POLICY`, `INVALID_ACTION`, or `INVALID_RESOURCE_TYPE`
+  for a document the catalog rejects; `INVARIANT_VIOLATION` when the change would break an enforced
+  [access invariant](/docs/guides/governance/change-safety); `RECENT_AUTH_REQUIRED`.
+
+A <Term id="boundary">boundary</Term> never grants. When a request is evaluated, the boundaries of the tenant and
+every ancestor apply, so a boundary on an organization caps all of its projects. Use it for plan tiers or
+regulatory scopes that tenant administrators must not be able to widen. Root administrators are not limited by it.
+The call replaces the boundary; it cannot remove one. See [boundaries](/docs/guides/authorization/policies#boundaries).
+
+```ts
+// Tenants on this plan may never use the billing export, whatever their roles say.
+await iam.api.tenants.setBoundary(rootCredential, {
+  tenantId,
+  boundary: {
+    version: 1,
+    statements: [
+      { effect: 'allow', actions: ['*'], resources: ['*'] },
+      { effect: 'deny', actions: ['billing:export'], resources: ['*'] },
+    ],
+  },
+});
+```
+
+## setLimits
+
+Sets the tenant's plan limits, root only: how many people, service accounts, groups, roles, policies, registered
+resources, and webhooks it may hold.
+
+- **Permission:** `iam:tenants:update` on the tenant, and you must be a root administrator.
+- **Audited as:** `iam:tenants:update` and `tenant:limits` (with the new limits). A caller who is not root is
+  recorded as a denial.
+- **Errors:** `ACCESS_DENIED` for anyone but root; `INVALID_INPUT` for an unknown key or a value that is not a whole
+  number from 0 to 1,000,000,000; `INVALID_TRANSITION` for a deleted tenant.
+
+Omitted keys are unlimited and `null` clears every limit. Lowering a limit below current usage removes nothing; it
+only blocks further creation. The member limit counts active and disabled people, not deleted tombstones. Show
+current usage next to the limits with [`usage`](#usage).
+
+```ts
+await iam.api.tenants.setLimits(rootCredential, {
+  tenantId,
+  limits: { identities: 25, serviceAccounts: 5, webhooks: 3 },
+});
+```
+
+## setRegion
+
+Moves a tenant's home region in a multi-region deployment, root only, so its sign-in is served by that region from
+then on.
+
+- **Permission:** `iam:tenants:update` on the tenant, with recent authentication, and you must be a root
+  administrator.
+- **Audited as:** `iam:tenants:update` and `tenant:region` (with the effective region before and after). A caller who
+  is not root is recorded as a denial.
+- **Errors:** `ACCESS_DENIED` for anyone but root; `INVALID_INPUT` for a region the deployment does not know, when
+  regions are not configured, or for `null` on the root tenant; `INVALID_TRANSITION` for a deleted tenant;
+  `RECENT_AUTH_REQUIRED`.
+
+Descendants without a region of their own move with it; `null` makes the tenant inherit its parent's region again.
+The call changes where sign-in is served. When your regions share one database that is the whole move; when each
+region keeps its own database, copy the organization's data to the new region yourself before switching.
+
+```ts
+await iam.api.tenants.setRegion(rootCredential, { tenantId, region: 'eu-west-1' });
+```
+
+## setSlug
+
+Sets, changes, or removes the tenant's public sign-in alias.
+
+- **Permission:** `iam:tenants:update` on the tenant, with recent authentication.
+- **Audited as:** `iam:tenants:update`.
+- **Errors:** `SLUG_TAKEN` (409) when another tenant holds the alias; `INVALID_INPUT` for a badly formed slug;
+  `INVALID_TRANSITION` for a deleted tenant; `RECENT_AUTH_REQUIRED`.
+
+A slug is 1 to 63 lowercase letters, digits, or hyphens, neither starting nor ending with a hyphen, and unique
+across the whole installation; input is lowercased. The previous alias is released at once, so links and bookmarks
+that use it stop resolving and another tenant may claim it. `slug: null` removes the alias.
+
+## setStatus
+
+Suspends, reactivates, or deletes a tenant together with its whole subtree.
+
+- **Permission:** `iam:tenants:update` on the tenant to suspend or reactivate, `iam:tenants:delete` to delete;
+  recent authentication either way.
+- **Audited as:** the action checked, `iam:tenants:update` or `iam:tenants:delete`.
+- **Errors:** `INVALID_TRANSITION` for the root tenant, a deleted tenant, a pending tenant (which can only be
+  deleted), or an unknown status; `TENANT_INACTIVE` when reactivating under a parent that is not active;
+  `RECENT_AUTH_REQUIRED`.
+
+What each change does:
+
+- **Suspend** makes the tenant and every descendant unusable at once: sign-in and authorization are refused, and
+  every session and API key in the subtree is deleted, including role sessions sourced from it. Descendants keep
+  their own status, so they become usable again when the tenant is reactivated.
+- **Reactivate** lets people sign in again. Deleted sessions and API keys are not restored.
+- **Delete** marks the tenant and every descendant `deleted`, stamps `deletedAt` to start the retention window, and
+  deletes their sessions. The records stay until the retention worker (`purgeDeleted`, the `purge` CLI command,
+  30 days by default) removes them; audit records survive the purge. A deleted tenant cannot be changed again.
+
+Because authorization inside a suspended tenant is refused, only a root administrator can reactivate or delete it.
+See [scheduled jobs](/docs/operations/jobs) for running the retention worker.
+
+```ts
+await iam.api.tenants.setStatus(rootCredential, { tenantId, status: 'suspended' });
+```
+
+## update
+
+Renames a tenant.
+
+- **Permission:** `iam:tenants:update` on the tenant, with recent authentication.
+- **Audited as:** `iam:tenants:update`.
+- **Errors:** `INVALID_INPUT` for an empty name; `INVALID_TRANSITION` for a deleted tenant; `RECENT_AUTH_REQUIRED`.
+
+Other properties have their own calls: [`setSlug`](#setslug), [`setAuthPolicy`](#setauthpolicy),
+[`setAccessPolicy`](#setaccesspolicy), [`setLimits`](#setlimits), [`setBoundary`](#setboundary),
+[`reparent`](#reparent), and [`setStatus`](#setstatus).
+
+## usage
+
+Returns the tenant's current record counts next to its plan limits, for plan pages and metering.
+
+- **Permission:** `iam:tenants:read` on the tenant.
+- **Audited as:** `iam:tenants:read`.
+
+It counts people (`identities`: active and disabled, not deleted) and how many of them have MFA (`mfaEnrolled`: an
+enabled authenticator or at least one passkey), service accounts, groups, roles, policies, registered resources,
+relationships, webhooks, and unexpired user sessions (`activeSessions`). `limits` is `{}` when none are set. The
+counts are read from storage on every call, so cache them for dashboards rather than calling this on every
+request.

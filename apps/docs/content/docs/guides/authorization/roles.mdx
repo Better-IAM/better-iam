@@ -1,0 +1,299 @@
+---
+title: Roles and bindings
+description: Custom roles built from permission lists or policy documents, role inheritance, bindings to people and groups, and delegated grant authorities.
+icon: UserCog
+packages: ['@better-iam/server']
+sources:
+  - docs/policies.md
+  - packages/server/src/api/roles.ts
+  - packages/server/src/api/bindings.ts
+  - packages/server/src/decisions.ts
+  - packages/server/src/context.ts
+  - packages/server/src/api/identities.ts
+---
+
+Listing permissions person by person does not scale: when a new editor joins, someone has to remember every
+action an editor needs, and when the editor job changes, every editor has to be updated. Roles solve this. A
+<Term id="role">role</Term> is a named set of permissions for a job function, such as _Editor_ or _Approver_,
+defined once and given to everyone who does that job.
+
+A <Term id="binding">binding</Term> is what gives a role to someone: it links one role to one
+<Term id="identity">identity</Term> (a person or service account) or to one <Term id="group">group</Term>. A person
+receives every role bound to them directly or through a group they belong to. Change the role, and everyone who
+holds it changes with it.
+
+Roles are built from [policy documents](/docs/guides/authorization/policies), so a role can be a plain list of
+<Term id="action">actions</Term> or carry <Term id="condition">conditions</Term>. Every role, policy, and binding
+is also issued under a <Term id="authority">grant authority</Term>: the delegated right to hand out access, with a
+ceiling on what it may ever grant. That is how you let a team lead manage their own team's roles without making
+them an administrator.
+
+## Create a role
+
+Create one role per job function in your product. `roles.create` (requires `iam:roles:create`) stores a role and
+returns it, with its ID for bindings. A role grants the union of its attached policies and its optional inline
+document, and you describe its permissions in one of three ways:
+
+<Tabs items={['Permissions list', 'Inline document', 'Attached policies']}>
+<Tab value="Permissions list">
+
+A permissions list becomes an inline allow statement over every resource of the tenant (`resources: ['*']`). It is
+the usual shape for application roles.
+
+```ts
+const editor = await iam.api.roles.create(credential, {
+  tenantId,
+  name: 'Editor',
+  description: 'Reads and writes documents',
+  permissions: ['documents:read', 'documents:write'],
+});
+// editor.document:
+// { version: 1, statements: [{ sid: 'RolePermissions', effect: 'allow',
+//   actions: ['documents:read', 'documents:write'], resources: ['*'] }] }
+```
+
+</Tab>
+<Tab value="Inline document">
+
+Use a full document when access depends on conditions or should be limited to some resources.
+
+```ts
+const approver = await iam.api.roles.create(credential, {
+  tenantId,
+  name: 'Approver',
+  document: {
+    version: 1,
+    statements: [
+      {
+        sid: 'ApproveWithMfa',
+        effect: 'allow',
+        actions: ['invoices:approve'],
+        resources: ['invoice/*'],
+        conditions: { Bool: { 'principal.mfa': true } },
+      },
+    ],
+  },
+});
+```
+
+</Tab>
+<Tab value="Attached policies">
+
+Stored policies are versioned and reusable across roles. Attach them by ID.
+
+```ts
+const readOnly = await iam.api.policies.create(credential, {
+  tenantId,
+  name: 'Read documents',
+  document: { version: 1, statements: [{ effect: 'allow', actions: ['documents:read'], resources: ['document/*'] }] },
+});
+
+const auditor = await iam.api.roles.create(credential, {
+  tenantId,
+  name: 'Auditor',
+  policyIds: [readOnly.id],
+});
+```
+
+</Tab>
+</Tabs>
+
+Passing both `permissions` and `document` fails with `INVALID_INPUT`. Inline documents are validated against the
+[catalog](/docs/guides/authorization/catalog) and bounded by the role's grant-authority ceilings exactly like
+attached policies.
+
+To change what a job function may do, call `roles.update`. It accepts the same fields as `roles.create`:
+`document: null` removes the inline document, and `policyIds` replaces the attached set. Everyone who holds the
+role sees the change at their next request. `roles.get` and `roles.list` read roles back (`iam:roles:read`).
+
+When a job function no longer exists, `roles.delete` removes the role together with its bindings and their
+activations. It is refused with `RESOURCE_IN_USE` while another role inherits it or an
+<Term id="access-package">access package</Term> includes it. To see who would lose what before you delete or edit
+a role, use the <Term id="impact-preview">change impact preview</Term>
+([Change safety](/docs/guides/governance/change-safety)).
+
+## Role inheritance
+
+Job functions often build on each other: a _Manager_ does everything an _Editor_ does, plus approvals. Copying
+the editor's permissions into the manager role works until someone changes one and forgets the other.
+Inheritance avoids the copy. A role lists the roles it builds on in `inherits`, and grants the union of its own
+policies and document and, recursively, everything the roles it inherits grant.
+
+```ts
+const manager = await iam.api.roles.create(credential, {
+  tenantId,
+  name: 'Manager',
+  permissions: ['reports:export'],
+  inherits: [editor.id, approver.id],
+});
+
+// Replace the parents; an empty list clears inheritance.
+await iam.api.roles.update(credential, { tenantId, roleId: manager.id, inherits: [editor.id] });
+```
+
+- A role may inherit at most 20 direct parents, cannot inherit itself, and cannot form a cycle.
+- Protected roles, such as _Owner_, cannot be inherited (`PROTECTED_RESOURCE`).
+- Inherited grants are evaluated under the inheriting role's own authority ceilings as well as the inherited
+  role's. A delegated administrator who makes their role inherit a broader one gets no more than their ceiling
+  allows.
+- A role that others inherit cannot be deleted (`RESOURCE_IN_USE`) until they stop inheriting it.
+- Configuration sync carries `inherits` by name and applies it once every role of the document exists, so a parent
+  and its child can be introduced together.
+
+## Bindings
+
+A role grants nothing until it is bound to someone. A binding gives one role to one subject: an identity
+(`subjectType: 'identity'`) or a group (`subjectType: 'group'`, which applies to every live member). Binding roles
+to groups is usually the better habit: people then gain and lose the role as they join and leave the group,
+without anyone editing bindings.
+
+`bindings.create` creates a binding. It requires `iam:bindings:create` on the role (`iam/{roleId}`), so you can
+let someone hand out some roles and not others, and it records the binding under the caller's grant authority:
+
+```ts
+// A person
+await iam.api.bindings.create(credential, {
+  tenantId,
+  roleId: editor.id,
+  subjectType: 'identity',
+  subjectId: alice.id,
+});
+
+// A group: every current and future member receives the role
+await iam.api.bindings.create(credential, {
+  tenantId,
+  roleId: auditor.id,
+  subjectType: 'group',
+  subjectId: finance.id,
+});
+```
+
+By default a binding applies at all times until it is removed. For access that should not last forever, a binding
+can be narrower than "always":
+
+| Option | Effect | Details |
+| --- | --- | --- |
+| `expiresAt` | Stops granting at that time. | [Temporary access](/docs/guides/authorization/temporary-access#expiring-bindings) |
+| `startsAt` | Grants nothing until then. | [Temporary access](/docs/guides/authorization/temporary-access#future-dated-bindings) |
+| `window` | An <Term id="access-window">access window</Term>: applies only inside recurring hours in a time zone. | [Temporary access](/docs/guides/authorization/temporary-access#access-windows) |
+| `eligible` | An <Term id="eligible-binding">eligible binding</Term>: grants nothing until the subject activates it, for a bounded time. | [Just-in-time elevation](/docs/guides/privileged-access/elevation) |
+
+`bindings.delete` (`iam:bindings:delete`) takes a role away, and `bindings.update` changes a binding's dates,
+window, or eligibility. Both are allowed only to the administrator whose authority issued the binding, or to
+root; anyone else gets `ACCESS_DENIED` ("Cannot mutate a higher authority binding"). That keeps a junior
+administrator from undoing a senior one's grants. Protected roles are never bound this way
+(`PROTECTED_RESOURCE`); ownership has [its own API](#the-owner-role).
+
+### Who holds what
+
+Reviews and support questions come down to "what can this person do?" and "who has this role?". These
+administrative reads answer them, and all require `iam:bindings:read`:
+
+- `identities.listBindings({ tenantId, identityId })` returns the effective role set of one person, including
+  roles that reach them through groups. Each entry carries `via` (`'identity'` or the group), the `role`, and,
+  where they apply, the live `activation`, a `pendingActivation`, and `inWindow`.
+- `roles.listBindings({ tenantId, roleId })` shows who holds a role, with a summary of each person or group.
+- `bindings.list` searches bindings across the tenant, filtered by `roleId`, `subjectType`, `subjectId`,
+  `eligible`, and `expiresBefore` (for "what ends this month?").
+
+Expired bindings are omitted unless you pass `includeExpired: true` to `bindings.list`. To see what a person can
+actually do on a specific resource, after conditions and boundaries, use
+[`policies.effectiveActions`](/docs/guides/authorization/reviews#what-can-a-person-do).
+
+### Groups and deny statements
+
+A group binding reaches every live member, including deny statements in the role. Adding or removing a member can
+therefore grant or remove denies, so group membership changes require `iam:groups:update` on the group and
+authority over the group's bindings, not just the right to edit the group's name.
+
+## Grant authorities
+
+In a growing organization, not every administrator should be able to grant everything. A support lead should be
+able to give support roles to their team, but never make someone a tenant administrator. Grant authorities are
+how Better IAM delegates the right to grant, with a cap.
+
+Every role, policy, and binding records the grant authority it was created under, and each authority has a
+**ceiling**: a policy document that bounds everything issued under it. Whatever a role says, a binding issued
+under a narrow authority grants no more than that authority's ceiling allows. Ceilings chain: an authority
+delegated from another is bounded by its own ceiling and every ceiling above it.
+
+`authorities.create` delegates a new authority to a person:
+
+```ts
+// Give the support lead authority to grant support roles, and nothing else.
+await iam.api.authorities.create(credential, {
+  tenantId,
+  identityId: supportLead.id,
+  ceiling: {
+    version: 1,
+    statements: [{ effect: 'allow', actions: ['tickets:*', 'customers:read'], resources: ['*'] }],
+  },
+});
+```
+
+The authority caps what the support lead's grants can reach; it does not give them the right to grant. They also
+need a role that allows `iam:bindings:create` on the support roles. The two together mean: "may bind these roles,
+and whatever those roles say, the result never exceeds tickets and customer reads".
+
+- `authorities.create` requires `iam:authorities:create` on the identity and a recently authenticated session.
+  Nobody but root can issue authority to themselves. The new authority is a child of one of the caller's own
+  (`parentAuthorityId` picks which), so delegation creates a narrower child authority while retaining its parent
+  chain.
+- `authorities.revoke` withdraws an authority, for example when the support lead changes teams. It requires
+  recent authentication and is allowed only to the holder of the parent authority (or root).
+- A caller with no active authority cannot create roles, policies, or bindings (`GRANT_AUTHORITY_REQUIRED`).
+  Root administrators receive a root-issued, unrestricted authority automatically.
+
+Grant authorities are retained as references, including the creator's authority for policies and roles. That has
+three consequences:
+
+- **Edits stay with their authority.** A role or policy can be edited only by the holder of the authority that
+  created it, or by root. A lower-authority editor cannot broaden a policy after a superior attaches it, and a
+  higher authority attaching a lower authority's policy keeps the limits under which that policy was created.
+- **Revocation cascades.** Removing a person's delegation authority disables every
+  <Term id="grant">grant</Term> that depends on it at the next request. An API key also retains its issuing
+  authority's ceiling, and every check it makes is denied once that authority is revoked.
+- **Membership is not authority.** Removing an administrator's membership alone does not delete access they
+  provisioned earlier; revoke their authority to disable it.
+
+A ceiling works like any other <Term id="boundary">boundary</Term>: it constrains and never grants access. There is
+no arbitrary policy-containment solver, so a ceiling is not proved to contain a role when the role is created.
+Instead, it is applied as a boundary whenever a request is evaluated. See
+[Boundaries](/docs/guides/authorization/policies#boundaries).
+
+## The Owner role
+
+Every tenant needs someone who can always fix its configuration, even after a bad policy edit. That is the
+_Owner_: a protected role backed by the protected _Owner_ policy, which allows everything. So that nobody can lock
+the tenant out by accident or on purpose, owner role definitions are protected: they cannot be updated, deleted,
+inherited, bound with `bindings.create`, requested, packaged, assumed, or named in a separation-of-duties rule.
+
+Ownership changes go through its dedicated API instead. `identities.setOwner({ tenantId, identityId, owner })`
+makes a person an owner (`owner: true`) or removes their ownership (`owner: false`). It requires
+`iam:identities:update` and recent authentication, only an owner (or root) may call it, and it refuses to remove
+the last active owner (`LAST_OWNER`).
+
+## Assuming a role
+
+Sometimes a person or service needs a role only for one task, or needs to act inside another tenant. Instead of
+binding the role, a trusted identity can take it on temporarily through
+<Term id="role-assumption">role assumption</Term>, in a role session whose permissions are exactly the role's.
+Trusts, `roles.assume`, and their limits are covered in
+[Temporary access](/docs/guides/authorization/temporary-access#role-sessions).
+
+## Next steps
+
+<Cards>
+  <Card title="Policy documents" href="/docs/guides/authorization/policies">
+    Statements, conditions, variables, and boundaries.
+  </Card>
+  <Card title="Separation of duties" href="/docs/guides/authorization/separation-of-duties">
+    Stop anyone from holding two conflicting roles.
+  </Card>
+  <Card title="Access packages" href="/docs/guides/privileged-access/access-packages">
+    Grant bundles of roles and group memberships together.
+  </Card>
+  <Card title="Roles API" href="/docs/reference/api/roles">
+    Every roles method with its signature.
+  </Card>
+</Cards>

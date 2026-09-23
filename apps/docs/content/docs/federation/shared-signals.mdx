@@ -1,0 +1,233 @@
+---
+title: Shared Signals
+description: Push signed CAEP and RISC security events about a tenant's people to SIEMs, applications, and partner IdPs as sessions end and accounts change.
+icon: RadioTower
+packages: ['@better-iam/oauth']
+sources: ['docs/protocols.md', 'docs/enterprise.md', 'packages/oauth/src/ssf.ts']
+---
+
+Revoking a <Term id="session">session</Term> in Better IAM ends it here, but other systems keep their own state. An
+app that turned an ID token into its own cookie still thinks the person is signed in. A partner identity provider
+(IdP) still trusts the account. The company's security team never hears, in their security information and event
+management system (SIEM), that a password was reset. Without a signal, those systems find out hours later, or
+never.
+
+The **OpenID Shared Signals Framework (SSF)** is the standard for sending such signals between systems. It defines
+two sets of event types:
+
+- **CAEP** (Continuous Access Evaluation Profile) covers events that should make a receiver re-check an active
+  session right now, such as "this session was revoked" or "this person's credentials changed".
+- **RISC** (Risk Incident Sharing and Coordination) covers account-level events, such as "this account was
+  disabled", "deleted", or "its email address changed".
+
+Each event travels as a **Security Event Token (SET, RFC 8417)**: a small JSON Web Token (JWT) signed by the
+sender, so the receiver can verify where it came from. Better IAM pushes SETs to the receiver's HTTPS endpoint
+(push delivery, RFC 8935) and retries until they are accepted.
+
+`createSharedSignalsTransmitter` makes Better IAM an SSF **transmitter**. It turns IAM activity (sessions revoked,
+credentials changed, identifiers changed, accounts disabled or deleted) into signed SETs and pushes them to each
+<Term id="tenant">tenant</Term>'s receivers. The activity comes from the same audit events that feed the
+<Term id="audit-chain">audit chain</Term> and <Term id="webhook">webhooks</Term>.
+
+**Who configures it.** Your team sets up the transmitter and its delivery job once. Tenant administrators (often
+the customer's IT or security team) then add **streams**, one per receiver, with the endpoint and credentials the
+receiver's operator gives them.
+
+## Set up the transmitter
+
+Create the transmitter with the host callbacks and a signing key, connect it to IAM's events, and schedule its
+retries. The example also creates a first stream, which an administrator would normally do from your admin UI:
+
+```ts title="signals.ts"
+import { createSharedSignalsTransmitter, sharedSignalEvents } from 'better-iam/oauth';
+
+export const signals = createSharedSignalsTransmitter({
+  ...iam.protocolHost,
+  issuer: 'https://id.example.com/oidc', // usually the OAuth issuer; its /jwks publishes the public keys
+  jwks: secrets.privateSigningJwks,
+  encryptionKey: secrets.base64Encoded32ByteKey,
+});
+signals.subscribe(iam.events); // publish as IAM events are dispatched
+setInterval(() => void signals.dispatch(), 60_000).unref(); // retries
+
+await signals.createStream(credential, {
+  tenantId,
+  name: 'Acme SIEM',
+  endpointUrl: 'https://siem.acme.com/ssf/events',
+  authorization: 'Bearer receiver-issued-token',
+  events: [sharedSignalEvents.sessionRevoked, sharedSignalEvents.credentialChange],
+  subjectFormat: 'email',
+});
+```
+
+<TypeTable
+  type={{
+    issuer: { type: 'string', description: 'Who the events come from, written into every SET as iss. Usually the OAuth issuer. Receivers check it.', required: true },
+    jwks: { type: '{ keys: JWK[] }', description: 'Private signing keys. The first private key with an alg signs every SET.', required: true },
+    jwksUri: { type: 'string', description: 'Where receivers fetch the public keys to verify SETs.', default: '{issuer}/jwks' },
+    encryptionKey: { type: 'string', description: "Base64-encoded 32-byte key that encrypts receivers' authorization headers at rest.", required: true },
+    timeoutMs: { type: 'number', description: 'How long one delivery may take before it counts as failed and is retried.', default: '10000' },
+    allowInsecureLocalhost: { type: 'boolean', description: 'Allow http:// receivers on loopback addresses, for development and tests.', default: 'false' },
+    fetch: { type: 'typeof fetch', description: 'A custom fetch implementation, for example to add an egress proxy.' },
+    'store, authorize, authenticate': { type: 'host callbacks', description: 'Database access and the permission checks for stream management. Supplied by iam.protocolHost.', required: true },
+  }}
+/>
+
+When the transmitter shares the OAuth provider's issuer and keys, the provider's `/jwks` already publishes the
+public half. Otherwise publish it yourself at `jwksUri`.
+
+Three functions move events:
+
+- `subscribe(iam.events, { onError? })` listens to IAM events, turns matching ones into SETs, and delivers them at
+  once. Call it at startup. It returns an unsubscribe function.
+- `dispatch({ limit? })` sends deliveries that are due, including retries (at most 200 per call by default), and
+  prunes delivered records older than a week. Run it on an interval; see
+  [Protocol jobs](/docs/operations/jobs#protocol-jobs).
+- `publish(auditEvent)` queues SETs for one audit event yourself, for example when replaying events, and returns
+  the number of streams addressed.
+
+### Serve the transmitter metadata
+
+Receivers learn about a transmitter from a standard metadata document. `signals.handler(request)` serves it at
+`/.well-known/ssf-configuration{issuer path}` and returns `undefined` for every other request. Put it in front of
+your other handlers:
+
+```ts
+export async function handle(request: Request): Promise<Response> {
+  return signals.handler(request) ?? (await iam.handler(request));
+}
+```
+
+The document names the `issuer`, the `jwks_uri`, push delivery (`urn:ietf:rfc:8935`) as the only delivery method,
+`spec_version: "1_0"`, and `default_subjects: "ALL"`.
+
+## Event mapping
+
+The transmitter watches for these audit actions and turns each into one standard event. Other activity, including
+SCIM provisioning changes, produces no event.
+
+| IAM activity | Audit actions | Event |
+| --- | --- | --- |
+| Sign-out of a session, "sign out other devices", administrator session revocation, tenant-wide revocation | `auth:session:revoke`, `auth:session:revoke-others`, `identity:revoke-sessions`, `tenant:revoke-sessions` | CAEP `session-revoked` |
+| Password changed or reset | `auth:password:change`, `auth:password:reset` | CAEP `credential-change` (`credential_type: password`, `change_type: update`) |
+| Authenticator app added or removed | `auth:mfa:enable`, `auth:mfa:disable` | CAEP `credential-change` (`credential_type: app`, `change_type: create` or `delete`) |
+| Passkey added or removed | `auth:passkey:create`, `auth:passkey:delete` | CAEP `credential-change` (`credential_type: fido2-platform`, `change_type: create` or `delete`) |
+| Email address changed, by the person or an administrator | `auth:email:change`, `identity:email-change` | RISC `identifier-changed` |
+| Offboarding, scheduled expiry | `identity:offboard`, `identity:expire` | RISC `account-disabled` |
+| Deletion | `identity:delete` | RISC `account-purged` |
+
+Only allowed (successful) actions produce events. The `sharedSignalEvents` export names the five event type URIs,
+for a stream's `events` list: `sessionRevoked`, `credentialChange`, `identifierChanged`, `accountDisabled`, and
+`accountPurged`.
+
+What receivers typically do with them: end their own session on `session-revoked`, ask for a fresh sign-in or
+flag the account on `credential-change`, update their copy of the email on `identifier-changed`, and block or
+remove the account on `account-disabled` and `account-purged`.
+
+## What receivers get
+
+Receivers verify the signature with your public keys, then read who the event is about and what happened. Each SET
+is signed with the first private key that has an `alg`, with `typ: secevent+jwt` and the key's `kid`.
+Decoded, a session revocation looks like this:
+
+```json
+{
+  "iss": "https://id.example.com/oidc",
+  "aud": "https://siem.acme.com/ssf/events",
+  "jti": "0b6f5e1c-4d0a-4a8b-9f3e-7c2d1e5a9b40",
+  "iat": 1790000000,
+  "txn": "audit-event-id",
+  "sub_id": { "format": "iss_sub", "iss": "https://id.example.com/oidc", "sub": "identity-id" },
+  "events": {
+    "https://schemas.openid.net/secevent/caep/event-type/session-revoked": {
+      "event_timestamp": 1790000000,
+      "initiating_entity": "admin"
+    }
+  }
+}
+```
+
+- `aud` is the stream's `audience`, which defaults to its endpoint URL.
+- `txn` is the ID of the IAM audit event that caused it, so receivers can correlate with your
+  [audit log](/docs/guides/events/audit-chain).
+- `sub_id` says who the event is about. It is `{ format: "iss_sub", iss, sub: identityId }` by default, or
+  `{ format: "email", email }` when the stream asks for `subjectFormat: 'email'` and the address still exists.
+  Tenant-wide revocation uses a `complex` subject naming the tenant.
+- `event_timestamp` is when the activity happened. `initiating_entity` is `user` when the person acted on their own
+  account, otherwise `admin`.
+
+## Streams
+
+A stream is one receiver of one tenant's events: the customer's SIEM, one of their applications, a partner IdP.
+Administrators configure streams, usually from a settings screen in your admin UI; receivers cannot create or change
+them.
+
+<TypeTable
+  type={{
+    tenantId: { type: 'string', description: 'The organization whose events the stream receives. A stream never sees other tenants.', required: true },
+    name: { type: 'string', description: 'A label for administrators, up to 200 characters.', required: true },
+    endpointUrl: { type: 'string', description: "The receiver's HTTPS push endpoint (RFC 8935), which the receiver's operator gives you.", required: true },
+    audience: { type: 'string', description: 'The aud of the events. Set it when the receiver expects a specific value.', default: 'endpointUrl' },
+    authorization: { type: 'string', description: 'Sent as the Authorization header with every delivery, usually a bearer token the receiver issued. Encrypted and write-only.' },
+    events: { type: 'string[]', description: 'Which event types to send. A SIEM usually wants all; an app may only need session-revoked.', default: 'all five' },
+    subjectFormat: { type: "'iss_sub' | 'email'", description: 'How people are identified: by issuer and identity ID, or by email for receivers that key accounts by email.', default: "'iss_sub'" },
+    enabled: { type: 'boolean', description: 'false pauses delivery, for receiver maintenance. Events keep collecting and are delivered after re-enabling.', default: 'true' },
+  }}
+/>
+
+| Method | Permission on `ssf/{streamId}` | What it does and when to use it |
+| --- | --- | --- |
+| `createStream(credential, input)` | `iam:ssf:streams:create` | Adds a receiver. |
+| `listStreams(credential, { tenantId })` | `iam:ssf:streams:read` | Lists streams with health fields: `pending` deliveries, `lastDeliveredAt`, `lastError`, and `hasAuthorization`. Use it for a status page. |
+| `getStream(credential, { tenantId, streamId })` | `iam:ssf:streams:read` | Reads one stream. |
+| `updateStream(credential, { tenantId, streamId, ...changes })` | `iam:ssf:streams:update` | Changes settings, pauses or resumes, or replaces the header. `authorization: null` removes the header. |
+| `deleteStream(credential, { tenantId, streamId })` | `iam:ssf:streams:delete` | Removes the stream and drops its undelivered events. |
+| `verifyStream(credential, { tenantId, streamId, state? })` | `iam:ssf:streams:update` | Sends an SSF verification event right away and reports whether the receiver accepted it. Use it after setup to test the endpoint, credentials, and keys in one call. |
+| `listDeliveries(credential, { tenantId, streamId, status?, limit? })` | `iam:ssf:streams:read` | Recent deliveries, newest first (default 50, at most 500), filterable by `pending`, `delivered`, or `failed`. Use it to debug a receiver. |
+
+Stream changes are audited as `iam:ssf:CreateStream`, `iam:ssf:UpdateStream`, and `iam:ssf:DeleteStream`. The
+receiver's `authorization` header is encrypted with `encryptionKey` and never returned. Endpoints must use HTTPS
+(`allowInsecureLocalhost` allows loopback HTTP for development).
+
+`verifyStream` sends a verification event whose `state` echoes back to the receiver, and returns
+`{ delivered, error?, jti }`.
+
+## Delivery
+
+Receivers go offline for maintenance, so delivery is queued and retried rather than attempted once. Each delivery
+moves through these states:
+
+```mermaid
+stateDiagram-v2
+  [*] --> pending: published
+  pending --> delivered: 202, 200, or 204
+  pending --> pending: error, retry with backoff
+  pending --> failed: eighth failed attempt
+  delivered --> [*]: pruned after a week
+```
+
+- Deliveries are `POST` requests with `Content-Type: application/secevent+jwt` and the stream's `authorization`
+  header. Redirects are not followed.
+- They expect `202`, and also accept `200` and `204`. Any other answer records `HTTP` and the status, with the
+  receiver's `err` and `description` when it sends them, as the stream's `lastError`.
+- Failures retry with backoff: 30 seconds, 2 minutes, 8 minutes, about 30 minutes, then every 2 hours, for eight
+  attempts in total. After that the delivery is `failed`.
+- A paused stream (`enabled: false`) keeps collecting events and delivers them after it is re-enabled. Deleting a
+  stream drops its queue. A suspended tenant's deliveries fail and retry.
+
+## Not offered
+
+Receiver-driven stream management (the SSF stream configuration API, where a receiver creates its own stream) and
+poll delivery (where a receiver fetches events) are not offered: streams are configured by administrators, and
+events are pushed.
+
+## Next steps
+
+<Cards>
+  <Card title="Enterprise onboarding" href="/docs/federation/enterprise-onboarding#offboarding-end-to-end">
+    How Shared Signals fits into offboarding with SCIM and back-channel logout.
+  </Card>
+  <Card title="Webhooks" href="/docs/guides/events/webhooks">
+    Deliver every audit event, not only security events, to your own services.
+  </Card>
+</Cards>

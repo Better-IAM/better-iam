@@ -1,0 +1,201 @@
+---
+title: Database operations
+description: Migrations, transactions, durability, indexes, upgrades, backups, and PostgreSQL integration checks for the database behind Better IAM.
+icon: Database
+packages: ['@better-iam/core', '@better-iam/adapter-postgres', '@better-iam/adapter-sqlite', '@better-iam/adapter-libsql']
+sources: ['docs/deployment.md', 'docs/architecture.md', 'packages/core/src/sql.ts', 'packages/core/src/storage.ts', 'packages/server/src/lifecycle.ts', 'packages/adapter-sqlite/src/index.ts', 'packages/adapter-postgres/src/index.ts', 'packages/adapter-libsql/src/index.ts']
+---
+
+Better IAM keeps all of its state in one table of your database, `iam_records`, as JSON documents grouped by
+collection. Relationships between records are enforced by the services under transaction isolation, not by
+foreign keys, so the rule for operators is simple: change IAM data only through the API, the CLI, or the
+<Term id="adapter">storage adapter</Term> contract. Raw SQL writes can violate integrity and revocation guarantees.
+
+## Migrations
+
+Each release may need new tables or indexes, and old records may need backfilling. Run migrations deliberately, as
+a step of every deploy, before the new release serves traffic:
+
+```sh
+better-iam migrate --config better-iam.config.mjs
+```
+
+`migrate` calls `iam.initialize()`, which is idempotent. It:
+
+1. applies the built-in schema steps that have not run yet, each recorded by name in the `iam_migrations` table;
+2. runs every plugin's `migrate` callback in its own transaction;
+3. starts the retention window of tenants deleted before retention timestamps existed;
+4. chains audit events recorded before the <Term id="audit-chain">audit chain</Term> existed, in one transaction. The first `initialize()` after
+   upgrading to a chained version backfills the whole log, so on very large logs run it in a maintenance window.
+
+| Step | What it creates |
+| --- | --- |
+| `0001_records` | The `iam_records` table (primary key collection and id, unique collection, tenant, and natural key) and a tenant index. |
+| `0002_query_indexes` | Tenant and natural-key indexes, plus the lookup indexes: one partial expression index per hot field on SQLite and libSQL, one `jsonb_path_ops` GIN document index on PostgreSQL. |
+| `0003_ordered_indexes` | Tenant-scoped indexes on `timestamp` and `sequence` for ordered audit reads. |
+| `0004_expiry_indexes` | Collection-wide indexes on `expiresAt`, `deliveredAt`, and `failedAt` for the retention sweep. |
+| `0005_lookup_indexes` | `sourceSessionId` and `trustId` indexes on SQLite and libSQL for session cascades (PostgreSQL's document index already covers them). |
+
+A released step never changes; new fields get a new step. The schema version itself lives in
+`iam_schema_version`, and a database with an unsupported version is refused with `SCHEMA_VERSION`.
+
+### Upgrading an existing database
+
+<Callout type="warn" title="Plan a maintenance window for index migrations">
+`0002_query_indexes` and `0004_expiry_indexes` build their indexes inside the migration transaction. On large
+tables that blocks IAM writes, but not reads, for the duration.
+</Callout>
+
+- On PostgreSQL, `0002_query_indexes` first rewrites existing rows that need the value encoding described below.
+- A migration waits up to ten minutes for another instance's migration to finish.
+- Instances of the previous release keep working during a rolling upgrade. On PostgreSQL they would read encoded
+  values raw, which only matters for records holding U+0000 or unpaired surrogates.
+- `doctor` reports `schema-behind` (an error) whenever the database lacks a step of the running release.
+
+## Transactions and consistency
+
+Security checks such as "is this one-time token still unused" only work if no other request can change the answer
+between the check and the write. All adapters therefore serialize IAM transactions: SQLite takes an immediate writer lock, libSQL takes the writer lock
+(`BEGIN IMMEDIATE`) before any read, and PostgreSQL uses a transaction-scoped advisory lock that also serializes
+other adapter instances. Check-and-write operations such as token consumption and last-owner protection depend on
+this, so every instance that touches these tables must go through the adapter.
+
+- **No network calls inside transactions.** Avoid them in your own transactional code too. External side effects
+  belong in the <Term id="outbox">outbox</Term> or after commit; delivery callbacks already run outside the write transaction.
+- **No distributed cache to invalidate.** Token validity and the current role and policy state are read on every
+  use, so a revocation takes effect on the next request everywhere.
+- **Session activity is throttled.** Validating a session updates its `lastSeenAt` at most once a minute, or once
+  per tenth of the idle timeout when that is shorter. Busy clients do not turn every request into a write, and
+  idle expiry stays accurate to that interval.
+
+## Durability
+
+A revocation that is lost in a crash gives access back, so committed IAM writes must survive power loss. The
+defaults keep them durable:
+
+<Tabs items={['SQLite', 'PostgreSQL', 'libSQL']} groupId="database">
+<Tab value="SQLite">
+
+File databases run in write-ahead-log mode with `synchronous = FULL` by default: readers in other processes never
+block the writer, and a committed transaction survives power loss.
+
+- `sqliteAdapter({ journalMode: 'delete' })` restores the rollback journal, for example on network file systems
+  that cannot share WAL memory.
+- `durability: 'normal'` trades the last transactions before a power failure for faster commits. In WAL mode that
+  never corrupts the database.
+- With `journalMode: 'delete'`, keep `durability: 'full'`: a power failure at NORMAL can corrupt a
+  rollback-journal database. `doctor` reports this combination as the error `sqlite-durability`.
+
+</Tab>
+<Tab value="PostgreSQL">
+
+Keep `synchronous_commit` on. With `synchronous_commit = off`, a crash can lose recently committed transactions,
+including revocations, and `doctor` reports the warning `postgres-async-commit`.
+
+</Tab>
+<Tab value="libSQL">
+
+Local libSQL files behave like SQLite files. Remote Turso and sqld databases queue write transactions on the
+server, and embedded replicas keep a local file in sync with a remote URL. Durability of remote data is the
+server's.
+
+</Tab>
+</Tabs>
+
+An in-memory database (`:memory:`) is reported by `doctor` as the warning `in-memory-database`: everything is
+lost when the process exits.
+
+## Queries and indexes
+
+IAM looks records up on every request, so these lookups must stay fast as the data grows. Record lookups run in
+SQL. Scalar filter fields become typed JSON conditions, and results are paged in SQL
+whenever the whole filter can be expressed there. Hot lookup fields are indexed: session token hashes, identity
+and group ids, email addresses, OAuth artifact hashes, and the rest of `INDEXED_FIELDS` in `better-iam/core`.
+SQLite and libSQL use one partial expression index per field; PostgreSQL uses a single `jsonb_path_ops` GIN
+index over the document plus B-tree indexes on tenant and natural key.
+
+Audit listings, exports, and retention pruning page through events in timestamp or sequence order in SQL
+(`IamStore.findOrdered`), so their cost follows the page size rather than the length of the log.
+
+- **PostgreSQL pending list.** Rows written after the GIN index exists wait in its pending list until a vacuum
+  merges them. Autovacuum does this in normal operation. After a bulk import, run `VACUUM ANALYZE iam_records` so
+  lookups use the index immediately.
+- **PostgreSQL value encoding.** `jsonb` cannot hold U+0000 or unpaired surrogates, so the PostgreSQL adapter
+  stores such strings, and object keys, in a reversible encoding (`encodeJsonbDocument` in `better-iam/core`) and
+  decodes them on every read. Applications see the original values. Filters on such values are evaluated in
+  memory.
+- **libSQL write cost.** `@libsql/client` compiles each statement on every call, and SQLite compile time grows
+  with the number of indexes an insert maintains. Local libSQL writes therefore cost more than the SQLite
+  adapter's, which caches prepared statements.
+
+## Retention
+
+Sign-ins, OAuth and SAML flows, and deliveries leave records behind after they stop mattering. Without a sweep,
+storage and some scans grow with traffic (`dispatchOutbox`, for example, reads the whole outbox). Schedule
+`sweep` and `purge`; see [Scheduled jobs](/docs/operations/jobs#retention-sweep) for exactly what each deletes and
+what is never deleted by age.
+
+## Backups
+
+- **Back up the database** with your usual tooling, and test restores. Records are only consistent as a whole, so
+  restore a whole database, never individual rows.
+- **Back up the keys with it.** The deployment `secret` (and any `previousSecrets`) opens authenticator secrets,
+  webhook secrets, and queued deliveries. A restored database without its secret has enrolled factors and pending
+  messages nobody can read. OAuth and SAML keys need the same care.
+- **Portable snapshots.** `better-iam store-export` writes every record to a JSON Lines file in one consistent
+  transaction, and `store-import` loads it into an empty database. A snapshot holds credential hashes and
+  encrypted secrets, so protect it like the database itself. See
+  [Storage adapters](/docs/operations/storage#snapshots-and-moving-between-databases).
+- **Keep audit history independently.** Archive each tenant's audit chain outside the database with
+  [`audit-archive`](/docs/operations/jobs#continuous-audit-archiving), so a restored or tampered database cannot
+  rewrite what was already archived.
+
+## Measuring
+
+`instrumentStore(store, onCall)` from `better-iam/core` wraps any store and reports every read, write,
+`collections`, and `describe` call, with its collection, filter keys (never values), record count, and
+duration. Use it for slow-query logs and capacity planning.
+
+```ts
+import { instrumentStore } from 'better-iam/core';
+import { postgresAdapter } from 'better-iam/adapter-postgres';
+
+const database = instrumentStore(
+  postgresAdapter({ connectionString: process.env.DATABASE_URL! }),
+  (call) => {
+    if (call.durationMs > 50) logger.warn('slow IAM storage call', call);
+  },
+);
+```
+
+`pnpm bench:scale` seeds a deployment of `BENCH_IDENTITIES` identities (default 5000) and prints per-operation
+latency and storage calls over `BENCH_ITERATIONS` runs of each operation (default 40).
+
+## PostgreSQL integration checks
+
+The PostgreSQL-only tests run against a real server:
+
+```sh
+BETTER_IAM_POSTGRES_URL=postgres://localhost/better_iam_test pnpm test:postgres
+```
+
+- Point `BETTER_IAM_POSTGRES_URL` at an isolated test database. Tests use namespaced records and separate pools.
+- The adapter conformance suite gives each case its own schema when the server honors the connection `options`
+  parameter, and falls back to per-case collection prefixes otherwise. `BETTER_IAM_POSTGRES_POOL_SIZE` sets its
+  pool size (default 3).
+- The normal suite explicitly skips PostgreSQL-only cases when the variable is absent. CI runs a dedicated
+  PostgreSQL service job.
+
+## Next steps
+
+<Cards>
+  <Card title="Storage adapters" href="/docs/operations/storage">
+    Adapter options, snapshots between databases, and every doctor finding.
+  </Card>
+  <Card title="Scheduled jobs" href="/docs/operations/jobs">
+    The purge and sweep jobs that keep storage from growing with traffic.
+  </Card>
+  <Card title="Secrets and keys" href="/docs/operations/deployment/secrets">
+    The keys to back up together with the database.
+  </Card>
+</Cards>

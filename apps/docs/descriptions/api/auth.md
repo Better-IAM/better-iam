@@ -1,0 +1,545 @@
+# auth
+
+The `auth` group signs people in and lets them manage their own account security: passwords, one-time codes, passkeys, MFA, sessions, and recovery. It is what your login page, your account settings page, and the links in your recovery emails call.
+
+Unlike the other groups, these methods are not checked against `iam:*` permissions. Each one is either public, because the caller is still proving who they are (sign-up, sign-in, MFA challenges, email links), or it acts only on the caller's own session and account. No method takes another person's ID: administrators manage other people's accounts through [`identities`](/docs/reference/api/identities) (`revokeSessions`, `requestPasswordReset`, `unlock`) and set the rules with [`tenants.setAuthPolicy`](/docs/reference/api/tenants#setauthpolicy).
+
+Changes are recorded as `auth:*` audit events with the person as actor and resource, and with `impersonatorId` when an administrator acted through [impersonation](/docs/guides/authentication/impersonation). They are written only when something happens, never as denials. The one kind of failure that is recorded is `auth:signin:fail`: an attempt that named a real, active account with a wrong password, code, or recovery code. The events land in the tenant's audit log, fan out to webhooks like every other event, and people read their own with `listSecurityEvents`.
+
+Over HTTP every method is `POST {basePath}/auth/{method}`. Methods that issue a session set the session cookie, and a remembered-device token travels in a cookie of its own (see [HTTP behaviour](/docs/guides/authentication/http)). The HTTP handler records the client's IP address and user agent for you. When you call these methods in-process, pass `{ headers: request.headers }` as the credential of an authenticated method, or wrap a public call in `iam.auth.withClient({ ip, userAgent }, fn)`, so network rules, per-address rate limits, and the sign-in record see the real client.
+
+## Sign-in flow and MFA challenges
+
+Every way of signing in ends the same way. Once the first factor checks out (a password, a passwordless code or link, or a federated assertion), Better IAM decides whether the person also needs a second factor. MFA is required for root administrators, for anyone with an authenticator enrolled, and for people the tenant policy (`requireMfa`, or `requireMfaForOwners` for owners) or the deployment's `requireMfa` callback covers. The result, a `SignInResult`, has one of two shapes:
+
+- A session: `{ token, session }`. The token is the bearer secret, returned once (only its hash is stored); `session` is the stored session without its secret-derived fields.
+- An MFA challenge: `{ mfaRequired: true, challenge, enrollmentRequired, emailCodeAvailable?, passkeyAvailable? }`. The `challenge` is a single-use token, valid for five minutes, proving that the first factor passed. It is not a session: it only unlocks the calls below.
+
+| The challenge says | Next call |
+| --- | --- |
+| `enrollmentRequired: false` (an authenticator is enrolled) | `verifyMfa` with a code from the authenticator, or `recoverMfa` with a recovery code |
+| `enrollmentRequired: true` (nothing enrolled) | `beginMfa`, then `confirmMfa`, to enroll an authenticator on the spot |
+| `emailCodeAvailable: true` | `requestMfaCode`, then `verifyMfa` with the emailed code |
+| `passkeyAvailable: true` | `beginPasskeyMfa`, then `finishPasskeyMfa` |
+
+A passkey sign-in (`finishPasskeyAuthentication`) skips this step: a user-verified passkey counts as both factors, so it always returns a session.
+
+**Remember this device.** `verifyMfa`, `confirmMfa`, and `finishPasskeyMfa` accept `rememberDevice: true` and then also return a `deviceToken` with its `deviceExpiresAt` (together an `MfaSessionResult`). Passing that token to `signIn` or `finishPasswordless` later satisfies the MFA requirement from that browser; an unknown or expired token simply leads to the normal challenge. The HTTP handler keeps the token in the `better-iam.device` cookie and adds it to those two calls for you. The deployment's `trustedDeviceLifetimeMs` (30 days by default) and the tenant's `trustedDeviceDays` cap how long a device is remembered, either can turn the feature off, and root administrators are never remembered.
+
+**Issuing the session.** Before a session is issued, the person must still be active in an active tenant, must have verified their email when the deployment requires it (`EMAIL_UNVERIFIED`), and must be connecting from a network the tenant accepts (`IP_NOT_ALLOWED`, `IP_BLOCKED`). The new session then:
+
+- records the sign-in `method` (`password`, `passwordless-email`, `passwordless-sms`, `passkey`, or `federated`), which policies see as `principal.authMethod`, and the client's IP address, user agent, and label;
+- carries the person's previous sign-in and the failed attempts since then as `session.previousSignIn`, for a "last sign-in" notice, and restarts that count;
+- ends the person's oldest sessions when the tenant caps concurrent sessions with `maxSessions`;
+- queues a `new-sign-in` email when the client is unfamiliar and sign-in notifications are on (never for a remembered device);
+- is audited as `auth:session:create` with the method and client, plus `auth:device:trust` when a device was remembered.
+
+**Failed attempts.** A wrong password, authenticator or emailed code, or recovery code for a real, active account is recorded after the refusal as `auth:signin:fail`, with a `reason` of `password`, `mfa`, or `recovery-code`. It counts toward the next session's `previousSignIn`, and with the deployment's `failedSignInAlerts` set, the person receives one `sign-in-failures` email when the streak reaches that number. Unknown addresses, disabled accounts, and rate-limited attempts are never recorded, so the trail cannot be used to discover accounts. The [sign-in methods](/docs/guides/authentication/sign-in-methods) and [MFA](/docs/guides/authentication/mfa) guides walk through each flow.
+
+## Rate limits and tenant policy
+
+Every public flow except `beginMfa`, and every authenticated flow that checks a password or code or sends a message, counts the attempt before it looks at any credential:
+
+1. **Network blocks.** A client address covered by a live [`security.blockNetwork`](/docs/reference/api/security#blocknetwork) block, of the tenant or platform-wide, is refused with `IP_BLOCKED` before anything else, and no counter moves.
+2. **Per-address counter.** When the deployment sets `rateLimits.ipAttempts`, all of a tenant's flows share one counter per client address (IPv6 addresses are counted per /64), which stops password spraying across many accounts.
+3. **Per-subject counter.** Each flow counts against its own subject: the email address, phone number, or account it names, or the single-use token being redeemed.
+
+| Tier | Default attempts per 15-minute window | Used by |
+| --- | --- | --- |
+| Ordinary | 10 (`rateLimits.attempts`) | `signIn`, `reauthenticate`, `changePassword`, `beginPasskeyAuthentication` with an email, and redeeming emailed tokens (`verifyEmail`, `resetPassword`, `confirmEmailChange`) |
+| Sensitive | 5 (`rateLimits.sensitiveAttempts`) | `signUp`, every call that sends an email or SMS, checking passwordless and phone codes, `confirmMfa`, every step that answers an MFA challenge, and finishing a passkey sign-in |
+| Discovery | 10 times the ordinary limit, per client address | `beginPasskeyAuthentication` without an email |
+
+Every attempt counts, successful or not. Second-factor steps count twice, per challenge and per person, because each correct password mints a new challenge with a fresh budget. A tenant policy's `maxAttempts` lowers the per-subject limits for that tenant (it can never raise them). An exhausted counter fails the call with `RATE_LIMITED` (429). The error carries `retryAfterMs`, the HTTP response adds a `Retry-After` header, and the browser client exposes it as `IamClientError.retryAfterMs`. Counters are stored in the IAM database unless you supply `rateLimits.limiter`, and [`identities.unlock`](/docs/reference/api/identities#unlock) clears a person's counters after a burst of failures.
+
+A tenant's [authentication policy](/docs/guides/authentication/tenant-policy) can only tighten what the deployment allows. Its effects on these methods:
+
+| Policy field | Effect |
+| --- | --- |
+| `allowedMethods` | A sign-in method outside the list fails with `METHOD_NOT_ALLOWED` before any credential is examined, so the answer never reveals whether a password was right: `password` (`signIn`, `reauthenticate`), `passwordless-email` and `passwordless-sms` (`startPasswordless`, `finishPasswordless`), `passkey` (`beginPasskeyAuthentication`, `finishPasskeyAuthentication`). |
+| `requireMfa`, `requireMfaForOwners` | Sign-ins return an MFA challenge, and people without a factor enroll on the spot. Sessions that did not pass MFA stop working with `MFA_REQUIRED`, and `disableMfa` is refused. |
+| `mfaEmailCodes` | Offers emailed codes (`emailCodeAvailable`) to people with no authenticator. |
+| `trustedDeviceDays` | Shortens "remember this device"; `0` turns it off. |
+| `allowedIpRanges` | Sessions are issued and used only from these networks; anything else fails with `IP_NOT_ALLOWED`. Needs recorded client addresses. |
+| `bindSessionsToIp` | A session works only from the address it was issued from; elsewhere it is refused with `SESSION_NETWORK_MISMATCH` (401) and recorded as `auth:session:mismatch`. |
+| `sessionLifetimeMs`, `sessionIdleTimeoutMs`, `maxSessions` | Shorter sessions, and a cap on concurrent sessions per person (the oldest ends). |
+| `maxAttempts` | Lower rate limits, as above. |
+| `minPasswordLength`, `passwordMinClasses`, `passwordRejectPersonalInfo`, `passwordHistory`, `passwordMaxAgeDays` | Checked by `signUp`, `resetPassword`, and `changePassword` (`WEAK_PASSWORD`, `PASSWORD_REUSED`); an expired password fails `signIn` with `PASSWORD_EXPIRED` until it is reset. The deployment's screening adds `BREACHED_PASSWORD`, and `PASSWORD_CHECK_UNAVAILABLE` when a fail-closed breach check cannot answer. |
+| `notifyNewSignIn` | Emails people about sessions from unfamiliar clients. |
+
+A tenant that does not exist, is suspended, or sits under a suspended parent fails every flow with `TENANT_UNAVAILABLE`. Features the deployment has not enabled fail with `FEATURE_DISABLED`: sign-up without `signUpEnabled`, password flows when `emailPassword` is `false`, a passwordless channel without `passwordlessEmail` or `passwordlessSms`, passkeys without `passkeys`, and anything that sends an email or SMS without `sendEmail` or `sendSms`.
+
+## Sessions and recent authentication
+
+Methods whose permission is "the caller's own session" act only on the person behind the credential you pass: `{ token }` with a session token, or `{ headers }` with the incoming request's headers, which carry the session cookie or an `Authorization: Bearer` token. Only a person's session works here. API keys and assumed-role sessions fail with `UNAUTHENTICATED`, as does a session that has expired, idled out, or been revoked. Each call re-checks the session too: it fails with `MFA_REQUIRED` when the person now needs MFA and the session did not pass it, and with `IP_NOT_ALLOWED` or `IP_BLOCKED` when its network is no longer accepted.
+
+Methods that change how someone signs in, or that end sessions, also need **recent authentication**: the session must have been established within the deployment's `recentAuthenticationMs` (five minutes by default). An older session fails with `RECENT_AUTH_REQUIRED`; call [`reauthenticate`](#reauthenticate), or sign in again, and retry with the new session. An impersonation session never qualifies, whatever its age, and fails with `IMPERSONATION_RESTRICTED`, so an administrator viewing as a member cannot change the member's password, factors, devices, or sessions. See [sessions](/docs/guides/authentication/sessions).
+
+Some changes end every session of the person, including the one that made the call, and also forget their remembered devices and pending challenges (sign-in challenges and emailed links): `changePassword`, `resetPassword`, `confirmEmailChange`, `confirmMfa`, `disableMfa`, and `deletePasskey`. That way, a password, address, or factor change always cuts off anyone who was using the old one. `confirmMfa` returns a fresh session; after the others, the person signs in again.
+
+## beginMfa
+
+Starts enrolling a TOTP authenticator and returns its secret and an `otpauth://` URI to show as a QR code.
+
+- **Permission:** None: public during sign-in, with the `{ tenantId, challenge }` of an `mfaRequired` result; or the caller's own session, [authenticated recently](#sessions-and-recent-authentication).
+- **Audited as:** not audited; `confirmMfa` records `auth:mfa:enable`.
+- **Errors:** `INVALID_CHALLENGE` when the sign-in challenge is invalid or expired; `MFA_REQUIRED` when a sign-in challenge is used by someone who already has an authenticator (they must use it instead); `MFA_ALREADY_ENABLED` (409) when a signed-in caller already has one; `RECENT_AUTH_REQUIRED` for an older session.
+
+The enrollment stays pending for ten minutes and is bound to the credential that started it, so `confirmMfa` must present the same sign-in challenge or the same session. Calling `beginMfa` again replaces a pending enrollment with a new secret. Over HTTP, send `{ tenantId, challenge }` in the body during sign-in, or `{}` with a session.
+
+```ts
+// signIn returned { mfaRequired: true, enrollmentRequired: true, challenge }.
+const { secret, uri } = await iam.api.auth.beginMfa({ tenantId, challenge: result.challenge });
+// Render `uri` as a QR code and show `secret` for manual entry, then call confirmMfa.
+```
+
+## beginPasskeyAuthentication
+
+Starts a passkey sign-in and returns WebAuthn request options plus the `challengeId` to finish it with.
+
+- **Permission:** None: public.
+- **Audited as:** not audited; `finishPasskeyAuthentication` records the session.
+- **Errors:** `FEATURE_DISABLED` when passkeys are not configured; `METHOD_NOT_ALLOWED` when the tenant does not allow `passkey`; `INVALID_CREDENTIALS` when `email` names no active person in the tenant; `RATE_LIMITED`.
+
+Without `email`, the options name no credential: the browser's passkey picker or autofill offers any discoverable passkey it holds for your site, and `finishPasskeyAuthentication` finds the account from the credential itself. That mode is rate limited per client address with ten times the ordinary allowance, because a login page starts one on every visit. With `email`, the options list that person's passkeys. The challenge is valid for five minutes, so refresh an autofill request that waits longer. See [passkeys](/docs/guides/authentication/passkeys).
+
+## beginPasskeyMfa
+
+Starts answering an MFA challenge with a registered passkey instead of a code, returning WebAuthn request options bound to that sign-in.
+
+- **Permission:** None: public, with the `challenge` of an `mfaRequired` result that offered `passkeyAvailable`.
+- **Audited as:** not audited; `finishPasskeyMfa` records the session.
+- **Errors:** `FEATURE_DISABLED` when passkeys are not configured or the person has none registered; `INVALID_CHALLENGE` when the sign-in challenge is invalid or expired; `RATE_LIMITED` (counted per challenge and per person).
+
+The passkey challenge it returns is valid for five minutes, and the sign-in challenge must still be open when you call `finishPasskeyMfa`.
+
+## beginPasskeyRegistration
+
+Returns WebAuthn creation options for adding a passkey to the caller's account.
+
+- **Permission:** The caller's own session, [authenticated recently](#sessions-and-recent-authentication).
+- **Audited as:** not audited; `finishPasskeyRegistration` records `auth:passkey:create`.
+- **Errors:** `FEATURE_DISABLED` when passkeys are not configured; `RECENT_AUTH_REQUIRED`; `IMPERSONATION_RESTRICTED`.
+
+The options require a discoverable credential and user verification, request no attestation, and exclude the passkeys the person already has. The challenge is bound to this session and valid for five minutes.
+
+```ts
+// In the browser, with the typed client.
+import { startRegistration } from 'better-iam/client/passkeys';
+
+const { challengeId, options } = await client.auth.beginPasskeyRegistration();
+const response = await startRegistration({ optionsJSON: options });
+await client.auth.finishPasskeyRegistration({ challengeId, response, name: 'Work laptop' });
+```
+
+## changePassword
+
+Replaces the caller's password after checking the current one, and signs the person out everywhere.
+
+- **Permission:** The caller's own session, [authenticated recently](#sessions-and-recent-authentication).
+- **Audited as:** `auth:password:change`; a wrong current password is recorded as `auth:signin:fail`.
+- **Errors:** `INVALID_CREDENTIALS` when `currentPassword` is wrong or the account has no password; `WEAK_PASSWORD`, `BREACHED_PASSWORD`, or `PASSWORD_REUSED` when the new password fails the deployment's screening or the tenant's rules; `RECENT_AUTH_REQUIRED`; `IMPERSONATION_RESTRICTED`; `RATE_LIMITED`.
+
+Every session ends, including the one that made the call, along with remembered devices and pending challenges, so the person signs in again with the new password. A wrong current password counts as a failed attempt on the account, because someone holding a stolen session may be guessing it. People who have no password set one through `requestPasswordReset` and `resetPassword` instead.
+
+## confirmEmailChange
+
+Completes an email change from the link sent to the new address, then signs the person out everywhere.
+
+- **Permission:** None: public (the token from the `email-change` email is the proof).
+- **Audited as:** `auth:email:change`.
+- **Errors:** `INVALID_CHALLENGE` when the token is invalid, already used, or older than ten minutes; `UNAUTHENTICATED` when the session that requested the change has ended; `IDENTITY_EXISTS` (409) when another person in the tenant now has the address; `RATE_LIMITED`.
+
+The new address is marked verified, since following the link proves the person receives mail there. Tying the confirmation to the requesting session means a change requested from a session that has since been revoked cannot complete. Every session, remembered device, and pending challenge of the person then ends.
+
+## confirmMfa
+
+Checks the first code from a newly enrolled authenticator, turns MFA on, and returns a fresh session with ten recovery codes.
+
+- **Permission:** None: public with the sign-in challenge (`credential: { tenantId, challenge }`), or the caller's own session, [authenticated recently](#sessions-and-recent-authentication); either way, the same credential that called `beginMfa`.
+- **Audited as:** `auth:mfa:enable`, then `auth:session:create` (and `auth:device:trust` with `rememberDevice`).
+- **Errors:** `INVALID_CHALLENGE` when there is no pending enrollment for this credential or it is older than ten minutes; `INVALID_MFA` for a wrong or already-used code; `MFA_REQUIRED` when a sign-in challenge is used by someone who already has an authenticator; `RECENT_AUTH_REQUIRED`; `RATE_LIMITED`.
+
+Show the recovery codes once and ask the person to store them somewhere safe: they are returned only here and by `regenerateRecoveryCodes`, and each works once with `recoverMfa`. Enabling MFA ends every existing session, remembered device, and pending challenge of the person, so the returned session is the only one left. It has passed MFA and keeps the original sign-in method; over HTTP it replaces the session cookie.
+
+```ts
+const { token, recoveryCodes } = await iam.api.auth.confirmMfa({
+  credential: { tenantId, challenge: result.challenge },
+  code: '492039',
+  rememberDevice: true,
+});
+```
+
+## confirmPhoneVerification
+
+Checks the six-digit SMS code from `startPhoneVerification` and saves the number as the caller's verified phone.
+
+- **Permission:** The caller's own session, [authenticated recently](#sessions-and-recent-authentication); the same session that started the verification.
+- **Audited as:** `auth:phone:verify`.
+- **Errors:** `INVALID_CHALLENGE` when the code is wrong or expired, or was sent to another session or another number; `PHONE_EXISTS` (409) when another person in the tenant has already verified the number; `INVALID_INPUT` when `phone` is not in E.164 format; `RECENT_AUTH_REQUIRED`; `RATE_LIMITED`.
+
+A verified phone lets the person sign in with SMS codes when the deployment enables `passwordlessSms`.
+
+## deletePasskey
+
+Removes one of the caller's passkeys and signs the person out everywhere.
+
+- **Permission:** The caller's own session, [authenticated recently](#sessions-and-recent-authentication).
+- **Audited as:** `auth:passkey:delete`.
+- **Errors:** `NOT_FOUND` when the passkey is not one of the caller's; `LAST_AUTHENTICATOR` (409) when it is the last passkey and the person has no other way to sign in; `RECENT_AUTH_REQUIRED`; `IMPERSONATION_RESTRICTED`.
+
+"Another way to sign in" means a password, or a verified email address or phone number with passwordless sign-in enabled for that channel. Every session, remembered device, and pending challenge ends, so no session opened with the removed passkey outlives it.
+
+## disableMfa
+
+Removes the caller's authenticator and recovery codes, and signs the person out everywhere.
+
+- **Permission:** The caller's own session, [authenticated recently](#sessions-and-recent-authentication) and signed in with MFA.
+- **Audited as:** `auth:mfa:disable`.
+- **Errors:** `MFA_REQUIRED` when the session did not pass MFA, when the person is a root administrator, or when the tenant policy or the deployment's `requireMfa` callback requires MFA for them; `RECENT_AUTH_REQUIRED`; `IMPERSONATION_RESTRICTED`.
+
+Registered passkeys are kept. Every session, remembered device, and pending challenge of the person ends.
+
+## finishPasskeyAuthentication
+
+Verifies a passkey assertion and signs the person in with a session that has already passed MFA.
+
+- **Permission:** None: public.
+- **Audited as:** `auth:session:create` with method `passkey`.
+- **Errors:** `INVALID_CHALLENGE` when `challengeId` is invalid or expired; `INVALID_PASSKEY` when the passkey is not registered to an account in this tenant, its user handle does not match, or verification fails; `INVALID_INPUT` when `response` is missing; `METHOD_NOT_ALLOWED`; `FEATURE_DISABLED`; `EMAIL_UNVERIFIED`, `IP_NOT_ALLOWED`, or `IP_BLOCKED` from the session checks; `RATE_LIMITED`.
+
+The server checks the challenge, origin, relying-party ID, user verification, signature, and signature counter, then records the passkey's `lastUsedAt`. Because the passkey proves possession and user verification together, the result is always a session (`SessionResult`), never an MFA challenge. Over HTTP it sets the session cookie.
+
+```ts
+// In the browser, with the typed client.
+import { startAuthentication } from 'better-iam/client/passkeys';
+
+const { challengeId, options } = await client.auth.beginPasskeyAuthentication({ tenantId });
+const response = await startAuthentication({ optionsJSON: options });
+await client.auth.finishPasskeyAuthentication({ tenantId, challengeId, response });
+```
+
+## finishPasskeyMfa
+
+Verifies a passkey assertion for a pending sign-in and issues the session, optionally remembering the device.
+
+- **Permission:** None: public, with the `challengeId` from `beginPasskeyMfa`.
+- **Audited as:** `auth:session:create` (and `auth:device:trust` with `rememberDevice`).
+- **Errors:** `INVALID_CHALLENGE` when the passkey challenge, or the sign-in challenge it belongs to, is invalid or expired; `INVALID_PASSKEY` when the passkey is not the person's or verification fails; `INVALID_INPUT` when `response` is missing; `RATE_LIMITED` (counted per challenge and per person).
+
+Both challenges are consumed together, and the session keeps the method of the first factor, such as `password`. The result is an `MfaSessionResult`: the session, plus `deviceToken` and `deviceExpiresAt` when you asked to remember the device and the policy allows it.
+
+## finishPasskeyRegistration
+
+Verifies the browser's registration response and saves the new passkey on the caller's account.
+
+- **Permission:** The caller's own session, [authenticated recently](#sessions-and-recent-authentication); the same session that called `beginPasskeyRegistration`.
+- **Audited as:** `auth:passkey:create`, with the passkey's name.
+- **Errors:** `INVALID_CHALLENGE` when the challenge is expired or belongs to another session; `INVALID_PASSKEY` when verification fails; `PASSKEY_EXISTS` (409) when the credential is already registered anywhere in the installation; `INVALID_INPUT` for an empty name or one over 64 characters; `RECENT_AUTH_REQUIRED`.
+
+`name` is optional. Without it, the passkey is labeled from what the authenticator reports about itself: "This device", "Phone", "Security key", or "Passkey". Returns the new passkey's `id` and `name`.
+
+## finishPasswordless
+
+Redeems a magic-link token or one-time code and signs the person in, or returns an MFA challenge.
+
+- **Permission:** None: public.
+- **Audited as:** `auth:session:create` when a session is issued.
+- **Errors:** `INVALID_CHALLENGE` when the token is wrong, already used, older than five minutes, or issued for another destination, or when the person's address or phone changed since it was sent; `METHOD_NOT_ALLOWED`; `FEATURE_DISABLED` when the channel has been turned off; `RATE_LIMITED` (counted per destination).
+
+Pass the same `destination` the message went to: a value starting with `+` is read as a phone number, anything else as an email address. Signing in by email also marks the address verified. The result is a `SignInResult` (see [the sign-in flow](#sign-in-flow-and-mfa-challenges)); a `deviceToken` from "remember this device" satisfies MFA, and the HTTP handler adds it from the device cookie.
+
+## getSession
+
+Returns the caller's identity, their session, and the session limits in force, so a client can warn before an idle sign-out.
+
+- **Permission:** The caller's own session.
+- **Audited as:** not audited.
+- **Errors:** `UNAUTHENTICATED` when the session is missing, expired, idle, or revoked.
+
+`limits` holds the tenant's `lifetimeMs` and `idleTimeoutMs`, `idleExpiresAt` (when the session lapses if nothing uses it again, never later than its absolute expiry), and `now`, the server's clock, so a client can correct for its own clock skew. Like every authenticated call, it counts as activity, which makes it the natural target for a "Stay signed in" button. The identity comes back without its password hash.
+
+## listPasskeys
+
+Lists the caller's passkeys, newest first, without key material.
+
+- **Permission:** The caller's own session.
+- **Audited as:** not audited.
+
+Each entry has its `id`, `name`, `createdAt`, `lastUsedAt` (the last sign-in or MFA answer), `deviceType` (`singleDevice`, or `multiDevice` for a synced passkey), `backedUp`, `transports`, and, when the authenticator reports one, the `aaguid` that identifies its model.
+
+## listSecurityEvents
+
+Returns the caller's own authentication trail, newest first: sign-ins, failed attempts, sign-outs, and changes to passwords, addresses, factors, passkeys, and devices.
+
+- **Permission:** The caller's own session.
+- **Audited as:** not audited.
+- **Errors:** `INVALID_INPUT` when `limit` is not an integer from 1 to 200.
+
+It returns up to `limit` (50 by default) of the `auth:*` audit events the person was the actor of in this tenant. Each event carries `impersonatorId` when an administrator acted through impersonation, `sequence` (its position in the [audit chain](/docs/guides/events/audit-chain)), and `metadata` such as the client's `ip` and `userAgent`, the sign-in `method`, or a failure's `reason`. Use it for an account page's recent activity; the tenant's full log is [`audit.list`](/docs/reference/api/audit#list), which needs `iam:audit:read`.
+
+## listSessions
+
+Lists the caller's unexpired sessions in this tenant, marking the one making the call with `current: true`.
+
+- **Permission:** The caller's own session.
+- **Audited as:** not audited.
+
+Each session shows its sign-in `method`, its `client` details, and its timestamps, never its token. Sessions an administrator opened as the person through impersonation appear too, with `impersonatorId`, so people can see them and end them with `revokeSession`.
+
+## listTrustedDevices
+
+Lists the caller's remembered devices that have not expired, most recently used first, without their tokens.
+
+- **Permission:** The caller's own session.
+- **Audited as:** not audited.
+
+Each device records when it was remembered, when it expires, when it last vouched for a sign-in (`lastUsedAt`), and the client (IP address, user agent, label) that completed MFA.
+
+## mfaStatus
+
+Summarizes what the caller has set up: whether an authenticator is enabled, how many recovery codes remain, how many passkeys and remembered devices they have, and whether this session passed MFA.
+
+- **Permission:** The caller's own session.
+- **Audited as:** not audited.
+
+Use it to drive an account security page, for example to prompt for new recovery codes when `recoveryCodesRemaining` runs low.
+
+## reauthenticate
+
+Checks the caller's password again and returns a new session that counts as recently authenticated, or an MFA challenge.
+
+- **Permission:** The caller's own session, but not an impersonation session.
+- **Audited as:** `auth:session:create` for the new session; a wrong password is recorded as `auth:signin:fail`.
+- **Errors:** `INVALID_CREDENTIALS` for a wrong password or an account without one; `METHOD_NOT_ALLOWED` when the tenant does not allow `password`; `IMPERSONATION_RESTRICTED`; `RATE_LIMITED`.
+
+Call it when an operation answers `RECENT_AUTH_REQUIRED`, then retry with the new session. It is a full sign-in: when the person needs MFA the result is an `mfaRequired` challenge (a remembered device does not skip it here), and the session comes from `verifyMfa` or another second-factor call. The old session stays valid; over HTTP the cookie switches to the new one. People without a password get a recent session by signing in again, for example with a passkey.
+
+```ts
+const result = await iam.api.auth.reauthenticate({ headers: request.headers }, { password });
+```
+
+## recoverMfa
+
+Answers an MFA challenge with a single-use recovery code when the person has lost their authenticator.
+
+- **Permission:** None: public, with the `challenge` of an `mfaRequired` result.
+- **Audited as:** `auth:mfa:recover`, then `auth:session:create`; a wrong code is recorded as `auth:signin:fail`.
+- **Errors:** `INVALID_MFA` when the code is wrong or already used, or the person has no authenticator enrolled; `INVALID_CHALLENGE` when the challenge is invalid or expired; `RATE_LIMITED` (counted per challenge and per person).
+
+The code is used up. The authenticator stays enrolled, so once signed in the person should check `mfaStatus` and replace their codes with `regenerateRecoveryCodes`. This call cannot remember the device.
+
+## regenerateRecoveryCodes
+
+Replaces all of the caller's recovery codes with ten new ones.
+
+- **Permission:** The caller's own session, [authenticated recently](#sessions-and-recent-authentication) and signed in with MFA.
+- **Audited as:** `auth:mfa:recovery-codes`.
+- **Errors:** `MFA_REQUIRED` when the session did not pass MFA; `MFA_NOT_ENROLLED` when no authenticator is enabled; `RECENT_AUTH_REQUIRED`; `IMPERSONATION_RESTRICTED`.
+
+The old codes stop working at once. Show the new ones one time: only their hashes are stored, so they cannot be read back.
+
+## renamePasskey
+
+Changes the label of one of the caller's passkeys.
+
+- **Permission:** The caller's own session.
+- **Audited as:** `auth:passkey:rename`, with the new name.
+- **Errors:** `NOT_FOUND` when the passkey is not one of the caller's; `INVALID_INPUT` for an empty name or one over 64 characters.
+
+Unlike the other passkey changes, renaming does not need recent authentication.
+
+## requestEmailChange
+
+Emails a confirmation link to the new address the caller wants to move to.
+
+- **Permission:** The caller's own session, [authenticated recently](#sessions-and-recent-authentication).
+- **Audited as:** not audited; `confirmEmailChange` records `auth:email:change`.
+- **Errors:** `INVALID_INPUT` for an invalid address; `FEATURE_DISABLED` when email delivery is not configured; `RECENT_AUTH_REQUIRED`; `IMPERSONATION_RESTRICTED`; `RATE_LIMITED`.
+
+The address does not change until someone with access to the new mailbox follows the `email-change` link, within ten minutes and while this session is still alive. Whether another person already uses the address is checked at confirmation. Administrators change an address directly with [`identities.update`](/docs/reference/api/identities#update).
+
+## requestEmailVerification
+
+Emails a new verification link to an address that has not been verified yet.
+
+- **Permission:** None: public.
+- **Audited as:** not audited; `verifyEmail` records `auth:email:verify`.
+- **Errors:** `FEATURE_DISABLED` when email delivery is not configured; `RATE_LIMITED`.
+
+It always succeeds, so it never reveals whether an account exists: the `verify-email` message, valid for 24 hours, goes out only when an active person in the tenant has that address unverified. Use it for a "resend verification email" button.
+
+## requestMfaCode
+
+Emails a six-digit one-time code that answers the given MFA challenge, for people with no authenticator.
+
+- **Permission:** None: public, with the `challenge` of a sign-in that offered `emailCodeAvailable`.
+- **Audited as:** not audited.
+- **Errors:** `FEATURE_DISABLED` when emailed codes were not offered for this sign-in or the person has no verified address; `INVALID_CHALLENGE` when the challenge is invalid or expired; `RATE_LIMITED` (counted per challenge and per person).
+
+The code works once with `verifyMfa` until the returned `expiresAt`, which never outlives the sign-in challenge. Requesting again replaces the code. Emailed codes are offered only to people with nothing enrolled and a verified address, never to root administrators, and only when the tenant's or the deployment's `mfaEmailCodes` allows them.
+
+## requestPasswordReset
+
+Emails a password-reset link to a person who has forgotten their password.
+
+- **Permission:** None: public.
+- **Audited as:** not audited; `resetPassword` records `auth:password:reset`.
+- **Errors:** `FEATURE_DISABLED` when email delivery is not configured or password sign-in is turned off; `RATE_LIMITED`.
+
+It always succeeds, so it never reveals whether an account exists. The `password-reset` message goes out only to an active person whose address is verified, and its token is valid for ten minutes. Administrators can send the same email for a member with [`identities.requestPasswordReset`](/docs/reference/api/identities#requestpasswordreset). See [recovery](/docs/guides/authentication/recovery).
+
+## resetPassword
+
+Sets a new password with the token from a password-reset email and ends every session of the person.
+
+- **Permission:** None: public (the token is the proof).
+- **Audited as:** `auth:password:reset`.
+- **Errors:** `INVALID_CHALLENGE` when the token is invalid, already used, or expired; `WEAK_PASSWORD`, `BREACHED_PASSWORD`, or `PASSWORD_REUSED` when the new password fails the deployment's screening or the tenant's rules; `FEATURE_DISABLED` when password sign-in is turned off; `RATE_LIMITED`.
+
+Recovery never signs the person in and never removes MFA: they sign in afterwards with the new password and their second factor. Every session, remembered device, and pending challenge ends, including any other reset links. The new password also restarts the tenant's password-age clock (`passwordMaxAgeDays`), which is how someone whose password expired gets back in.
+
+## revokeOtherSessions
+
+Ends every other session of the caller in this tenant ("sign out everywhere else") and returns how many ended.
+
+- **Permission:** The caller's own session, [authenticated recently](#sessions-and-recent-authentication).
+- **Audited as:** `auth:session:revoke-others`.
+- **Errors:** `RECENT_AUTH_REQUIRED`; `IMPERSONATION_RESTRICTED`.
+
+This includes sessions an administrator opened as the person through impersonation. Remembered devices are not affected, so a device that is still remembered can sign in again without MFA; use `revokeTrustedDevices` to forget those too.
+
+## revokeSession
+
+Ends one of the caller's sessions, such as one left open on a shared computer.
+
+- **Permission:** The caller's own session, [authenticated recently](#sessions-and-recent-authentication).
+- **Audited as:** `auth:session:revoke`.
+- **Errors:** `NOT_FOUND` when the session is not one of the caller's; `RECENT_AUTH_REQUIRED`; `IMPERSONATION_RESTRICTED`.
+
+Take the id from `listSessions`. Any impersonation sessions the person opened through the ended session end with it.
+
+## revokeTrustedDevice
+
+Forgets one remembered device, so its next sign-in asks for MFA again.
+
+- **Permission:** The caller's own session, [authenticated recently](#sessions-and-recent-authentication).
+- **Audited as:** `auth:device:revoke`.
+- **Errors:** `NOT_FOUND` when the device is not one of the caller's; `RECENT_AUTH_REQUIRED`; `IMPERSONATION_RESTRICTED`.
+
+Sessions already issued on that device keep working; end them with `revokeSession`.
+
+## revokeTrustedDevices
+
+Forgets every remembered device of the caller and returns how many were removed.
+
+- **Permission:** The caller's own session, [authenticated recently](#sessions-and-recent-authentication).
+- **Audited as:** `auth:device:revoke`, once, when at least one device was removed.
+- **Errors:** `RECENT_AUTH_REQUIRED`; `IMPERSONATION_RESTRICTED`.
+
+Over HTTP it also clears the `better-iam.device` cookie in the calling browser. Existing sessions keep working.
+
+## signIn
+
+Checks an email address and password and returns a session, or an MFA challenge when a second factor is needed.
+
+- **Permission:** None: public.
+- **Audited as:** `auth:session:create` when a session is issued; `auth:signin:fail` when a real, active account was given a wrong password.
+- **Errors:** `INVALID_CREDENTIALS` (401) for an unknown address, a wrong password, an inactive account, or an account without a password, all indistinguishable; `EMAIL_UNVERIFIED` when verification is required and still pending; `PASSWORD_EXPIRED` when the tenant's maximum password age has passed; `METHOD_NOT_ALLOWED`; `TENANT_UNAVAILABLE`; `IP_NOT_ALLOWED` or `IP_BLOCKED`; `FEATURE_DISABLED` when password sign-in is turned off; `RATE_LIMITED`.
+
+The tenant is never inferred from the email address: you always pass `tenantId`. Unknown addresses go through the same password-hash work as real ones, so response times do not reveal which accounts exist. Pass `deviceToken` from an earlier "remember this device" to skip the second factor in that browser. See [the sign-in flow](#sign-in-flow-and-mfa-challenges) for what to do with each result.
+
+```ts
+const result = await iam.auth.withClient({ ip, userAgent }, () =>
+  iam.api.auth.signIn({ tenantId, email: 'ada@example.com', password }),
+);
+if ('mfaRequired' in result) {
+  // Ask for a code, then: iam.api.auth.verifyMfa({ tenantId, challenge: result.challenge, code })
+} else {
+  // result.token is the bearer token; result.session describes the new session.
+}
+```
+
+## signOut
+
+Ends the caller's current session.
+
+- **Permission:** The caller's own session.
+- **Audited as:** `auth:session:revoke`.
+- **Errors:** `UNAUTHENTICATED` when the session has already ended.
+
+Impersonation sessions the person opened through this session end with it. Over HTTP the session cookie is cleared even when the sign-out is refused, for example because the session had already idled out. Remembered devices stay remembered; `revokeTrustedDevices` forgets them.
+
+## signUp
+
+Registers a new person in a tenant with an email address and password, when self-registration is enabled.
+
+- **Permission:** None: public.
+- **Audited as:** `auth:identity:create`.
+- **Errors:** `FEATURE_DISABLED` when `signUpEnabled` is off or password sign-in is turned off; `FORBIDDEN` for the root tenant, whose people only administrators create; `IDENTITY_EXISTS` (409) when the address is taken in this tenant; `LIMIT_EXCEEDED` when the tenant has reached its member limit; `WEAK_PASSWORD` or `BREACHED_PASSWORD`; `TENANT_UNAVAILABLE`; `RATE_LIMITED`.
+
+Sign-up does not sign the person in. When email verification is required (the default once sign-up is enabled), it queues a `verify-email` message valid for 24 hours and returns `verificationRequired: true`, and `signIn` fails with `EMAIL_UNVERIFIED` until `verifyEmail` succeeds. The new person is never an owner or a root administrator, and signing up grants no access by itself: bind roles with [`bindings.create`](/docs/reference/api/bindings#create) or add them to a group.
+
+## startPasswordless
+
+Sends a magic link or a one-time code for signing in without a password.
+
+- **Permission:** None: public.
+- **Audited as:** not audited; `finishPasswordless` records the session.
+- **Errors:** `INVALID_INPUT` for an unknown `channel` or `kind`, a malformed destination, or SMS with `kind: 'magic-link'`; `FEATURE_DISABLED` when the channel is not enabled; `METHOD_NOT_ALLOWED` when the tenant does not allow it; `RATE_LIMITED` (counted per destination).
+
+It always succeeds, whether or not the destination belongs to anyone, so it never reveals which accounts exist. A message goes out only to an active person with that email address, or with that phone number verified; SMS supports codes only. The magic-link token or six-digit code is valid for five minutes and works once, with `finishPasswordless`. The message uses the `magic-link` or `code` template, which your `sendEmail` or `sendSms` callback turns into an email or text.
+
+```ts
+await iam.api.auth.startPasswordless({
+  tenantId,
+  destination: 'ada@example.com',
+  channel: 'email',
+  kind: 'code',
+});
+// Later, with the code the person typed:
+const result = await iam.api.auth.finishPasswordless({
+  tenantId,
+  destination: 'ada@example.com',
+  token: '038514',
+});
+```
+
+## startPhoneVerification
+
+Texts a six-digit code to a phone number the caller wants to verify.
+
+- **Permission:** The caller's own session, [authenticated recently](#sessions-and-recent-authentication).
+- **Audited as:** not audited; `confirmPhoneVerification` records `auth:phone:verify`.
+- **Errors:** `INVALID_INPUT` when `phone` is not in E.164 format (such as `+14155550100`); `FEATURE_DISABLED` when SMS delivery is not configured; `RECENT_AUTH_REQUIRED`; `IMPERSONATION_RESTRICTED`; `RATE_LIMITED`.
+
+The code, sent with the `phone-verify` template, is valid for five minutes and only from the session that requested it.
+
+## verifyEmail
+
+Marks an email address verified using the token from a verification email.
+
+- **Permission:** None: public (the token is the proof).
+- **Audited as:** `auth:email:verify`.
+- **Errors:** `INVALID_CHALLENGE` when the token is invalid, already used, or older than 24 hours; `UNAUTHENTICATED` when the account is no longer active; `RATE_LIMITED`.
+
+It does not sign the person in: send them to your sign-in page afterwards.
+
+## verifyMfa
+
+Answers an MFA challenge with a code from the person's authenticator, or an emailed code, and issues the session.
+
+- **Permission:** None: public, with the `challenge` of an `mfaRequired` result.
+- **Audited as:** `auth:session:create` (and `auth:device:trust` with `rememberDevice`); a wrong code is recorded as `auth:signin:fail`.
+- **Errors:** `INVALID_MFA` for a wrong, expired, or already-used code; `MFA_NOT_ENROLLED` (403) when the person has no authenticator and no emailed code was requested; `INVALID_CHALLENGE` when the challenge is invalid or expired; `RATE_LIMITED` (counted per challenge and per person).
+
+Authenticator codes are six digits. The current 30-second step and one on either side are accepted, and each step only once, so a captured code cannot be replayed. With `rememberDevice: true` the result also carries a `deviceToken` for later sign-ins (see [the sign-in flow](#sign-in-flow-and-mfa-challenges)). Over HTTP it sets the session cookie and, when a device was remembered, the device cookie.
+
+```ts
+const session = await iam.api.auth.verifyMfa({
+  tenantId,
+  challenge: result.challenge,
+  code: '492039',
+  rememberDevice: true,
+});
+```

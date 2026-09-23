@@ -1,0 +1,314 @@
+---
+title: Sign-in methods
+description: Passwords and password screening, self-registration, magic links, email and SMS codes, federated sign-in, API keys, and assumed roles.
+icon: LogIn
+packages: ['@better-iam/auth', '@better-iam/server']
+sources:
+  - docs/authentication.md
+  - docs/security.md
+  - packages/auth/src/service/sessions.ts
+  - packages/auth/src/service/passwordless.ts
+  - packages/auth/src/password-policy.ts
+---
+
+Better IAM supports several ways to sign in, because no single method suits everyone: passwords are familiar,
+emailed links avoid passwords altogether, passkeys resist phishing, enterprises want their own identity provider,
+and machines need keys. You choose which methods your deployment offers, and each organization (a
+<Term id="tenant">tenant</Term>) can narrow that set with its
+[tenant policy](/docs/guides/authentication/tenant-policy).
+
+Whatever the method, the result is the same: a <Term id="session">session</Term>, or an MFA challenge when a second
+factor is required (see [how a sign-in works](/docs/guides/authentication#how-a-sign-in-works)).
+
+## Choose the methods you offer
+
+Methods are switched on under `authentication` in the server options. Features that send messages need a delivery
+callback: `sendEmail` hands a queued email to your mail provider, and `sendSms` does the same for text messages.
+Construction fails with `INVALID_CONFIG` when an enabled email feature has no `sendEmail`, or SMS codes have no
+`sendSms`, so a misconfiguration is caught at startup rather than when someone tries to sign in.
+
+```ts title="iam.ts"
+import { betterIam } from 'better-iam';
+import { pwnedPasswords } from 'better-iam/auth';
+
+export const iam = betterIam({
+  // database, secret, baseURL ...
+  authentication: {
+    sendEmail: async (message) => mailer.send(message), // deduplicate retries by message.id
+    sendSms: async (message) => sms.send(message),
+    emailPassword: true, // the default; false turns password sign-in off
+    passwordlessEmail: true, // magic links and emailed codes
+    passwordlessSms: true, // SMS codes
+    signUpEnabled: false, // the default
+    passkeys: { rpID: 'example.com', rpName: 'Acme Cloud' },
+    passwordPolicy: { isBreached: pwnedPasswords() },
+  },
+});
+```
+
+## Passwords
+
+Passwords remain the default for most products, so Better IAM makes them as safe as it can: strong hashing,
+screening against weak and breached passwords, and responses that never reveal whether an account exists.
+
+Call `auth.signIn({ tenantId, email, password, deviceToken? })` from your login form. It checks the password and
+returns a session or an MFA challenge. `deviceToken` comes from
+["remember this device"](/docs/guides/authentication/mfa#remember-this-device); through the HTTP handler it is sent
+automatically from a cookie.
+
+```ts
+const result = await client.auth.signIn({ tenantId, email: 'alice@example.com', password });
+```
+
+- Passwords are hashed with **Argon2id** and must be 12 to 1,024 characters long.
+- A wrong password, an unknown address, and a disabled account all fail with the same `INVALID_CREDENTIALS`.
+  Unknown and passwordless-only accounts perform the same password-hash work, so response times do not reveal
+  which accounts exist.
+- A wrong password for a real, active account is recorded as a failed attempt (`auth:signin:fail`) and counted in
+  the person's [sign-in record](/docs/guides/authentication/sessions#sign-in-records-and-alerts).
+- `emailPassword: false` disables password sign-in, reset, and self-registration (`FEATURE_DISABLED`).
+
+### Password screening
+
+Length alone does not make a password safe: `password1234` is twelve characters, and millions of longer passwords
+circulate in breach dumps that attackers try first. Screening refuses those at the moment a password is chosen.
+
+Every password rule applies wherever a password is set: identity creation, invitations, bulk onboarding, reset,
+and change. The deployment sets a baseline with `authentication.passwordPolicy`:
+
+<TypeTable
+  type={{
+    blockCommonPasswords: {
+      type: 'boolean',
+      default: 'true',
+      description: <>A small built-in screen that refuses well-known passwords, keyboard walks, sequences, and passwords with fewer than five distinct characters (<code>WEAK_PASSWORD</code>). Supply <code>isBreached</code> for a comprehensive corpus.</>,
+    },
+    isBreached: {
+      type: '(password: string) => Promise<boolean>',
+      description: <>Returns true when the password appears in a breach corpus (<code>BREACHED_PASSWORD</code>). <code>pwnedPasswords()</code> provides one.</>,
+    },
+    check: {
+      type: '(password, { tenantId, identity? }) => string | undefined',
+      description: <>A custom rule: return a message to reject the password (<code>WEAK_PASSWORD</code>), or nothing to accept it. May be async.</>,
+    },
+  }}
+/>
+
+`pwnedPasswords()` from `better-iam/auth` is a Have I Been Pwned client that uses k-anonymity: it sends only the
+first five characters of the password's SHA-1 hash and matches the returned suffixes locally. It times out after
+three seconds and fails open unless you ask it to fail closed:
+
+```ts
+passwordPolicy: {
+  isBreached: pwnedPasswords({
+    threshold: 1, // minimum breach count that rejects a password
+    failClosed: true, // refuse with PASSWORD_CHECK_UNAVAILABLE when the service cannot be reached
+    timeoutMs: 3_000,
+  }),
+  check: (password) => (/acme/i.test(password) ? 'Do not use the company name' : undefined),
+},
+```
+
+Organizations tighten this further with their own rules: minimum length, character classes, no personal
+information, password history (`PASSWORD_REUSED`), and a maximum age (`PASSWORD_EXPIRED`). See
+[password rules](/docs/guides/authentication/tenant-policy#password-rules).
+
+### Self-registration
+
+Most business products add people by invitation, so self-registration is disabled by default. Turn it on with
+`authentication.signUpEnabled: true` when anyone should be able to join a tenant on their own, for example a
+community or a free tier. `auth.signUp` then creates the visitor's account in an existing tenant:
+
+```ts
+const { identity, verificationRequired } = await client.auth.signUp({
+  tenantId,
+  email: 'bob@example.com',
+  name: 'Bob',
+  password,
+});
+```
+
+`signUp` never creates an identity in the root tenant (`FORBIDDEN`) and does not sign the person in.
+`requireEmailVerification` defaults to the value of `signUpEnabled`: while it is on, sign-up queues a
+`verify-email` message (valid for 24 hours) and unverified people cannot sign in (`EMAIL_UNVERIFIED`). See
+[email verification](/docs/guides/authentication/recovery#email-verification). Tenant plan limits apply
+(`LIMIT_EXCEEDED`).
+
+## Magic links and one-time codes
+
+Many people reuse passwords or forget them. Passwordless sign-in avoids passwords altogether: it proves the person
+controls an email address or phone number by sending a single-use secret there. It is a two-step flow:
+
+1. `auth.startPasswordless` sends a magic link or a six-digit code to the address the person typed.
+2. `auth.finishPasswordless` checks the token from the link, or the code the person typed, and signs them in.
+
+<Tabs items={['Magic link', 'Emailed code', 'SMS code']}>
+<Tab value="Magic link">
+
+```ts
+await client.auth.startPasswordless({
+  tenantId,
+  destination: 'alice@example.com',
+  channel: 'email',
+  kind: 'magic-link',
+});
+
+// On the page the link opens (your links.magicLink builder decides its URL):
+const result = await client.auth.finishPasswordless({
+  tenantId,
+  destination: 'alice@example.com',
+  token, // from the link
+});
+```
+
+</Tab>
+<Tab value="Emailed code">
+
+```ts
+await client.auth.startPasswordless({
+  tenantId,
+  destination: 'alice@example.com',
+  channel: 'email',
+  kind: 'code',
+});
+const result = await client.auth.finishPasswordless({
+  tenantId,
+  destination: 'alice@example.com',
+  token: '482913', // the six-digit code the person typed
+});
+```
+
+</Tab>
+<Tab value="SMS code">
+
+```ts
+await client.auth.startPasswordless({
+  tenantId,
+  destination: '+15551234567', // E.164
+  channel: 'sms',
+  kind: 'code',
+});
+const result = await client.auth.finishPasswordless({ tenantId, destination: '+15551234567', token: '482913' });
+```
+
+</Tab>
+</Tabs>
+
+- `startPasswordless` always answers `{ success: true }`, whether or not the address belongs to anyone, so it cannot
+  be used to enumerate accounts. It sends only when an active person in the tenant has that email, or has verified
+  that phone number.
+- Links and codes are single-use and expire after **five minutes**. Codes are six digits. The outbox uses the
+  `magic-link` template for links and `code` for codes.
+- SMS supports codes only (`INVALID_INPUT` for an SMS magic link), and only to a phone number the person has
+  verified from their account first (see [phone numbers](/docs/guides/authentication/recovery#phone-numbers)).
+- Finishing an email flow marks the address verified. A flow fails with `INVALID_CHALLENGE` if the person's email or
+  phone changed after the code was sent.
+- Passwordless sign-in never links accounts by matching an address; it signs in the identity that owns the
+  address in that tenant.
+- Both steps use the sensitive rate-limit tier. The tenant's `allowedMethods` must include `passwordless-email`
+  or `passwordless-sms`.
+- `finishPasswordless` accepts a `deviceToken` like `signIn`, and returns an MFA challenge when a second factor
+  is required.
+
+## Passkeys
+
+<Term id="passkey">Passkeys</Term> sign people in with a device-bound or synced WebAuthn credential instead of a
+password. They cannot be phished, and they satisfy MFA on their own. With discoverable passkeys, the browser's
+autofill picks the account and no email is needed. See [passkeys](/docs/guides/authentication/passkeys).
+
+## Federated sign-in
+
+Enterprise customers want their people to sign in with the company's own identity provider, so that joining,
+leaving, and MFA are managed in one place. Federated sign-in delegates the proof to that provider through
+<Term id="oidc">OpenID Connect</Term> (OAuth/OIDC, including Google and GitHub) or <Term id="saml">SAML</Term>.
+
+The protocol packages handle the ceremony. When it succeeds, they call `protocolHost.completeAuthentication`, which
+finishes like any other sign-in with the method `federated`: the tenant must allow the method, and root, tenant,
+and deployment MFA requirements apply.
+
+- Federation maps `(tenant, provider, issuer, subject)` to an identity. A new subject with a verified email
+  provisions an account (`VERIFIED_EMAIL_REQUIRED` without one).
+- An email that already belongs to an identity fails with `ACCOUNT_LINK_REQUIRED`. The person signs in to the
+  existing account and links the provider explicitly; an email collision is never treated as proof of ownership.
+- `mapAttributes` stores provider attributes on the identity, validated against
+  `permissions.identityAttributes`, and replaces them on every sign-in.
+
+See [OAuth sign-in](/docs/federation/oauth-sign-in) and [SAML](/docs/federation/saml).
+
+## Service accounts and API keys
+
+Scripts, integrations, and other servers cannot type a password or answer an MFA prompt. They sign in with API keys
+issued to <Term id="service-account">service accounts</Term>. A key is an opaque bearer token sent as
+`Authorization: Bearer <key>`; only its hash is stored, so a database leak does not reveal usable keys.
+
+`credentials.create` issues a key for a service account and returns the token once. Store it in your secret
+manager right away; it cannot be shown again.
+
+```ts
+const { token, credentialId, expiresAt } = await iam.api.credentials.create(adminCredential, {
+  tenantId,
+  identityId: serviceAccountId,
+  name: 'nightly-export',
+  scopes: ['reports:export'], // or a session `policy`; not both
+  expiresInSeconds: 30 * 86_400, // 30 days; 90 days when omitted
+});
+```
+
+- Keys expire (90 days by default). `credentials.rotate` replaces a key with a new one and invalidates the old key
+  in the same transaction, for scheduled rotation or after a leak. `credentials.revoke` ends a key at once, and
+  `credentials.update` changes its label, description, or expiry.
+- `lastUsedAt` is updated at most once a minute. `credentials.list({ unusedForMs })` finds keys nobody has used for
+  that long, so you can revoke them.
+- A key keeps the ceiling of the <Term id="authority">grant authority</Term> that issued it, and stops working when
+  that authority is revoked or the service account is disabled or past its `expiresAt`.
+- API keys are judged against the address presenting them: a key used from a blocked network is refused.
+
+See the [credentials reference](/docs/reference/api/credentials).
+
+## Assumed roles
+
+Sometimes an identity in one tenant must act inside another: your support team working in a customer's
+organization, or a central automation managing many tenants. Rather than creating accounts everywhere,
+<Term id="role-assumption">role assumption</Term> gives a short-lived session with one specific role in the target
+tenant.
+
+It rests on a **trust**: an exact source-identity to target-role relationship that a root administrator creates with
+`trust.create`. The source identity then calls `roles.assume` to receive a role session:
+
+```ts
+const { token, session } = await iam.api.roles.assume(credential, {
+  tenantId: targetTenantId,
+  trustId,
+  durationSeconds: 900, // 15 minutes, the default; at least 60
+});
+```
+
+`roles.assume` returns the role session's bearer `token`, which the caller sends as `Authorization: Bearer` to act
+in the target tenant. The HTTP handler never sets it as a cookie, so the caller's own session stays intact.
+
+- Assumption also requires the source identity's `iam:roles:assume` permission on `iam/{roleId}`. A trust may
+  require MFA (the default) and an external ID.
+- Role sessions last 15 minutes by default and at most an hour, unless the trust's `maxSessionSeconds` and the
+  deployment's `sts.maxRoleSessionSeconds` allow longer. They never outlive the source credential.
+- Role sessions cannot chain (`ROLE_CHAINING_DISABLED`), cannot be started from an impersonation session, and are
+  never recently authenticated, so they cannot perform sensitive operations.
+- Revoking the trust, the source session, the source identity, or a relevant grant authority ends the role
+  session at its next use.
+
+## Restricting methods per tenant
+
+Not every organization wants every method you offer. A company that runs its own identity provider may insist on
+federated sign-in only. An organization's `allowedMethods` lists the sign-in methods it accepts: `password`,
+`passwordless-email`, `passwordless-sms`, `passkey`, and `federated`. Unset means every method the deployment
+enables. A method outside the list is refused with `METHOD_NOT_ALLOWED` before any credential is examined. See
+[tenant policy](/docs/guides/authentication/tenant-policy#restricting-sign-in-methods).
+
+## Failed attempts and lockouts
+
+Attackers guess passwords and codes at scale, so sign-in, recovery, and MFA flows share persisted rate limits per
+account, and optionally per client IP. A refused attempt fails with `RATE_LIMITED` and a `retryAfterMs` that tells
+the client when to try again. When a real person locks themselves out, an administrator clears their counters with
+`identities.unlock`; when one address keeps attacking, an incident responder refuses it with
+`security.blockNetwork`. See
+[rate limits](/docs/guides/authentication/http#rate-limits) and
+[network restrictions](/docs/guides/authentication/tenant-policy#network-restrictions).
