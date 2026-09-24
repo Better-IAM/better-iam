@@ -88,8 +88,8 @@ exceptions, which stay as history.
 ## Evaluating
 
 `evaluate` (`iam:compliance:evaluate`) runs the enabled controls, at most once a minute per organization
-(`RATE_LIMITED` otherwise). The checks read outside any transaction, so a large directory never holds the store's
-write lock; the results are then written in one short transaction. Each result records the status, the status before
+(`RATE_LIMITED` otherwise). The checks read outside any transaction, so evaluating a large directory never holds the
+store's write lock; the results are then written in one short transaction. Each result records the status, the status before
 exceptions (`rawStatus`), a summary, metrics and up to 200 findings; `evaluate` returns the statuses and counts, and
 `listResults` the findings. A check that cannot run fails its control rather than passing by omission. The run keeps
 `counts` per status and a SHA-256 `digest` of its results, which is also written to the tamper-evident audit log as

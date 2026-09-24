@@ -115,6 +115,7 @@ SCIM provisioning changes, produces no event.
 | Passkey added or removed | `auth:passkey:create`, `auth:passkey:delete` | CAEP `credential-change` (`credential_type: fido2-platform`, `change_type: create` or `delete`) |
 | Email address changed, by the person or an administrator | `auth:email:change`, `identity:email-change` | RISC `identifier-changed` |
 | Offboarding, scheduled expiry | `identity:offboard`, `identity:expire` | RISC `account-disabled` |
+| Threat response: sessions ended, identity contained | `threat:revoke-sessions`, `threat:contain` | CAEP `session-revoked`, RISC `account-disabled` |
 | Deletion | `identity:delete` | RISC `account-purged` |
 
 Only allowed (successful) actions produce events. The `sharedSignalEvents` export names the five event type URIs,
@@ -220,11 +221,15 @@ stateDiagram-v2
 
 Receiver-driven stream management (the SSF stream configuration API, where a receiver creates its own stream) and
 poll delivery (where a receiver fetches events) are not offered: streams are configured by administrators, and
-events are pushed.
+events are pushed. To receive events from other identity providers, see the
+[Shared Signals receiver](/docs/federation/shared-signals-receiver).
 
 ## Next steps
 
 <Cards>
+  <Card title="Shared Signals receiver" href="/docs/federation/shared-signals-receiver">
+    The other direction: take in CAEP and RISC events from upstream identity providers.
+  </Card>
   <Card title="Enterprise onboarding" href="/docs/federation/enterprise-onboarding#offboarding-end-to-end">
     How Shared Signals fits into offboarding with SCIM and back-channel logout.
   </Card>

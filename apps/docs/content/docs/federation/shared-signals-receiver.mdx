@@ -37,8 +37,8 @@ To send Better IAM's own events to other systems instead, see the
 **Who configures it.** Organization administrators register their providers, usually from your admin UI. Reading
 sources and events needs `iam:signals:read`; registering and changing sources, reprocessing events, and polling on
 demand need `iam:signals:manage`. Both are checked on `iam/signals/sources` and `iam/signals/events` (with `/{id}` for
-one record), and every change also needs a <Term id="recent-authentication">recent sign-in</Term>. Your team only
-schedules the poll job, and only when poll sources exist.
+one record), and every change also needs a <Term id="recent-authentication">recent sign-in</Term>. Your team sets the
+[deployment options](#deployment) and schedules the poll job once poll sources exist.
 
 ## Supported events
 
@@ -137,7 +137,7 @@ const { source, pushUrl, pushToken } = await iam.api.signals.createSource(admin,
     },
     actions: {
       type: "Record<eventType, 'record' | 'revoke-sessions'>",
-      description: 'The action per event type. Types not listed are recorded only. Any event type except the two control events may end sessions.',
+      description: 'The action per event type. Types not listed are recorded only.',
     },
     requireTyp: {
       type: 'boolean',
@@ -190,16 +190,14 @@ token is required only when the source has one, and is compared in constant time
 
 | Status | `err` | Meaning |
 | --- | --- | --- |
-| 202 | (empty body) | The event is committed. A SET whose issuer and `jti` arrived before also gets 202, and nothing is done again. |
-| 400 | `invalid_request`, `invalid_key`, `invalid_issuer`, `invalid_audience` | The SET was refused (see [Verification](#verification)); `description` says why. The same SET gets the same answer again. |
+| 202 | (empty body) | The event is committed, or its issuer and `jti` arrived before (nothing is done again). |
+| 400 | `invalid_request`, `invalid_key`, `invalid_issuer`, `invalid_audience` | The SET was refused (see [Verification](#verification)); `description` says why. Resending gets the same answer. |
 | 401 | `authentication_failed` | The bearer token is missing or wrong (with `WWW-Authenticate: Bearer`). |
 | 403 | `access_denied` | The sender's address is in one of the organization's network blocks. |
-| 404 | `invalid_request` | No active push source has that ID: it is unknown, deleted, disabled, a poll source, or its organization is suspended. |
-| 405 | `invalid_request` | The method was not POST (with `Allow: POST`). |
-| 413 | `invalid_request` | The body is larger than 64 KiB. |
-| 415 | `invalid_request` | The content type is not `application/secevent+jwt`. |
-| 429 | `invalid_request` | The source sent more than 3000 events in the rate-limit window. `Retry-After` says when to try again. |
-| 503 | `invalid_key`, `invalid_request` | The source's keys could not be obtained (`Retry-After: 30`) or storage was busy (`Retry-After: 1`). The provider should send it again. |
+| 404 | `invalid_request` | No active push source has that ID: unknown, deleted, disabled, a poll source, or its organization is suspended. |
+| 405, 413, 415 | `invalid_request` | Not POST (with `Allow: POST`); a body over 64 KiB; a content type other than `application/secevent+jwt`. |
+| 429 | `invalid_request` | More than 3000 events from the source in the rate-limit window, with `Retry-After`. |
+| 503 | `invalid_key`, `invalid_request` | The source's keys could not be obtained (`Retry-After: 30`) or storage was busy (`Retry-After: 1`): send it again. |
 | 500 | `invalid_request` | Processing failed unexpectedly. |
 
 Error bodies are RFC 8935 JSON, `{ "err": "...", "description": "..." }`, and every response carries
@@ -228,10 +226,11 @@ active poll source:
    provider delivers them again.
 4. **Repeats** while the provider answers `moreAvailable: true`, up to five requests per source and run.
 
-A run returns `{ sources, received, acknowledged, errors }`: new events, acknowledgements the provider accepted, and
-failed requests plus events left for redelivery. A failed request is noted as the source's `lastError` (such as "The
-poll endpoint answered 500"), and pending acknowledgements wait for the next attempt. There is no long polling, so the
-job's interval is the delay. `signals.poll({ tenantId, sourceId })` polls one source now, for a "Check now" button.
+A run returns `{ sources, received, acknowledged, errors }`: sources polled, new events, acknowledgements the provider
+accepted, and failed requests plus events left for redelivery. A failed request is noted as the source's `lastError`
+(such as "The poll endpoint answered 500"), and pending acknowledgements wait for the next attempt. There is no long
+polling, so the job's interval is the delay. `signals.poll({ tenantId, sourceId })` polls one source now, for a
+"Check now" button.
 
 The poll token is sealed with the deployment secret, bound to its source, and re-sealed by `iam.rotateSecrets()`
 (see [Secrets](/docs/operations/deployment/secrets)). A token sealed under a secret that is no longer configured
@@ -449,13 +448,11 @@ const stream = await signals.createStream(upstreamAdmin, {
 await signals.verifyStream(upstreamAdmin, { tenantId: upstreamTenantId, streamId: stream.id });
 ```
 
-A Better IAM transmitter signs every organization's events with the same issuer and key, and names the organization
-in a `tenant_id` claim. Set `tenantClaim` to the upstream organization's ID, so the source accepts only that
-organization's events.
-
-The transmitter sends `iss_sub` subjects whose `sub` is the upstream identity ID. These match federation links when
-the organization signs in through an OIDC connection to the upstream deployment's OAuth provider, whose issuer the
-transmitter usually shares. Otherwise, create the stream with `subjectFormat: 'email'` and turn on `matchEmail`.
+A Better IAM transmitter signs every organization's events with the same issuer and key and names the organization
+in a `tenant_id` claim, so set `tenantClaim` to the upstream organization's ID: the source then accepts only that
+organization's events. Its `iss_sub` subjects carry the upstream identity ID, which matches federation links when the
+organization signs in through an OIDC connection to the upstream OAuth provider (whose issuer the transmitter usually
+shares). Otherwise, create the stream with `subjectFormat: 'email'` and turn on `matchEmail`.
 
 </Tab>
 <Tab value="Okta">
@@ -548,9 +545,9 @@ at connect time, which defeats DNS rebinding, refuses redirects, and bounds the 
 
 <Callout title="Schedule the poll job">
   Run `iam.signals.poll()` every minute or so beside your other [jobs](/docs/operations/jobs) (`{ sourceId }` polls
-  one source). It needs no credential, and what it records is audited by the actor `signal:{sourceId}`. Overlapping runs are harmless: an
-  event delivered twice is recognized as a duplicate and acknowledged again. Deployments without poll sources can
-  skip the job, since pushes need nothing scheduled.
+  one source). It needs no credential; what it records is audited by the actor `signal:{sourceId}`. Overlapping runs
+  are harmless, since an event delivered twice is recognized as a duplicate and acknowledged again. Deployments
+  without poll sources can skip the job: pushes need nothing scheduled.
 </Callout>
 
 ```ts

@@ -54,12 +54,19 @@ logo URLs must be `https`; while the deployment itself runs on `localhost`, `127
 | `name`, `description`, `category`, `logoUrl` | What the launcher shows. The console groups apps by category. |
 | `oauthClientId` | The `clientId` of an OAuth client of this organization, named by one app at most. The app becomes `oidc` (otherwise `link`) and decides [who may sign in](#refuse-people-without-the-app) to the client. |
 | `visibility` | `assigned` (the default) or `everyone`. |
-| `enabled` | `false` takes the app off every launcher and refuses launches, keeping its assignments. |
+| `enabled` | `false` takes the app off every launcher and refuses launches and sign-ins to its client, keeping its assignments. |
 | `requestPackageId` | A requestable access package people without the app may ask for. |
 | `ownerIds` | Up to 20 people to contact about the app. It grants them nothing. |
 
 A tenant holds at most 500 apps. `update` changes anything but the key (`null` clears an optional field), and
-`delete` removes an app with its assignments and launch history.
+`delete` removes an app with its assignments and launch history. Changes are audited as `app:create`, `app:update`
+and `app:delete`.
+
+<Callout title="Releasing an OAuth client is explicit" type="warn">
+  Without its app, everyone in the organization may sign in to an OAuth client. So deleting an app that governs a
+  client, or changing or clearing its `oauthClientId`, answers `CONFLICT` unless you pass `releaseClient: true`. To
+  keep refusing everyone, disable the app instead.
+</Callout>
 
 ## Who has an app
 
@@ -69,12 +76,16 @@ A person has an app when it is enabled and:
 - it is assigned to them, or
 - it is assigned to a group they belong to,
 
-counting only assignments and memberships that have not ended. Only active people have apps; service accounts and
-agents never do. The launcher says why each app is there (`via`): `direct`, else `group`, else `everyone`.
+counting only assignments and memberships that have not ended. Only active, unexpired people have apps; service
+accounts and agents never do. The launcher says why each app is there (`via`): `direct`, else `group`, else
+`everyone`.
 
-`assign` (`iam:applications:assign`) gives an app to one person or one group, with an optional `expiresAt` up to ten
-years away. Assigning the same person or group again replaces the assignment. `unassign` removes one, and
-`listAssignments` shows each assignment with its person or group and when the person last opened the app.
+`assign` (`iam:applications:assign` on the app) gives an app to one person or one group, with an optional `expiresAt`
+up to ten years away; an app holds at most 10,000 assignments, so assign groups at scale. Assigning the same person or
+group again replaces the assignment. `unassign` removes one (authorized on its app, so per-app administrators can),
+and `listAssignments` shows the assignments of one app, or of every app without `appId`, with the group's name or,
+for callers who may read the directory, the person's, and when the person last opened the app. Deleting a person or a
+group removes their assignments.
 
 ```ts title="A contractor gets the CRM until the end of the year"
 await iam.api.applications.assign(admin, {
@@ -109,11 +120,13 @@ and agents acting for people are refused.
 - `launch` checks the person has the app, records the launch (first and last time, and a count), audits `app:launch`,
   and returns `{ url }`. It does not sign the person in to the app; the app's own sign-in runs as usual.
 
-An administrator [viewing as](/docs/guides/authentication/impersonation) the person sees their launcher, and a launch
-made that way is not audited as `app:launch`.
+An administrator [viewing as](/docs/guides/authentication/impersonation) the person sees their launcher, but cannot
+open apps from it: `launch` answers `IMPERSONATION_RESTRICTED`.
 
 In React, `useMyApps` from `@better-iam/react` loads the launcher: `apps` to open, `requestable` apps to ask for, and
-`launch(appId)`, which records the launch, reloads, and resolves to the URL.
+`launch(appId)`, which records the launch, reloads, and resolves to the URL. It does not open the app: by the time it
+resolves, the browser no longer treats a new tab as the result of the click and blocks it, so open the tab during the
+click and point it at the URL afterwards.
 
 ```tsx
 function Launcher({ tenantId }: { tenantId: string }) {
@@ -121,11 +134,16 @@ function Launcher({ tenantId }: { tenantId: string }) {
   async function open(appId: string) {
     // Open the tab during the click (browsers block tabs opened later), then point it at the app.
     const tab = window.open('about:blank', '_blank');
-    const url = await launch(appId);
-    if (tab) {
-      tab.opener = null;
-      tab.location.href = url;
-    } else window.location.href = url;
+    try {
+      const url = await launch(appId);
+      if (tab) {
+        tab.opener = null;
+        tab.location.href = url;
+      } else window.location.href = url;
+    } catch (error) {
+      tab?.close(); // not the person's app, or an administrator viewing as them
+      throw error;
+    }
   }
   return (
     <>
@@ -145,9 +163,14 @@ function Launcher({ tenantId }: { tenantId: string }) {
 ## Refuse people without the app
 
 A launcher does not stop anyone from going to an app directly. For apps that sign in through this deployment's
-[OAuth provider](/docs/federation/oauth-provider), your
-[interaction page](/docs/federation/oauth-provider#build-the-interaction-pages) can refuse people who do not have the
-app. The provider does not check assignments by itself.
+[OAuth provider](/docs/federation/oauth-provider), the provider does. `iam.protocolHost` gives it the optional hook
+`clientAllowed(identityId, tenantId, clientId)`, which asks the catalog whenever the provider loads a person's account
+for a client: when it redeems an authorization code, refreshes tokens, and answers userinfo. A person without the app
+gets no tokens for its client, and removing their app, or disabling it, also stops their refresh tokens. A provider
+created without `iam.protocolHost` enforces nothing unless you pass a `clientAllowed` of your own.
+
+The provider refuses only at the token endpoint, after the person has signed in. To tell them why instead, check in
+your [interaction page](/docs/federation/oauth-provider#build-the-interaction-pages) before completing it:
 
 ```ts
 const details = await issuer.interactionDetails(req, res);
@@ -172,12 +195,13 @@ if (!access.allowed) {
 | The app exists and the person has it now | `allowed: true`, `governed: true` |
 | The app exists and the person does not have it, or the app is disabled | `allowed: false`, `governed: true` |
 
-It takes no credential and is not audited: it is for the deployment's own code. Over the API the same check is
-`applications.check`, which needs `iam:applications:read`.
+It gives the same answer as the provider's hook, takes no credential and is not audited: it is for the deployment's
+own code. Over the API the same check is `applications.check`, which needs `iam:applications:read`.
 
 <Callout title="Register the client as an app first">
   Clients without an app are allowed for everyone, so enforcement starts only once you register the OAuth client in
-  the catalog with its `oauthClientId`. Disabling that app then refuses everyone rather than ungoverning the client.
+  the catalog with its `oauthClientId`. Disabling that app then refuses everyone rather than ungoverning the client,
+  and deleting it needs `releaseClient: true`.
 </Callout>
 
 ## Clean up unused access
@@ -202,8 +226,9 @@ for (const app of report.filter((item) => item.unused.length))
 | `iam:applications:assign` | `assign`, `unassign`, `removeUnused` |
 | none (own session) | `mine`, `launch` |
 
-Assignments are audited as `app:assign` and `app:unassign`, and launches as `app:launch`; subscribe a
-<Term id="webhook">webhook</Term> to `app:*` to follow them. The console pages are **Access › Applications** for
+Apps are audited as `app:create`, `app:update` and `app:delete`, assignments as `app:assign` and `app:unassign`, and
+launches as `app:launch`; subscribe a <Term id="webhook">webhook</Term> to `app:*` to follow them. People's names
+appear in `listAssignments` and `usage` only for callers who may also read the directory (`iam:identities:read`). The console pages are **Access › Applications** for
 administrators (apps, assignments, usage, and a "Remove unused" button) and **Home › My apps** for everyone.
 
 <Cards>

@@ -22,7 +22,7 @@ reads the audit events recorded since its last run from a per-tenant cursor, ver
 records what it finds. Detection is therefore as late as the job's interval and never slows a sign-in, and it sees
 every writer's events: the authentication service, SCIM, protocols, and deployment jobs.
 
-- **Rules.** Twenty built-in rules, each with a severity, a subject type, a MITRE ATT&CK technique, and (for counting
+- **Rules.** Twenty-one built-in rules, each with a severity, a subject type, a MITRE ATT&CK technique, and (for counting
   rules) a threshold and window a tenant can tune within bounds. [`rules`](#rules) lists them with the setting in force.
 - **Detections** are recorded once each: a rule's unique key is its triggering event or its burst, so re-reading
   events never raises a second one. Each carries evidence: up to 20 audit event ids with counts, the time span, and

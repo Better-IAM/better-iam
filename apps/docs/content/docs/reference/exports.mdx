@@ -147,10 +147,10 @@ Typed browser client with session store and passkey helpers.
 
 | Export | What it does | Explained in |
 | --- | --- | --- |
-| `createDeviceProver(options?)` | Lets a browser or Node agent prove which registered device a request comes from, so policies can require a registered, managed, or compliant device. |  |
-| `const deviceProofHeader` | The request header that carries a device proof. |  |
-| `indexedDbKeyStore(name?)` | Keeps a browser's device key in IndexedDB between page loads, with a private key that page scripts can sign with but never read. It is the default key store in browsers. |  |
-| `memoryKeyStore()` | Keeps the key pair in memory only: for tests, scripts, and servers that re-enrol after a restart. |  |
+| `createDeviceProver(options?)` | Lets a browser or Node agent prove which registered device a request comes from, so policies can require a registered, managed, or compliant device. | [Device posture](/docs/guides/device-posture) |
+| `const deviceProofHeader` | The request header that carries a device proof. | [Device posture](/docs/guides/device-posture) |
+| `indexedDbKeyStore(name?)` | Keeps a browser's device key in IndexedDB between page loads, with a private key that page scripts can sign with but never read. It is the default key store in browsers. | [Device posture](/docs/guides/device-posture) |
+| `memoryKeyStore()` | Keeps the key pair in memory only: for tests, scripts, and servers that re-enrol after a restart. | [Device posture](/docs/guides/device-posture) |
 
 ### @better-iam/client/passkeys
 
@@ -604,7 +604,7 @@ The `betterIam()` factory: tenants, identities, authorization, governance, HTTP 
 | `departmentHeads(tx, tenantId, departmentId, options?)` | The heads of a department (identity IDs): its own head and, with `includeAncestors`, the heads of the departments above it, nearest first and without duplicates. |  |
 | `departmentOf(tx, tenantId, identityId)` | The ID of the department a person belongs to, if any. |  |
 | `departmentPath(tx, tenantId, departmentId)` | Department IDs from the top of the tree down to `departmentId` itself (for roll-ups); empty when unknown. |  |
-| `const deviceProofHeader` | The request header that carries a device proof (a compact JWS). |  |
+| `const deviceProofHeader` | The request header that carries a device proof (a compact JWS). | [Device posture](/docs/guides/device-posture) |
 | `effectiveRisk(record, now, halfLifeHours)` | The score and level in force at `now`: decayed contributions, raised to an unexpired override's level. |  |
 | `evaluateCompliance(device, integration, settings, now)` | Judges a device against the tenant's requirements. |  |
 | `generateSecretValue(generator)` | A random value from the generator: uniform draws, with one character of each kept class placed at random. |  |

@@ -179,6 +179,8 @@ describe('privacy purposes and consent', () => {
         receipt: { ...receipt, granted: false },
       }),
     ).toMatchObject({ valid: false, reason: 'SIGNATURE_INVALID' });
+    // History is newest first by decision time; decisions at the same instant have no defined order.
+    s.f.advance(1_000);
     await s.privacy.decide(s.aliceToken, {
       tenantId: s.tenantId,
       purposeKey: 'marketing-email',

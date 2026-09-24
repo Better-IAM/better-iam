@@ -52,7 +52,7 @@ An application (`create`, `iam:applications:manage`) has these fields:
 | `oauthClientId`    | The `clientId` of an OAuth client of this organization, for an app that signs people in through this deployment. It must exist and not be revoked, and only one app may name it: the app then [decides who may sign in](#enforcing-assignments-at-sign-in) to the client. |
 | `kind`             | Set for you: `oidc` when the app names an `oauthClientId`, `link` otherwise.                                                                                                                                                                                              |
 | `visibility`       | `assigned` (the default): only assigned people and members of assigned groups have the app. `everyone`: every active person of the organization has it.                                                                                                                   |
-| `enabled`          | `true` by default. A disabled app disappears from every launcher and cannot be launched; its assignments stay.                                                                                                                                                            |
+| `enabled`          | `true` by default. A disabled app disappears from every launcher and cannot be launched, and its OAuth client refuses everyone; its assignments stay.                                                                                                                     |
 | `requestPackageId` | A requestable [access package](#requesting-an-app) people without the app may ask for.                                                                                                                                                                                    |
 | `ownerIds`         | Up to 20 identities of the tenant to contact about the app. Being an owner grants nothing.                                                                                                                                                                                |
 
@@ -171,7 +171,7 @@ first, then by name. `mine` is not audited.
 An app the person does not have (unassigned, disabled or unknown) answers `ACCESS_DENIED`. Launching does not sign
 the person in to the app: the app's own sign-in runs as usual, through this deployment for `oidc` apps. An
 administrator [viewing as the person](authentication.md#impersonation) sees their launcher, but `launch` answers
-`IMPERSONATION_RESTRICTED` (403): opening the app would count as the person's use and start a sign-in in their name.
+`IMPERSONATION_RESTRICTED` (403), so no launch is ever recorded in the person's name by someone else.
 
 In React, `useMyApps({ tenantId, enabled? })` from `@better-iam/react` loads the launcher. `apps` holds the apps the
 person can open (most recently used first), `requestable` those they may request, `status`, `error` and `refresh`
