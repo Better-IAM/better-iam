@@ -9,6 +9,8 @@ import {
   type Tenant,
 } from '@better-iam/core';
 import type { ServerContext } from '../context.js';
+import { documentDenyStatements } from '../decisions.js';
+import { assertDeniesKept, reliedOnByOthers } from './roles.js';
 import {
   enabledFeatureKeys,
   featureContextKey,
@@ -80,6 +82,8 @@ export async function updatePolicy(
     throw new IamError('VERSION_CONFLICT', 'Policy version changed', 409);
   if (input.document === undefined && input.name === undefined && input.description === undefined)
     throw new IamError('INVALID_INPUT', 'Nothing to update');
+  if (input.document !== undefined)
+    await assertPolicyDeniesKept(ctx, tx, principal, policy, input.document);
   await tx.insert('policyVersions', {
     ...policy,
     id: id(),
@@ -95,6 +99,35 @@ export async function updatePolicy(
   if (input.description !== undefined)
     next.description = text(input.description, 'description', 512);
   return tx.put('policies', next);
+}
+
+/**
+ * A policy another authority attached to a role (or whose role it inherits or bound) carries denies that authority
+ * relies on: its editor may not remove or change one (roles.ts assertDeniesKept).
+ */
+async function assertPolicyDeniesKept(
+  ctx: ServerContext,
+  tx: IamStore,
+  principal: AuthenticatedPrincipal,
+  policy: Policy,
+  document: PolicyDocument,
+): Promise<void> {
+  await assertDeniesKept(
+    ctx,
+    tx,
+    principal,
+    documentDenyStatements(policy.document),
+    documentDenyStatements(document),
+    async () =>
+      reliedOnByOthers(
+        tx,
+        policy.tenantId,
+        policy.authorityId,
+        (await tx.find<Role>('roles', { tenantId: policy.tenantId }))
+          .filter((role) => role.policyIds.includes(policy.id))
+          .map((role) => role.id),
+      ),
+  );
 }
 
 /** Deletes a policy that no role still attaches; the Owner policy is protected. */
@@ -164,6 +197,7 @@ export function createPoliciesApi(ctx: ServerContext) {
           )[0];
           if (!archived) throw new IamError('NOT_FOUND', 'Policy version not found', 404);
           await catalog.validate(tx, input.tenantId, archived.document);
+          await assertPolicyDeniesKept(ctx, tx, principal, policy, archived.document);
           await tx.insert('policyVersions', {
             ...policy,
             id: id(),
@@ -216,6 +250,13 @@ export function createPoliciesApi(ctx: ServerContext) {
               'principal.authTime': now,
               'principal.sessionTagKeys': [],
               'principal.delegated': false,
+              // Threat detection keys as for a person nothing was detected about (threats.ts).
+              'principal.riskLevel': 'none',
+              'principal.riskScore': 0,
+              // Device posture keys as for a request without a verified device (devices.ts).
+              'request.deviceAssurance': 'none',
+              'request.deviceManaged': false,
+              'request.deviceCompliant': false,
               'request.time': now,
               // The tenant's feature flags as they are now, read only when the document names them.
               ...(mentionsFeatures([input.document])

@@ -310,6 +310,8 @@ Each SET is signed with the first private key that has an `alg` (`typ: secevent+
 
 Streams are managed with `createStream`, `listStreams`, `getStream`, `updateStream`, and `deleteStream`, authorized as `iam:ssf:streams:create|read|update|delete` on `ssf/{streamId}` and audited. The receiver's `authorization` header is encrypted and write-only. Endpoints must use HTTPS (`allowInsecureLocalhost` allows loopback HTTP for development). `verifyStream` sends an SSF verification event with a `state` at once and reports whether the receiver accepted it. Deliveries expect `202` (also accepting `200`/`204`), retry with backoff (30 seconds growing to two hours, eight attempts), and are listed per stream with `listDeliveries`. A paused stream (`enabled: false`) keeps collecting events and delivers them after it is re-enabled. Deleting a stream drops its queue. `handler(request)` serves the transmitter metadata at `/.well-known/ssf-configuration{issuer path}`. Receiver-driven stream management (the SSF stream configuration API) and poll delivery are not offered: streams are configured by administrators.
 
+Better IAM also receives Shared Signals from upstream identity providers (push and poll, mapped to the organization's people, feeding threat detection): see the [Shared Signals receiver](shared-signals-receiver.md).
+
 ## SAML service provider
 
 Configure `createSamlService({ ...host, connections })` with each tenant's `entryPoint`, `idpIssuer`, `idpCertificates`, `entityId`, `callbackUrl`, SP `privateKey`, and `publicCertificate`. Supply `decryptionPrivateKey` and `decryptionCertificate` to accept encrypted assertions; `requireEncryptedAssertions: true` rejects plaintext assertions.

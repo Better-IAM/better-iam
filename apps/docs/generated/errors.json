@@ -18,7 +18,20 @@
    "@better-iam/nestjs",
    "@better-iam/server"
   ],
-  "occurrences": 68
+  "occurrences": 113
+ },
+ {
+  "code": "ACCESS_EXPIRING",
+  "statuses": [
+   409
+  ],
+  "messages": [
+   "The access that allows this credential ends within a minute"
+  ],
+  "packages": [
+   "@better-iam/server"
+  ],
+  "occurrences": 1
  },
  {
   "code": "ACCOUNT_LINK_CONFLICT",
@@ -90,11 +103,13 @@
   "statuses": [
    400
   ],
-  "messages": [],
+  "messages": [
+   "No archived events of … were found"
+  ],
   "packages": [
    "@better-iam/cli"
   ],
-  "occurrences": 1
+  "occurrences": 2
  },
  {
   "code": "AUDIT_CHAIN_BROKEN",
@@ -108,6 +123,21 @@
    "@better-iam/cli"
   ],
   "occurrences": 1
+ },
+ {
+  "code": "AUTHORITY_UNAVAILABLE",
+  "statuses": [
+   409
+  ],
+  "messages": [
+   "A revoked authority cannot change",
+   "The certificate authority … is …",
+   "The certificate authority … has expired"
+  ],
+  "packages": [
+   "@better-iam/server"
+  ],
+  "occurrences": 3
  },
  {
   "code": "BILLING_PERIOD_CLOSED",
@@ -152,6 +182,51 @@
   "occurrences": 2
  },
  {
+  "code": "CERTIFICATE_INVALID",
+  "statuses": [
+   401
+  ],
+  "messages": [
+   "No certificate was presented",
+   "The certificate cannot be read",
+   "The certificate was not issued here",
+   "The certificate has been revoked",
+   "A CA certificate cannot authenticate",
+   "The certificate is not for … use"
+  ],
+  "packages": [
+   "@better-iam/server"
+  ],
+  "occurrences": 13
+ },
+ {
+  "code": "CHECKOUT_REQUIRED",
+  "statuses": [
+   409
+  ],
+  "messages": [
+   "This secret is handed out only through check-outs (vault.checkout)",
+   "A check-out reveals only the version it handed out"
+  ],
+  "packages": [
+   "@better-iam/server"
+  ],
+  "occurrences": 2
+ },
+ {
+  "code": "CLAIM_UNAVAILABLE",
+  "statuses": [
+   409
+  ],
+  "messages": [
+   "This person has no value for the claim …"
+  ],
+  "packages": [
+   "@better-iam/server"
+  ],
+  "occurrences": 1
+ },
+ {
   "code": "CONFIG_DRIFT",
   "statuses": [
    400
@@ -191,6 +266,19 @@
   "occurrences": 1
  },
  {
+  "code": "CONFIRMATION_INVALID",
+  "statuses": [
+   400
+  ],
+  "messages": [
+   "This confirmation link is invalid or has expired"
+  ],
+  "packages": [
+   "@better-iam/server"
+  ],
+  "occurrences": 1
+ },
+ {
   "code": "CONFLICT",
   "statuses": [
    409
@@ -201,7 +289,7 @@
    "Client ID already exists; tenant binding is immutable.",
    "A project with this name already exists",
    "A SAML connection with this ID already exists.",
-   "A revoked connection cannot be rotated."
+   "The connection changed while it was being updated; try again."
   ],
   "packages": [
    "@better-iam/core",
@@ -211,7 +299,7 @@
    "@better-iam/scim",
    "@better-iam/server"
   ],
-  "occurrences": 61
+  "occurrences": 100
  },
  {
   "code": "CREDENTIAL_CHAINING_DISABLED",
@@ -219,12 +307,13 @@
    400
   ],
   "messages": [
-   "Temporary credentials cannot mint session tokens"
+   "Temporary credentials cannot mint session tokens",
+   "Delegated sessions cannot assume roles"
   ],
   "packages": [
    "@better-iam/server"
   ],
-  "occurrences": 1
+  "occurrences": 2
  },
  {
   "code": "CSRF",
@@ -350,14 +439,15 @@
   "messages": [
    "Reminders require an email delivery callback",
    "Member invitations require an email delivery callback",
+   "Public requests need an email delivery callback",
+   "Public requests need an email delivery callback to confirm addresses",
    "Organization invitations require an email delivery callback",
-   "The access digest requires an email delivery callback",
-   "Expiry reminders require an email delivery callback"
+   "The access digest requires an email delivery callback"
   ],
   "packages": [
    "@better-iam/server"
   ],
-  "occurrences": 7
+  "occurrences": 9
  },
  {
   "code": "DOCTOR_FINDINGS",
@@ -412,6 +502,18 @@
   "occurrences": 3
  },
  {
+  "code": "ENGINE_FAILED",
+  "statuses": [
+   400,
+   502
+  ],
+  "messages": [],
+  "packages": [
+   "@better-iam/server"
+  ],
+  "occurrences": 2
+ },
+ {
   "code": "FEATURE_DISABLED",
   "statuses": [
    400,
@@ -429,7 +531,7 @@
    "@better-iam/auth",
    "@better-iam/server"
   ],
-  "occurrences": 29
+  "occurrences": 34
  },
  {
   "code": "FEATURE_LOCKED",
@@ -467,9 +569,10 @@
    "Root identity provisioning requires an administrator"
   ],
   "packages": [
-   "@better-iam/auth"
+   "@better-iam/auth",
+   "@better-iam/server"
   ],
-  "occurrences": 1
+  "occurrences": 2
  },
  {
   "code": "GRANT_AUTHORITY_REQUIRED",
@@ -478,6 +581,32 @@
   ],
   "messages": [
    "An active delegated grant authority is required"
+  ],
+  "packages": [
+   "@better-iam/server"
+  ],
+  "occurrences": 1
+ },
+ {
+  "code": "HOST_KEY_CHANGED",
+  "statuses": [
+   409
+  ],
+  "messages": [
+   "This host key differs from the enrolled one; re-enroll the host with a new join token"
+  ],
+  "packages": [
+   "@better-iam/server"
+  ],
+  "occurrences": 1
+ },
+ {
+  "code": "HOST_KEY_IN_USE",
+  "statuses": [
+   409
+  ],
+  "messages": [
+   "Host … already uses this key"
   ],
   "packages": [
    "@better-iam/server"
@@ -498,6 +627,33 @@
    "@better-iam/server"
   ],
   "occurrences": 3
+ },
+ {
+  "code": "HOST_NAME_TAKEN",
+  "statuses": [
+   409
+  ],
+  "messages": [
+   "Host … already uses …"
+  ],
+  "packages": [
+   "@better-iam/server"
+  ],
+  "occurrences": 1
+ },
+ {
+  "code": "HOST_OUTSIDE_PATTERNS",
+  "statuses": [
+   400
+  ],
+  "messages": [
+   "Pattern … must end in a verified domain of this organization or fix an address prefix",
+   "… is outside the names this organization can vouch for (verify its domain or set hostPatterns)"
+  ],
+  "packages": [
+   "@better-iam/server"
+  ],
+  "occurrences": 2
  },
  {
   "code": "HOSTNAME_NOT_ALLOWED",
@@ -541,6 +697,19 @@
   "occurrences": 4
  },
  {
+  "code": "IDENTITY_INACTIVE",
+  "statuses": [
+   409
+  ],
+  "messages": [
+   "Credentials are issued to active members only"
+  ],
+  "packages": [
+   "@better-iam/server"
+  ],
+  "occurrences": 2
+ },
+ {
   "code": "IMPERSONATION_RESTRICTED",
   "statuses": [
    403
@@ -551,14 +720,14 @@
    "This operation is unavailable while impersonating a member",
    "Consent cannot be granted while impersonating a member.",
    "Access paths are not available while impersonating",
-   "Agreements cannot be accepted while impersonating"
+   "Requests cannot be decided while impersonating"
   ],
   "packages": [
    "@better-iam/auth",
    "@better-iam/oauth",
    "@better-iam/server"
   ],
-  "occurrences": 19
+  "occurrences": 27
  },
  {
   "code": "INSUFFICIENT_SCOPE",
@@ -580,12 +749,13 @@
   ],
   "messages": [
    "Access paths did not complete",
-   "Impact preview did not complete"
+   "Impact preview did not complete",
+   "The CA certificate is malformed"
   ],
   "packages": [
    "@better-iam/server"
   ],
-  "occurrences": 2
+  "occurrences": 3
  },
  {
   "code": "INVALID_ACTION",
@@ -619,17 +789,32 @@
    401
   ],
   "messages": [
+   "Email has changed",
    "Invalid verification code",
    "Challenge is invalid or expired",
    "MFA enrollment is invalid or expired",
    "Invalid passkey challenge",
-   "Sign-in challenge is invalid or expired",
-   "Email has changed"
+   "Sign-in challenge is invalid or expired"
   ],
   "packages": [
    "@better-iam/auth"
   ],
-  "occurrences": 8
+  "occurrences": 9
+ },
+ {
+  "code": "INVALID_CIPHERTEXT",
+  "statuses": [
+   400
+  ],
+  "messages": [
+   "The ciphertext was not produced by that key",
+   "The ciphertext is not valid",
+   "The ciphertext could not be decrypted with this key and encryption context"
+  ],
+  "packages": [
+   "@better-iam/server"
+  ],
+  "occurrences": 6
  },
  {
   "code": "INVALID_CONFIG",
@@ -652,7 +837,7 @@
    "@better-iam/cli",
    "@better-iam/server"
   ],
-  "occurrences": 59
+  "occurrences": 71
  },
  {
   "code": "INVALID_CREDENTIAL",
@@ -676,13 +861,30 @@
   "messages": [
    "Invalid current password",
    "Invalid password",
-   "Authentication is unavailable for this account",
    "Invalid email or password"
   ],
   "packages": [
    "@better-iam/auth"
   ],
-  "occurrences": 4
+  "occurrences": 3
+ },
+ {
+  "code": "INVALID_CSR",
+  "statuses": [
+   400
+  ],
+  "messages": [
+   "The certificate request is not valid DER",
+   "The requested key must be ECDSA P-256 or P-384, Ed25519, or RSA of 2048 to 8192 bits",
+   "The request names an unsupported kind of name",
+   "csr must be a PEM certificate request",
+   "The request carries an unreadable public key",
+   "The request is signed with an unsupported algorithm"
+  ],
+  "packages": [
+   "@better-iam/server"
+  ],
+  "occurrences": 9
  },
  {
   "code": "INVALID_FILTER",
@@ -712,12 +914,13 @@
    "Child type is not permitted",
    "Child type is not permitted under the new parent",
    "Cannot move a tenant under its own subtree",
-   "Invalid tenant hierarchy"
+   "Invalid tenant hierarchy",
+   "The authority chain is broken"
   ],
   "packages": [
    "@better-iam/server"
   ],
-  "occurrences": 4
+  "occurrences": 5
  },
  {
   "code": "INVALID_IDENTITY",
@@ -761,7 +964,7 @@
    "@better-iam/scim",
    "@better-iam/server"
   ],
-  "occurrences": 606
+  "occurrences": 965
  },
  {
   "code": "INVALID_LINK",
@@ -797,6 +1000,19 @@
   "occurrences": 3
  },
  {
+  "code": "INVALID_NONCE",
+  "statuses": [
+   400
+  ],
+  "messages": [
+   "The proof needs a fresh nonce from verifiableCredentials.nonce"
+  ],
+  "packages": [
+   "@better-iam/server"
+  ],
+  "occurrences": 1
+ },
+ {
   "code": "INVALID_PASSKEY",
   "statuses": [
    401
@@ -827,6 +1043,17 @@
    "@better-iam/server"
   ],
   "occurrences": 2
+ },
+ {
+  "code": "INVALID_PROOF",
+  "statuses": [
+   400
+  ],
+  "messages": [],
+  "packages": [
+   "@better-iam/server"
+  ],
+  "occurrences": 1
  },
  {
   "code": "INVALID_RECORD",
@@ -876,25 +1103,27 @@
   "packages": [
    "@better-iam/server"
   ],
-  "occurrences": 6
+  "occurrences": 7
  },
  {
   "code": "INVALID_SEALED_VALUE",
   "statuses": [
-   400
+   400,
+   500
   ],
   "messages": [
    "Invalid sealed value",
    "Outbox payload is not sealed",
    "The stored downstream token cannot be opened.",
-   "Webhook payload is incomplete"
+   "Webhook payload is incomplete",
+   "The secret value cannot be opened"
   ],
   "packages": [
    "@better-iam/auth",
    "@better-iam/scim",
    "@better-iam/server"
   ],
-  "occurrences": 4
+  "occurrences": 5
  },
  {
   "code": "INVALID_SESSION",
@@ -954,11 +1183,14 @@
   "statuses": [
    401
   ],
-  "messages": [],
-  "packages": [
-   "@better-iam/oauth"
+  "messages": [
+   "Invalid or expired host token"
   ],
-  "occurrences": 1
+  "packages": [
+   "@better-iam/oauth",
+   "@better-iam/server"
+  ],
+  "occurrences": 4
  },
  {
   "code": "INVALID_TRANSITION",
@@ -978,7 +1210,7 @@
    "@better-iam/projects",
    "@better-iam/server"
   ],
-  "occurrences": 62
+  "occurrences": 100
  },
  {
   "code": "INVARIANT_VIOLATION",
@@ -1014,12 +1246,14 @@
   ],
   "messages": [
    "Invitation is invalid",
-   "Invitation authority revoked"
+   "Invitation authority revoked",
+   "The inviter can no longer invite",
+   "The inviter can no longer grant this access"
   ],
   "packages": [
    "@better-iam/server"
   ],
-  "occurrences": 5
+  "occurrences": 10
  },
  {
   "code": "IP_BLOCKED",
@@ -1048,6 +1282,44 @@
   "occurrences": 1
  },
  {
+  "code": "KEY_MANAGED",
+  "statuses": [
+   409
+  ],
+  "messages": [],
+  "packages": [
+   "@better-iam/server"
+  ],
+  "occurrences": 1
+ },
+ {
+  "code": "KEY_MATERIAL_UNAVAILABLE",
+  "statuses": [
+   500
+  ],
+  "messages": [
+   "The key material cannot be opened with the configured secrets",
+   "A stored value cannot be opened"
+  ],
+  "packages": [
+   "@better-iam/server"
+  ],
+  "occurrences": 2
+ },
+ {
+  "code": "KEY_STATE_INVALID",
+  "statuses": [
+   409
+  ],
+  "messages": [
+   "A key that is … cannot be …"
+  ],
+  "packages": [
+   "@better-iam/server"
+  ],
+  "occurrences": 2
+ },
+ {
   "code": "LAST_AUTHENTICATOR",
   "statuses": [
    409
@@ -1066,12 +1338,13 @@
    409
   ],
   "messages": [
+   "The last owner without an expiry cannot be given one",
    "Cannot remove the final active owner"
   ],
   "packages": [
    "@better-iam/server"
   ],
-  "occurrences": 1
+  "occurrences": 2
  },
  {
   "code": "LAST_ROOT_ADMIN",
@@ -1087,23 +1360,52 @@
   "occurrences": 1
  },
  {
+  "code": "LDAP_BASE_TAKEN",
+  "statuses": [
+   409
+  ],
+  "messages": [
+   "Another organization publishes its directory under this base DN"
+  ],
+  "packages": [
+   "@better-iam/server"
+  ],
+  "occurrences": 1
+ },
+ {
+  "code": "LEGAL_HOLD",
+  "statuses": [
+   409
+  ],
+  "messages": [
+   "This subject is under a legal hold; release it or reject the request as exempt",
+   "This person is under a legal hold; release the hold before deleting them",
+   "People in this organization are under a legal hold; release the holds before deleting it"
+  ],
+  "packages": [
+   "@better-iam/server"
+  ],
+  "occurrences": 3
+ },
+ {
   "code": "LIMIT_EXCEEDED",
   "statuses": [
    409
   ],
   "messages": [
    "This tenant has reached its member limit (…)",
+   "This tenant has reached its … limit (…).",
    "At most … agreements",
-   "A tenant can define at most … meters",
-   "A tenant can have at most … budgets",
-   "At most … plans",
-   "A campaign covers at most … bindings; narrow it by role or subject type"
+   "At most … apps",
+   "At most … assignments per app; assign groups instead",
+   "A tenant can define at most … meters"
   ],
   "packages": [
    "@better-iam/auth",
+   "@better-iam/scim",
    "@better-iam/server"
   ],
-  "occurrences": 19
+  "occurrences": 46
  },
  {
   "code": "LINKING_DISABLED",
@@ -1118,6 +1420,19 @@
    "@better-iam/server"
   ],
   "occurrences": 2
+ },
+ {
+  "code": "LOGIN_REQUIRED",
+  "statuses": [
+   401
+  ],
+  "messages": [
+   "The application asked for a fresh sign-in: sign in again, then continue."
+  ],
+  "packages": [
+   "@better-iam/oauth"
+  ],
+  "occurrences": 1
  },
  {
   "code": "MAX_DEPTH",
@@ -1202,13 +1517,14 @@
    "Complete multi-factor authentication before impersonating a member who requires it",
    "Use an existing MFA factor before changing enrollment",
    "MFA is required by this tenant",
-   "Activation requires an MFA-verified session"
+   "Activation requires an MFA-verified session",
+   "Sign in with multi-factor authentication to get this credential"
   ],
   "packages": [
    "@better-iam/auth",
    "@better-iam/server"
   ],
-  "occurrences": 9
+  "occurrences": 10
  },
  {
   "code": "MISSING_ENV",
@@ -1223,6 +1539,21 @@
    "@better-iam/cli"
   ],
   "occurrences": 2
+ },
+ {
+  "code": "NAME_NOT_PERMITTED",
+  "statuses": [
+   403
+  ],
+  "messages": [
+   "A requested name is outside the authority's name constraints",
+   "This authority issues SPIFFE IDs only in …",
+   "spiffe://…/…/… names an identity; it is issued only to that identity (requestCertificate)"
+  ],
+  "packages": [
+   "@better-iam/server"
+  ],
+  "occurrences": 3
  },
  {
   "code": "NO_AUDIT_ARCHIVE",
@@ -1240,15 +1571,16 @@
  {
   "code": "NOT_FOUND",
   "statuses": [
+   400,
    404
   ],
   "messages": [
    "Passkey not found",
    "Device not found",
    "Session not found",
+   "No tenant …",
    "Endpoint not found",
-   "Cannot update a missing record",
-   "OAuth connection not found."
+   "Cannot update a missing record"
   ],
   "packages": [
    "@better-iam/auth",
@@ -1260,7 +1592,7 @@
    "@better-iam/scim",
    "@better-iam/server"
   ],
-  "occurrences": 128
+  "occurrences": 178
  },
  {
   "code": "NOT_INITIALIZED",
@@ -1362,6 +1694,19 @@
   "occurrences": 1
  },
  {
+  "code": "OWNER_INACTIVE",
+  "statuses": [
+   409
+  ],
+  "messages": [
+   "The owner of these steps is no longer active; cancel the run, or save the workflow again and start a new one"
+  ],
+  "packages": [
+   "@better-iam/server"
+  ],
+  "occurrences": 1
+ },
+ {
   "code": "PASSKEY_EXISTS",
   "statuses": [
    409
@@ -1426,7 +1771,7 @@
    "@better-iam/scim",
    "@better-iam/server"
   ],
-  "occurrences": 2
+  "occurrences": 4
  },
  {
   "code": "PHONE_EXISTS",
@@ -1484,7 +1829,18 @@
   "packages": [
    "@better-iam/server"
   ],
-  "occurrences": 18
+  "occurrences": 20
+ },
+ {
+  "code": "QUOTA_EXCEEDED",
+  "statuses": [
+   429
+  ],
+  "messages": [],
+  "packages": [
+   "@better-iam/server"
+  ],
+  "occurrences": 1
  },
  {
   "code": "RATE_LIMITED",
@@ -1492,12 +1848,15 @@
    429
   ],
   "messages": [
-   "Too many attempts; try again later"
+   "Too many attempts; try again later",
+   "The controls were evaluated less than a minute ago",
+   "A key rotates on demand at most ten times a day"
   ],
   "packages": [
-   "@better-iam/auth"
+   "@better-iam/auth",
+   "@better-iam/server"
   ],
-  "occurrences": 1
+  "occurrences": 3
  },
  {
   "code": "RECENT_AUTH_REQUIRED",
@@ -1546,7 +1905,7 @@
   "packages": [
    "@better-iam/server"
   ],
-  "occurrences": 19
+  "occurrences": 25
  },
  {
   "code": "RESOURCE_MISMATCH",
@@ -1601,6 +1960,17 @@
   "occurrences": 2
  },
  {
+  "code": "ROTATION_FAILED",
+  "statuses": [
+   502
+  ],
+  "messages": [],
+  "packages": [
+   "@better-iam/server"
+  ],
+  "occurrences": 1
+ },
+ {
   "code": "SAME_DATABASE",
   "statuses": [
    409
@@ -1632,7 +2002,7 @@
   "packages": [
    "@better-iam/saml"
   ],
-  "occurrences": 18
+  "occurrences": 19
  },
  {
   "code": "SCHEMA_VERSION",
@@ -1648,12 +2018,54 @@
   "occurrences": 1
  },
  {
+  "code": "SECRET_CHECKED_OUT",
+  "statuses": [
+   409
+  ],
+  "messages": [
+   "You already hold a check-out of this secret; check it in or renew it",
+   "Someone else has this secret checked out; try again when it is checked in"
+  ],
+  "packages": [
+   "@better-iam/server"
+  ],
+  "occurrences": 2
+ },
+ {
+  "code": "SECRET_PENDING_DELETION",
+  "statuses": [
+   409
+  ],
+  "messages": [
+   "This secret is scheduled for deletion; restore it first",
+   "This secret is already scheduled for deletion",
+   "This secret is scheduled for deletion"
+  ],
+  "packages": [
+   "@better-iam/server"
+  ],
+  "occurrences": 3
+ },
+ {
   "code": "SELF_REVIEW",
   "statuses": [
    403
   ],
   "messages": [
    "Reviewers cannot certify their own access; ask another reviewer"
+  ],
+  "packages": [
+   "@better-iam/server"
+  ],
+  "occurrences": 1
+ },
+ {
+  "code": "SESSION_EXPIRING",
+  "statuses": [
+   401
+  ],
+  "messages": [
+   "This session or the access that allows it ends within a minute; renew it first"
   ],
   "packages": [
    "@better-iam/server"
@@ -1673,6 +2085,17 @@
    "@better-iam/server"
   ],
   "occurrences": 2
+ },
+ {
+  "code": "SIGNAL_REJECTED",
+  "statuses": [
+   400
+  ],
+  "messages": [],
+  "packages": [
+   "@better-iam/server"
+  ],
+  "occurrences": 1
  },
  {
   "code": "SLUG_TAKEN",
@@ -1733,12 +2156,38 @@
   "occurrences": 1
  },
  {
+  "code": "SOURCE_ADDRESS_UNKNOWN",
+  "statuses": [
+   400
+  ],
+  "messages": [
+   "This organization binds certificates to your address, which could not be determined"
+  ],
+  "packages": [
+   "@better-iam/server"
+  ],
+  "occurrences": 1
+ },
+ {
   "code": "SPEND_LIMIT_REACHED",
   "statuses": [
    402
   ],
   "messages": [
    "The budget “…” is spent"
+  ],
+  "packages": [
+   "@better-iam/server"
+  ],
+  "occurrences": 1
+ },
+ {
+  "code": "SSH_NOT_CONFIGURED",
+  "statuses": [
+   409
+  ],
+  "messages": [
+   "Set up the SSH certificate authority first (ssh.setup)"
   ],
   "packages": [
    "@better-iam/server"
@@ -1822,12 +2271,13 @@
    409
   ],
   "messages": [
+   "… belongs to a team; add people to the team instead",
    "This group belongs to a team; manage its members with the teams API"
   ],
   "packages": [
    "@better-iam/server"
   ],
-  "occurrences": 1
+  "occurrences": 2
  },
  {
   "code": "TENANT_INACTIVE",
@@ -1839,9 +2289,9 @@
    "Tenant is unavailable.",
    "Tenant unavailable.",
    "Tenant must be active",
-   "The organization is not active",
-   "New parent ancestry must be active",
-   "Parent must be active"
+   "The tenant is not active",
+   "Tenant inactive",
+   "This organization is not active"
   ],
   "packages": [
    "@better-iam/oauth",
@@ -1849,7 +2299,7 @@
    "@better-iam/scim",
    "@better-iam/server"
   ],
-  "occurrences": 16
+  "occurrences": 21
  },
  {
   "code": "TENANT_MISMATCH",
@@ -1889,6 +2339,20 @@
    "@better-iam/auth"
   ],
   "occurrences": 1
+ },
+ {
+  "code": "TOO_MANY_HOSTS",
+  "statuses": [
+   400
+  ],
+  "messages": [
+   "The certificate would name … hosts; name at most … with hosts",
+   "Name fewer hosts or logins (at most 256 principals)"
+  ],
+  "packages": [
+   "@better-iam/server"
+  ],
+  "occurrences": 2
  },
  {
   "code": "TOO_MANY_REQUESTS",
@@ -1964,6 +2428,19 @@
   "occurrences": 3
  },
  {
+  "code": "TYPE_DISABLED",
+  "statuses": [
+   409
+  ],
+  "messages": [
+   "This credential type is disabled"
+  ],
+  "packages": [
+   "@better-iam/server"
+  ],
+  "occurrences": 3
+ },
+ {
   "code": "UNAUTHENTICATED",
   "statuses": [
    401
@@ -2011,6 +2488,21 @@
   "occurrences": 2
  },
  {
+  "code": "UNSUPPORTED_FILTER",
+  "statuses": [
+   400
+  ],
+  "messages": [
+   "… conditions cannot be expressed in …; filter these resources with filterMatches or authorize",
+   "These policies are too complex to plan as a filter; check the resources with authorize",
+   "A policy compares a value with …, one of the resource’s own attributes, which a filter cannot express; check the resources with authorize"
+  ],
+  "packages": [
+   "@better-iam/core"
+  ],
+  "occurrences": 4
+ },
+ {
   "code": "UNTRUSTED_ORIGIN",
   "statuses": [
    403
@@ -2022,7 +2514,7 @@
    "@better-iam/next",
    "@better-iam/server"
   ],
-  "occurrences": 2
+  "occurrences": 3
  },
  {
   "code": "VERIFIED_EMAIL_REQUIRED",
@@ -2044,7 +2536,35 @@
   ],
   "messages": [
    "The agreement changed; review the current version before accepting",
-   "Policy version changed"
+   "Policy version changed",
+   "The purpose changed; review the current version before deciding"
+  ],
+  "packages": [
+   "@better-iam/server"
+  ],
+  "occurrences": 3
+ },
+ {
+  "code": "VERSION_DESTROYED",
+  "statuses": [
+   410
+  ],
+  "messages": [
+   "This version was destroyed"
+  ],
+  "packages": [
+   "@better-iam/server"
+  ],
+  "occurrences": 2
+ },
+ {
+  "code": "VERSION_DISABLED",
+  "statuses": [
+   409
+  ],
+  "messages": [
+   "Only enabled versions can become current",
+   "This version is disabled"
   ],
   "packages": [
    "@better-iam/server"
@@ -2074,7 +2594,7 @@
    400
   ],
   "messages": [
-   "Web identity trusts must pin token.sub with StringEquals or StringLike (no leading wildcard)"
+   "Web identity trusts must pin token.sub with StringEquals or StringLike (a wildcard only after two complete segments, such as repo:acme/*)"
   ],
   "packages": [
    "@better-iam/server"
@@ -2102,6 +2622,17 @@
   "messages": [
    "Webhook endpoint responded with status …"
   ],
+  "packages": [
+   "@better-iam/server"
+  ],
+  "occurrences": 1
+ },
+ {
+  "code": "WEBHOOK_UNREACHABLE",
+  "statuses": [
+   502
+  ],
+  "messages": [],
   "packages": [
    "@better-iam/server"
   ],

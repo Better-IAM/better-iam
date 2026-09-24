@@ -93,6 +93,7 @@ describe('store diagnostics', () => {
         '0003_ordered_indexes',
         '0004_expiry_indexes',
         '0005_lookup_indexes',
+        '0006_protection_indexes',
       ]);
       expect(description.migrations.every((migration) => migration.appliedAt > 0)).toBe(true);
       expect(description.collections).toEqual([

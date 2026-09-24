@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { IamError, type CredentialInput } from '@better-iam/core';
+import { createGuardedFetch } from '@better-iam/auth';
 import type { GatewayPermit } from './api/inference.js';
 import type {
   InferenceTokenUsage,
@@ -46,7 +47,11 @@ export interface GatewayRuntime {
 export interface InferenceGatewayOptions {
   /** Path prefix the gateway is mounted under, such as `/ai` (default: none, so routes start at `/v1`). */
   basePath?: string;
-  /** Transport for upstream calls (default `globalThis.fetch`); inject one for proxies or tests. */
+  /**
+   * Transport for upstream calls; inject one for proxies or tests. By default platform providers use
+   * `globalThis.fetch` and base URLs an organization chose use the SSRF guard (`inference.allowPrivateNetworks`); an
+   * injected transport replaces both and must enforce its own address rules.
+   */
   fetch?: typeof fetch;
   /** Deadline for the upstream response headers, in milliseconds (default 10 minutes). */
   timeoutMs?: number;
@@ -145,34 +150,47 @@ function mcpHost(value: unknown): string {
 
 /**
  * The first reference in a request to an object stored at the provider under the organization's key, which the gateway
- * cannot tie to the caller: `item_reference` inputs and `file_id`s (Responses, Chat Completions), `file` sources
- * (Anthropic), and existing code-execution containers. Undefined when there is none.
+ * cannot tie to the caller: `item_reference` inputs, `file_id`s and `file_ids` wherever they appear (message parts,
+ * function outputs, image masks, code-interpreter containers), `vector_store_ids` (file search), `file` sources
+ * (Anthropic, including inside tool results), and existing code-execution containers. The whole request is searched
+ * (the path is kept for callers), so a reference cannot hide in a shape the gateway does not know; one too large or deep
+ * to search counts as a reference. Undefined when there is none.
  */
-export function storedReference(path: string, body: Record<string, unknown>): string | undefined {
+export function storedReference(_path: string, body: Record<string, unknown>): string | undefined {
   const plainObject = (value: unknown): value is Record<string, unknown> =>
     !!value && typeof value === 'object' && !Array.isArray(value);
-  const list = (value: unknown): unknown[] => (Array.isArray(value) ? value.slice(0, 2048) : []);
-  const hasFile = (part: unknown): boolean =>
-    plainObject(part) &&
-    (typeof part.file_id === 'string' ||
-      (plainObject(part.file) && typeof part.file.file_id === 'string') ||
-      (plainObject(part.source) &&
-        (part.source.type === 'file' || typeof part.source.file_id === 'string')));
-  if (
-    typeof body.container === 'string' ||
-    (plainObject(body.container) && typeof body.container.id === 'string')
-  )
-    return 'container';
-  for (const tool of list(body.tools))
-    if (plainObject(tool) && typeof tool.container === 'string') return 'container';
-  const items = path === '/v1/responses' ? list(body.input) : list(body.messages);
-  for (const item of items) {
-    if (!plainObject(item)) continue;
-    if (item.type === 'item_reference') return 'item_reference';
-    if (hasFile(item)) return 'file_id';
-    for (const part of list(item.content)) if (hasFile(part)) return 'file_id';
-  }
-  return undefined;
+  let budget = 50_000;
+  const search = (value: unknown, depth: number): string | undefined => {
+    if (--budget < 0 || depth > 64) return 'too-complex';
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        const found = search(item, depth + 1);
+        if (found) return found;
+      }
+      return undefined;
+    }
+    if (!plainObject(value)) return undefined;
+    if (value.type === 'item_reference') return 'item_reference';
+    if (typeof value.file_id === 'string') return 'file_id';
+    if (Array.isArray(value.file_ids) && value.file_ids.length) return 'file_id';
+    if (Array.isArray(value.vector_store_ids) && value.vector_store_ids.length)
+      return 'vector_store';
+    if (plainObject(value.source) && value.source.type === 'file') return 'file_id';
+    const container = value.container;
+    if (
+      typeof container === 'string' ||
+      (plainObject(container) && typeof container.id === 'string')
+    )
+      return 'container';
+    for (const [key, item] of Object.entries(value)) {
+      // Free text and numbers never hold a reference; only structure is searched.
+      if (key === 'text' && typeof item === 'string') continue;
+      const found = search(item, depth + 1);
+      if (found) return found;
+    }
+    return undefined;
+  };
+  return search(body, 0);
 }
 
 /** A tool kind as a policy names it: lowercase, without a version date (`web_search_20250305`) or `_preview`. */
@@ -694,7 +712,11 @@ export function createInferenceGateway(
       const abort = new AbortController();
       const timer = setTimeout(() => abort.abort(), timeoutMs);
       try {
-        const upstream = await transport(upstreamUrl(current.provider.baseUrl, path), {
+        // A base URL an organization chose goes through the SSRF guard: the answer is streamed back to the caller.
+        const send =
+          options.fetch ??
+          (current.provider.guard ? createGuardedFetch(current.provider.guard) : transport);
+        const upstream = await send(upstreamUrl(current.provider.baseUrl, path), {
           method: 'POST',
           headers,
           body: JSON.stringify(upstreamBody),

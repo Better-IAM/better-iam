@@ -7,7 +7,7 @@ import {
   type StoredRecord,
   type Tenant,
 } from '@better-iam/core';
-import { decryptSecret, encryptSecret } from '@better-iam/auth';
+import { decryptSecret, encryptSecret, type SafeFetchAddressOptions } from '@better-iam/auth';
 import type { ServerContext } from './context.js';
 import type { Delegation, DelegationSpend } from './delegations.js';
 import type { GroupMember } from './models.js';
@@ -34,6 +34,12 @@ export interface InferenceOptions {
   usageRetentionDays?: number;
   /** Lets base URLs use http on loopback hosts, for development and tests only. */
   allowInsecureLocalhost?: boolean;
+  /**
+   * Lets custom base URLs that organizations chose (`allowCustomBaseUrls`) reach private and reserved addresses. Off
+   * by default: the gateway returns the upstream response, so without this an organization could read services on
+   * the server's own network. Base URLs of the root tenant's providers are never restricted.
+   */
+  allowPrivateNetworks?: boolean;
 }
 
 /** The resource type and action the inference module adds to the permission catalog. */
@@ -129,6 +135,8 @@ export interface InferenceBudget extends StoredRecord {
   models?: string[];
   /** Emits `inference:budget-alert` once per window when usage crosses this share of a limit. */
   alertAtPercent?: number;
+  /** Set by a platform (root) administrator: only a platform administrator may change or remove it. */
+  platform?: boolean;
   createdAt: number;
   updatedAt: number;
 }
@@ -290,7 +298,11 @@ export function inferencePlugins(options: { inference?: unknown }): IamPlugin[] 
     const days = settings.usageRetentionDays;
     if (days !== undefined && (!Number.isSafeInteger(days) || days < 1 || days > 3650))
       throw new IamError('INVALID_CONFIG', 'inference.usageRetentionDays must be 1 to 3650');
-    for (const key of ['allowCustomBaseUrls', 'allowInsecureLocalhost'] as const)
+    for (const key of [
+      'allowCustomBaseUrls',
+      'allowInsecureLocalhost',
+      'allowPrivateNetworks',
+    ] as const)
       if (settings[key] !== undefined && typeof settings[key] !== 'boolean')
         throw new IamError('INVALID_CONFIG', `inference.${key} must be a boolean`);
   } else if (options.inference !== true)
@@ -615,6 +627,11 @@ export interface UsageSubject {
   /** For a hand-off: the agents that handed the work on, whose own budgets count the call too. */
   chainAgentIds?: string[];
   groupIds: ReadonlySet<string>;
+  /**
+   * In a delegated session: the groups of the acting agent (and of the agents that handed the work on), so a group
+   * budget on agents counts what they do for people as well as what they do with their own keys.
+   */
+  agentGroupIds?: ReadonlySet<string>;
 }
 
 /** The subject of a principal's calls in `tenantId`. */
@@ -641,6 +658,15 @@ export async function usageSubject(
     typeof delegationId === 'string'
       ? (await tx.get<Delegation>('delegations', delegationId))?.chain
       : undefined;
+  const agentGroupIds = new Set<string>();
+  if (principal.session.kind === 'delegated')
+    for (const actingId of [agentId, ...(chain ?? [])])
+      if (typeof actingId === 'string')
+        for (const member of await tx.find<GroupMember>('groupMembers', {
+          tenantId,
+          identityId: actingId,
+        }))
+          if (ctx.liveMembership(member)) agentGroupIds.add(member.groupId);
   return {
     tenantId,
     identityId: principal.identity.id,
@@ -648,6 +674,7 @@ export async function usageSubject(
     ...(typeof delegationId === 'string' ? { delegationId } : {}),
     ...(chain?.length ? { chainAgentIds: [...chain] } : {}),
     groupIds,
+    ...(agentGroupIds.size ? { agentGroupIds } : {}),
   };
 }
 
@@ -703,21 +730,28 @@ async function coveringBudgets(
   })) {
     if (budget.models?.length && !budget.models.some((pattern) => matchPattern(pattern, model)))
       continue;
+    const viaAgentGroup =
+      budget.subjectType === 'group' &&
+      !subject.groupIds.has(budget.subjectId) &&
+      (subject.agentGroupIds?.has(budget.subjectId) ?? false);
     const covers =
       budget.subjectType === 'tenant'
         ? budget.subjectId === subject.tenantId
         : budget.subjectType === 'group'
-          ? subject.groupIds.has(budget.subjectId)
+          ? subject.groupIds.has(budget.subjectId) || viaAgentGroup
           : budget.subjectId === subject.identityId ||
             budget.subjectId === subject.agentId ||
             // An agent's budget also counts the work it handed on to other agents.
             (subject.chainAgentIds?.includes(budget.subjectId) ?? false);
     if (!covers) continue;
-    // An identity budget on an agent counts everything the agent does, for anyone.
+    // An identity budget on an agent counts everything the agent does, for anyone; a per-identity group budget that
+    // covers the call through the agent's group counts it against the agent.
     const subjectKey =
       budget.subjectType === 'identity' || budget.scope === 'shared'
         ? 'shared'
-        : subject.identityId;
+        : viaAgentGroup && subject.agentId
+          ? subject.agentId
+          : subject.identityId;
     covering.push({ budget, subjectKey });
   }
   // The person's spending caps on the delegation the call is made under and on every delegation above it (hand-offs).
@@ -1098,16 +1132,34 @@ export interface ProviderCredential {
   kind: ProviderKind;
   baseUrl: string;
   apiKey: string;
+  /**
+   * Set when an organization (not the platform) owns a provider with a custom base URL: upstream calls must go through
+   * the SSRF guard with these address rules, since the organization chose where they go.
+   */
+  guard?: SafeFetchAddressOptions;
 }
 
-export function providerCredential(
+export async function providerCredential(
   ctx: ServerContext,
+  tx: IamStore,
   provider: InferenceProvider,
-): ProviderCredential {
-  return {
+): Promise<ProviderCredential> {
+  const credential: ProviderCredential = {
     id: provider.id,
     kind: provider.kind,
     baseUrl: provider.baseUrl,
     apiKey: openProviderKey(ctx, provider),
   };
+  if (provider.baseUrl !== providerBaseUrls[provider.kind]) {
+    const realm = await ctx.tenant(tx, provider.tenantId);
+    if (realm.type !== 'root' || realm.parentId !== null) {
+      const settings = inferenceSettings(ctx);
+      credential.guard = {
+        anyPort: true,
+        allowInsecureLocalhost: settings.allowInsecureLocalhost === true,
+        allowPrivateNetworks: settings.allowPrivateNetworks === true,
+      };
+    }
+  }
+  return credential;
 }

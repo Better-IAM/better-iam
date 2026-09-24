@@ -140,7 +140,10 @@ export interface ManagerSyncResult {
   dryRun: boolean;
   /** People whose manager is (or would be) set to their department's head, with both names for display. */
   updated: Array<{ identityId: string; name: string; managerId: string; managerName: string }>;
-  /** People left as they were because they already have another manager (without `overwrite`). */
+  /**
+   * People left as they were: they already have another manager (without `overwrite`), the change would close a
+   * reporting cycle, or the caller may not update them (`iam:identities:update` on that person).
+   */
   kept: number;
   /** People whose department (and the ones above it) has no head, or who head it with nobody above. */
   noHead: number;
@@ -1027,6 +1030,21 @@ function departmentModule(ctx: ServerContext) {
                   continue;
                 }
                 if (reaches(manager.id, identity.id)) {
+                  result.kept++;
+                  continue;
+                }
+                // Each person is updated as identities.update would: a deny protecting that identity holds.
+                const may = await ctx.decisions.decide(
+                  tx,
+                  principal,
+                  {
+                    tenantId: tenant.id,
+                    action: 'iam:identities:update',
+                    resource: { type: 'iam', id: identity.id },
+                  },
+                  true,
+                );
+                if (!may.allowed) {
                   result.kept++;
                   continue;
                 }

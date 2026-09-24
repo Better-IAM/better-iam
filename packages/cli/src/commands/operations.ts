@@ -42,6 +42,8 @@ export const operationCommands = [
         max: 3650,
         default: 30,
         description: 'Keep deleted tenants this many days',
+        // Deletes tenant data: only `cli.defaults.purge` may change it, never a shared '*' default.
+        wildcardDefault: false,
       },
     },
     async run({ iam, flags }) {
@@ -217,6 +219,31 @@ export const operationCommands = [
     flags: { tenant: tenantFilter },
     async run({ iam, flags }) {
       return (await iam()).checkInvariants(flags.tenant ? { tenantId: flags.tenant } : {});
+    },
+  }),
+  defineCommand({
+    name: 'detect-threats',
+    group: 'Operations',
+    summary: "Read each organization's new audit events and raise threat detections",
+    description:
+      "detect-threats runs identity threat detection for every active organization (or one --tenant): it reads up to --max-events (2000) unread audit events from the organization's cursor, verifies their hash chain (a break is reported as audit-tampering), evaluates the detection rules, records detections and incidents, updates identity risk, and runs the organization's response playbooks. It prints what the run did; pending counts organizations with more unread events than one run reads, which the next run continues. A deployment operation for cron, every minute.",
+    target: 'config',
+    flags: {
+      tenant: tenantFilter,
+      // The server's own bounds (threat-engine.ts).
+      'max-events': {
+        type: 'integer',
+        min: 1,
+        max: 20_000,
+        default: 2000,
+        description: 'Most unread audit events read per organization and run',
+      },
+    },
+    async run({ iam, flags }) {
+      return (await iam()).detectThreats({
+        ...(flags.tenant ? { tenantId: flags.tenant } : {}),
+        ...(flags['max-events'] !== undefined ? { maxEvents: flags['max-events'] } : {}),
+      });
     },
   }),
   defineCommand({

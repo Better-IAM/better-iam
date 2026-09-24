@@ -234,6 +234,11 @@ export function schemaMigrations(dialect: SqlDialect): readonly SchemaMigration[
       name: '0005_lookup_indexes',
       statements: fieldIndexes('0005_lookup_indexes'),
     },
+    {
+      // Data protection token lookups by keyed value fingerprint.
+      name: '0006_protection_indexes',
+      statements: fieldIndexes('0006_protection_indexes'),
+    },
   ];
 }
 

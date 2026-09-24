@@ -1,4 +1,4 @@
-import type { Identity } from '@better-iam/core';
+import type { AuthenticatedPrincipal, IamStore, Identity } from '@better-iam/core';
 import {
   applyCampaign,
   type CertificationCampaign,
@@ -22,11 +22,36 @@ export interface CertificationAutoCloseResult {
 /** Deployment worker for access certifications. Not an HTTP endpoint. */
 export function createCertificationWorker(ctx: ServerContext) {
   const { store } = ctx;
+  /**
+   * The creator as the principal revocations run under, only while they could still close the campaign themselves:
+   * active, not expired, and allowed iam:certifications:manage on it. Offboarding (disabling, expiry, losing the
+   * permission) ends their authority here too, as deletion does.
+   */
+  async function actingCreator(
+    tx: IamStore,
+    campaign: CertificationCampaign,
+    creator: Identity,
+  ): Promise<AuthenticatedPrincipal | undefined> {
+    if (creator.status !== 'active' || ctx.identityExpired(creator)) return undefined;
+    const principal = ctx.decisions.simulatedPrincipal(creator);
+    const decision = await ctx.decisions.decide(
+      tx,
+      principal,
+      {
+        tenantId: campaign.tenantId,
+        action: 'iam:certifications:manage',
+        resource: { type: 'iam', id: `certifications/${campaign.id}` },
+      },
+      true,
+    );
+    return decision.allowed ? principal : undefined;
+  }
   return {
     /**
      * Closes every open `autoClose` campaign whose `dueAt` has passed (or only those of `tenantId`), each in its own
-     * transaction. Revocations run under the campaign creator's grant authority; when the creator no longer exists
-     * the campaign still closes and every revocation is reported as `revocation-failed`. Audited as
+     * transaction. Revocations run under the campaign creator's grant authority; when the creator no longer exists,
+     * is disabled or expired, or no longer holds iam:certifications:manage on the campaign, the campaign still closes
+     * and every revocation is reported as `revocation-failed`. Audited as
      * `certification:auto-close` (with the outcome counts) plus one `iam:bindings:delete` per removed binding, both
      * by `deployment-operator`. A deployment operation for schedulers: no credential.
      */
@@ -59,10 +84,7 @@ export function createCertificationWorker(ctx: ServerContext) {
           // An administrator may have closed or deleted it since the scan.
           if (campaign?.status !== 'open') return undefined;
           const creator = await tx.get<Identity>('identities', campaign.createdBy);
-          const principal =
-            creator && creator.status !== 'deleted'
-              ? ctx.decisions.simulatedPrincipal(creator)
-              : undefined;
+          const principal = creator && (await actingCreator(tx, campaign, creator));
           const { outcomes } = await applyCampaign(ctx, tx, campaign, principal, {
             operator: 'deployment-operator',
           });

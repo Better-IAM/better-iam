@@ -19,6 +19,7 @@ import {
   loadTeam,
   maxTeamDepth,
   maxTeams,
+  roleHoldsDeny,
   slugFromName,
   syncTeamGroups,
   syncTeamsFromGroups,
@@ -316,6 +317,31 @@ function teamModule(ctx: ServerContext) {
     return result;
   }
 
+  /**
+   * The person's live maintainer memberships that give standing over `team`: of the team itself or of a team above it,
+   * as long as no team from that one down to `team` takes membership changes from administrators only. Otherwise a
+   * parent's maintainer would reach through an admins-only team and hand out what it holds to whoever they put below.
+   */
+  async function standingMemberships(
+    tx: IamStore,
+    identityId: string,
+    team: Team,
+    now: number,
+  ): Promise<TeamMember[]> {
+    const scope = new Set<string>();
+    for (const holder of teamChain(await allTeams(tx, team.tenantId), team.id)) {
+      if (holder.memberManagement === 'admins') break;
+      scope.add(holder.id);
+    }
+    if (!scope.size) return [];
+    return (
+      await tx.find<TeamMember>(teamCollections.members, { tenantId: team.tenantId, identityId })
+    ).filter(
+      (member) =>
+        member.role === 'maintainer' && liveTeamMember(member, now) && scope.has(member.teamId),
+    );
+  }
+
   /** Whether the principal may act on the team at `level` through membership rather than a permission. */
   async function teamStanding(
     tx: IamStore,
@@ -325,12 +351,7 @@ function teamModule(ctx: ServerContext) {
   ): Promise<boolean> {
     if (!ownUserSession(principal, team.tenantId)) return false;
     const now = ctx.now();
-    const maintains =
-      team.memberManagement !== 'admins' &&
-      (await isTeamMaintainer(tx, team.tenantId, team.id, principal.identity.id, {
-        at: now,
-        includeAncestors: true,
-      }));
+    const maintains = (await standingMemberships(tx, principal.identity.id, team, now)).length > 0;
     if (maintains || level === 'maintainer') return maintains;
     // Members see their team: a direct membership of it or of any team below it.
     return (
@@ -366,7 +387,9 @@ function teamModule(ctx: ServerContext) {
             { tenantId, action, resource: { type: 'iam', id: team.id } },
             true,
           );
-          return !decision.allowed;
+          // Standing stands in for a missing grant only: an explicit deny, a boundary, or a refused tenant or
+          // credential still refuses a maintainer, through the ordinary operation below.
+          return decision.reason === 'NO_APPLICABLE_GRANT';
         } catch {
           return false;
         }
@@ -491,6 +514,56 @@ function teamModule(ctx: ServerContext) {
         subjectId: team.groupId,
       }))
         await ctx.grantingAuthority(tx, principal, tenantId, binding.authorityId);
+  }
+
+  /** The backing groups of `team` and of the teams above it that hold the person right now. */
+  async function heldChainGroups(
+    tx: IamStore,
+    team: Team,
+    identityId: string,
+  ): Promise<Set<string>> {
+    const held = new Set<string>();
+    for (const holder of teamChain(await allTeams(tx, team.tenantId), team.id)) {
+      const membership = (
+        await tx.find<GroupMember>('groupMembers', {
+          tenantId: team.tenantId,
+          uniqueKey: `${holder.groupId}:${identityId}`,
+        })
+      )[0];
+      if (membership && ctx.liveMembership(membership)) held.add(holder.groupId);
+    }
+    return held;
+  }
+
+  /**
+   * People ending their own membership (leaving, or a maintainer removing or shortening themselves) drop out of backing
+   * groups, and a deny bound to one of those groups stops applying to them. `groups.removeMember` needs the grant
+   * authority behind a group's bindings for exactly that reason, so the same holds here for bindings whose role holds a
+   * deny statement: without that authority, an administrator removes the person.
+   */
+  async function assertMayDropDenies(
+    tx: IamStore,
+    principal: AuthenticatedPrincipal,
+    tenantId: string,
+    groupIds: Iterable<string>,
+  ): Promise<void> {
+    for (const groupId of new Set(groupIds))
+      for (const binding of await tx.find<Binding>('bindings', {
+        tenantId,
+        subjectType: 'group',
+        subjectId: groupId,
+      })) {
+        if (ctx.expiredBinding(binding) || !(await roleHoldsDeny(tx, binding.roleId))) continue;
+        try {
+          await ctx.grantingAuthority(tx, principal, tenantId, binding.authorityId);
+        } catch {
+          throw new IamError(
+            'ACCESS_DENIED',
+            'This team carries a restriction (a deny) you cannot lift yourself; ask an administrator to remove you',
+            403,
+          );
+        }
+      }
   }
 
   async function allTeams(tx: IamStore, tenantId: string): Promise<Map<string, Team>> {
@@ -652,6 +725,19 @@ function teamModule(ctx: ServerContext) {
     const now = ctx.now();
     if (existing && liveTeamMember(existing, now))
       throw new IamError('CONFLICT', `${identity.name} is already in this team`, 409);
+    // A maintainer adding themselves (to a team below the one they maintain) may not outlast their own standing.
+    if (mutation.via === 'maintainer' && identity.id === principal.identity.id) {
+      const standing = await standingMemberships(tx, identity.id, team, now);
+      const ends = standing.some((member) => member.expiresAt === undefined)
+        ? undefined
+        : Math.max(...standing.map((member) => member.expiresAt!));
+      if (ends !== undefined && (expiresAt === undefined || expiresAt > ends))
+        throw new IamError(
+          'ACCESS_DENIED',
+          'Maintainers cannot add themselves for longer than they maintain the team; ask an administrator',
+          403,
+        );
+    }
     const record: TeamMember = {
       id: existing?.id ?? id(),
       tenantId: team.tenantId,
@@ -912,9 +998,21 @@ function teamModule(ctx: ServerContext) {
           throw new IamError('INVALID_INPUT', 'A team cannot move under itself or its own team');
         const chain = parentChain(teams, parent, subtreeHeight(teams, team));
         await assertCanNestUnder(tx, principal, team.tenantId, chain);
+        // The new parent's maintainers gain standing over the moved team and every team below it, so moving them
+        // hands out what those teams hold: it needs the same authority as adding someone to them.
+        await assertAuthorityOver(tx, principal, team.tenantId, [
+          team,
+          ...teamDescendants(teams.values(), team.id),
+        ]);
         next.parentId = parent.id;
       }
     }
+    // Opening an admins-only team to its maintainers lets them grant what it and the teams above it hold.
+    if (team.memberManagement === 'admins' && next.memberManagement !== 'admins')
+      await assertAuthorityOver(tx, principal, team.tenantId, [
+        team,
+        ...(next.parentId ? teamChain(teams, next.parentId) : []),
+      ]);
     await tx.put<Team>(teamCollections.teams, next);
     if (next.slug !== team.slug || next.name !== team.name) {
       const group = await tx.get<Group>('groups', team.groupId);
@@ -1280,6 +1378,30 @@ function teamModule(ctx: ServerContext) {
               delete next.expiresAt;
               if (input.expiresAt !== null) next.expiresAt = ctx.bindingExpiry(input.expiresAt);
             }
+            // Maintainers act under the administrators' delegation: they never extend their own membership (a
+            // temporary maintainer would make themselves permanent), and ending it early is leaving the team.
+            if (
+              via !== 'permission' &&
+              member.identityId === principal.identity.id &&
+              input.expiresAt !== undefined
+            ) {
+              if (
+                member.expiresAt !== undefined &&
+                (next.expiresAt === undefined || next.expiresAt > member.expiresAt)
+              )
+                throw new IamError(
+                  'ACCESS_DENIED',
+                  'Maintainers cannot extend their own membership; ask an administrator',
+                  403,
+                );
+              if (next.expiresAt !== member.expiresAt)
+                await assertMayDropDenies(
+                  tx,
+                  principal,
+                  team.tenantId,
+                  await heldChainGroups(tx, team, member.identityId),
+                );
+            }
             await tx.put<TeamMember>(teamCollections.members, next);
             await syncTeamGroups(tx, team.tenantId, [team.id], ctx.now());
             await audit(tx, principal, 'team:member:update', team, {
@@ -1321,7 +1443,19 @@ function teamModule(ctx: ServerContext) {
                 'This person is a member through team sync; remove them from the source group',
                 409,
               );
+            // A maintainer removing themselves is leaving the team (see leave).
+            const self = via !== 'permission' && member.identityId === principal.identity.id;
+            const held = self ? await heldChainGroups(tx, team, member.identityId) : undefined;
             await removeMember(tx, principal, team, member, 'team:member:remove', via);
+            if (held) {
+              const kept = await heldChainGroups(tx, team, member.identityId);
+              await assertMayDropDenies(
+                tx,
+                principal,
+                team.tenantId,
+                [...held].filter((groupId) => !kept.has(groupId)),
+              );
+            }
             touch([member.identityId]);
             return { deleted: true as const };
           },
@@ -1585,13 +1719,24 @@ function teamModule(ctx: ServerContext) {
       credential: CredentialInput,
       input: { tenantId: string; requestId: string; note?: string },
     ): Promise<TeamJoinRequestView> => decide(credential, input, 'denied'),
-    /** Leaves a team the caller belongs to directly. Audited as `team:leave`. */
+    /**
+     * Leaves a team the caller belongs to directly. Audited as `team:leave`. Refused (ACCESS_DENIED) when leaving would
+     * take the caller out of a backing group bound to a role with a deny statement whose grant authority they lack.
+     */
     leave: (credential: CredentialInput, input: { tenantId: string; teamId: string }) =>
       reconciling(input.tenantId, (touch) =>
         selfService(credential, input.tenantId, async (tx, principal, tenantId) => {
           const team = await loadTeam(tx, tenantId, input.teamId);
           const member = await memberRecord(tx, team, principal.identity.id);
+          const held = await heldChainGroups(tx, team, member.identityId);
           await removeMember(tx, principal, team, member, 'team:leave');
+          const kept = await heldChainGroups(tx, team, member.identityId);
+          await assertMayDropDenies(
+            tx,
+            principal,
+            tenantId,
+            [...held].filter((groupId) => !kept.has(groupId)),
+          );
           touch([member.identityId]);
           return { left: true as const };
         }),

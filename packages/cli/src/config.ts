@@ -1,4 +1,5 @@
-import { access } from 'node:fs/promises';
+import { access, stat } from 'node:fs/promises';
+import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { IamError } from '@better-iam/core';
@@ -8,7 +9,10 @@ import { postgresAdapter } from '@better-iam/adapter-postgres';
 import { CliError } from './errors.js';
 import type { CommandSpec } from './framework.js';
 
-/** Configuration file names the CLI looks for, in this order, in the working directory and then each parent. */
+/**
+ * Configuration file names the CLI looks for, in this order, in the working directory and then each parent up to the
+ * repository root or home directory.
+ */
 export const configFileNames = [
   'better-iam.config.mjs',
   'better-iam.config.js',
@@ -67,14 +71,35 @@ async function exists(path: string): Promise<boolean> {
   }
 }
 
-/** The nearest configuration file in `cwd` or one of its parents, like Prettier and ESLint find theirs. */
+/**
+ * Whether a found configuration may be imported without being named: on POSIX systems, a file another user owns, or
+ * one in a directory anyone may write to (such as /tmp), could have been planted there, and importing it runs it.
+ */
+async function trustworthy(candidate: string): Promise<boolean> {
+  const uid = typeof process.getuid === 'function' ? process.getuid() : undefined;
+  if (uid === undefined) return true;
+  try {
+    const [file, directory] = await Promise.all([stat(candidate), stat(dirname(candidate))]);
+    return (file.uid === uid || file.uid === 0) && (directory.mode & 0o002) === 0;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The nearest configuration file in `cwd` or one of its parents, like Prettier and ESLint find theirs, without leaving
+ * the repository: the search stops at the repository root (a directory holding `.git`) or the home directory, and skips
+ * files another user could have planted (see `trustworthy`).
+ */
 export async function findConfigFile(cwd: string): Promise<string | undefined> {
   let directory = resolve(cwd);
+  const home = resolve(homedir());
   for (;;) {
     for (const name of configFileNames) {
       const candidate = join(directory, name);
-      if (await exists(candidate)) return candidate;
+      if ((await exists(candidate)) && (await trustworthy(candidate))) return candidate;
     }
+    if (directory === home || (await exists(join(directory, '.git')))) return undefined;
     const parent = dirname(directory);
     if (parent === directory) return undefined;
     directory = parent;

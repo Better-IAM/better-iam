@@ -1,0 +1,219 @@
+---
+title: Application catalog
+description: A My apps launcher for your organization's tools, with assignments to people and groups, access requests, audited launches, and sign-in enforcement.
+metaTitle: Application catalog and My apps launcher
+icon: Blocks
+status: new
+packages: ['@better-iam/server', '@better-iam/client', '@better-iam/react']
+sources:
+  - docs/applications.md
+  - packages/server/src/applications.ts
+  - packages/server/src/api/applications.ts
+  - packages/server/src/federation.ts
+  - packages/oauth/src/provider.ts
+  - packages/react/src/index.tsx
+---
+
+People in an organization use a dozen tools: the wiki, the CRM, CI, payroll. They hunt for bookmarks, ask where the
+expense tool lives, and keep access to tools they stopped using long ago. Administrators, meanwhile, cannot say who is
+supposed to have which tool, or who still uses it.
+
+The **application catalog** is the organization's list of tools, and **My apps** is the launcher where each person
+opens the ones they have. An app is either an <Term id="oidc">OpenID Connect</Term> client of this deployment or a
+plain link to any other tool. Administrators give an app to **everyone** or **assign** it to people and
+<Term id="group">groups</Term>, optionally until a date; people who lack an app **request** it through an
+<Term id="access-package">access package</Term>; every launch is recorded and audited; and the OAuth provider
+**refuses** people who do not have the app.
+
+```ts
+const crm = await iam.api.applications.create(admin, {
+  tenantId,
+  key: 'crm',
+  name: 'CRM',
+  launchUrl: 'https://crm.acme.test/login',
+  category: 'Sales',
+});
+await iam.api.applications.assign(admin, {
+  tenantId,
+  appId: crm.id,
+  subjectType: 'group',
+  subjectId: sales.id,
+});
+const apps = await iam.api.applications.mine(aliceSession, { tenantId });
+```
+
+## Register an app
+
+`create` (`iam:applications:manage`) adds an app. `key` is permanent (lowercase letters, digits, dots, underscores or
+hyphens, starting with a letter) and `launchUrl` is where launching sends people: the app's sign-in URL. Launch and
+logo URLs must be `https`; while the deployment itself runs on `localhost`, `127.0.0.1` or `[::1]`, they may also be
+`http` on those hosts.
+
+| Field | What it does |
+| --- | --- |
+| `name`, `description`, `category`, `logoUrl` | What the launcher shows. The console groups apps by category. |
+| `oauthClientId` | The `clientId` of an OAuth client of this organization, named by one app at most. The app becomes `oidc` (otherwise `link`) and decides [who may sign in](#refuse-people-without-the-app) to the client. |
+| `visibility` | `assigned` (the default) or `everyone`. |
+| `enabled` | `false` takes the app off every launcher and refuses launches, keeping its assignments. |
+| `requestPackageId` | A requestable access package people without the app may ask for. |
+| `ownerIds` | Up to 20 people to contact about the app. It grants them nothing. |
+
+A tenant holds at most 500 apps. `update` changes anything but the key (`null` clears an optional field), and
+`delete` removes an app with its assignments and launch history.
+
+## Who has an app
+
+A person has an app when it is enabled and:
+
+- its visibility is `everyone`, or
+- it is assigned to them, or
+- it is assigned to a group they belong to,
+
+counting only assignments and memberships that have not ended. Only active people have apps; service accounts and
+agents never do. The launcher says why each app is there (`via`): `direct`, else `group`, else `everyone`.
+
+`assign` (`iam:applications:assign`) gives an app to one person or one group, with an optional `expiresAt` up to ten
+years away. Assigning the same person or group again replaces the assignment. `unassign` removes one, and
+`listAssignments` shows each assignment with its person or group and when the person last opened the app.
+
+```ts title="A contractor gets the CRM until the end of the year"
+await iam.api.applications.assign(admin, {
+  tenantId,
+  appId: crm.id,
+  subjectType: 'identity',
+  subjectId: contractorId,
+  expiresAt: Date.parse('2026-12-31T00:00:00Z'),
+});
+```
+
+An assignment stops counting the moment it ends, and `iam.sweepExpired()` deletes it later.
+
+## Let people request an app
+
+Give the app a `requestPackageId`: a requestable [access package](/docs/guides/privileged-access/access-packages)
+that grants a group the app is assigned to. The catalog checks that the package is requestable, not what it grants,
+so point it at the right group.
+
+People without the app then see it under "More apps" with a **Request access** button. The request is an ordinary
+[package request](/docs/guides/privileged-access/access-packages#self-service-requests): it needs
+`iam:packages:request`, and the package's approvers decide. Once the person joins the group, the app moves to their
+launcher.
+
+## The launcher
+
+People use the launcher from their own signed-in session, with no permission. API keys, role sessions, session tokens
+and agents acting for people are refused.
+
+- `mine` lists the enabled apps the person has, most recently opened first, then the apps they may request (with
+  `requestPackageId` and no `via`). It is not audited.
+- `launch` checks the person has the app, records the launch (first and last time, and a count), audits `app:launch`,
+  and returns `{ url }`. It does not sign the person in to the app; the app's own sign-in runs as usual.
+
+An administrator [viewing as](/docs/guides/authentication/impersonation) the person sees their launcher, and a launch
+made that way is not audited as `app:launch`.
+
+In React, `useMyApps` from `@better-iam/react` loads the launcher: `apps` to open, `requestable` apps to ask for, and
+`launch(appId)`, which records the launch, reloads, and resolves to the URL.
+
+```tsx
+function Launcher({ tenantId }: { tenantId: string }) {
+  const { apps, requestable, launch } = useMyApps({ tenantId });
+  async function open(appId: string) {
+    // Open the tab during the click (browsers block tabs opened later), then point it at the app.
+    const tab = window.open('about:blank', '_blank');
+    const url = await launch(appId);
+    if (tab) {
+      tab.opener = null;
+      tab.location.href = url;
+    } else window.location.href = url;
+  }
+  return (
+    <>
+      {apps.map((app) => (
+        <button key={app.id} onClick={() => void open(app.id)}>
+          {app.name}
+        </button>
+      ))}
+      {requestable.map((app) => (
+        <RequestAccessButton key={app.id} packageId={app.requestPackageId!} />
+      ))}
+    </>
+  );
+}
+```
+
+## Refuse people without the app
+
+A launcher does not stop anyone from going to an app directly. For apps that sign in through this deployment's
+[OAuth provider](/docs/federation/oauth-provider), your
+[interaction page](/docs/federation/oauth-provider#build-the-interaction-pages) can refuse people who do not have the
+app. The provider does not check assignments by itself.
+
+```ts
+const details = await issuer.interactionDetails(req, res);
+const { identity } = await iam.authenticate(credential);
+const access = await iam.applications.allowed({
+  tenantId: details.tenantId,
+  identityId: identity.id,
+  oauthClientId: details.clientId,
+});
+if (!access.allowed) {
+  // Not assigned: end the flow with access_denied, or show a page to request the app.
+  await issuer.completeInteraction(req, res, { credential, consent: false });
+  return;
+}
+```
+
+`iam.applications.allowed` takes exactly one of `appId` and `oauthClientId` and answers `{ allowed, governed }`:
+
+| Situation | Answer |
+| --- | --- |
+| No app in the catalog names the client | `allowed: true`, `governed: false`: the catalog does not govern it |
+| The app exists and the person has it now | `allowed: true`, `governed: true` |
+| The app exists and the person does not have it, or the app is disabled | `allowed: false`, `governed: true` |
+
+It takes no credential and is not audited: it is for the deployment's own code. Over the API the same check is
+`applications.check`, which needs `iam:applications:read`.
+
+<Callout title="Register the client as an app first">
+  Clients without an app are allowed for everyone, so enforcement starts only once you register the OAuth client in
+  the catalog with its `oauthClientId`. Disabling that app then refuses everyone rather than ungoverning the client.
+</Callout>
+
+## Clean up unused access
+
+`usage` (`iam:applications:read`) reports for every app how many people have it (`people`), how many opened it in
+the last 30 days, and `unused`: direct assignments to people, at least `unusedDays` old (90 by default), whose person
+has not opened the app in that time. `removeUnused` (`iam:applications:assign`) removes them for one app and audits
+each removal as `app:unassign`. Group assignments stay: the app goes with the group membership.
+
+```ts
+const report = await iam.api.applications.usage(admin, { tenantId, unusedDays: 60 });
+for (const app of report.filter((item) => item.unused.length))
+  await iam.api.applications.removeUnused(admin, { tenantId, appId: app.appId, unusedDays: 60 });
+```
+
+## Permissions and audit
+
+| Action | Methods |
+| --- | --- |
+| `iam:applications:read` | `list`, `listAssignments`, `usage`, `check` |
+| `iam:applications:manage` | `create`, `update`, `delete` |
+| `iam:applications:assign` | `assign`, `unassign`, `removeUnused` |
+| none (own session) | `mine`, `launch` |
+
+Assignments are audited as `app:assign` and `app:unassign`, and launches as `app:launch`; subscribe a
+<Term id="webhook">webhook</Term> to `app:*` to follow them. The console pages are **Access › Applications** for
+administrators (apps, assignments, usage, and a "Remove unused" button) and **Home › My apps** for everyone.
+
+<Cards>
+  <Card title="applications API reference" href="/docs/reference/api/applications">
+    Every method with its permission, audit events, and errors.
+  </Card>
+  <Card title="Access packages" href="/docs/guides/privileged-access/access-packages">
+    The packages people request to get an app.
+  </Card>
+  <Card title="OAuth provider" href="/docs/federation/oauth-provider">
+    Register the clients your apps sign in with.
+  </Card>
+</Cards>

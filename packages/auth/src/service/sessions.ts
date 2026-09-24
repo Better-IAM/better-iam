@@ -40,7 +40,7 @@ export class SessionAuth extends AuthBase {
           'Root identity provisioning requires an administrator',
           403,
         );
-      const identity = await this.createIdentity(tx, {
+      const created = await this.createIdentity(tx, {
         ...input,
         tenantId,
         email: normalized,
@@ -48,8 +48,16 @@ export class SessionAuth extends AuthBase {
         rootAdmin: false,
         emailVerified: false,
       });
+      // Nobody has proven this address yet: see Identity.unprovenPassword (finishPasswordless acts on it).
+      const identity = await tx.put<Identity>('identities', { ...created, unprovenPassword: true });
       if (this.requireEmailVerification) {
-        const token = await this.challenge(tx, identity, 'verify-email', {}, 24 * 60 * 60_000);
+        const token = await this.challenge(
+          tx,
+          identity,
+          'verify-email',
+          { email: normalized },
+          24 * 60 * 60_000,
+        );
         await this.enqueue(tx, identity, 'email', normalized, 'verify-email', { token });
       }
       return {
@@ -89,9 +97,10 @@ export class SessionAuth extends AuthBase {
           identity?.passwordHash ?? (await this.dummyPasswordHash),
           input.password,
         );
-        if (!identity || !valid || identity.status !== 'active') {
-          if (identity && !valid && identity.kind === 'user' && identity.status === 'active')
-            failed = identity;
+        // An expired identity is refused like a disabled one (and, like it, leaves no failure record).
+        const usable = identity?.status === 'active' && !this.identityExpired(identity);
+        if (!identity || !valid || !usable) {
+          if (identity && !valid && identity.kind === 'user' && usable) failed = identity;
           throw new IamError('INVALID_CREDENTIALS', 'Invalid email or password', 401);
         }
         if (this.requireEmailVerification && !identity.emailVerified)

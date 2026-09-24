@@ -5,7 +5,9 @@ import {
   verifyAuditChain,
   type AuditChainHead,
   type AuditEvent,
+  type AuthenticatedPrincipal,
   type CredentialInput,
+  type IamStore,
   type OutboxMessage,
 } from '@better-iam/core';
 import type { ServerContext } from '../context.js';
@@ -33,6 +35,22 @@ function resourcePatterns(value: unknown): string[] {
 export function createWebhooksApi(ctx: ServerContext) {
   const { auth, events } = ctx;
   const { operation } = ctx.operations;
+  /**
+   * A subtree subscription receives every descendant organization's events, so it stays root's after creation too:
+   * retargeting it, taking its secret, removing it, or making it deliver needs a root principal, not just
+   * iam:webhooks:update or iam:webhooks:delete in the tenant that holds it.
+   */
+  const subscription = async (
+    tx: IamStore,
+    principal: AuthenticatedPrincipal,
+    tenantId: string,
+    webhookId: string,
+  ): Promise<Webhook> => {
+    const hook = await ctx.scoped<Webhook>(tx, 'webhooks', webhookId, tenantId);
+    if (hook.scope === 'subtree' && !(await ctx.rootPrincipal(tx, principal)))
+      throw new IamError('ACCESS_DENIED', 'Subtree subscriptions are platform controlled', 403);
+    return hook;
+  };
   return {
     /** Subscribes an HTTPS endpoint to audit events matching the given patterns. The signing secret is returned once. */
     create: (
@@ -117,7 +135,7 @@ export function createWebhooksApi(ctx: ServerContext) {
         input.webhookId,
         async ({ tx, principal }) => {
           auth.requireRecent(principal);
-          const hook = await ctx.scoped<Webhook>(tx, 'webhooks', input.webhookId, input.tenantId);
+          const hook = await subscription(tx, principal, input.tenantId, input.webhookId);
           if (
             input.url === undefined &&
             input.events === undefined &&
@@ -155,7 +173,7 @@ export function createWebhooksApi(ctx: ServerContext) {
         input.webhookId,
         async ({ tx, principal }) => {
           auth.requireRecent(principal);
-          const hook = await ctx.scoped<Webhook>(tx, 'webhooks', input.webhookId, input.tenantId);
+          const hook = await subscription(tx, principal, input.tenantId, input.webhookId);
           const { secret, sealed } = events.sealedWebhookSecret(hook.id);
           return {
             webhook: publicWebhook(
@@ -173,7 +191,7 @@ export function createWebhooksApi(ctx: ServerContext) {
         input.webhookId,
         async ({ tx, principal }) => {
           auth.requireRecent(principal);
-          await ctx.scoped<Webhook>(tx, 'webhooks', input.webhookId, input.tenantId);
+          await subscription(tx, principal, input.tenantId, input.webhookId);
           await tx.delete('webhooks', input.webhookId);
           for (const message of await tx.find<OutboxMessage>('outbox', {
             tenantId: input.tenantId,
@@ -192,7 +210,7 @@ export function createWebhooksApi(ctx: ServerContext) {
         'iam:webhooks:update',
         input.webhookId,
         async ({ tx, principal }) => {
-          const hook = await ctx.scoped<Webhook>(tx, 'webhooks', input.webhookId, input.tenantId);
+          const hook = await subscription(tx, principal, input.tenantId, input.webhookId);
           if (!hook.active) throw new IamError('INVALID_TRANSITION', 'Webhook is paused');
           const event: WebhookEvent = {
             id: id(),
@@ -265,8 +283,8 @@ export function createWebhooksApi(ctx: ServerContext) {
         input.tenantId,
         'iam:webhooks:update',
         input.webhookId,
-        async ({ tx }) => {
-          const hook = await ctx.scoped<Webhook>(tx, 'webhooks', input.webhookId, input.tenantId);
+        async ({ tx, principal }) => {
+          const hook = await subscription(tx, principal, input.tenantId, input.webhookId);
           if (!hook.active) throw new IamError('INVALID_TRANSITION', 'Webhook is paused');
           const message = await tx.get<OutboxMessage>(
             'outbox',

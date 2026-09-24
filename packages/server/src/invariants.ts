@@ -113,6 +113,12 @@ const accessChangingActions = new Set(
     'teams:update',
     'teams:delete',
     'departments:manage',
+    // Packages are created with their contents (their rule-driven grants are checked where the rules apply them).
+    'packages:create',
+    // Feature flags feed tenant.features, and spend feeds principal.spendExceeded, both of which policies test.
+    'features:manage',
+    'features:override',
+    'billing:manage',
   ].map((action) => `iam:${action}`),
 );
 

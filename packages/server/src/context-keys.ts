@@ -43,6 +43,11 @@ export const principalServerKeys: ReadonlyMap<string, ContextKeyType> = new Map<
   // Spend (billing-service.ts): whether an enforced budget covering the principal is spent, and the spent budgets' names.
   ['principal.spendExceeded', 'boolean'],
   ['principal.budgetsExceeded', 'list'],
+  // Privacy (privacy.ts): keys of the consent and legitimate-interest purposes that may be processed for the person now.
+  ['principal.consents', 'list'],
+  // Threat detection (threats.ts): the identity's effective risk level ('none' | 'low' | 'medium' | 'high') and score.
+  ['principal.riskLevel', 'identifier'],
+  ['principal.riskScore', 'number'],
   // Session-aware keys: 'simulation' is the session id of simulated principals.
   ['principal.sessionId', 'identifier'],
   ['principal.tokenIssueTime', 'timestamp'],
@@ -67,6 +72,14 @@ export const principalServerKeys: ReadonlyMap<string, ContextKeyType> = new Map<
   ['request.time', 'timestamp'],
   // The client address the server saw; never set for simulated principals or without a client scope.
   ['request.sourceIp', 'identifier'],
+  // Device posture (devices.ts): what the request's verified device proves ('none' | 'registered' | 'managed' |
+  // 'compliant'), whether an active integration manages it and whether it meets the tenant's requirements (false
+  // without a verified device), and the device's id and platform when one verified.
+  ['request.deviceAssurance', 'identifier'],
+  ['request.deviceManaged', 'boolean'],
+  ['request.deviceCompliant', 'boolean'],
+  ['request.deviceId', 'identifier'],
+  ['request.devicePlatform', 'identifier'],
 ]);
 
 /**
@@ -100,6 +113,9 @@ export const optionalPrincipalServerKeys: ReadonlySet<string> = new Set([
   'principal.delegationChain',
   'principal.departmentId',
   'request.sourceIp',
+  // Only when the request carries a verified device proof (devices.ts).
+  'request.deviceId',
+  'request.devicePlatform',
 ]);
 
 /** Session tags appear as `principal.sessionTags.<key>` (optional strings), one key per tag. */

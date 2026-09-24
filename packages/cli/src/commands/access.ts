@@ -89,7 +89,8 @@ export const accessCommands = [
       const body = /\.(m?[jt]s)$/i.test(output)
         ? tenantConfigModule(exported, output)
         : JSON.stringify(exported, null, 2) + '\n';
-      await writeFile(output, body, { flag: 'wx' });
+      // Owner-only, like store-export: the document names every group member and binding.
+      await writeFile(output, body, { flag: 'wx', mode: 0o600 });
       // The confirmation stays one line, as before; --format json indents it.
       io.out(formatResult({ tenantId, output }, flags.format ?? 'compact', flags.query));
     },

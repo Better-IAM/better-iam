@@ -109,6 +109,17 @@ save it.
 True when an error means the caller is not signed in any more or must confirm who they are (the server answered 401
 or 403). Anything else is a network or server failure, worth a retry rather than a sign-in page.
 
+## @better-iam/client/device createDeviceProver
+
+Lets a browser or Node agent prove which registered device a request comes from, so policies can require a registered,
+managed, or compliant device. It keeps a key pair, gives you the public key to enroll with `devices.enroll`, and
+signs short-lived proofs bound to the session: pass `headers: () => prover.headers(sessionId)` to the typed client.
+
+## @better-iam/client/device indexedDbKeyStore
+
+Keeps a browser's device key in IndexedDB between page loads, with a private key that page scripts can sign with but
+never read. It is the default key store in browsers.
+
 ## @better-iam/auth createAuth
 
 Creates the authentication service (sign-in, sessions, MFA, passkeys, and recovery) on its own, without the rest of
@@ -381,6 +392,23 @@ Builds the inference gateway, an HTTP handler that lets any Better IAM credentia
 Anthropic Messages and OpenAI Chat Completions APIs without holding a provider key. Applications call
 `iam.inference.gateway(options)`, which passes the instance's own runtime; call this directly only to serve a runtime
 of your own (the `GatewayRuntime` interface) behind the same routes.
+
+## @better-iam/server regulationDeadlines
+
+The statutory response windows data-subject requests are answered within, per regulation: `responseDays` and the one
+extension allowed (`extensionDays`). GDPR and UK GDPR give 30 days plus 60, CCPA 45 plus 45, LGPD 15 with no
+extension, PIPEDA and `other` 30 plus 30. Use it to show deadlines next to a tenant's own shorter `responseDays`
+([privacy guide](/docs/guides/governance/privacy)).
+
+## @better-iam/server complianceChecks
+
+The compliance center's built-in checks, each with its `id`, `title`, `description` and `params` (name, default and
+range), as `compliance.catalog` returns them ([compliance guide](/docs/guides/governance/compliance)).
+
+## @better-iam/server complianceFrameworks
+
+The built-in framework mappings (SOC 2, ISO 27001, NIST 800-53 and GDPR): each requirement with the checks that are
+evidence for it, not full coverage of it ([compliance guide](/docs/guides/governance/compliance)).
 
 ## @better-iam/server/assertions createAssertionsApi
 

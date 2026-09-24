@@ -449,7 +449,13 @@ export function createA2aAuthorizer(options: A2aGateOptions) {
      * gate and the server cannot disagree on which skill runs.
      */
     async canSend(caller: A2aCaller, params: Record<string, unknown>): Promise<A2aDecision> {
-      if (!options.skillOf && new Set(namedSkills(params)).size > 1)
+      // A skill id that is not a string (an array, a number) would pass as "no skill" (the message rule) while the
+      // server may still coerce it to a skill name: refuse it like two different skills.
+      if (
+        !options.skillOf &&
+        (new Set(namedSkills(params)).size > 1 ||
+          namedSkills(params).some((value) => typeof value !== 'string'))
+      )
         return { allowed: false, reason: 'AMBIGUOUS_SKILL' };
       const skill = skillOf(params);
       return decide(caller, ruleFor(skill), skill, params, true);

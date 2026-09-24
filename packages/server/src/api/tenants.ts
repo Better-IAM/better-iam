@@ -17,6 +17,7 @@ import { encryptSecret, type TrustedDevice } from '@better-iam/auth';
 import { tenantAccessPolicy } from '../access-policy.js';
 import { slug, type ServerContext } from '../context.js';
 import type { GrantAuthority, OwnerInvitation, TenantAlias } from '../models.js';
+import { assertNoTenantLegalHold } from '../privacy.js';
 import { tenantAuthPolicy, tenantLimits } from '../tenant-policy.js';
 import { all, hash, id, token } from '../utils.js';
 import { email, text } from '../validation.js';
@@ -34,6 +35,15 @@ export interface TenantDiscovery {
   region?: string;
   /** Its canonical sign-in URL, when organization addresses or regions are configured. */
   signInUrl?: string;
+}
+
+/** Per key, the stricter of two sets of plan limits (a key either one sets applies); undefined when neither sets any. */
+function stricterLimits(a: TenantLimits = {}, b: TenantLimits = {}): TenantLimits | undefined {
+  const merged: TenantLimits = { ...a };
+  for (const [key, value] of Object.entries(b) as [keyof TenantLimits, number | undefined][])
+    if (value !== undefined && (merged[key] === undefined || value < merged[key]!))
+      merged[key] = value;
+  return Object.keys(merged).length ? merged : undefined;
 }
 
 export function createTenantsApi(ctx: ServerContext) {
@@ -104,8 +114,14 @@ export function createTenantsApi(ctx: ServerContext) {
             createdAt: Date.now(),
           };
           realm.tenantId = realm.id;
-          // Plan defaults for every new organization; root can change them per tenant later.
-          if (config.tenantDefaults.limits) realm.limits = { ...config.tenantDefaults.limits };
+          // Plan defaults for every new tenant, never looser than its parent's own plan (the stricter value wins per
+          // key), so an organization cannot escape its limits through child projects. The root tenant's limits are
+          // the platform's own and are not passed on. Root can change them per tenant later.
+          const limits = stricterLimits(
+            config.tenantDefaults.limits,
+            parent.parentId !== null ? parent.limits : undefined,
+          );
+          if (limits) realm.limits = limits;
           if (config.tenantDefaults.authPolicy)
             realm.authPolicy = { ...config.tenantDefaults.authPolicy };
           if (input.boundary) await catalog.validate(tx, realm.id, input.boundary);
@@ -269,6 +285,7 @@ export function createTenantsApi(ctx: ServerContext) {
      * lifetimes. Policies only tighten the deployment's configuration. Existing sessions are re-validated against the
      * new policy on their next use, so requiring MFA immediately locks out sessions that did not complete it.
      * `allowedIpRanges` for the caller's own organization must include the caller's address (recorded and current).
+     * The root tenant's policy decides whether root administrators can sign in at all, so only root changes it.
      */
     setAuthPolicy: (
       credential: CredentialInput,
@@ -283,6 +300,14 @@ export function createTenantsApi(ctx: ServerContext) {
           auth.requireRecent(principal);
           if (target.status === 'deleted')
             throw new IamError('INVALID_TRANSITION', 'Deleted tenants cannot be updated');
+          // A platform staff member's allowlist or method restriction on the root tenant would lock every root
+          // administrator out, and bootstrap recovery signs in there too.
+          if (target.parentId === null && !(await ctx.rootPrincipal(tx, principal)))
+            throw new IamError(
+              'ACCESS_DENIED',
+              'The root tenant’s authentication policy is set by root administrators',
+              403,
+            );
           const { authPolicy: _previous, ...rest } = target;
           const next: Tenant = { ...rest };
           if (input.authPolicy !== null) next.authPolicy = tenantAuthPolicy(input.authPolicy);
@@ -349,7 +374,11 @@ export function createTenantsApi(ctx: ServerContext) {
           return result;
         },
       ),
-    /** Platform-controlled plan limits (root only): creation past a limit fails with LIMIT_EXCEEDED. `null` clears them. */
+    /**
+     * Platform-controlled plan limits (root only): creation past a limit fails with LIMIT_EXCEEDED. `null` clears them.
+     * Descendants of an organization are tightened to the new limits per key (they are never looser than their
+     * parent, see `create`); loosening or clearing leaves them as they are.
+     */
     setLimits: (
       credential: CredentialInput,
       input: { tenantId: string; limits: TenantLimits | null },
@@ -366,6 +395,19 @@ export function createTenantsApi(ctx: ServerContext) {
           const next: Tenant = { ...rest };
           if (input.limits !== null) next.limits = tenantLimits(input.limits);
           const result = await tx.put('tenants', next);
+          if (next.limits && target.parentId !== null) {
+            const realms = await tx.find<Tenant>('tenants');
+            const below = new Set([target.id]);
+            for (let depth = 0; depth < maxDepth; depth++)
+              for (const realm of realms)
+                if (realm.parentId && below.has(realm.parentId)) below.add(realm.id);
+            for (const realm of realms) {
+              if (realm.id === target.id || !below.has(realm.id)) continue;
+              const limits = stricterLimits(realm.limits, next.limits);
+              if (limits && JSON.stringify(limits) !== JSON.stringify(realm.limits ?? {}))
+                await tx.put('tenants', { ...realm, limits });
+            }
+          }
           await ctx.events.audit(
             tx,
             principal,
@@ -430,7 +472,8 @@ export function createTenantsApi(ctx: ServerContext) {
      * Incident response: ends every user session in the tenant (the caller's own session is kept unless `includeSelf`).
      * Requires recent authentication and iam:tenants:update; role sessions sourced from this tenant and impersonation
      * sessions opened through an ended session end as well, and the tenant's remembered devices are forgotten (the
-     * caller's own are kept unless `includeSelf`), so the next sign-in needs the second factor again.
+     * caller's own are kept unless `includeSelf`), so the next sign-in needs the second factor again. On the root
+     * tenant, whose sessions include every root administrator's, only root may.
      */
     revokeSessions: (
       credential: CredentialInput,
@@ -443,6 +486,12 @@ export function createTenantsApi(ctx: ServerContext) {
         input.tenantId,
         async ({ tx, principal, tenant: target }) => {
           auth.requireRecent(principal);
+          if (target.parentId === null && !(await ctx.rootPrincipal(tx, principal)))
+            throw new IamError(
+              'ACCESS_DENIED',
+              'Only root administrators can sign everyone out of the root tenant',
+              403,
+            );
           let revoked = 0;
           for (const session of await tx.find<Session>('sessions'))
             if (
@@ -575,6 +624,9 @@ export function createTenantsApi(ctx: ServerContext) {
             )
           )
             throw new IamError('TENANT_INACTIVE', 'Parent must be active');
+          // Legal holds (privacy.ts) keep people's data: an organization with an active hold cannot be deleted.
+          if (input.status === 'deleted')
+            await assertNoTenantLegalHold(tx, target.id, ctx.now(), ctx.config.maxDepth);
           const now = Date.now();
           const result = await tx.put('tenants', {
             ...target,

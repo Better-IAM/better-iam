@@ -1,7 +1,7 @@
 import { randomInt } from 'node:crypto';
 import { IamError, type Identity } from '@better-iam/core';
 import { newToken } from '../crypto.js';
-import type { SignInResult } from '../types.js';
+import type { Challenge, SignInResult } from '../types.js';
 import { email, phone, text } from '../validation.js';
 import { AccountAuth } from './account.js';
 
@@ -39,6 +39,15 @@ export class PasswordlessAuth extends AccountAuth {
         })
       )[0];
       if (identity) {
+        // Only the newest code or link for a destination stays valid: otherwise every restart would add another live
+        // six-digit code, and each finish attempt would match any of them.
+        for (const earlier of await tx.find<Challenge>('authChallenges', {
+          tenantId,
+          identityId: identity.id,
+          purpose: 'passwordless',
+        }))
+          if (earlier.payload.destination === destination)
+            await tx.delete('authChallenges', earlier.id);
         const token =
           input.kind === 'code' ? randomInt(0, 1_000_000).toString().padStart(6, '0') : newToken();
         await this.challenge(
@@ -83,14 +92,29 @@ export class PasswordlessAuth extends AccountAuth {
       if (challenge.payload.destination !== destination)
         throw new IamError('INVALID_CHALLENGE', 'Invalid verification code', 401);
       const identity = await this.user(tx, challenge.identityId, tenantId);
+      let squatted = false;
       if (challenge.payload.channel === 'email') {
         if (identity.email !== destination)
           throw new IamError('INVALID_CHALLENGE', 'Email has changed', 401);
+        squatted = !identity.emailVerified && identity.unprovenPassword === true;
         identity.emailVerified = true;
-        await tx.put('identities', identity);
+        delete identity.unprovenPassword;
       } else if (identity.phone !== destination || !identity.phoneVerified)
         throw new IamError('INVALID_CHALLENGE', 'Phone has changed', 401);
       await tx.delete('authChallenges', challenge.id);
+      if (squatted) {
+        // The first proof that someone controls this address, on an account whose password was chosen at self
+        // sign-up before anyone proved it. That password, and the sessions and remembered devices it produced, came
+        // from someone who may not own the address, so they go: an account registered in someone else's name cannot
+        // be kept by its registrant once the real owner signs in. The owner sets a password through reset.
+        // (Accounts an administrator created keep their password.)
+        await this.revokeIdentity(tx, identity.id);
+        if (identity.passwordHash) {
+          delete identity.passwordHash;
+          await this.audit(tx, identity, 'auth:password:clear');
+        }
+      }
+      if (challenge.payload.channel === 'email') await tx.put('identities', identity);
       return this.completeAuthentication(
         tx,
         identity,

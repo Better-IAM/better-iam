@@ -7,7 +7,7 @@ import {
   type StoredRecord,
 } from '@better-iam/core';
 import type { ServerContext } from './context.js';
-import type { Binding, BindingActivation, Group, GroupMember } from './models.js';
+import type { Binding, BindingActivation, Group, GroupMember, Policy, Role } from './models.js';
 import { id } from './utils.js';
 
 /**
@@ -599,4 +599,58 @@ export async function teamsSyncingFrom(
   return (await tx.find<Team>(teamCollections.teams, { tenantId })).filter((team) =>
     team.syncGroupIds?.includes(groupId),
   );
+}
+
+/**
+ * The bindings on the backing groups of `teamIds` and of every team above them: what membership of those teams hands
+ * out. Changing who is in them needs the grant authority behind each binding, as `groups.addMember` does for a group.
+ */
+export async function teamChainBindings(
+  tx: IamStore,
+  tenantId: string,
+  teamIds: Iterable<string>,
+): Promise<Binding[]> {
+  const teams = await tenantTeams(tx, tenantId);
+  const groupIds = new Set<string>();
+  for (const teamId of teamIds)
+    for (const team of teamChain(teams, teamId)) groupIds.add(team.groupId);
+  const bindings: Binding[] = [];
+  for (const groupId of groupIds)
+    bindings.push(
+      ...(await tx.find<Binding>('bindings', {
+        tenantId,
+        subjectType: 'group',
+        subjectId: groupId,
+      })),
+    );
+  return bindings;
+}
+
+/**
+ * Whether a role, or a role it inherits, holds a deny statement (in its own document or an attached policy). Leaving
+ * a group bound to such a role lifts a restriction, which needs the same authority as removing the person would.
+ */
+export async function roleHoldsDeny(tx: IamStore, roleId: string): Promise<boolean> {
+  const seen = new Set<string>();
+  const queue = [roleId];
+  while (queue.length) {
+    const current = queue.shift()!;
+    if (seen.has(current)) continue;
+    seen.add(current);
+    const role = await tx.get<Role>('roles', current);
+    if (!role) continue;
+    const documents = role.document ? [role.document] : [];
+    for (const policyId of role.policyIds ?? []) {
+      const policy = await tx.get<Policy>('policies', policyId);
+      if (policy) documents.push(policy.document);
+    }
+    if (
+      documents.some((document) =>
+        document.statements.some((statement) => statement.effect === 'deny'),
+      )
+    )
+      return true;
+    queue.push(...(role.inherits ?? []));
+  }
+  return false;
 }

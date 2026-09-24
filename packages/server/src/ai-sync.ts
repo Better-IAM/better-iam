@@ -682,7 +682,7 @@ export async function applyAi(
       if (change.action === 'create') {
         await env.allow('iam:inference:manage', tenantId, `create model ${desired!.name}`);
         const input = modelInput(desired!, providers);
-        await inference.createModel(tx, tenantId, {
+        await inference.createModel(tx, principal, tenantId, {
           name: desired!.name,
           ...(Object.fromEntries(
             Object.entries(input).filter(([, value]) => value !== null),
@@ -690,7 +690,7 @@ export async function applyAi(
         });
       } else if (change.action === 'update') {
         await env.allow('iam:inference:manage', tenantId, `update model ${change.name}`);
-        await inference.updateModel(tx, tenantId, {
+        await inference.updateModel(tx, principal, tenantId, {
           name: desired!.name,
           ...modelInput(desired!, providers),
         });
@@ -735,14 +735,14 @@ export async function applyAi(
         models: budget.models ?? null,
         alertAtPercent: budget.alertAtPercent ?? null,
       };
-      await inference.saveBudget(tx, tenantId, input, record);
+      await inference.saveBudget(tx, principal, tenantId, input, record);
     }
   }
   if (phase !== 'upsert') {
     for (const { change, record } of plan.budgets)
       if (change.action === 'delete') {
         await env.allow('iam:inference:manage', tenantId, `delete budget ${change.name}`);
-        await inference.deleteBudget(tx, record!);
+        await inference.deleteBudget(tx, principal, record!);
       }
     for (const { change } of plan.models)
       if (change.action === 'delete') {
@@ -752,6 +752,8 @@ export async function applyAi(
     for (const { change, record } of plan.agents)
       if (change.action === 'delete') {
         await env.allow('iam:agents:delete', record!.id, `delete agent ${change.name}`);
+        // As `agents.delete`: removing an agent needs a fresh sign-in in person.
+        ctx.auth.requireRecent(principal);
         await agents.deleteAgent(tx, principal, record!);
       }
   }

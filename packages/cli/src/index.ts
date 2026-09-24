@@ -188,6 +188,10 @@ export async function main(
     if (error instanceof CliError && error.hint) console.error(`Hint: ${error.hint}`);
     if (process.env.BETTER_IAM_DEBUG && error instanceof Error && error.stack)
       console.error(error.stack);
+    // A command run by `vault-run` failed: exit with its status, as the command itself would have.
+    const exitStatus = (error as { exitStatus?: unknown } | null)?.exitStatus;
+    if (typeof exitStatus === 'number' && Number.isInteger(exitStatus) && exitStatus > 0 && exitStatus < 256)
+      return exitStatus;
     return code !== undefined && usageCodes.has(code) ? 2 : 1;
   }
 }
@@ -214,8 +218,15 @@ export function runBinary(argv: string[] = process.argv.slice(2), cli: Cli = def
     });
 }
 
-if (
-  process.argv[1] &&
-  realpathSync(resolve(process.argv[1])) === realpathSync(fileURLToPath(import.meta.url))
-)
-  runBinary();
+/** Whether this module is the program Node was started with (not imported by a script or worker). */
+function isEntryPoint(): boolean {
+  if (!process.argv[1]) return false;
+  try {
+    return realpathSync(resolve(process.argv[1])) === realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    // `node -e` and REPL-style hosts leave something in argv[1] that is not a file; importing must still work.
+    return false;
+  }
+}
+
+if (isEntryPoint()) runBinary();

@@ -589,7 +589,18 @@ export function createMcpGate(options: McpGateOptions) {
     }
     const message = jsonRpc(parsed);
     if (message?.method === 'tools/call') {
-      const name = typeof message.params?.name === 'string' ? message.params.name : '';
+      // A name that is not a string (an array, a number) would be judged as no tool at all (and allowed with
+      // `unlisted: 'allow'`) while the server may coerce it to a real tool's name: refuse it.
+      if (typeof message.params?.name !== 'string')
+        return json(
+          {
+            jsonrpc: '2.0',
+            id: message.id ?? null,
+            error: { code: -32602, message: 'The tool name must be a string' },
+          },
+          400,
+        );
+      const name = message.params.name;
       const args =
         message.params?.arguments && typeof message.params.arguments === 'object'
           ? (message.params.arguments as Record<string, unknown>)

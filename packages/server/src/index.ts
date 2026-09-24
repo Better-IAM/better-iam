@@ -15,6 +15,22 @@ import { createInferenceRuntime } from './api/inference.js';
 import { inferencePlugins } from './inference.js';
 import { createA2aRuntime } from './a2a.js';
 import { createBillingRuntime } from './api/billing.js';
+import { createKmsRuntime } from './api/keys.js';
+import { createPkiRuntime } from './api/pki.js';
+import { createProtectionRuntime } from './api/protection.js';
+import { createVaultRuntime } from './api/vault.js';
+import { createPlanRuntime } from './api/filters.js';
+import { createQuotasRuntime } from './api/quotas.js';
+import { createPrivacyRuntime } from './api/privacy.js';
+import { createWorkflowsRuntime } from './api/workflows.js';
+import { createComplianceRuntime } from './api/compliance.js';
+import { createApplicationsRuntime } from './api/applications.js';
+import { createSshRuntime } from './api/ssh.js';
+import { sshPlugins } from './ssh.js';
+import { createVcProtocol, createVcRuntime } from './api/verifiable-credentials.js';
+import { vcOptions, vcPlugins } from './vc.js';
+import { createLdapRuntime } from './ldap.js';
+import { createSignalsProtocol, createSignalsRuntime } from './signal-receiver.js';
 import { billingServiceOf } from './billing-service.js';
 import { createLifecycle } from './lifecycle.js';
 import { createMetrics } from './metrics.js';
@@ -22,6 +38,7 @@ import { createObserver } from './observe.js';
 import { createUsageRecorder } from './usage.js';
 import { checkInvariants } from './invariants.js';
 import { closeOverdueTeamReviews } from './team-reviews.js';
+import { detectThreats } from './threat-engine.js';
 import { createOperations } from './operations.js';
 import { resolveConfig, type BetterIamOptions } from './options.js';
 import { validatePlugins } from './plugins.js';
@@ -78,6 +95,101 @@ export type {
 } from './web-identity-exchange.js';
 export type { WebIdentityFailureReason } from './web-identity.js';
 export { verifyWebhookSignature } from './events.js';
+// SSH certificate authority (ssh-ca.ts wire format, api/ssh.ts service).
+export {
+  SSH_CERT_HOST,
+  SSH_CERT_USER,
+  buildSshKrl,
+  generateSshAuthorityKey,
+  parseSshCertificate,
+  parseSshPublicKey,
+  signSshCertificate,
+  sshFingerprint,
+  sshHostAddress,
+  sshKeyLine,
+  sshKeyTypes,
+  sshLogin,
+  sshSerial,
+  sshSigningKey,
+} from './ssh-ca.js';
+export type {
+  KrlAuthoritySection,
+  ParsedSshCertificate,
+  SshCertificateSpec,
+  SshKeyType,
+  SshPublicKey,
+  SshSigningKey,
+} from './ssh-ca.js';
+export {
+  sshForwardingActions,
+  sshHostResourceType,
+  sshLoginAction,
+  sshLoginResourceType,
+} from './ssh.js';
+export type {
+  SshAuthorityKind,
+  SshAuthorityStatus,
+  SshHostStatus,
+  SshOptions,
+  SshRevocationReason,
+  SshSweepResult,
+} from './ssh.js';
+// Verifiable credentials: SD-JWT VCs, Token Status Lists and OpenID4VCI holder proofs (sd-jwt.ts).
+export {
+  HOLDER_PROOF_TYPE,
+  KB_JWT_TYPE,
+  SD_JWT_VC_TYPE,
+  STATUS_INVALID,
+  STATUS_LIST_JWT_TYPE,
+  STATUS_SUSPENDED,
+  STATUS_VALID,
+  SdJwtError,
+  createDisclosure,
+  issueSdJwt,
+  presentSdJwt,
+  readDisclosure,
+  readStatusList,
+  setStatusAt,
+  signStatusList,
+  splitSdJwt,
+  statusAt,
+  verifyHolderProof,
+  verifySdJwt,
+} from './sd-jwt.js';
+export type { SdJwtDisclosure, SdJwtFailure, VerifiedSdJwt } from './sd-jwt.js';
+export { credentialTypeResource, vcRequestAction } from './vc.js';
+export { normalizeBaseDn } from './ldap.js';
+export type { LdapDirectory, LdapGroupView, LdapPerson, LdapService, LdapUidMode } from './ldap.js';
+export type { LdapSettingsInput, LdapSettingsView } from './api/ldap.js';
+export type {
+  VcClaim,
+  VcClaimSource,
+  VcCredentialStatus,
+  VcSweepResult,
+  VerifiableCredentialOptions,
+  VerifiedCredential,
+} from './vc.js';
+export type {
+  VcCredentialTypeInput,
+  VcCredentialTypeUpdate,
+  VcCredentialTypeView,
+  VcIssuedView,
+  VcIssuerKeyView,
+  VcOfferResult,
+  VcVerification,
+} from './api/verifiable-credentials.js';
+export type {
+  SshAccessEntry,
+  SshAuthorityView,
+  SshCertificateRequest,
+  SshCertificateView,
+  SshHostInput,
+  SshHostSetup,
+  SshHostUpdate,
+  SshHostView,
+  SshIssuedCertificate,
+  SshSettingsView,
+} from './api/ssh.js';
 export {
   authenticatedAuthMethods,
   publicApiMethods,
@@ -486,6 +598,286 @@ export type {
   SubscriptionView,
   TermsView,
 } from './api/billing.js';
+export type {
+  EncryptionContext,
+  GrantConstraints,
+  GrantOperation,
+  GrantSummary,
+  KeySpec,
+  KeyState,
+  KeySummary,
+  KeyUsage,
+  MacAlgorithm,
+  SignatureFormat,
+  SigningAlgorithm,
+} from './kms.js';
+export type {
+  AliasSummary,
+  JwtVerification,
+  KeyCreateInput,
+  KeyMaintenanceResult,
+  KeyVersionSummary,
+  PublicKeyView,
+} from './api/keys.js';
+// Private certificate authority (pki.ts, api/pki.ts, x509.ts).
+export { createCertificateRequest } from './x509.js';
+export type {
+  CertificateRequestInput,
+  DistinguishedName,
+  RevocationReason,
+  SubjectAltNames,
+} from './x509.js';
+export type {
+  AuthoritySummary,
+  AuthorityState,
+  CertificateSummary,
+  CertificateUsage,
+  CertificateVerification,
+} from './pki.js';
+export type { AuthorityCreateInput, CertificateIssueInput, IssuedCertificate } from './api/pki.js';
+// Data protection by tokenization (tokenization.ts, api/protection.ts).
+export type { DataType, MaskStyle, ProfileSummary, TokenFormat } from './tokenization.js';
+export type { ProfileCreateInput } from './api/protection.js';
+// Data filtering / query planning (core plan.ts, api/filters.ts).
+export type { PlanResourcesRequest, ResourcePlanResult } from './api/filters.js';
+// API usage plans and quotas (quotas.ts, api/quotas.ts).
+export { QuotaExceededError, quotaWindow } from './quotas.js';
+export type {
+  QuotaDecision,
+  QuotaLimit,
+  QuotaLimitStatus,
+  QuotaPeriod,
+  QuotaSubjectType,
+  QuotaThrottle,
+} from './quotas.js';
+export type {
+  IamQuotas,
+  QuotaAssignmentView,
+  QuotaConsumeRequest,
+  QuotaPlanView,
+  QuotaUsageView,
+} from './api/quotas.js';
+export type { DecisionInputs } from './decisions.js';
+// Secrets vault (vault.ts, api/vault.ts).
+export { generateValue as generateSecretValue } from './vault.js';
+export type {
+  CheckoutPolicy,
+  EngineHolder,
+  EngineIssued,
+  EngineIssueInput,
+  EngineLeaseInput,
+  GeneratorCharset,
+  LeaseSettings,
+  PasswordGenerator,
+  RotatorInput,
+  SecretFormat,
+  SecretKind,
+  SecretRotation,
+  VaultEngine,
+  VaultOptions,
+  VaultRotator,
+} from './vault.js';
+export type {
+  CheckoutResult,
+  DynamicLeaseResult,
+  IamVault,
+  LeaseJobResult,
+  RevealedSecret,
+  RotationResult,
+  SecretAccessView,
+  SecretLeaseView,
+  SecretVersionView,
+  SecretView,
+  VaultJobResult,
+} from './api/vault.js';
+// Privacy and consent (privacy.ts, api/privacy.ts).
+export { regulationDeadlines, consentState } from './privacy.js';
+export type {
+  ConsentMode,
+  ConsentReason,
+  ConsentReceipt,
+  ConsentSource,
+  ConsentState,
+  LegalBasis,
+  PrivacyConsent,
+  PrivacyConsentEvent,
+  PrivacyHold,
+  PrivacyPurpose,
+  PrivacyRestriction,
+  Regulation,
+  RejectionReason,
+  SubjectInput,
+  SubjectRequest,
+  SubjectRequestEvent,
+  SubjectRequestStatus,
+  SubjectRequestType,
+} from './privacy.js';
+export type {
+  ConsentHistoryEntry,
+  ConsentView,
+  DeadlineReminderResult,
+  MyPurpose,
+  PrivacySettingsView,
+  PrivacySummary,
+  PurposeInput,
+  SubjectRequestView,
+} from './api/privacy.js';
+// Lifecycle workflows (workflows.ts, api/workflows.ts).
+export type {
+  Workflow,
+  WorkflowRun,
+  WorkflowRunStatus,
+  WorkflowStep,
+  WorkflowStepKind,
+  WorkflowStepResult,
+  WorkflowTrigger,
+} from './workflows.js';
+export type {
+  WorkflowInput,
+  WorkflowJobResult,
+  WorkflowPreview,
+  WorkflowRunView,
+  WorkflowView,
+} from './api/workflows.js';
+// Compliance center (compliance.ts, api/compliance.ts).
+export { complianceChecks, complianceFrameworks } from './compliance.js';
+export type {
+  CheckFinding,
+  CheckStatus,
+  ComplianceCheck,
+  ComplianceControl,
+  ComplianceException,
+  ComplianceFramework,
+  ComplianceResult as ComplianceControlResult,
+  ComplianceRun,
+  FrameworkRequirement,
+} from './compliance.js';
+export { verifyEvidencePack } from './api/compliance.js';
+export type {
+  ComplianceJobResult,
+  ControlInput,
+  EvidenceKey,
+  EvidencePack,
+  FindingView,
+  FrameworkStatus,
+  RequirementStatus,
+  ResultView,
+} from './api/compliance.js';
+// Application catalog and launcher (applications.ts, api/applications.ts).
+export type { AppAssignment, AppLaunch, Application } from './applications.js';
+export type { ApplicationInput, ApplicationUsage, MyApp } from './api/applications.js';
+// Identity threat detection and response (threats.ts, threat-rules.ts, threat-engine.ts, api/threats.ts).
+export { effectiveRisk, resolveThreatSettings, riskLevelFor, threatRules } from './threats.js';
+export type {
+  DetectionStatus,
+  IdentityRisk,
+  IncidentResolution,
+  IncidentStatus,
+  ResolvedThreatSettings,
+  ResponseAction,
+  ResponseActionKind,
+  RiskContribution,
+  RiskLevel,
+  ThreatBaseline,
+  ThreatCursor,
+  ThreatDetection,
+  ThreatDetectionRun,
+  ThreatEvidence,
+  ThreatIncident,
+  ThreatNote,
+  ThreatPlaybook,
+  ThreatResponse,
+  ThreatRuleCategory,
+  ThreatRuleDefinition,
+  ThreatRuleId,
+  ThreatRuleSetting,
+  ThreatSettings,
+  ThreatSeverity,
+  ThreatSubject,
+  ThreatSubjectType,
+} from './threats.js';
+export type { DetectionCandidate } from './threat-rules.js';
+export type {
+  DetectionPage,
+  IdentityRiskView,
+  IncidentDetail,
+  IncidentPage,
+  RiskContributionView,
+  RiskPage,
+  SuspiciousActivityReport,
+  ThreatPlaybookInput,
+  ThreatRuleSettingInput,
+  ThreatRuleView,
+  ThreatSettingsInput,
+  ThreatSettingsView,
+  ThreatSummary,
+} from './api/threats.js';
+// Device posture (devices.ts, api/devices.ts).
+export { assuranceOf, deviceProofHeader, evaluateCompliance, resolveDeviceSettings } from './devices.js';
+export type {
+  ComplianceReason,
+  ComplianceResult,
+  DeviceAssurance,
+  DeviceEnrollment,
+  DeviceIntegration,
+  DeviceIntegrationVendor,
+  DeviceKey,
+  DevicePlatform,
+  DevicePosture,
+  DevicePublicJwk,
+  DeviceSettings,
+  DeviceStatus,
+  RegisteredDevice,
+  ResolvedDeviceSettings,
+} from './devices.js';
+export type {
+  DeviceCheck,
+  DeviceDetail,
+  DeviceEnrollInput,
+  DeviceEnrollmentCode,
+  DeviceEnrollmentView,
+  DeviceIntegrationView,
+  DeviceKeyView,
+  DevicePublicKeyInput,
+  DeviceReport,
+  DeviceReportResult,
+  DeviceSettingsView,
+  DeviceView,
+  MyDevice,
+} from './api/devices.js';
+// Shared Signals receiver (signal-receiver.ts, api/signals.ts; event and subject parsing in @better-iam/core).
+export {
+  DEFAULT_SIGNAL_ALGORITHMS,
+  maxSignalSourcesPerTenant,
+  signalCollections,
+  SignalRejectedError,
+} from './signal-receiver.js';
+export type {
+  IamSignals,
+  ReceivedSignal,
+  SignalAction,
+  SignalActionableEvent,
+  SignalAlgorithm,
+  SignalDelivery,
+  SignalErrorCode,
+  SignalPollResult,
+  SignalPollState,
+  SignalReceipt,
+  SignalSource,
+  SignalSourceStatus,
+  SignalStatus,
+  SignalSubjectMapping,
+} from './signal-receiver.js';
+export type {
+  SignalEventPage,
+  SignalEventView,
+  SignalSourceCreated,
+  SignalSourceCreateInput,
+  SignalSourceUpdateInput,
+  SignalSourceView,
+} from './api/signals.js';
+export type { ResolvedSignalsConfig, SignalsOptions } from './options.js';
+export type { SecurityEventClaims, SignalEventType, SubjectIdentifier } from '@better-iam/core';
 
 /**
  * IAM-signed session JWTs (`sts.jwt`): the issuer, the public keys downstream services verify with, and an online,
@@ -511,7 +903,12 @@ export interface IamSessionTokens {
 export function betterIam(options: BetterIamOptions) {
   const config = resolveConfig(options);
   // Built-in modules that extend the catalog (inference: the `model` type and `inference:invoke`) come last.
-  const plugins = [...(options.plugins ?? []), ...inferencePlugins(options)];
+  const plugins = [
+    ...(options.plugins ?? []),
+    ...inferencePlugins(options),
+    ...sshPlugins(options),
+    ...vcPlugins(options),
+  ];
   const catalog = new Catalog(options, plugins, config);
   validatePlugins(plugins, catalog);
   const now = () => options.authentication?.now?.() ?? Date.now();
@@ -587,6 +984,10 @@ export function betterIam(options: BetterIamOptions) {
   ctx.usage = createUsageRecorder(ctx);
   // The billing ledger; validates the `billing` option now, so a bad value fails construction with INVALID_CONFIG.
   ctx.billing = billingServiceOf(ctx).hooks;
+  // Wallet-facing issuer endpoints (`{basePath}/vc/{tenantId}/...` and their /.well-known metadata).
+  if (vcOptions(ctx)) ctx.mountedProtocols.push(createVcProtocol(ctx));
+  // The Shared Signals push endpoint (`{signals.pushPath}/{sourceId}`, RFC 8935).
+  ctx.mountedProtocols.push(createSignalsProtocol(ctx));
 
   // In-process calls that carry request headers record and judge the same client the HTTP handler would.
   const authApi = createAuthApi(auth, observe, (headers) =>
@@ -674,6 +1075,12 @@ export function betterIam(options: BetterIamOptions) {
     closeOverdueTeamReviews: (input?: { tenantId?: string }) => closeOverdueTeamReviews(ctx, input),
     /** Evaluates every tenant's access invariants and audits breaks and restorations (a scheduler job). */
     checkInvariants: (input?: { tenantId?: string }) => checkInvariants(ctx, input),
+    /**
+     * Identity threat detection (a scheduler job, every few minutes): reads each active tenant's new audit events
+     * from its cursor (at most `maxEvents`, default 2000), verifies the hash chain, raises detections, groups them into
+     * incidents, updates identity risk, and runs response playbooks. Manage it through `api.threats`.
+     */
+    detectThreats: (input?: { tenantId?: string; maxEvents?: number }) => detectThreats(ctx, input),
     /** Writes buffered access usage now (`accessUsage` option); call it before shutting down. */
     flushAccessUsage: () => ctx.usage.flush(),
     /**
@@ -695,6 +1102,75 @@ export function betterIam(options: BetterIamOptions) {
      * budgets and invoices through `api.billing`.
      */
     billing: createBillingRuntime(ctx),
+    /**
+     * Key management, server side: the scheduler job `maintain` (hourly) that performs automatic key rotation,
+     * destroys keys after their deletion waiting period and removes lapsed grants. Use keys through `api.keys`.
+     */
+    kms: createKmsRuntime(ctx),
+    /**
+     * The private certificate authority, server side: public CRLs (`crl`, `crlResponse` for a CRL distribution
+     * point), trust bundles, and `verify` for servers that terminate mutual TLS. Manage it through `api.pki`.
+     */
+    pki: createPkiRuntime(ctx),
+    /** Data protection, server side: the retention job `sweep` (daily). Tokenize through `api.protection`. */
+    protection: createProtectionRuntime(ctx),
+    /**
+     * The secrets vault, server side: `get` and `resolve` (`vault://name#field` references) for the deployment's own
+     * code, and the scheduler jobs `rotateDue` (hourly), `expireLeases` (every few minutes) and `purgeDeleted`
+     * (daily). Manage secrets through `api.vault`.
+     */
+    vault: createVaultRuntime(ctx),
+    /**
+     * Data filtering: which resources of a type the caller may perform an action on, as a filter for your own queries
+     * (`filterToSql`, `filterToPrisma`, `filterToMongo`, `filterMatches` from `@better-iam/core`). The credential goes in
+     * the request, as with `authorize`.
+     */
+    planResources: createPlanRuntime(ctx),
+    /**
+     * API usage plans and quotas, in your request handlers: `consume` / `enforce` count use for the request's
+     * credential (`enforce` throws QUOTA_EXCEEDED with `retryAfterMs`), `status` reads what is left, and `consumeFor`
+     * counts for a subject your code identified. Define and assign plans through `api.quotas`.
+     */
+    quotas: createQuotasRuntime(ctx),
+    /**
+     * Privacy and consent, server side: credential-free `check` and `record` for the deployment's own code (such as a
+     * cookie banner or a marketing send), and the scheduler job `sendDeadlineReminders` (daily) for data-subject
+     * request deadlines. Manage purposes and requests through `api.privacy`.
+     */
+    privacy: createPrivacyRuntime(ctx),
+    /**
+     * Lifecycle workflows, server side: the scheduler job `runDue` (every few minutes) that starts runs for joiners,
+     * movers, leavers and dates and resumes waiting runs, and `subscribe()` to react to changes within moments (needs
+     * `dispatchAuditHooks` running). Manage workflows through `api.workflows`.
+     */
+    workflows: createWorkflowsRuntime(ctx),
+    /** The compliance center, server side: the scheduler job `evaluateAll` (daily). Manage controls via `api.compliance`. */
+    compliance: createComplianceRuntime(ctx),
+    /**
+     * The application catalog, server side: `allowed` tells an OAuth sign-in or consent page whether a person is
+     * assigned the app registered for a client. Manage apps through `api.applications`.
+     */
+    applications: createApplicationsRuntime(ctx),
+    /**
+     * The SSH certificate authority (`ssh` option), server side: the scheduler job `sweep` (every few minutes) that
+     * revokes certificates whose holder or access went away, and `revocationList(tenantId)` as bytes for a custom
+     * route. Manage authorities, hosts and certificates through `api.ssh`.
+     */
+    ssh: createSshRuntime(ctx),
+    /**
+     * Verifiable credentials (`verifiableCredentials` option), server side: `verify` presentations of credentials the
+     * deployment issued, and the scheduler job `sweep` (hourly) revoking credentials of people who left. Manage types
+     * and credentials through `api.verifiableCredentials`; wallets use the `{basePath}/vc/{tenantId}` endpoints.
+     */
+    verifiableCredentials: createVcRuntime(ctx),
+    /** The LDAP directory gateway's lookups before a bind (base DN → tenant, bind name → identity); see `@better-iam/ldap`. */
+    ldap: createLdapRuntime(ctx),
+    /**
+     * The Shared Signals receiver, server side: the scheduler job `poll` (every minute or so) that fetches events from
+     * poll sources (RFC 8936), and `receive(sourceId, set)` to hand in a security event token from a custom transport.
+     * Pushes arrive at `{signals.pushPath}/{sourceId}`; manage sources and read events through `api.signals`.
+     */
+    signals: createSignalsRuntime(ctx),
     protocolHost: federation.protocolHost,
     useProtocol: http.useProtocol,
     dispatchAuditHooks: ctx.events.dispatch,

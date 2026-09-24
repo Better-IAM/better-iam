@@ -41,7 +41,7 @@ import type {
   SignInResult,
   TrustedDevice,
 } from '../types.js';
-import { email, password, publicSession, text } from '../validation.js';
+import { displayName, email, password, publicSession, text } from '../validation.js';
 import { assertPasswordRules } from '../password-policy.js';
 
 /** Previous password hashes kept per identity; `passwordHistory` policies may use up to this many. */
@@ -333,7 +333,12 @@ export class AuthBase {
   async limitAttempt(
     tenantId: string,
     subject: string,
-    options: { tier?: 'default' | 'sensitive' | 'generous'; limit?: number } = {},
+    options: {
+      tier?: 'default' | 'sensitive' | 'generous';
+      limit?: number;
+      /** With `limit`: false skips the network steps (blocks, per-IP counter) when the same attempt already ran them. */
+      countClient?: boolean;
+    } = {},
   ): Promise<void> {
     if (options.limit === undefined) {
       await this.rate(tenantId, subject, options.tier ?? 'default');
@@ -341,7 +346,7 @@ export class AuthBase {
     }
     if (!Number.isSafeInteger(options.limit) || options.limit < 1)
       throw new IamError('INVALID_INPUT', 'limit must be a positive integer');
-    await this.rateClient(tenantId);
+    if (options.countClient !== false) await this.rateClient(tenantId);
     await this.consume(hashToken(`${tenantId}:${subject}`), tenantId, options.limit);
   }
 
@@ -541,13 +546,19 @@ export class AuthBase {
     return { supported: true, cleared: subjects.length };
   }
 
-  /** An active human identity in an active tenant tree. */
+  /** True once an identity's `expiresAt` has passed: it is refused everywhere, before the purge worker disables it. */
+  protected identityExpired(identity: Identity): boolean {
+    return typeof identity.expiresAt === 'number' && identity.expiresAt <= this.now();
+  }
+
+  /** An active, unexpired human identity in an active tenant tree. */
   protected async user(tx: IamStore, identityId: string, tenantId?: string): Promise<Identity> {
     const identity = await tx.get<Identity>('identities', identityId);
     if (
       !identity ||
       identity.kind !== 'user' ||
       identity.status !== 'active' ||
+      this.identityExpired(identity) ||
       (tenantId && identity.tenantId !== tenantId)
     )
       throw new IamError('UNAUTHENTICATED', 'Invalid authentication', 401);
@@ -774,7 +785,7 @@ export class AuthBase {
       uniqueKey: `email:${normalized}`,
       kind: 'user',
       email: normalized,
-      name: text(input.name, 'name', 256),
+      name: displayName(input.name, 256),
       status: 'active',
       emailVerified: input.emailVerified ?? false,
       rootAdmin: input.rootAdmin ?? false,
@@ -831,16 +842,18 @@ export class AuthBase {
     deviceToken: string,
   ): Promise<TrustedDevice | undefined> {
     if (identity.rootAdmin || !/^[A-Za-z0-9_-]{32,512}$/.test(deviceToken)) return undefined;
-    if (this.deviceLifetimeFor(await tx.get<Tenant>('tenants', identity.tenantId)) === 0)
-      return undefined;
+    const lifetime = this.deviceLifetimeFor(await tx.get<Tenant>('tenants', identity.tenantId));
+    if (lifetime === 0) return undefined;
     const device = (
       await tx.find<TrustedDevice>('authDevices', { tokenHash: hashToken(deviceToken) })
     )[0];
+    // The current policy also bounds devices remembered under a longer one (trustedDeviceDays lowered later).
     if (
       !device ||
       device.identityId !== identity.id ||
       device.tenantId !== identity.tenantId ||
-      device.expiresAt <= this.now()
+      device.expiresAt <= this.now() ||
+      this.now() - device.createdAt >= lifetime
     )
       return undefined;
     device.lastUsedAt = this.now();
@@ -1123,24 +1136,48 @@ export class AuthBase {
       await tx.delete('sessions', dependent.id);
   }
 
-  /** An impersonation session lives only while the administrator's own session and identity do; otherwise it is removed on sight. */
+  /**
+   * An impersonation session lives only while the administrator's own session and identity do, while the member's
+   * tenant still allows impersonation, and while the member is still someone who may be impersonated (not an owner or
+   * root administrator); otherwise it is refused (and removed on sight). The administrator's tenant idle timeout also
+   * applies: the view-as ends once neither session has been used for that long.
+   */
   async assertImpersonationSource(tx: IamStore, session: Session): Promise<void> {
     if (!session.impersonatorId) return;
     const source = session.impersonatorSessionId
       ? await tx.get<Session>('sessions', session.impersonatorSessionId)
       : undefined;
     const actor = await tx.get<Identity>('identities', session.impersonatorId);
+    const member = await tx.get<Identity>('identities', session.identityId);
+    const memberTenant = await tx.get<Tenant>('tenants', session.tenantId);
+    const sourceTenant = source ? await tx.get<Tenant>('tenants', source.tenantId) : undefined;
+    const lastActive = Math.max(source?.lastSeenAt ?? 0, session.lastSeenAt);
     if (
       !source ||
       source.kind !== 'user' ||
       source.identityId !== session.impersonatorId ||
       source.expiresAt <= this.now() ||
+      this.now() - lastActive >= this.sessionLimits(sourceTenant).idleTimeoutMs ||
       !actor ||
-      actor.status !== 'active'
+      actor.status !== 'active' ||
+      this.identityExpired(actor) ||
+      !memberTenant?.authPolicy?.allowImpersonation ||
+      !member ||
+      member.owner ||
+      member.rootAdmin
     ) {
       await tx.delete('sessions', session.id);
       throw new IamError('UNAUTHENTICATED', 'Impersonation has ended', 401);
     }
+  }
+
+  /** Whether the person has a registered passkey that can serve as their second factor on this deployment. */
+  protected async passkeyFactor(tx: IamStore, identity: Identity): Promise<boolean> {
+    return (
+      Boolean(this.options.passkeys) &&
+      (await tx.find('authPasskeys', { tenantId: identity.tenantId, identityId: identity.id }))
+        .length > 0
+    );
   }
 
   /**
@@ -1169,10 +1206,7 @@ export class AuthBase {
         Boolean(active.email && active.emailVerified) &&
         Boolean(this.options.sendEmail) &&
         (tenant?.authPolicy?.mfaEmailCodes ?? this.options.mfaEmailCodes ?? false);
-      const passkeys =
-        Boolean(this.options.passkeys) &&
-        (await tx.find('authPasskeys', { tenantId: active.tenantId, identityId: active.id }))
-          .length > 0;
+      const passkeys = await this.passkeyFactor(tx, active);
       const challenge = await this.challenge(
         tx,
         active,
@@ -1183,7 +1217,9 @@ export class AuthBase {
       return {
         mfaRequired: true,
         challenge,
-        enrollmentRequired: !mfa?.enabled,
+        // A registered passkey is a second factor: the login challenge cannot enroll an authenticator over it.
+        enrollmentRequired: !mfa?.enabled && !passkeys,
+        authenticatorEnrolled: Boolean(mfa?.enabled),
         ...(emailCodes ? { emailCodeAvailable: true } : {}),
         ...(passkeys ? { passkeyAvailable: true } : {}),
       };
@@ -1255,8 +1291,13 @@ export class AuthBase {
     if (!session || session.kind !== 'user' || session.expiresAt <= this.now())
       throw new IamError('UNAUTHENTICATED', 'Invalid or expired credentials', 401);
     const tenant = await tx.get<Tenant>('tenants', session.tenantId);
-    const { idleTimeoutMs } = this.sessionLimits(tenant);
-    if (this.now() - session.lastSeenAt >= idleTimeoutMs)
+    const { lifetimeMs, idleTimeoutMs } = this.sessionLimits(tenant);
+    // Both limits are judged against the tenant's current policy, so shortening the lifetime (after an incident, say)
+    // also ends sessions issued under the longer one.
+    if (
+      this.now() - session.lastSeenAt >= idleTimeoutMs ||
+      this.now() - session.createdAt >= lifetimeMs
+    )
       throw new IamError('UNAUTHENTICATED', 'Invalid or expired credentials', 401);
     const identity = await this.user(tx, session.identityId, session.tenantId);
     if (this.requireEmailVerification && !identity.emailVerified)
@@ -1267,6 +1308,11 @@ export class AuthBase {
     // A session issued from a network the tenant no longer allows, or has since blocked, stops working at its next use.
     this.assertIpAllowed(tenant, session.client?.ip);
     await this.assertNetworkNotBlocked(tx, session.tenantId, session.client?.ip);
+    // The address presenting the cookie now is judged against network blocks too, so a stolen session is useless
+    // from a blocked network (as API keys and temporary credentials already are).
+    const presentedIp = this.clientScope.getStore()?.ip;
+    if (presentedIp && presentedIp !== session.client?.ip)
+      await this.assertNetworkNotBlocked(tx, session.tenantId, presentedIp);
     // Opt-in per tenant: the session works only from the network it was issued from, so a stolen cookie is
     // useless elsewhere; unknown addresses on either side are not judged.
     if (tenant?.authPolicy?.bindSessionsToIp) {

@@ -80,11 +80,25 @@ describe('passkeys as the second factor', () => {
         response: authenticator.register(registration.options.challenge),
       },
     );
-    // Now the tenant requires MFA: the challenge offers the passkey even though no authenticator app is enrolled.
+    // Now the tenant requires MFA: the challenge offers the passkey even though no authenticator app is enrolled,
+    // and the passkey is a factor, so the password alone cannot enroll an authenticator over it.
     await f.setPolicy({ requireMfa: true });
     const challenge = await f.signIn();
     if (!('mfaRequired' in challenge)) throw new Error('MFA expected');
-    expect(challenge).toMatchObject({ enrollmentRequired: true, passkeyAvailable: true });
+    expect(challenge).toMatchObject({
+      enrollmentRequired: false,
+      authenticatorEnrolled: false,
+      passkeyAvailable: true,
+    });
+    await expect(
+      f.iam.api.auth.beginMfa({ tenantId: f.tenantId, challenge: challenge.challenge }),
+    ).rejects.toMatchObject({ code: 'MFA_REQUIRED' });
+    await expect(
+      f.iam.api.auth.confirmMfa({
+        credential: { tenantId: f.tenantId, challenge: challenge.challenge },
+        code: '123456',
+      }),
+    ).rejects.toMatchObject({ code: 'MFA_REQUIRED' });
     const begun = await f.iam.api.auth.beginPasskeyMfa({
       tenantId: f.tenantId,
       challenge: challenge.challenge,

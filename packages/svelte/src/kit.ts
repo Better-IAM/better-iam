@@ -52,6 +52,8 @@ export interface KitEvent {
   cookies: KitCookies;
   locals: object;
   isDataRequest?: boolean;
+  /** The route SvelteKit matched (set before `handle` runs); `id` is null when nothing matched. */
+  route?: { id: string | null };
 }
 
 /**
@@ -117,10 +119,36 @@ export interface IamKitOptions {
 export function isKitControlError(error: unknown): boolean {
   return isRedirect(error) || isHttpError(error);
 }
-function pathMatches(rule: ProtectRule<unknown>['path'], url: URL): boolean {
-  if (typeof rule === 'function') return rule(url);
-  if (rule instanceof RegExp) return rule.test(url.pathname);
-  return underPath(url.pathname, rule);
+/**
+ * The paths a request can reach a route by. SvelteKit keeps `event.url.pathname` percent-encoded but routes on the
+ * decoded path (`/%61dmin` reaches `routes/admin`), and a `reroute` hook can send a path to another route, so a rule
+ * applies when it matches the raw path, the decoded path, or (for prefixes) the matched route's id without groups.
+ */
+function routedUrls(event: KitEvent): { urls: URL[]; routePath: string | undefined } {
+  const urls = [event.url];
+  try {
+    // SvelteKit's decode_pathname: everything but %25 is decoded before routing.
+    const decoded = event.url.pathname.split('%25').map(decodeURI).join('%25');
+    if (decoded !== event.url.pathname) {
+      const url = new URL(event.url);
+      url.pathname = decoded;
+      urls.push(url);
+    }
+  } catch {
+    /* SvelteKit refuses to route a malformed path. */
+  }
+  const id = event.route?.id;
+  const routePath = typeof id === 'string' ? id.replace(/\/\([^/]*\)/g, '') || '/' : undefined;
+  return { urls, routePath };
+}
+function pathMatches(rule: ProtectRule<unknown>['path'], event: KitEvent): boolean {
+  const { urls, routePath } = routedUrls(event);
+  if (typeof rule === 'function') return urls.some((url) => rule(url));
+  if (rule instanceof RegExp) return urls.some((url) => rule.test(url.pathname));
+  return (
+    urls.some((url) => underPath(url.pathname, rule)) ||
+    (routePath !== undefined && underPath(routePath, rule))
+  );
 }
 
 /** Parses one `Set-Cookie` header into the name, decoded value, and options `event.cookies.set` accepts. */
@@ -247,6 +275,7 @@ export function createIamKit<T extends IamLike>(
       can: core.can,
       authorize: core.authorize,
       listAccessible: core.listAccessible,
+      plan: core.plan,
       assertion: core.assertion,
       get client() {
         return core.client;
@@ -327,7 +356,7 @@ export function createIamKit<T extends IamLike>(
         return (await resolveIam()).handler(event.request);
       const helpers = locals(event);
       for (const rule of options.protect ?? []) {
-        if (!pathMatches(rule.path, event.url)) continue;
+        if (!pathMatches(rule.path, event)) continue;
         const session = await helpers.requireSession(rule.stepUp ? { stepUp: rule.stepUp } : {});
         await authorizeFor(helpers, rule.authorize, { event, session }, rule.deniedRedirect);
       }

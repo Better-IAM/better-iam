@@ -90,7 +90,9 @@ export function createIamMiddleware(
     options.protect ??
     ((pathname: string) =>
       !isLogin(pathname) &&
-      !pathname.startsWith('/api/iam') &&
+      // On a segment boundary: `/api/iamx` is an application route, not the IAM API.
+      pathname !== '/api/iam' &&
+      !pathname.startsWith('/api/iam/') &&
       !publicPaths.some((pattern) => matchPath(pattern, pathname)));
   const nextParam = options.nextParam === undefined ? 'next' : options.nextParam;
   return (request) => {
@@ -131,6 +133,11 @@ function base64urlBytes(value: string): Uint8Array | undefined {
   } catch {
     return undefined;
   }
+}
+function bytesBase64url(bytes: Uint8Array): string {
+  let binary = '';
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 function hexBytes(value: string): Uint8Array {
   const bytes = new Uint8Array(value.length / 2);
@@ -220,7 +227,9 @@ export async function verifyAssertionToken(
   )
     throw new AssertionError('Invalid verification key');
   const provided = base64urlBytes(parts[2]!);
-  if (!provided) throw new AssertionError('Malformed assertion');
+  // Only the canonical spelling of the signature is accepted (atob ignores unused trailing bits).
+  if (!provided || bytesBase64url(provided) !== parts[2])
+    throw new AssertionError('Malformed assertion');
   let verified = false;
   for (const key of keys) {
     const expected = await hmacSha256(hexBytes(key), `${parts[0]}.${parts[1]}`);

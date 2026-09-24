@@ -169,6 +169,23 @@ async function applyApprovers(
   binding.approverGroupId = input.approverGroupId;
 }
 
+/**
+ * Whether the caller issued a binding: its authority is their own, or they are root. A "view as" session never counts
+ * as the member it shows, so it cannot lengthen, change or remove what the member granted.
+ */
+async function issuedByCaller(
+  ctx: ServerContext,
+  tx: IamStore,
+  principal: AuthenticatedPrincipal,
+  binding: Binding,
+): Promise<boolean> {
+  const authority = await tx.get<GrantAuthority>('grantAuthorities', binding.authorityId);
+  return (
+    (authority?.identityId === principal.identity.id && !principal.session.impersonatorId) ||
+    (await ctx.rootPrincipal(tx, principal))
+  );
+}
+
 /** A binding may be removed by the administrator whose authority issued it, or by root. */
 export async function deleteBinding(
   ctx: ServerContext,
@@ -178,8 +195,7 @@ export async function deleteBinding(
 ): Promise<void> {
   const role = await tx.get<Role>('roles', binding.roleId);
   if (role?.protected) throw new IamError('PROTECTED_RESOURCE', 'Use owner transfer', 403);
-  const authority = await tx.get<GrantAuthority>('grantAuthorities', binding.authorityId);
-  if (authority?.identityId !== principal.identity.id && !(await ctx.rootPrincipal(tx, principal)))
+  if (!(await issuedByCaller(ctx, tx, principal, binding)))
     throw new IamError('ACCESS_DENIED', 'Cannot mutate a higher authority binding', 403);
   for (const activation of await tx.find<BindingActivation>('bindingActivations', {
     tenantId: binding.tenantId,
@@ -326,11 +342,13 @@ export function createBindingsApi(ctx: ServerContext) {
             binding,
             (await ctx.tenant(tx, input.tenantId)).accessPolicy,
           ).maxActivationMs;
+          // Approvers may shorten what was asked for, never lengthen it.
+          const requested = Math.min(activation.requestedDurationMs ?? limit, limit);
           const durationMs = integer(
-            input.durationMs ?? Math.min(activation.requestedDurationMs ?? limit, limit),
+            input.durationMs ?? requested,
             'durationMs',
             60_000,
-            limit,
+            Math.max(requested, 60_000),
           );
           decided.status = 'active';
           decided.activatedAt = now;
@@ -420,11 +438,7 @@ export function createBindingsApi(ctx: ServerContext) {
           );
           const role = await tx.get<Role>('roles', binding.roleId);
           if (role?.protected) throw new IamError('PROTECTED_RESOURCE', 'Use owner transfer', 403);
-          const authority = await tx.get<GrantAuthority>('grantAuthorities', binding.authorityId);
-          if (
-            authority?.identityId !== principal.identity.id &&
-            !(await ctx.rootPrincipal(tx, principal))
-          )
+          if (!(await issuedByCaller(ctx, tx, principal, binding)))
             throw new IamError('ACCESS_DENIED', 'Cannot mutate a higher authority binding', 403);
           if (
             input.startsAt === undefined &&
@@ -819,14 +833,8 @@ export function createBindingsApi(ctx: ServerContext) {
             input.tenantId,
           );
           const binding = await tx.get<Binding>('bindings', activation.bindingId);
-          if (binding) {
-            const authority = await tx.get<GrantAuthority>('grantAuthorities', binding.authorityId);
-            if (
-              authority?.identityId !== principal.identity.id &&
-              !(await ctx.rootPrincipal(tx, principal))
-            )
-              throw new IamError('ACCESS_DENIED', 'Cannot mutate a higher authority binding', 403);
-          }
+          if (binding && !(await issuedByCaller(ctx, tx, principal, binding)))
+            throw new IamError('ACCESS_DENIED', 'Cannot mutate a higher authority binding', 403);
           await tx.delete('bindingActivations', activation.id);
           await ctx.events.audit(
             tx,

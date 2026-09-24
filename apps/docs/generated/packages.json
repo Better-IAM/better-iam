@@ -2,7 +2,7 @@
  {
   "name": "better-iam",
   "directory": "packages/better-iam",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Umbrella package: installs every package and exposes them as subpath imports.",
   "exports": [
    "better-iam",
@@ -36,8 +36,10 @@
    "better-iam/fastify",
    "better-iam/react-router",
    "better-iam/client/session",
+   "better-iam/client/device",
    "better-iam/mcp",
-   "better-iam/a2a"
+   "better-iam/a2a",
+   "better-iam/ldap"
   ],
   "internalDependencies": [
    "@better-iam/core",
@@ -60,7 +62,8 @@
    "@better-iam/middleware",
    "@better-iam/react-router",
    "@better-iam/mcp",
-   "@better-iam/a2a"
+   "@better-iam/a2a",
+   "@better-iam/ldap"
   ],
   "dependencies": [],
   "peerDependencies": [
@@ -77,7 +80,7 @@
  {
   "name": "@better-iam/a2a",
   "directory": "packages/a2a",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Agent2Agent (A2A) support: IAM-attested agent cards, card verification and discovery, and authorization for A2A servers.",
   "exports": [
    "@better-iam/a2a"
@@ -91,7 +94,7 @@
  {
   "name": "@better-iam/adapter-libsql",
   "directory": "packages/adapter-libsql",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "libSQL / Turso storage adapter.",
   "exports": [
    "@better-iam/adapter-libsql"
@@ -107,7 +110,7 @@
  {
   "name": "@better-iam/adapter-postgres",
   "directory": "packages/adapter-postgres",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "PostgreSQL storage adapter.",
   "exports": [
    "@better-iam/adapter-postgres"
@@ -124,7 +127,7 @@
  {
   "name": "@better-iam/adapter-sqlite",
   "directory": "packages/adapter-sqlite",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "SQLite storage adapter (better-sqlite3).",
   "exports": [
    "@better-iam/adapter-sqlite"
@@ -141,7 +144,7 @@
  {
   "name": "@better-iam/auth",
   "directory": "packages/auth",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Passwords, sessions, MFA, passkeys, magic links, recovery, and delivery templates.",
   "exports": [
    "@better-iam/auth",
@@ -160,7 +163,7 @@
  {
   "name": "@better-iam/cli",
   "directory": "packages/cli",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "The `better-iam` command line: migrations, bootstrap, audits, config as code, jobs.",
   "exports": [
    "@better-iam/cli"
@@ -178,12 +181,13 @@
  {
   "name": "@better-iam/client",
   "directory": "packages/client",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Typed browser client with session store and passkey helpers.",
   "exports": [
    "@better-iam/client",
    "@better-iam/client/passkeys",
-   "@better-iam/client/session"
+   "@better-iam/client/session",
+   "@better-iam/client/device"
   ],
   "internalDependencies": [
    "@better-iam/core"
@@ -196,7 +200,7 @@
  {
   "name": "@better-iam/core",
   "directory": "packages/core",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Models, the policy engine, the storage contract, the audit chain, and shared errors.",
   "exports": [
    "@better-iam/core",
@@ -207,9 +211,21 @@
   "peerDependencies": []
  },
  {
+  "name": "@better-iam/ldap",
+  "directory": "packages/ldap",
+  "version": "0.2.0",
+  "description": "A read-only LDAPv3 directory gateway over Better IAM: people, groups and password binds for applications that only speak LDAP.",
+  "exports": [
+   "@better-iam/ldap"
+  ],
+  "internalDependencies": [],
+  "dependencies": [],
+  "peerDependencies": []
+ },
+ {
   "name": "@better-iam/mcp",
   "directory": "packages/mcp",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Tool-level authorization for Model Context Protocol servers: Better IAM credentials, agents and OAuth tokens.",
   "exports": [
    "@better-iam/mcp"
@@ -223,7 +239,7 @@
  {
   "name": "@better-iam/middleware",
   "directory": "packages/middleware",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Framework-neutral middleware core with Express, Hono, and Fastify adapters.",
   "exports": [
    "@better-iam/middleware",
@@ -241,7 +257,7 @@
  {
   "name": "@better-iam/nestjs",
   "directory": "packages/nestjs",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "NestJS module, guard, decorators, and testing utilities.",
   "exports": [
    "@better-iam/nestjs",
@@ -262,7 +278,7 @@
  {
   "name": "@better-iam/next",
   "directory": "packages/next",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Next.js App Router helpers: guarded pages, routes, actions, and edge checks.",
   "exports": [
    "@better-iam/next",
@@ -283,7 +299,7 @@
  {
   "name": "@better-iam/nuxt",
   "directory": "packages/nuxt",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Nuxt module and h3 helpers.",
   "exports": [
    "@better-iam/nuxt",
@@ -305,7 +321,7 @@
  {
   "name": "@better-iam/oauth",
   "directory": "packages/oauth",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "OAuth/OIDC authorization server, resource-server helpers, and Shared Signals.",
   "exports": [
    "@better-iam/oauth"
@@ -324,7 +340,7 @@
  {
   "name": "@better-iam/projects",
   "directory": "packages/projects",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Reference tenant-scoped Projects plugin.",
   "exports": [
    "@better-iam/projects"
@@ -338,7 +354,7 @@
  {
   "name": "@better-iam/react",
   "directory": "packages/react",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "React provider, hooks, and permission-gated components.",
   "exports": [
    "@better-iam/react"
@@ -355,7 +371,7 @@
  {
   "name": "@better-iam/react-router",
   "directory": "packages/react-router",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "React Router (framework mode) middleware, guarded loaders, and actions.",
   "exports": [
    "@better-iam/react-router"
@@ -371,7 +387,7 @@
  {
   "name": "@better-iam/saml",
   "directory": "packages/saml",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "SAML 2.0 service provider with tenant-managed connections.",
   "exports": [
    "@better-iam/saml"
@@ -389,7 +405,7 @@
  {
   "name": "@better-iam/scim",
   "directory": "packages/scim",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "SCIM 2.0 inbound provisioning and outbound provisioning to applications.",
   "exports": [
    "@better-iam/scim"
@@ -404,7 +420,7 @@
  {
   "name": "@better-iam/server",
   "directory": "packages/server",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "The `betterIam()` factory: tenants, identities, authorization, governance, HTTP API.",
   "exports": [
    "@better-iam/server",
@@ -423,7 +439,7 @@
  {
   "name": "@better-iam/svelte",
   "directory": "packages/svelte",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Svelte stores and SvelteKit hooks, guards, and actions.",
   "exports": [
    "@better-iam/svelte",
@@ -443,7 +459,7 @@
  {
   "name": "@better-iam/vue",
   "directory": "packages/vue",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Vue plugin, composables, and the `IamCan` component.",
   "exports": [
    "@better-iam/vue"

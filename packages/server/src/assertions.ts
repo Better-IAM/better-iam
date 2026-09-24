@@ -77,6 +77,9 @@ export function verifyAssertion(
   } catch {
     throw invalid('Malformed assertion');
   }
+  // Base64url decoding is lenient (unused trailing bits, padding, stray characters), so only the canonical spelling
+  // of a signature is accepted: one assertion has exactly one valid string form.
+  if (provided.toString('base64url') !== parts[2]) throw invalid('Malformed assertion');
   const signingInput = `${parts[0]}.${parts[1]}`;
   if (
     !keys.some((key) => {
@@ -118,8 +121,9 @@ export function createAssertionsApi(ctx: ServerContext) {
     /**
      * Issues an assertion about the caller for `audience`, authorized as `iam:assertions:create` on `iam/{audience}` so
      * administrators decide which audiences each role may obtain tokens for. Lifetime is 10 seconds to one hour
-     * (default five minutes). Role sessions assert the assumed role's identity and no groups. Session tokens that carry
-     * a policy or a source policy are refused (ACCESS_DENIED, audited), since the roles claim would escape the scope.
+     * (default five minutes). Role sessions assert the assumed role's identity and no groups. Scoped credentials (API
+     * keys with scopes, session tokens with a policy or source policy, role sessions with a session policy) are refused
+     * (ACCESS_DENIED, audited), since the roles claim would escape the scope.
      */
     issue: async (
       credential: CredentialInput,
@@ -139,12 +143,14 @@ export function createAssertionsApi(ctx: ServerContext) {
         'iam:assertions:create',
         audience,
         async ({ tx, principal, tenant }) => {
-          // The roles claim lists the identity's roles, which would escape a session token's scope-down policy.
-          if (
-            principal.session.kind === 'session-token' &&
-            (principal.session.policy || principal.session.sourcePolicy)
-          )
-            throw new OperationDenied('Scoped session tokens cannot obtain assertions');
+          // The roles claim lists the identity's roles (or the assumed role), which would escape any scope-down: a
+          // session token's policy or source policy, an API key's scopes, or a role session's session policy.
+          if (principal.session.policy || principal.session.sourcePolicy)
+            throw new OperationDenied(
+              principal.session.kind === 'session-token'
+                ? 'Scoped session tokens cannot obtain assertions'
+                : 'Scoped credentials cannot obtain assertions',
+            );
           // Likewise a delegated agent session, which is always bounded by its delegation's scope.
           if (principal.session.kind === 'delegated')
             throw new OperationDenied('Delegated agent sessions cannot obtain assertions');

@@ -129,6 +129,11 @@ export interface OnboardingFlow extends StoredRecord {
   steps: OnboardingStep[];
   /** Member flows of the defining tenant: groups a person joins when they complete the flow. */
   completionGroupIds?: string[];
+  /**
+   * Whose authority the completion groups stand on: the last editor checked for every group (any change to who
+   * completes the flow, or when, checks again). Groups this person can no longer add people to are skipped.
+   */
+  groupsOwnerId?: string;
   /** Bumped whenever the steps change. */
   version: number;
   /** Who last saved the flow (left out where descendants see an inherited flow). */
@@ -1086,6 +1091,6 @@ export function parseAnswers(step: OnboardingStep, value: unknown): Record<strin
 
 /** A flow record without the fields only the defining tenant needs; what descendants and members see. */
 export function publicFlow(flow: OnboardingFlow): OnboardingFlow {
-  const { completionGroupIds: _groups, authorId: _author, ...rest } = flow;
+  const { completionGroupIds: _groups, groupsOwnerId: _owner, authorId: _author, ...rest } = flow;
   return rest;
 }

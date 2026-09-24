@@ -46,6 +46,12 @@ export interface OAuthLoginConnection {
    * a single tenant, so that an arbitrary organization's directory cannot sign in to this tenant.
    */
   allowedMicrosoftTenants?: string[];
+  /**
+   * Email domains whose verified addresses may enroll: a first sign-in from any other address creates no account (it
+   * can still sign in to an account linked before). Without it, any verified address the provider vouches for enrolls
+   * in `tenantId` on first sign-in — for Google or GitHub, that is anyone with an account there.
+   */
+  allowedEmailDomains?: string[];
   /** Generic OAuth2 has no standard identity schema; this trusted server mapper must select a stable provider ID. */
   mapProfile?(profile: Record<string, unknown>): {
     subject: string;
@@ -134,6 +140,19 @@ export function createOAuthLogin(config: OAuthLoginConfig) {
     url(connection.redirectUri, !!config.allowInsecureLocalhost);
     if (['oidc', 'oauth2'].includes(connection.kind) && !connection.issuer)
       throw new IamError('configuration', 'The provider issuer is required.');
+    if (
+      connection.allowedEmailDomains !== undefined &&
+      (!Array.isArray(connection.allowedEmailDomains) ||
+        !connection.allowedEmailDomains.length ||
+        connection.allowedEmailDomains.some(
+          (domain) =>
+            typeof domain !== 'string' || !/^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?\.[a-z]{2,}$/i.test(domain),
+        ))
+    )
+      throw new IamError(
+        'configuration',
+        'allowedEmailDomains must list one or more exact domain names.',
+      );
     if (connection.issuer) url(connection.issuer, !!config.allowInsecureLocalhost);
     if (connection.kind === 'microsoft') {
       const directory = connection.microsoftTenant ?? 'organizations';
@@ -552,6 +571,15 @@ export function createOAuthLogin(config: OAuthLoginConfig) {
       if (attributes !== undefined) identity.attributes = attributes;
     }
     await activeTenant(config.store, item.tenantId);
+    // Addresses outside the connection's enrollment domains never create an account (no verified email to enroll with).
+    if (
+      item.allowedEmailDomains &&
+      identity.emailVerified &&
+      !item.allowedEmailDomains.some(
+        (domain) => identity.email?.toLowerCase().endsWith(`@${domain.toLowerCase()}`) === true,
+      )
+    )
+      identity.emailVerified = false;
     if (saved.linkingSessionId && saved.linkingIdentityId) {
       identity.linkingIdentityId = saved.linkingIdentityId;
       identity.linkingSessionId = saved.linkingSessionId;

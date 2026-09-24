@@ -51,7 +51,9 @@ async function readJson(text: string, source: string): Promise<unknown> {
 /**
  * Builds the request body from `--data` (JSON, `@file.json`, or `-` for stdin) and `key=value` items, like HTTPie:
  * `name=Admin` (string), `limit:=10` / `actions:='["a"]'` (JSON), `document:=@policy.json` (JSON file),
- * `content=@terms.md` (file text), `resource.type=project` (nested), `actions[]=a` (append).
+ * `content=@terms.md` (file text), `resource.type=project` (nested), `actions[]=a` (append). A value that must
+ * start with `@` without reading a file is escaped as `key=\@text`; scripts passing values they do not control
+ * should always escape a leading `@`.
  */
 export async function requestBody(
   context: Pick<CommandContext<FlagSpecs>, 'io' | 'path'>,
@@ -86,8 +88,10 @@ export async function requestBody(
         ? await readJson(await readFile(context.path(raw.slice(1)), 'utf8'), raw.slice(1))
         : await readJson(raw, `${key}:=`);
     else
-      value =
-        raw.startsWith('@') && raw.length > 1
+      value = raw.startsWith('\\@')
+        ? // `key=\@text` sends the literal "@text" (as in httpie), for values that must never read a file.
+          raw.slice(1)
+        : raw.startsWith('@') && raw.length > 1
           ? await readFile(context.path(raw.slice(1)), 'utf8')
           : raw;
     assign(body, key.trim(), value);
@@ -132,7 +136,8 @@ export const apiCommands = [
       { name: 'route', description: 'group.method (roles.create, auth.getSession) or authorize' },
       {
         name: 'fields',
-        description: 'key=value, key:=json, key:=@file.json, key=@file.txt',
+        description:
+          'key=value, key:=json, key:=@file.json, key=@file.txt (key=\\@text sends a literal @text)',
         variadic: true,
       },
     ],

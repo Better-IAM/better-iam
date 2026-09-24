@@ -6,7 +6,14 @@ import {
   type AuthenticationResponseJSON,
   type RegistrationResponseJSON,
 } from '@simplewebauthn/server';
-import { IamError, type AuthMethod, type CredentialInput, type Identity } from '@better-iam/core';
+import { createHmac } from 'node:crypto';
+import {
+  IamError,
+  ipCounterKey,
+  type AuthMethod,
+  type CredentialInput,
+  type Identity,
+} from '@better-iam/core';
 import { hashToken, newId, newToken } from '../crypto.js';
 import type {
   Challenge,
@@ -170,10 +177,12 @@ export class PasskeyAuth extends MfaAuth {
     const config = this.passkeys();
     const tenantId = text(input.tenantId, 'tenantId');
     if (input.email === undefined) {
-      // Discovery names nobody, so the counter is per address; login pages start one per visit for autofill.
+      // Discovery names nobody, so the counter is per address (an IPv6 /64 as one, so rotating through it earns
+      // nothing); login pages start one per visit for autofill.
+      const ip = this.clientScope.getStore()?.ip;
       await this.rate(
         tenantId,
-        `passkey-discover:${this.clientScope.getStore()?.ip ?? 'unknown'}`,
+        `passkey-discover:${ip ? (ipCounterKey(ip) ?? ip) : 'unknown'}`,
         'generous',
       );
       return this.options.store.transaction(async (tx) => {
@@ -209,16 +218,23 @@ export class PasskeyAuth extends MfaAuth {
           kind: 'user',
         })
       )[0];
-      if (!identity)
-        throw new IamError(
-          'INVALID_CREDENTIALS',
-          'Authentication is unavailable for this account',
-          401,
-        );
-      const keys = await tx.find<PasskeyRecord>('authPasskeys', {
-        tenantId,
-        identityId: identity.id,
-      });
+      const keys = identity
+        ? await tx.find<PasskeyRecord>('authPasskeys', { tenantId, identityId: identity.id })
+        : [];
+      if (!identity || !keys.length) {
+        // Answered like an account with a passkey, so these options never reveal who has an account (or a passkey):
+        // a decoy credential id that is stable per address, and a challenge id that finishes nowhere.
+        const decoy = createHmac('sha256', this.options.secret)
+          .update(`passkey-decoy:${tenantId}:${normalized}`)
+          .digest()
+          .toString('base64url');
+        const options = await generateAuthenticationOptions({
+          rpID: config.rpID,
+          userVerification: 'required',
+          allowCredentials: [{ id: decoy }],
+        });
+        return { challengeId: newToken(), options };
+      }
       const options = await generateAuthenticationOptions({
         rpID: config.rpID,
         userVerification: 'required',

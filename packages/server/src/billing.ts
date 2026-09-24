@@ -55,6 +55,27 @@ export async function termsOf(tx: IamStore, accountId: string): Promise<BillingT
   )[0];
 }
 
+/**
+ * The contract terms a billing account's invoices use: its own, else the discount and tax of the nearest ancestor with
+ * terms, so a sub-account carved out of an organization stays under the organization's contract. A minimum commitment
+ * is not inherited (each sub-account would owe it again): it stays with the account it was set on, which is invoiced
+ * for it even in a month without usage.
+ */
+export async function accountTermsOf(
+  ctx: ServerContext,
+  tx: IamStore,
+  account: Tenant,
+): Promise<BillingTerms | undefined> {
+  for (const [index, realm] of (await ctx.ancestry(tx, account)).entries()) {
+    const terms = await termsOf(tx, realm.id);
+    if (!terms) continue;
+    if (index === 0) return terms;
+    const { minimumCommitmentMicros: _commitment, ...inherited } = terms;
+    return inherited;
+  }
+  return undefined;
+}
+
 export interface BillingOptions {
   /** ISO 4217 code every amount is stated in (default `USD`). */
   currency?: string;
@@ -936,7 +957,10 @@ export interface ChargedRow {
   internal: boolean;
 }
 
-/** A meter's charge for an account and period. */
+/**
+ * A meter's charge for an account and period. A meter used both while a subscription's plan priced it and outside that
+ * time has one charge per price (the plan's, the rate card's).
+ */
 export interface MeterCharge {
   meterId: string;
   meter: string;
@@ -962,34 +986,52 @@ export interface MeterCharge {
   unpriced?: true;
 }
 
+/** A plan's price for a meter over the local days (`YYYY-MM-DD`, inclusive) a subscription to it was live on. */
+export interface PlanPriceWindow {
+  spec: PriceSpec;
+  planKey: string;
+  from: string;
+  to: string;
+}
+
 /**
- * The price a subscription gives an account for a meter in a period: the first plan (oldest subscription first) with a
- * usage item for the meter among the account's subscriptions that were live at some point in the period.
+ * The prices an account's subscriptions give a meter in a period, oldest subscription first: for each subscription whose
+ * plan has a usage item for the meter, the days of the period it was live on. A day's usage takes the first window
+ * that covers it; usage on days no subscription covers (before it started, after it ended) keeps rate-card prices.
  */
-export async function planPriceFor(
+export async function planPricesFor(
   ctx: ServerContext,
   tx: IamStore,
   accountId: string,
   meter: string,
   period: string,
-): Promise<{ spec: PriceSpec; planKey: string } | undefined> {
+): Promise<PlanPriceWindow[]> {
   const subscriptions = await tx.find<BillingSubscription>(billingCollections.subscriptions, {
     tenantId: accountId,
   });
-  if (!subscriptions.length) return undefined;
-  const bounds = periodBounds(period, ctx.options.billing?.timeZone ?? 'UTC');
+  if (!subscriptions.length) return [];
+  const timeZone = ctx.options.billing?.timeZone ?? 'UTC';
+  const bounds = periodBounds(period, timeZone);
+  const windows: PlanPriceWindow[] = [];
   for (const subscription of subscriptions.sort(
     (a, b) => a.startedAt - b.startedAt || (a.id < b.id ? -1 : 1),
   )) {
-    if (subscription.startedAt >= bounds.end) continue;
-    if (subscription.endsAt !== undefined && subscription.endsAt <= bounds.start) continue;
+    const from = Math.max(bounds.start, subscription.startedAt);
+    const to = Math.min(bounds.end, subscription.endsAt ?? Number.POSITIVE_INFINITY);
+    if (to <= from) continue;
     const plan = await tx.get<BillingPlan>(billingCollections.plans, subscription.planId);
     const item = plan?.items.find(
       (candidate) => candidate.kind === 'usage' && candidate.meter === meter,
     );
-    if (item?.price) return { spec: item.price, planKey: plan!.key };
+    if (item?.price)
+      windows.push({
+        spec: item.price,
+        planKey: plan!.key,
+        from: dayOf(from, timeZone),
+        to: dayOf(to - 1, timeZone),
+      });
   }
-  return undefined;
+  return windows;
 }
 
 export interface AccountSpend {
@@ -1075,65 +1117,91 @@ async function computeAccountSpend(
       }),
     );
     const principalOf = (row: ChargedRow) => row.agentId ?? row.identityId;
-    charge.quantity =
+    const quantityOf = (list: ChargedRow[]) =>
       charge.aggregation === 'unique'
-        ? new Set(charged.map(principalOf).filter(Boolean)).size
-        : charged.reduce((sum, row) => sum + row.quantity, 0);
+        ? new Set(list.map(principalOf).filter(Boolean)).size
+        : list.reduce((sum, row) => sum + row.quantity, 0);
     if (charge.pricing === 'reported' || !meter) {
+      charge.quantity = quantityOf(charged);
       charged.forEach((row, index) => (row.costMicros = roundMicros(rollups[index]!.costMicros)));
       charge.amountMicros = roundMicros(charged.reduce((sum, row) => sum + row.costMicros, 0));
+      charges.push(charge);
     } else {
       // Tiers apply to the account's period total; the meter's own tenant prices meters defined inside the account.
       const priceChain = definedAbove
         ? accountChain
         : await ctx.ancestry(tx, (await tx.get<Tenant>('tenants', meter.tenantId)) ?? account);
-      // A subscription's plan price replaces the rate card for platform meters.
-      const planned = definedAbove
-        ? await planPriceFor(ctx, tx, account.id, meter.key, period)
-        : undefined;
-      const price = planned ? undefined : await priceFor(tx, meter, priceChain, period);
-      if (planned) {
-        charge.price = {
-          effectiveFrom: period,
-          setOn: account.id,
-          spec: planned.spec,
-          source: 'plan',
-          planKey: planned.planKey,
-        };
-        charge.amountMicros = priceQuantity(planned.spec, charge.quantity);
-      } else if (!price) charge.unpriced = true;
-      else {
-        charge.price = {
-          effectiveFrom: price.effectiveFrom,
-          setOn: price.tenantId,
-          spec: price.spec,
-          source: 'rate-card',
-        };
-        charge.amountMicros = priceQuantity(price.spec, charge.quantity);
+      // A subscription's plan price replaces the rate card for platform meters, for the days it was live only.
+      const windows = definedAbove
+        ? await planPricesFor(ctx, tx, account.id, meter.key, period)
+        : [];
+      // Each row's price: the first plan window covering its day, or the rate card (-1). A `unique` meter counts a
+      // person once, at the price of the first window they have usage in.
+      const groupOf = charged.map((row) =>
+        windows.findIndex((window) => row.day >= window.from && row.day <= window.to),
+      );
+      if (charge.aggregation === 'unique') {
+        const earliest = new Map<string, number>();
+        charged.forEach((row, index) => {
+          const principal = principalOf(row);
+          const group = groupOf[index]!;
+          const known = principal === undefined ? undefined : earliest.get(principal);
+          if (principal && group >= 0 && (known === undefined || group < known))
+            earliest.set(principal, group);
+        });
+        charged.forEach((row, index) => {
+          const principal = principalOf(row);
+          if (principal) groupOf[index] = earliest.get(principal) ?? -1;
+        });
       }
-      if (charge.amountMicros > 0 && charge.quantity > 0) {
-        if (charge.aggregation === 'unique') {
-          // Each person or agent costs the same; their share is spread over their rows by quantity.
-          const each = charge.amountMicros / charge.quantity;
-          const perPrincipal = new Map<string, ChargedRow[]>();
-          for (const row of charged) {
-            const principal = principalOf(row);
-            if (principal)
-              perPrincipal.set(principal, [...(perPrincipal.get(principal) ?? []), row]);
-          }
-          for (const list of perPrincipal.values()) {
-            const total = list.reduce((sum, row) => sum + row.quantity, 0);
+      for (const group of [...new Set(groupOf)].sort((a, b) => a - b)) {
+        const list = charged.filter((_, index) => groupOf[index] === group);
+        const part: MeterCharge = { ...charge, quantity: quantityOf(list) };
+        const planned = windows[group];
+        const price = planned ? undefined : await priceFor(tx, meter, priceChain, period);
+        if (planned) {
+          part.price = {
+            effectiveFrom: period,
+            setOn: account.id,
+            spec: planned.spec,
+            source: 'plan',
+            planKey: planned.planKey,
+          };
+          part.amountMicros = priceQuantity(planned.spec, part.quantity);
+        } else if (!price) part.unpriced = true;
+        else {
+          part.price = {
+            effectiveFrom: price.effectiveFrom,
+            setOn: price.tenantId,
+            spec: price.spec,
+            source: 'rate-card',
+          };
+          part.amountMicros = priceQuantity(price.spec, part.quantity);
+        }
+        if (part.amountMicros > 0 && part.quantity > 0) {
+          if (part.aggregation === 'unique') {
+            // Each person or agent costs the same; their share is spread over their rows by quantity.
+            const each = part.amountMicros / part.quantity;
+            const perPrincipal = new Map<string, ChargedRow[]>();
+            for (const row of list) {
+              const principal = principalOf(row);
+              if (principal)
+                perPrincipal.set(principal, [...(perPrincipal.get(principal) ?? []), row]);
+            }
+            for (const rowsOf of perPrincipal.values()) {
+              const total = rowsOf.reduce((sum, row) => sum + row.quantity, 0);
+              for (const row of rowsOf)
+                row.costMicros = roundMicros(
+                  total > 0 ? (each * row.quantity) / total : each / rowsOf.length,
+                );
+            }
+          } else
             for (const row of list)
-              row.costMicros = roundMicros(
-                total > 0 ? (each * row.quantity) / total : each / list.length,
-              );
-          }
-        } else
-          for (const row of charged)
-            row.costMicros = roundMicros((charge.amountMicros * row.quantity) / charge.quantity);
+              row.costMicros = roundMicros((part.amountMicros * row.quantity) / part.quantity);
+        }
+        charges.push(part);
       }
     }
-    charges.push(charge);
     rows.push(...charged);
   }
   charges.sort((a, b) => b.amountMicros - a.amountMicros || (a.meter < b.meter ? -1 : 1));

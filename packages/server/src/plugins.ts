@@ -17,6 +17,7 @@ export function validatePlugins(plugins: IamPlugin[], catalog: Catalog): void {
         /^[a-zA-Z0-9_-]+(?:\/[a-zA-Z0-9_-]+)*$/.test(path) &&
         !paths.has(path) &&
         typeof endpoint.validate === 'function' &&
+        (endpoint.resource === undefined || typeof endpoint.resource === 'function') &&
         typeof endpoint.handler === 'function';
       if (!valid)
         throw new IamError(

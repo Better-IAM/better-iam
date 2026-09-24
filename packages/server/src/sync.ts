@@ -5,6 +5,7 @@ import {
   type CredentialInput,
   type IamStore,
   type Identity,
+  type Json,
   type PolicyDocument,
   type Tenant,
   type TenantAccessPolicy,
@@ -559,8 +560,21 @@ async function readState(
     .sort(byName);
   // Teams' backing groups (and what is bound to them) belong to the teams API, never to configuration sync.
   const allGroups = await tx.find<Group>('groups', { tenantId });
-  const teamGroupIds = new Set(allGroups.filter(isTeamGroup).map((group) => group.id));
-  const groups = allGroups.filter((group) => !teamGroupIds.has(group.id)).sort(byName);
+  const outsideGroupIds = new Set(allGroups.filter(isTeamGroup).map((group) => group.id));
+  // Configuration names groups, and an identity provider's directory sync (SCIM) names the groups it creates: when
+  // such a group shares its name with another group, the name means the other one, so an IdP cannot capture the roles
+  // and approvals configuration gives a group by creating one of the same name. Those groups stay out of sync's view.
+  const scimGroupIds = new Set(
+    (await tx.find('scimGroups', { tenantId })).map((link) => String(link.groupId)),
+  );
+  const ownNames = new Set(
+    allGroups
+      .filter((group) => !outsideGroupIds.has(group.id) && !scimGroupIds.has(group.id))
+      .map((group) => group.name),
+  );
+  for (const group of allGroups)
+    if (scimGroupIds.has(group.id) && ownNames.has(group.name)) outsideGroupIds.add(group.id);
+  const groups = allGroups.filter((group) => !outsideGroupIds.has(group.id)).sort(byName);
   const identities = (await tx.find<Identity>('identities', { tenantId })).filter(
     (identity) => identity.status !== 'deleted',
   );
@@ -575,7 +589,7 @@ async function readState(
     members.set(membership.groupId, [...(members.get(membership.groupId) ?? []), identity]);
   }
   const bindings = (await tx.find<Binding>('bindings', { tenantId, subjectType: 'group' })).filter(
-    (binding) => !ctx.expiredBinding(binding) && !teamGroupIds.has(binding.subjectId),
+    (binding) => !ctx.expiredBinding(binding) && !outsideGroupIds.has(binding.subjectId),
   );
   const packages = (await tx.find<AccessPackage>('accessPackages', { tenantId })).sort(byName);
   const invariants = (await tx.find<AccessInvariant>('accessInvariants', { tenantId })).sort(
@@ -1419,12 +1433,18 @@ export function createConfigApi(ctx: ServerContext) {
         tenantId,
         'change the access policy',
       );
+      // As `tenants.setAccessPolicy`: loosening elevation floors needs a fresh sign-in in person (not a stale,
+      // impersonated, assumed-role or delegated session), and is audited as such.
+      ctx.auth.requireRecent(principal);
       const { accessPolicy: _previous, ...rest } = planned.accessPolicy.record!;
       const policy = planned.accessPolicy.desired!;
       await tx.put<Tenant>(
         'tenants',
         Object.keys(policy).length ? { ...rest, accessPolicy: policy } : rest,
       );
+      await ctx.events.audit(tx, principal, 'tenant:access-policy', tenantId, tenantId, 'allow', false, {
+        accessPolicy: (Object.keys(policy).length ? policy : null) as Json,
+      });
     }
     // Resource types first: policies and roles may name their actions.
     for (const item of planned.resourceTypes) {
@@ -1581,6 +1601,8 @@ export function createConfigApi(ctx: ServerContext) {
     }
     // Groups and their members
     const groupIds = new Map(state.groups.map((group) => [group.name, group.id]));
+    /** Groups configuration sync manages; others (teams' backing groups) never appear in a document. */
+    const managedGroupIds = new Set(state.groups.map((group) => group.id));
     for (const { change, desired, record } of planned.groups) {
       if (change.action === 'delete') continue;
       let groupId = record?.id;
@@ -1663,6 +1685,24 @@ export function createConfigApi(ctx: ServerContext) {
       if (!roleId || !groupId)
         throw new IamError('INVALID_INPUT', `Unknown binding ${change.name}`);
       await allow(tx, principal, tenantId, 'iam:bindings:create', roleId, `bind ${change.name}`);
+      // What configuration cannot express survives a replacement: an approver group sync does not manage (a team's
+      // backing group, left out of exports), and the start and end dates of a temporary or future-dated grant.
+      const previous = record ?? [];
+      const keptApprover = previous.find(
+        (binding) => binding.approverGroupId && !managedGroupIds.has(binding.approverGroupId),
+      )?.approverGroupId;
+      const now = ctx.now();
+      const dates =
+        previous.length && previous.every((binding) => binding.expiresAt !== undefined)
+          ? { expiresAt: Math.max(...previous.map((binding) => binding.expiresAt!)) }
+          : {};
+      const pending = previous.filter(
+        (binding) => binding.startsAt !== undefined && binding.startsAt > now,
+      );
+      const starts =
+        previous.length && pending.length === previous.length
+          ? { startsAt: Math.min(...pending.map((binding) => binding.startsAt!)) }
+          : {};
       const eligibility = {
         ...(desired!.eligible
           ? {
@@ -1673,11 +1713,14 @@ export function createConfigApi(ctx: ServerContext) {
               requireApproval: desired!.requireApproval,
               ...(desired!.approverGroup !== undefined
                 ? { approverGroupId: groupIds.get(desired!.approverGroup) ?? null }
-                : {}),
+                : keptApprover
+                  ? { approverGroupId: keptApprover }
+                  : {}),
               managerApproval: desired!.managerApproval,
             }
           : { eligible: false }),
         ...(desired!.window !== undefined ? { window: desired!.window } : {}),
+        ...(change.action === 'create' ? {} : { ...dates, ...starts }),
       };
       if (change.action === 'create')
         await createBinding(ctx, tx, principal, {
@@ -1809,10 +1852,13 @@ export function createConfigApi(ctx: ServerContext) {
             maxDurationMs: desired!.maxDurationMs ?? null,
             requireJustification: desired!.requireJustification === true,
             requestable: desired!.requestable === true,
+            // An approver group sync does not manage (a team's backing group) is not in the document; keep it.
             approverGroupId:
               desired!.approverGroup !== undefined
                 ? (groupIds.get(desired!.approverGroup) ?? null)
-                : null,
+                : record!.approverGroupId && !managedGroupIds.has(record!.approverGroupId)
+                  ? record!.approverGroupId
+                  : null,
             managerApproval: desired!.managerApproval === true,
             // Passed only when the plan lists the rule, so an unrelated edit never moves its ownership.
             ...(change.fields?.includes('autoAssign')

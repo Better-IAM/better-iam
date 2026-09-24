@@ -209,6 +209,8 @@ Client-side permission results are advisory. Enforce authorization on the server
 | `better-iam/middleware`       | Framework-neutral request helpers for other servers  |
 | `better-iam/mcp`              | MCP server gate: tool authorization for agents       |
 | `better-iam/a2a`              | A2A: attested agent cards, verification, server gate |
+| `better-iam/ldap`             | Read-only LDAPv3 directory gateway                   |
+| `better-iam/client/device`    | Device keys and session-bound device proofs          |
 | `better-iam/session-tokens`   | Runtime-neutral offline verifier for session JWTs    |
 | `@better-iam/nuxt`            | Nuxt module (install directly; not in umbrella)      |
 | `@better-iam/nuxt/h3`         | h3 / Nitro server helpers                            |
@@ -252,6 +254,20 @@ pnpm --filter @better-iam/console dev
 - [AI agents: agent accounts, sponsors, delegation on people's behalf, MCP tool authorization](docs/agents.md)
 - [Inference: model access policies, provider key vault, budgets, metering, and the model gateway](docs/inference.md)
 - [Billing: usage meters, rate cards, spend by person, team, department and project, budgets, statements](docs/billing.md)
+- [Key management: tenant encryption, signing and MAC keys, data keys, rotation, grants, JWT signing](docs/key-management.md)
+- [Private certificate authority: X.509 certificates for mutual TLS, SPIFFE workload identity, name policies, CRLs](docs/private-ca.md)
+- [Data protection: tokenization of cards, identifiers and personal data, detokenizing by purpose, masking, erasure](docs/data-protection.md)
+- [Secrets vault: versioned secrets, rotation, check-outs of shared credentials, dynamic secrets, customer-managed keys](docs/secrets-vault.md)
+- [Data filtering: query plans that turn "which rows may this person see?" into SQL, Prisma, or MongoDB filters](docs/data-filtering.md)
+- [SSH access: a certificate authority for your servers, short-lived certificates from policies, host enrollment, revocation](docs/ssh-access.md)
+- [Device posture: registered devices, session-bound device proofs, MDM and EDR compliance, device-aware policies](docs/device-posture.md)
+- [Verifiable credentials: SD-JWT VCs for wallets, selective disclosure, OpenID4VCI issuance, status-list revocation](docs/verifiable-credentials.md)
+- [Privacy and consent: purposes and legal bases, consent receipts, data-subject requests with deadlines, legal holds](docs/privacy.md)
+- [Lifecycle workflows: joiner, mover and leaver automation with triggers, scopes, steps, waits and a daily brake](docs/workflows.md)
+- [Compliance center: automated checks mapped to SOC 2, ISO 27001, NIST 800-53 and GDPR, exceptions, signed evidence](docs/compliance.md)
+- [Application catalog and My apps: OIDC clients and links, assignments to people and groups, requests, launches, sign-in enforcement](docs/applications.md)
+- [Threat detection and response: detection rules over the audit trail, incidents, identity risk in policies, containment, playbooks](docs/threat-detection.md)
+- [Shared Signals receiver: CAEP and RISC events from upstream identity providers, push and poll, subject mapping, session revocation](docs/shared-signals-receiver.md)
 - [API reference: every group, method, and route](docs/api-reference.md)
 - [Policies and delegation](docs/policies.md)
 - [Events and webhooks](docs/events.md)

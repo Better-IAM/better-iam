@@ -323,10 +323,15 @@ describe('CLI developer experience', () => {
 
     await runCli(['help', '--config', config], r.io());
     expect(r.output.at(-1)).toContain('echo-flags');
-    await runCli(['help', 'echo-flags'], r.io());
+    await runCli(['help', 'echo-flags', '--config', config], r.io());
     expect(r.output.at(-1)).toContain('--level N');
-    await runCli(['completion', 'fish'], r.io());
+    await runCli(['completion', 'fish'], r.io({ BETTER_IAM_CONFIG: config }));
     expect(r.output.at(-1)).toContain('-a echo-flags');
+    // Help and completion (which shells run at startup) never import a configuration they merely found.
+    await runCli(['help'], r.io());
+    expect(r.output.at(-1)).not.toContain('echo-flags');
+    await runCli(['completion', 'fish'], r.io());
+    expect(r.output.at(-1)).not.toContain('echo-flags');
     await expect(runCli(['echo-flag', '--who', 'x'], r.io())).rejects.toMatchObject({
       message: expect.stringContaining('Did you mean echo-flags?'),
     });

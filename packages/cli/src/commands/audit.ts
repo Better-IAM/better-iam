@@ -31,8 +31,16 @@ export const auditCommands = [
     flags: { tenant },
     async run({ iam, flags, print }) {
       const tenantId = flags.tenant!;
-      const { head, events } = await chain((await iam()).store, tenantId);
-      const verification = await verifyAuditChain(events, {
+      const store = (await iam()).store;
+      // A mistyped tenant has no chain to break; it must not pass a CI gate as "valid".
+      if (!(await store.get('tenants', tenantId)))
+        throw new IamError('NOT_FOUND', `No tenant ${tenantId}`);
+      const { head, events } = await chain(store, tenantId);
+      // Events stripped of their chain fields are handed to the verifier too, which refuses them once a chain exists.
+      const unchained = (await store.find<AuditEvent>('audit', { tenantId })).filter(
+        (event) => typeof event.sequence !== 'number',
+      );
+      const verification = await verifyAuditChain([...events, ...unchained], {
         head: head ? { sequence: head.sequence, hash: head.hash } : undefined,
       });
       print({ tenantId, ...verification, head: head ?? null });
@@ -62,8 +70,10 @@ export const auditCommands = [
       const tenantId = flags.tenant!;
       const { head, events } = await chain((await iam()).store, tenantId);
       const output = path(flags.output!);
+      // Owner-only, like store-export: every event names its actor, action, outcome and session.
       await writeFile(output, events.map((event) => JSON.stringify(event)).join('\n') + '\n', {
         flag: 'wx',
+        mode: 0o600,
       });
       return {
         tenantId,
@@ -92,6 +102,8 @@ export const auditCommands = [
         max: 36500,
         default: 365,
         description: 'Keep events newer than this many days',
+        // Deletes audit history: only `cli.defaults['audit-prune']` may change it, never a shared '*' default.
+        wildcardDefault: false,
       },
     },
     async run({ iam, flags }) {
@@ -170,6 +182,9 @@ export const auditCommands = [
       const events = [...bySequence.values()].map((entry) => entry.event);
       const verification = await verifyAuditChain(events);
       print({ tenantId, files: files.length, conflicts, ...verification });
+      // An archive with nothing in it proves nothing: a CI gate must not pass on an empty or misnamed directory.
+      if (!events.length)
+        throw new IamError('AUDIT_ARCHIVE_INVALID', `No archived events of ${tenantId} were found`);
       if (!verification.valid || conflicts)
         throw new IamError(
           'AUDIT_ARCHIVE_INVALID',

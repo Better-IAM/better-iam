@@ -11,8 +11,9 @@ import {
   type ResourceRef,
   type StoredRecord,
 } from '@better-iam/core';
+import { checkFetchUrl, createGuardedFetch } from '@better-iam/auth';
 
-const CAEP = 'https://schemas.openid.net/secevent/caep/event-type';
+const CAEP ='https://schemas.openid.net/secevent/caep/event-type';
 const RISC = 'https://schemas.openid.net/secevent/risc/event-type';
 const SSF = 'https://schemas.openid.net/secevent/ssf/event-type';
 const PUSH = 'urn:ietf:rfc:8935';
@@ -63,6 +64,9 @@ const mapping: Record<string, { type: SharedSignalEvent; claims?: Record<string,
   'identity:offboard': { type: sharedSignalEvents.accountDisabled },
   'identity:expire': { type: sharedSignalEvents.accountDisabled },
   'identity:delete': { type: sharedSignalEvents.accountPurged },
+  // Identity threat detection and response (server threat-response.ts): ended sessions and containment.
+  'threat:revoke-sessions': { type: sharedSignalEvents.sessionRevoked },
+  'threat:contain': { type: sharedSignalEvents.accountDisabled },
 };
 
 export interface SharedSignalsConfig {
@@ -80,8 +84,15 @@ export interface SharedSignalsConfig {
   encryptionKey: string;
   /** Allows `http://` delivery to loopback addresses, for development and tests only. */
   allowInsecureLocalhost?: boolean;
+  /**
+   * Lets receiver endpoints resolve to private and reserved addresses (`10.0.0.0/8`, `169.254.169.254`, …). Off by
+   * default: tenant administrators choose endpoints, so without this they could make the server call into its own
+   * network.
+   */
+  allowPrivateNetworks?: boolean;
   /** Per-delivery timeout (default 10 seconds). */
   timeoutMs?: number;
+  /** Replaces the default transport, which enforces the address rules above; a replacement must enforce its own. */
   fetch?: typeof fetch;
 }
 
@@ -182,7 +193,14 @@ export function createSharedSignalsTransmitter(config: SharedSignalsConfig) {
   const signingKey = importJWK(signer, signer.alg);
   // Reported when an event is signed; never an unhandled rejection at startup.
   signingKey.catch(() => undefined);
-  const request = config.fetch ?? fetch;
+  // Tenant administrators choose receiver endpoints, so the default transport refuses private and reserved addresses
+  // at connect time (a hostname cannot be re-pointed at the internal network after validation) and bounds responses.
+  const addressRules = {
+    anyPort: true,
+    allowInsecureLocalhost: config.allowInsecureLocalhost === true,
+    allowPrivateNetworks: config.allowPrivateNetworks === true,
+  };
+  const request = config.fetch ?? createGuardedFetch({ ...addressRules, maxBytes: 64 * 1024 });
   const timeoutMs = config.timeoutMs ?? 10_000;
 
   const seal = (value: string) => {
@@ -222,6 +240,15 @@ export function createSharedSignalsTransmitter(config: SharedSignalsConfig) {
       parsed.hash
     )
       throw new IamError('INVALID_INPUT', 'The receiver endpoint must be an absolute HTTPS URL.');
+    // IP literals are judged now; hostnames are judged by the transport each time it connects.
+    try {
+      checkFetchUrl(parsed, addressRules);
+    } catch {
+      throw new IamError(
+        'INVALID_INPUT',
+        'The receiver endpoint must point at a public address (see allowPrivateNetworks).',
+      );
+    }
     return parsed.href;
   }
   function settings(input: Partial<StreamInput>, current?: StreamRecord) {
@@ -333,6 +360,8 @@ export function createSharedSignalsTransmitter(config: SharedSignalsConfig) {
     const set = await new SignJWT({
       sub_id: subject,
       events: { [type]: claims },
+      // Every tenant's events share this issuer and key: receivers serving one organization check `tenant_id`.
+      tenant_id: stream.tenantId,
       ...(txn ? { txn } : {}),
     })
       .setProtectedHeader({
@@ -373,7 +402,10 @@ export function createSharedSignalsTransmitter(config: SharedSignalsConfig) {
       return { format: 'complex', tenant: { format: 'opaque', id: event.tenantId } };
     if (stream.subjectFormat === 'email') {
       const identity = await config.store.get<Identity>('identities', event.resourceId);
-      if (identity?.email) return { format: 'email', email: identity.email };
+      // Only a verified address of the stream's own tenant names someone: any tenant can create an account claiming
+      // an unverified `ceo@other.example` and send signed events about it to other receivers.
+      if (identity?.email && identity.emailVerified === true && identity.tenantId === stream.tenantId)
+        return { format: 'email', email: identity.email };
     }
     return { format: 'iss_sub', iss: issuer, sub: event.resourceId };
   }
@@ -431,7 +463,7 @@ export function createSharedSignalsTransmitter(config: SharedSignalsConfig) {
           body: record.set,
         });
         if (response.status !== 202 && response.status !== 200 && response.status !== 204) {
-          const text = (await response.text()).slice(0, 300);
+          const text = (await response.text().catch(() => '')).slice(0, 300);
           let detail = '';
           try {
             const body = JSON.parse(text) as { err?: unknown; description?: unknown };
@@ -440,7 +472,7 @@ export function createSharedSignalsTransmitter(config: SharedSignalsConfig) {
             detail = '';
           }
           error = `HTTP ${response.status}${detail}`;
-        }
+        } else await response.body?.cancel().catch(() => undefined);
       } catch (cause) {
         error =
           cause instanceof Error && cause.name === 'TimeoutError'
@@ -592,6 +624,17 @@ export function createSharedSignalsTransmitter(config: SharedSignalsConfig) {
           { ...input, authorization: input.authorization ?? undefined },
           current,
         );
+        // The stored authorization is write-only: pointing the stream somewhere else must not send it along, so a new
+        // endpoint needs the header again (or `authorization: null` to drop it).
+        if (
+          values.endpointUrl !== current.endpointUrl &&
+          current.sealedAuthorization &&
+          input.authorization === undefined
+        )
+          throw new IamError(
+            'INVALID_INPUT',
+            'Changing the receiver endpoint needs the authorization header again (or null to remove it).',
+          );
         const record: StreamRecord = {
           ...current,
           ...values,

@@ -1,5 +1,6 @@
 import {
   IamError,
+  canonicalJson,
   compareIds,
   evaluatePolicy,
   ipCounterKey,
@@ -29,6 +30,12 @@ import { mentionsOnboarding, onboardingContext } from './onboarding.js';
 import { departmentContext } from './departments.js';
 import { mentionedOrgKeys, teamContext } from './teams.js';
 import { billingServiceOf, mentionsSpend } from './billing-service.js';
+import { resolveSecretResource } from './vault.js';
+import { consentContext, mentionsConsents } from './privacy.js';
+import { resolveSshResource } from './ssh.js';
+import { resolveCredentialTypeResource } from './vc.js';
+import { mentionsRisk, riskContext } from './threats.js';
+import { deviceContext, mentionsDevice, withRequestDevice } from './devices.js';
 import type {
   Binding,
   BindingActivation,
@@ -45,6 +52,113 @@ import { actsInOwnRight } from './session-kinds.js';
 import { all } from './utils.js';
 import { text } from './validation.js';
 
+/**
+ * The administrator behind an impersonation ("view as") session, acting through their own source session; undefined
+ * for every other principal. currentPrincipal has already checked that the source session and identity are live.
+ */
+export async function impersonatingActor(
+  tx: IamStore,
+  principal: AuthenticatedPrincipal,
+): Promise<AuthenticatedPrincipal | undefined> {
+  const actorId = principal.session.impersonatorId;
+  if (!actorId) return undefined;
+  const sourceId = principal.session.impersonatorSessionId;
+  const session = sourceId ? await tx.get<Session>('sessions', sourceId) : undefined;
+  const identity = await tx.get<Identity>('identities', actorId);
+  if (!session || !identity || session.identityId !== identity.id || identity.status !== 'active')
+    throw new IamError('UNAUTHENTICATED', 'Impersonation has ended', 401);
+  // The administrator's side of the decision sees the device this request proves (bound to the "view as" session),
+  // when it is the administrator's own or shared.
+  return withRequestDevice({ identity, session }, principal);
+}
+
+/**
+ * Whether a type only a tenant registered (tenant-defined mode) must not answer for `action` from that tenant's
+ * registry. Tenant types answer for their own actions (`{type}:{verb}`); the application's actions on a type it never
+ * declared still go to resolveResource, as documented, so a tenant cannot register a type named after an application
+ * type and answer for the application's resources (another tenant's documents, say) from its own registry.
+ */
+export function shadowsApplicationType(
+  definition: { source?: string },
+  type: string,
+  action: string | undefined,
+  resolver: boolean,
+): boolean {
+  return (
+    resolver &&
+    definition.source === 'tenant' &&
+    action !== undefined &&
+    !action.startsWith(`${type}:`)
+  );
+}
+
+/** How deep an inheritance hierarchy is followed: roles.ts refuses writes past 200 roles, so none is cut short. */
+const maxInheritedRoles = 256;
+
+/** The deny statements of documents as one path that grants nothing. */
+function denyPaths(documents: PolicyDocument[], authorityId: string): GrantPath[] {
+  const grants = documents
+    .map((document) => ({
+      ...document,
+      statements: document.statements.filter((statement) => statement.effect === 'deny'),
+    }))
+    .filter((document) => document.statements.length > 0);
+  return grants.length ? [{ grants, boundaries: [], authorityId }] : [];
+}
+
+/**
+ * Every deny statement a role carries: its inline document, its attached policies, and the roles it inherits. Used
+ * where an authority behind the role has been revoked: what it granted lapses, what it forbade does not.
+ */
+async function roleDenies(
+  tx: IamStore,
+  role: Role,
+  tenantId: string,
+  authorityId: string,
+  seen: Set<string>,
+): Promise<GrantPath[]> {
+  const documents: PolicyDocument[] = [];
+  seen.add(role.id);
+  for (const queue = [role]; queue.length; ) {
+    const current = queue.pop()!;
+    if (current.tenantId !== tenantId) continue;
+    if (current.document) documents.push(current.document);
+    for (const policyId of current.policyIds) {
+      const policy = await tx.get<Policy>('policies', policyId);
+      if (policy?.tenantId === tenantId) documents.push(policy.document);
+    }
+    for (const inheritedId of current.inherits ?? []) {
+      if (seen.has(inheritedId) || seen.size > maxInheritedRoles) continue;
+      seen.add(inheritedId);
+      const inherited = await tx.get<Role>('roles', inheritedId);
+      if (inherited && !inherited.protected) queue.push(inherited);
+    }
+  }
+  return denyPaths(documents, authorityId);
+}
+
+/**
+ * Every deny statement a role carries (inline, attached policies, inherited roles), as canonical JSON, whatever the
+ * authorities behind them: what holders of the role are forbidden.
+ */
+export async function roleDenyStatements(tx: IamStore, role: Role): Promise<Set<string>> {
+  const paths = await roleDenies(tx, role, role.tenantId, '', new Set());
+  return new Set(
+    paths.flatMap((path) =>
+      path.grants.flatMap((document) => document.statements.map(canonicalJson)),
+    ),
+  );
+}
+
+/** The deny statements of a document, as canonical JSON. */
+export function documentDenyStatements(document: PolicyDocument | undefined): Set<string> {
+  return new Set(
+    (document?.statements ?? [])
+      .filter((statement) => statement.effect === 'deny')
+      .map(canonicalJson),
+  );
+}
+
 /** One way a principal receives a policy: the grant plus every ceiling that bounds it. */
 export interface GrantPath {
   grants: PolicyDocument[];
@@ -56,7 +170,24 @@ export type PreparedDecision =
   | {
       /** Evaluates the prepared grants against one resource, for the prepared action or an override. */
       evaluate(resource: ResolvedResource, action?: string): Decision;
+      /** What `evaluate` decides from, read-only, for query planning (core `planResources`). */
+      inputs?: DecisionInputs;
     };
+/** The inputs of a prepared decision: everything but the resource. Treat as read-only. */
+export interface DecisionInputs {
+  /** Principal, request and tenant context keys. */
+  context: Record<string, unknown>;
+  /** Ceilings over every grant path. */
+  boundaries: PolicyDocument[];
+  /** Grant paths (deny-only paths included). */
+  paths: GrantPath[];
+  /** Deny statements across every path. */
+  denies: PolicyDocument[];
+  /** Relations the principal holds, keyed by `{type}/{id}`. */
+  held: ReadonlyMap<string, ReadonlySet<string>>;
+  /** A delegation's per-action confirmation gate, when the session has one. */
+  confirm?: (action: string, resourceType: string, resourceId: string) => Decision | undefined;
+}
 export interface GrantSources {
   groupIds: Set<string>;
   bindings: Binding[];
@@ -87,6 +218,8 @@ export interface DecisionService {
     ceilings: PolicyDocument[],
     authorityId: string,
     seen?: Set<string>,
+    /** Receives, as paths that grant nothing, the denies of parts whose authority was revoked. */
+    lapsed?: GrantPath[],
   ): Promise<GrantPath[]>;
   /**
    * The identity's group memberships and every live binding that applies to it directly or through a group.
@@ -105,6 +238,8 @@ export interface DecisionService {
     identityId: string,
     tenantId: string,
     sources?: GrantSources,
+    /** Receives, as paths that grant nothing, the denies of bindings, roles and policies whose authority was revoked. */
+    lapsed?: GrantPath[],
   ): Promise<GrantPath[]>;
   /** Direct and group-derived role bindings: the effective role set of an identity. */
   effectiveBindings(
@@ -112,8 +247,16 @@ export interface DecisionService {
     tenantId: string,
     identityId: string,
   ): Promise<EffectiveBinding[]>;
-  /** Loads a resource's trusted attributes from the registry or the application resolver. */
-  resolve(tx: IamStore, reference: ResourceRef, internal?: boolean): Promise<ResolvedResource>;
+  /**
+   * Loads a resource's trusted attributes from the registry or the application resolver. With `action`, a type only a
+   * tenant registered answers from its registry for that type's own actions alone (see shadowsApplicationType).
+   */
+  resolve(
+    tx: IamStore,
+    reference: ResourceRef,
+    internal?: boolean,
+    action?: string,
+  ): Promise<ResolvedResource>;
   /**
    * Loads everything a decision needs except the resource: root override, tenant state, boundaries, and grant paths.
    * The returned evaluator can then be applied to many resources of the same tenant and action without re-reading storage.
@@ -228,9 +371,11 @@ function sessionContextKeys(
 export function createDecisions(ctx: ServerContext): DecisionService {
   const { options, catalog } = ctx;
   const service: DecisionService = {
-    async roleGrants(tx, role, tenantId, ceilings, authorityId, seen = new Set<string>()) {
+    async roleGrants(tx, role, tenantId, ceilings, authorityId, seen = new Set<string>(), lapsed) {
       const paths: GrantPath[] = [];
-      if (role.tenantId !== tenantId || seen.has(role.id) || seen.size > 32) return paths;
+      // As deep as roles.ts lets a hierarchy grow, so no inherited role (or its denies) is silently left out.
+      if (role.tenantId !== tenantId || seen.has(role.id) || seen.size > maxInheritedRoles)
+        return paths;
       seen.add(role.id);
       const roleCeilings =
         typeof role.authorityId === 'string'
@@ -238,7 +383,10 @@ export function createDecisions(ctx: ServerContext): DecisionService {
           : role.protected
             ? []
             : undefined;
-      if (!roleCeilings) return paths;
+      if (!roleCeilings) {
+        if (lapsed) lapsed.push(...(await roleDenies(tx, role, tenantId, authorityId, seen)));
+        return paths;
+      }
       // Inherited roles are evaluated under this role's ceilings too, so inheriting cannot widen a grant.
       for (const inheritedId of role.inherits ?? []) {
         const inherited = await tx.get<Role>('roles', inheritedId);
@@ -251,6 +399,7 @@ export function createDecisions(ctx: ServerContext): DecisionService {
             [...ceilings, ...roleCeilings],
             authorityId,
             seen,
+            lapsed,
           )),
         );
       }
@@ -269,7 +418,10 @@ export function createDecisions(ctx: ServerContext): DecisionService {
             : policy.uniqueKey === 'system:owner'
               ? []
               : undefined;
-        if (!policyCeilings) continue;
+        if (!policyCeilings) {
+          lapsed?.push(...denyPaths([policy.document], authorityId));
+          continue;
+        }
         // A higher authority attaching a lower authority's mutable policy cannot
         // silently remove the limits under which that policy was created.
         paths.push({
@@ -308,16 +460,28 @@ export function createDecisions(ctx: ServerContext): DecisionService {
       );
       return { groupIds, bindings };
     },
-    async identityGrants(tx, identityId, tenantId, sources) {
+    async identityGrants(tx, identityId, tenantId, sources, lapsed) {
       const { bindings } = sources ?? (await service.grantSources(tx, identityId, tenantId));
       const paths: GrantPath[] = [];
       for (const binding of bindings) {
         const role = await tx.get<Role>('roles', binding.roleId);
         if (!role || role.tenantId !== tenantId) continue;
         const ceilings = await ctx.authorityChain(tx, binding.authorityId);
-        if (!ceilings) continue;
+        if (!ceilings) {
+          if (lapsed)
+            lapsed.push(...(await roleDenies(tx, role, tenantId, binding.authorityId, new Set())));
+          continue;
+        }
         paths.push(
-          ...(await service.roleGrants(tx, role, tenantId, ceilings, binding.authorityId)),
+          ...(await service.roleGrants(
+            tx,
+            role,
+            tenantId,
+            ceilings,
+            binding.authorityId,
+            undefined,
+            lapsed,
+          )),
         );
       }
       return paths;
@@ -369,10 +533,13 @@ export function createDecisions(ctx: ServerContext): DecisionService {
       }
       return result;
     },
-    async resolve(tx, reference, internal = false) {
+    async resolve(tx, reference, internal = false, action) {
       text(reference.type, 'resource type');
       text(reference.id, 'resource id');
       if (internal && internalResourceTypes.has(reference.type)) {
+        // Vault secrets (`iam/vault/secrets/{name}`) carry their tags and settings (vault.ts).
+        const secret = await resolveSecretResource(tx, reference);
+        if (secret) return secret;
         // `iam/{type}/{id}` naming a registered managed resource carries that resource's owner, parent, and
         // attributes, so administrative actions such as sharing can be conditioned on them and on relations.
         const slash = reference.type === 'iam' ? reference.id.indexOf('/') : -1;
@@ -390,12 +557,21 @@ export function createDecisions(ctx: ServerContext): DecisionService {
       // AI models (`inference` option) resolve from the inference catalog, inherited down the tenant tree.
       const model = await resolveModelResource(ctx, tx, reference);
       if (model) return model;
+      // SSH logins and hosts (`ssh` option): `ssh-login/{host}/{login}` and `ssh-host/{host}` carry the host's labels.
+      const ssh = await resolveSshResource(ctx, tx, reference);
+      if (ssh) return ssh;
+      // Credential types (`verifiableCredentials` option): `credential-type/{name}`.
+      const credentialType = await resolveCredentialTypeResource(ctx, tx, reference);
+      if (credentialType) return credentialType;
       const definition = await catalog.resourceTypeDefinition(
         tx,
         reference.tenantId,
         reference.type,
       );
-      if (definition?.managed) {
+      if (
+        definition?.managed &&
+        !shadowsApplicationType(definition, reference.type, action, !!options.resolveResource)
+      ) {
         const record = await managedResource(tx, reference.tenantId, reference.type, reference.id);
         if (!record) throw new IamError('NOT_FOUND', 'Resource is not registered', 404);
         return resolvedManaged(record);
@@ -545,14 +721,28 @@ export function createDecisions(ctx: ServerContext): DecisionService {
         boundaries.push(...providerCeilings);
       }
       let paths: GrantPath[];
+      // Denies outlive the authority that issued them: a revoked or offboarded author (of a binding, a role, or an
+      // attached policy) takes away what they granted, never what they forbade. Those denies join as paths that grant
+      // nothing.
+      const lapsed: GrantPath[] = [];
       if (principal.session.kind === 'role') {
         // The role's own grant boundary is attached by the root-created trust.
         const trustCeiling = trust?.ceiling as PolicyDocument | undefined;
         paths =
           role && trust && !trust.revoked
-            ? await service.roleGrants(tx, role, target.id, trustCeiling ? [trustCeiling] : [], '')
+            ? await service.roleGrants(
+                tx,
+                role,
+                target.id,
+                trustCeiling ? [trustCeiling] : [],
+                '',
+                undefined,
+                lapsed,
+              )
             : [];
-      } else paths = await service.identityGrants(tx, principal.identity.id, target.id, sources);
+      } else
+        paths = await service.identityGrants(tx, principal.identity.id, target.id, sources, lapsed);
+      paths.push(...lapsed);
       // Feature flags that are on for the tenant, as `tenant.features`: read only when a condition names the key.
       if (
         mentionsFeatures([
@@ -612,6 +802,40 @@ export function createDecisions(ctx: ServerContext): DecisionService {
             ownTenant ? principal.identity.id : undefined,
           ),
         );
+      // Privacy (privacy.ts): `principal.consents`, the purposes that may be processed for the person right now, read
+      // only when a document names it; nothing for assumed roles. A session token keeps its person's consents.
+      if (
+        mentionsConsents([
+          ...boundaries,
+          ...paths.flatMap((path) => [...path.grants, ...path.boundaries]),
+        ])
+      )
+        Object.assign(
+          base,
+          ownTenant
+            ? await consentContext(tx, target.id, principal.identity, ctx.now())
+            : { 'principal.consents': [] },
+        );
+      // Threat detection (threats.ts): `principal.riskLevel` and `principal.riskScore`, read only when a document names
+      // them. Risk follows the person (an assumed role keeps it, a delegated session takes the higher of person and
+      // agent); simulated principals always get `none`.
+      if (
+        mentionsRisk([
+          ...boundaries,
+          ...paths.flatMap((path) => [...path.grants, ...path.boundaries]),
+        ])
+      )
+        Object.assign(base, await riskContext(tx, principal, ctx.now()));
+      // Device posture (devices.ts): the request's verified device as `request.deviceAssurance`, `request.deviceManaged`
+      // and `request.deviceCompliant` (always), `request.deviceId` and `request.devicePlatform` (when one verified),
+      // read only when a document names them. A missing or invalid proof means no device; nothing is written here.
+      if (
+        mentionsDevice([
+          ...boundaries,
+          ...paths.flatMap((path) => [...path.grants, ...path.boundaries]),
+        ])
+      )
+        Object.assign(base, await deviceContext(tx, principal, ctx.now()));
       // Deny in any applicable identity policy applies across grant paths.
       const denies = paths.flatMap((path) =>
         path.grants.map((document) => ({
@@ -675,20 +899,34 @@ export function createDecisions(ctx: ServerContext): DecisionService {
           }
           return { allowed: false, reason: 'NO_APPLICABLE_GRANT', matched: [] };
         },
+        // Read-only inputs for query planning (core plan.ts), which mirrors `evaluate` over whole resource types.
+        inputs: { context: base, boundaries, paths, denies, held, confirm: agentScope.confirm },
       };
     },
     async decide(tx, principal, request, internalResource = false) {
       const target = await ctx.tenant(tx, request.tenantId);
       const action = text(request.action, 'action');
+      // Refusals that do not depend on the resource (a principal of another tenant, an inactive tenant) come first,
+      // so an outsider learns nothing about the tenant's actions or resources and its resolver never runs for them.
+      const prepared = await service.prepareDecision(tx, principal, target, action);
+      if ('fixed' in prepared && !prepared.fixed.allowed) return prepared.fixed;
       if (!(await catalog.knownAction(tx, target.id, action)))
         return { allowed: false, reason: 'UNKNOWN_ACTION', matched: [] };
       const resource = await service.resolve(
         tx,
         { tenantId: target.id, type: request.resource.type, id: request.resource.id },
         internalResource || action.startsWith('iam:'),
+        action,
       );
-      const prepared = await service.prepareDecision(tx, principal, target, action);
-      return 'fixed' in prepared ? prepared.fixed : prepared.evaluate(resource);
+      const evaluated = (ready: PreparedDecision) =>
+        'fixed' in ready ? ready.fixed : ready.evaluate(resource);
+      const decision = evaluated(prepared);
+      // "View as" never exceeds the administrator behind it: every check, including the ones an operation makes
+      // on the side (may this role be granted, may this group be changed), must pass for both of them.
+      const actor = decision.allowed ? await impersonatingActor(tx, principal) : undefined;
+      if (!actor || evaluated(await service.prepareDecision(tx, actor, target, action)).allowed)
+        return decision;
+      return { allowed: false, reason: 'IMPERSONATOR_DENIED', matched: [] };
     },
     simulatedPrincipal(identity, mfa = false) {
       const at = ctx.now();

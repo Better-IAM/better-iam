@@ -76,27 +76,30 @@ export class IamAssertionGuard implements CanActivate {
 
   canActivate(context: ExecutionContext): boolean {
     const targets = [context.getHandler(), context.getClass()];
-    const isPublic = this.reflector.getAllAndOverride<boolean>(PUBLIC_KEY, targets) === true;
+    const required = this.reflector.getAllAndOverride<ClaimRequirements | undefined>(
+      ASSERTION_KEY,
+      targets,
+    );
+    // `@RequireClaims` needs claims to check, so `@Public()` admits callers without an assertion only when absent.
+    const anonymousAllowed =
+      this.reflector.getAllAndOverride<boolean>(PUBLIC_KEY, targets) === true && !required;
     const found = requestOf(context);
     const raw = found ? headersOf(found.request).get(this.options.header ?? 'authorization') : null;
+    // The scheme is case-insensitive (RFC 9110), as the IAM server's own credential parsing is.
     const token =
-      raw && (this.options.header ? raw : raw.startsWith('Bearer ') ? raw.slice(7) : null);
+      raw && (this.options.header ? raw : /^bearer /i.test(raw) ? raw.slice(7) : null);
     if (!found || !token) {
-      if (isPublic) return true;
+      if (anonymousAllowed) return true;
       throw iamHttpError('UNAUTHENTICATED', 'An IAM assertion is required', 401);
     }
     let claims: AssertionClaims;
     try {
       claims = verifyAssertion(token, this.options);
     } catch (error) {
-      if (isPublic) return true;
+      if (anonymousAllowed) return true;
       throw isIamError(error) ? toHttpException(error) : error;
     }
     claimsByRequest.set(found.key, claims);
-    const required = this.reflector.getAllAndOverride<ClaimRequirements | undefined>(
-      ASSERTION_KEY,
-      targets,
-    );
     if (required) {
       const denied =
         (required.mfa && !claims.mfa) ||

@@ -154,7 +154,18 @@ export function readDelegationTokenClaims(
   const exp = value.exp as number;
   if (exp <= iat || nbf < iat || exp - iat > delegationTokenLimits.maxSeconds)
     return { rejected: 'lifetime', message: 'The token lives longer than a delegation token may' };
-  const tolerance = (expected.clockToleranceSeconds ?? 30) * 1000;
+  // A NaN or infinite tolerance (or clock) would make every time comparison below false and accept any token.
+  const toleranceSeconds = expected.clockToleranceSeconds ?? 30;
+  if (
+    typeof toleranceSeconds !== 'number' ||
+    !Number.isFinite(toleranceSeconds) ||
+    toleranceSeconds < 0 ||
+    toleranceSeconds > 300 ||
+    typeof expected.now !== 'number' ||
+    !Number.isFinite(expected.now)
+  )
+    throw new TypeError('clockToleranceSeconds must be 0 to 300 seconds and now a finite time');
+  const tolerance = toleranceSeconds * 1000;
   if (exp * 1000 <= expected.now - tolerance)
     return { rejected: 'expired', message: 'The token has expired' };
   if (nbf * 1000 > expected.now + tolerance || iat * 1000 > expected.now + tolerance)

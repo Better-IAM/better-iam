@@ -15,6 +15,7 @@ run maintenance. This reference covers all of it: the `api` groups that manage o
 | `useProtocol`, `protocolHost` | Mount OAuth, SAML, and SCIM services, and the host callbacks those packages are built from. |
 | `initialize`, `bootstrap`, `recoverRoot`, `rotateSecrets`, `selfCheck` | Deployment operations: schema, the first administrator, break-glass recovery, secret rotation, and health findings. |
 | `purgeDeleted`, `sweepExpired`, `reconcilePackages`, `sendAccessDigest`, `sendExpiryReminders`, `closeOverdueCertifications`, `checkInvariants`, `archiveAudit`, `pruneAudit`, `dispatchAuditHooks`, `flushAccessUsage` | Scheduled jobs and shutdown work. See [Scheduled jobs](/docs/operations/jobs). |
+| `signals` | The Shared Signals receiver's server side: the poll job `signals.poll()` and `signals.receive(sourceId, set)` for custom transports. See [Shared Signals receiver](#shared-signals-receiver). |
 | `assertionKey`, `assertionKeys` | The keys downstream services verify [assertions](/docs/reference/api/assertions#issue) with. |
 | `auth` | Low-level authentication primitives for trusted integrations, such as `dispatchOutbox()` and `withClient()`. |
 | `store` | The storage adapter you passed as `database`. |
@@ -34,7 +35,9 @@ runtimes are not supported. They answer:
   `/authorizeMany`, `/listAccessible`, and `/plugins/{pluginId}/{path}` for plugin endpoints;
 - `GET {basePath}/health` (one database read, status 503 when storage fails), `GET {basePath}/metrics` (only with
   `observability.metrics.bearerToken`), and `GET {basePath}/.well-known/jwks.json` (only with `sts.jwt`);
-- the routes of every protocol service mounted with [`useProtocol`](#useprotocol), which are asked first.
+- the routes of every protocol service mounted with [`useProtocol`](#useprotocol), which are asked first;
+- `POST {signals.pushPath}/{sourceId}`, the [Shared Signals push endpoint](#shared-signals-receiver), also asked
+  before the API routes.
 
 `nodeHandler` is required when you mount the OAuth authorization server, which only speaks Node's request and
 response objects. It offers each request to the Node protocol mounts first and hands everything else to `handler`.
@@ -64,7 +67,7 @@ app.all('/api/iam/*', (c) => iam.handler(c.req.raw));
 | In the request path | `authenticate`, `authorize`, `require`, `authorizeMany`, `listAccessible`, `callPlugin` |
 | Once at process start | `useProtocol`, `iam.events.subscribe` |
 | Once per deploy or installation | `initialize` (CLI `migrate`), `bootstrap`, `selfCheck` (CLI `doctor`) |
-| On a schedule | `dispatchAuditHooks`, `purgeDeleted`, `sweepExpired`, `reconcilePackages`, `sendAccessDigest`, `sendExpiryReminders`, `closeOverdueCertifications`, `checkInvariants`, `archiveAudit`, `pruneAudit` |
+| On a schedule | `dispatchAuditHooks`, `purgeDeleted`, `sweepExpired`, `reconcilePackages`, `sendAccessDigest`, `sendExpiryReminders`, `closeOverdueCertifications`, `checkInvariants`, `detectThreats`, `signals.poll`, `archiveAudit`, `pruneAudit` |
 | Rarely, by an operator | `recoverRoot`, `rotateSecrets`, `assertionKey`, `assertionKeys` |
 | At shutdown | `flushAccessUsage` |
 
@@ -170,6 +173,30 @@ const { resources, total } = await iam.listAccessible({
   limit: 25,
   offset: 0,
 });
+```
+
+## planResources
+
+Returns which resources of one type the caller may perform an action on, as a filter for your own database query.
+
+- **When:** in the request path, for list pages over application data (the rows live in your database, not in IAM).
+  Also served as [`filters.plan`](/docs/reference/api/filters#plan) over HTTP.
+- **Permission:** none to call. The plan is the request credential's.
+- **Audited as:** not audited.
+- **Errors:** `INVALID_INPUT` for an `iam:*` action or an internal type; plus the credential errors of
+  [`authorize`](#authorize).
+
+Where `listAccessible` evaluates the resources IAM stores, a plan works for any type: the server partially evaluates
+the caller's grants, denies, boundaries, relationships and session limits and returns `always`, `never`, or
+`conditional` with a filter over `id` and the resource's attributes, with the same result `authorize` would give for
+each row. Compile it with `filterToSql`, `filterToPrisma`, `filterToMongo` or `filterMatches` from `@better-iam/core`.
+
+```ts
+import { filterToSql } from 'better-iam/core';
+
+const plan = await iam.planResources({ headers: request.headers, tenantId, action: 'documents:read', type: 'document' });
+if (plan.kind === 'never') return [];
+const where = filterToSql(plan.filter, { dialect: 'postgres', column: (field) => columns[field] });
 ```
 
 ## require
@@ -606,6 +633,39 @@ of every hour. The result is `{ checked, broken, restored }`. For a CI gate that
 [`invariants.run`](/docs/reference/api/invariants#run) (CLI `check-invariants`). See
 [change safety](/docs/guides/governance/change-safety).
 
+## detectThreats
+
+Reads each active organization's new audit events, verifies their hash chain, and raises threat detections, incidents, and responses.
+
+- **When:** on a schedule, every minute. The interval is how late a detection can be.
+- **CLI:** [`detect-threats`](/docs/reference/cli#detect-threats).
+- **Permission:** none. A deployment operation.
+- **Audited as:** `threat:detection` and `threat:incident-open` for what it finds, `threat:risk-change` when an
+  identity's risk level moves, and the playbook responses it takes (`threat:contain`, `threat:revoke-sessions`,
+  `threat:block-network`, `threat:notify`, `threat:response-braked`, and so on), all by the actor `threat-detection`.
+- **Errors:** `NOT_FOUND` for an unknown `tenantId`; `INVALID_INPUT` for a `maxEvents` outside 1 to 20,000.
+- **Safe to repeat:** yes. Each tenant has a cursor, the sequence and hash of the last event read, and every
+  detection a unique key, so re-reading events or overlapping runs never records anything twice.
+
+For every active organization (or only `tenantId`) it reads at most `maxEvents` unread events (2000 by default) from
+the tenant's cursor; a tenant's first run starts one day back. It checks that each event follows the one before and
+that its hash recomputes, and reports a break as an `audit-tampering` detection without stopping. Then it evaluates
+the tenant's detection rules over the new events and the history their windows reach back to, records detections
+grouped into incidents, raises identities' risk (which policies read as `principal.riskLevel` and
+`principal.riskScore`), and runs the tenant's playbooks for new detections, with at most `maxAutomaticContainments`
+automatic containments per tenant and run. The module's own events are verified but never judged. A tenant whose
+evaluation fails records nothing and keeps its cursor, and the others carry on. The result is
+`{ tenants, eventsScanned, detections, incidentsOpened, responses, braked, chainBreaks, pending }`, where `pending`
+counts tenants with more unread events than one run reads. Rules, incidents, and playbooks are managed through the
+[threats group](/docs/reference/api/threats), whose `detect` runs one tenant on demand.
+
+```ts
+setInterval(async () => {
+  const run = await iam.detectThreats();
+  if (run.chainBreaks) await alertSecurityTeam('Audit chain failed verification', run);
+}, 60_000).unref();
+```
+
 ## flushAccessUsage
 
 Writes the access usage buffered in memory to storage now.
@@ -726,4 +786,58 @@ const claims = verifyAssertion(token, {
   key: process.env.IAM_ASSERTION_KEYS!.split(','),
   audience: 'reports',
 });
+```
+
+## Shared Signals receiver
+
+`iam.signals` is the server side of the Shared Signals receiver: security events (CAEP and RISC SETs) that an
+organization's identity providers send about its people. Sources are registered and events read through the
+[signals group](/docs/reference/api/signals). Push sources need nothing scheduled: providers POST to
+`{signals.pushPath}/{sourceId}` (`/api/iam/signals/push/{sourceId}` by default), which `handler` and `nodeHandler`
+serve ahead of the API routes. The `signals` option sets `pushPath`, and `allowPrivateNetworks` and
+`allowInsecureLocalhost` for the address rules of key, discovery, and poll requests.
+
+### signals.poll
+
+Fetches events from every active poll source (RFC 8936), or from one with `sourceId`.
+
+- **When:** on a schedule, every minute or so, when any organization has a poll source. The interval is how late a
+  polled event can be.
+- **Permission:** none. A deployment operation; [`signals.poll`](/docs/reference/api/signals#poll) is the per-source
+  call for administrators.
+- **Audited as:** `signal:received` for each new event and `signal:revoke-sessions` for sessions it ends, by the actor
+  `signal:{sourceId}`.
+- **Errors:** `INVALID_INPUT` for a malformed `sourceId`. A failing provider never throws: it is counted in `errors`
+  and recorded on the source as `lastError`.
+- **Safe to repeat:** yes. Events are deduplicated on issuer and `jti`, so an event delivered again, for example after
+  overlapping runs, is recognized and acknowledged again.
+
+Each source is asked with `returnImmediately: true` and up to `maxEvents` events per request, following
+`moreAvailable` for at most five requests. Every SET is verified and recorded as a push would be. Stored events are
+acknowledged with the next request, refused ones are reported in `setErrs`, and events that cannot be handled yet (keys
+unavailable, storage busy) are left for the provider to deliver again. Sources of suspended organizations are skipped.
+The result is `{ sources, received, acknowledged, errors }`.
+
+```ts
+setInterval(() => void iam.signals.poll().catch(reportError), 60_000).unref();
+```
+
+### signals.receive
+
+Verifies and records one SET for a source, exactly as the push endpoint does, for transports of your own.
+
+- **When:** in the code that takes SETs from a queue, a bridge, or tests.
+- **Permission:** none. Trusted server code; the SET's signature is what authenticates it.
+- **Audited as:** `signal:received`, and `signal:revoke-sessions` when the source's action ends sessions.
+- **Errors:** `SIGNAL_REJECTED` (a `SignalRejectedError` with the RFC 8935 `err`, and `temporary: true` when a later
+  attempt may pass because the source's keys could not be fetched); `NOT_FOUND` for an unknown or disabled source, or
+  one whose organization is suspended.
+- **Safe to repeat:** yes. A SET received before returns its first receipt with `duplicate: true`.
+
+The result is `{ eventId, status, duplicate, identityId? }`, where `eventId` is the received event for
+[`signals.getEvent`](/docs/reference/api/signals#getevent).
+
+```ts
+const receipt = await iam.signals.receive(sourceId, compactSet);
+if (receipt.status === 'unmatched') console.warn('No person matched', receipt.eventId);
 ```

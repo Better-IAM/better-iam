@@ -8,6 +8,7 @@ import type {
 } from '@better-iam/core';
 import { assertAgentUsable, audienceMatches } from './agents.js';
 import type { ServerContext } from './context.js';
+import type { GrantPath } from './decisions.js';
 import {
   actionsMayOverlap,
   delegationLive,
@@ -103,7 +104,17 @@ export async function scopeRefusal(
   }))
     limits.push(boundary.document);
   const confirm = chain.flatMap((delegation) => delegation.confirm ?? []);
-  const denies = (await ctx.decisions.identityGrants(tx, basis.personId, basis.tenant.id))
+  // Denies of bindings, roles and policies whose author's authority was revoked still apply at decision time, so they
+  // bound a token's scopes too (they arrive as deny-only paths in `lapsed`).
+  const lapsed: GrantPath[] = [];
+  const paths = await ctx.decisions.identityGrants(
+    tx,
+    basis.personId,
+    basis.tenant.id,
+    undefined,
+    lapsed,
+  );
+  const denies = [...paths, ...lapsed]
     .flatMap((path) => [...path.grants, ...path.boundaries])
     .flatMap((document) => document.statements)
     .filter((statement) => statement.effect === 'deny')

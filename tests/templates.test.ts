@@ -91,12 +91,14 @@ describe('delivery templates', () => {
       payload: {
         method: 'password',
         time: '2026-09-22T00:00:00.000Z',
-        userAgent: 'Mozilla/5.0',
+        userAgent:
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0 Safari/537.36',
         ip: '203.0.113.7',
       },
     })!;
     expect(alert.subject).toBe('New sign-in to Better IAM');
-    expect(alert.text).toContain('Mozilla/5.0 · 203.0.113.7');
+    // The User-Agent is summarized, never quoted (it is attacker-chosen text).
+    expect(alert.text).toContain('Chrome on Windows · 203.0.113.7');
     expect(alert.text).toContain('Method: password.');
     const failures = renderDeliveryMessage({
       template: 'sign-in-failures',

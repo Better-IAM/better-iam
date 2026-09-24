@@ -2,6 +2,13 @@
  * The reconciler of automatic (birthright) access packages: plans, per package, which identities should gain,
  * keep, or lose the package under its rule, and applies each change in its own transaction under the rule owner's
  * grant authority. Runs after identity changes and rule saves (post-commit), on demand, and as a scheduler job.
+ *
+ * Trust: a rule grants under its owner's authority to whoever matches, so whoever can change the facts it tests
+ * chooses the recipients, with no grant rights of their own. Declared attributes and managerId are set with
+ * iam:identities:update, and members of a group without role bindings with iam:groups:update alone; rules keyed on
+ * them are only as safe as those permissions (ruleWarnings says so on every such clause). Facts access packages
+ * create never count: package memberships, and team memberships synced from them (identityFacts, org-rules.ts), so
+ * rules never chain onto another package or keep themselves alive.
  */
 import {
   IamError,
@@ -28,6 +35,7 @@ import {
   parseAutoAssign,
   ruleContext,
   ruleDocument,
+  ruleGroupIds,
   ruleKeys,
   ruleMatch,
   ruleProblem,
@@ -37,6 +45,7 @@ import {
   type RuleMatch,
   type RuleOrgFacts,
 } from '../package-rules.js';
+import { invariantSnapshot, invariantVerify } from '../invariants.js';
 import { loadOrgFacts, orgRuleEnvironment, type TenantOrgFacts } from '../org-rules.js';
 import { sodVerify, sodViolations, type SodRule } from '../sod.js';
 import { id } from '../utils.js';
@@ -74,7 +83,10 @@ export interface ReconcileOptions {
 
 interface IdentityFacts {
   identity: Identity;
-  /** Live memberships no access package owns: what a rule sees as identity.groups. */
+  /**
+   * Live memberships no access package owns, with team backing groups only through a team membership that counts:
+   * what a rule sees as identity.groups.
+   */
   directGroupIds: string[];
   /** What a rule sees as identity.teams and identity.departments (org-rules.ts). */
   org: RuleOrgFacts;
@@ -180,14 +192,28 @@ function identityFacts(
   packageId: string,
 ): IdentityFacts {
   const memberships = facts.memberships.get(identity.id) ?? [];
-  const directGroupIds = memberships
-    .filter((member) => member.packageAssignmentId === undefined && ctx.liveMembership(member))
+  const live = memberships.filter(
+    (member) => member.packageAssignmentId === undefined && ctx.liveMembership(member),
+  );
+  const ordinary = live
+    .filter((member) => member.teamId === undefined)
     .map((member) => member.groupId);
+  const org = facts.org.of(identity.id, ordinary);
+  // A team's backing group copies the team's members, and team sync copies package memberships of its source groups
+  // into the team: the backing membership counts only while the team membership behind it does (org.teams holds the
+  // counted teams and every team above them, exactly the teams whose backing groups that membership fills).
+  const teams = new Set(org.teams);
+  const directGroupIds = [
+    ...ordinary,
+    ...live
+      .filter((member) => member.teamId !== undefined && teams.has(member.teamId))
+      .map((member) => member.groupId),
+  ];
   return {
     identity,
     memberships,
     directGroupIds,
-    org: facts.org.of(identity.id, directGroupIds),
+    org,
     bindings: facts.bindings.get(identity.id) ?? [],
     assignment: facts.assignments.get(`${packageId}:${identity.id}`),
   };
@@ -442,8 +468,9 @@ async function clearIssues(ctx: ServerContext, ids: string[]): Promise<void> {
 
 /**
  * Applies one planned change in its own transaction, after re-deciding from fresh records: when the decision
- * changed since planning, nothing is written ('stale'). A separation-of-duties conflict the change would create
- * rolls back only this change.
+ * changed since planning, nothing is written ('stale'). A separation-of-duties conflict, or a newly broken enforced
+ * access invariant (INVARIANT_VIOLATION), that a grant would create rolls back only this change, which the caller
+ * records as a failed issue.
  */
 async function applyStep(
   ctx: ServerContext,
@@ -516,6 +543,11 @@ async function applyStep(
           ),
         };
     }
+    // Enforced access invariants bind automatic grants as they bind a manual assign (whose operation checks them):
+    // this reconcile runs outside any operation, so it checks them itself.
+    const guardrails = additive.has(step.change)
+      ? await invariantSnapshot(ctx, tx, tenantId, 'iam:packages:assign')
+      : undefined;
     const now = ctx.now();
     let action = '';
     let metadata: Record<string, Json> = {};
@@ -581,6 +613,7 @@ async function applyStep(
       }
     }
     await sodVerify(ctx, tx, tenantId, snapshot, [identity.id]);
+    await invariantVerify(ctx, tx, tenantId, guardrails);
     const issue = (
       await tx.find<PackageRuleIssue>('packageRuleIssues', {
         tenantId,
@@ -630,6 +663,23 @@ export async function approveRule(
     autoAssign: { ...rule, approved: { grants, removals, until: ctx.now() + 86_400_000 } },
   };
   return { pkg: await tx.put<AccessPackage>('accessPackages', approved), grants, removals };
+}
+
+/**
+ * The tenant's groups with role bindings, for ruleWarnings: adding members to them needs the bindings' authorities,
+ * not iam:groups:update alone. Read only when the rule tests identity.groups.
+ */
+async function boundGroups(
+  reader: IamStore,
+  tenantId: string,
+  rule: AutoAssignRule | AutoAssignInput,
+): Promise<Set<string>> {
+  if (!ruleGroupIds(rule).length) return new Set();
+  return new Set(
+    (await reader.find<Binding>('bindings', { tenantId, subjectType: 'group' })).map(
+      (binding) => binding.subjectId,
+    ),
+  );
 }
 
 /** A rule as administrators see it: owner, whether it runs, warnings, and the latest problems. */
@@ -688,7 +738,7 @@ export async function autoAssignView(
     ...(suspension
       ? { suspendedReason: suspension.reason, suspendedDetail: suspension.detail }
       : {}),
-    warnings: ruleWarnings(rule),
+    warnings: ruleWarnings(rule, { boundGroups: await boundGroups(reader, pkg.tenantId, rule) }),
     issueCount: issues.length,
     issues: issues.slice(0, 20).map((issue) => ({
       kind: issue.kind,
@@ -1185,7 +1235,7 @@ export async function previewRule(
   const preview: AutoAssignPreview = {
     rule: kind,
     keys,
-    warnings: ruleWarnings(rule),
+    warnings: ruleWarnings(rule, { boundGroups: await boundGroups(tx, input.tenantId, rule) }),
     matching: matches.length,
     excluded,
     frozen,

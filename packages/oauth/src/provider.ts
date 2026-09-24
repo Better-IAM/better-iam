@@ -54,6 +54,18 @@ export interface OAuthProviderConfig {
   authenticate(credential: CredentialInput): Promise<AuthenticatedPrincipal>;
   /** Host validation applies custom idle limits, email verification, and current MFA policy. */
   validateSession?(sessionId: string): Promise<unknown>;
+  /**
+   * The groups and roles an identity holds right now as decisions see them (eligible bindings only while activated,
+   * access windows and start dates applied), for the `iam` scope's `roles`/`groups` claims; `iam.protocolHost`
+   * supplies it. Without it the claims leave out every binding whose standing needs the server to judge.
+   */
+  liveGrants?(identityId: string, tenantId: string): Promise<{ groupIds: string[]; roleIds: string[] }>;
+  /**
+   * Whether the person may get tokens for this client at all (the application catalog's assignments;
+   * `iam.protocolHost` supplies it). Asked whenever the provider loads the account for a client: codes, refreshes and
+   * userinfo, so removing someone's app also stops their refresh tokens.
+   */
+  clientAllowed?(identityId: string, tenantId: string, clientId: string): Promise<boolean>;
   authorize(credential: CredentialInput, action: string, resource: ResourceRef): Promise<unknown>;
   interactionUrl(uid: string): string;
   /** Render application-owned pages around the provider's CSRF-protected form markup. */
@@ -560,6 +572,11 @@ export function createOAuthProvider(config: OAuthProviderConfig) {
           hash(ctx.oidc.client.clientId),
         );
         if (!row || row.revoked || row.tenantId !== account.tenantId) return undefined;
+        if (
+          config.clientAllowed &&
+          !(await config.clientAllowed(account.id, account.tenantId, ctx.oidc.client.clientId))
+        )
+          return undefined;
       }
       return {
         accountId,
@@ -572,22 +589,39 @@ export function createOAuthProvider(config: OAuthProviderConfig) {
             name: account.name,
           };
           if (!scope?.split(' ').includes('iam')) return base;
-          // Live role and group membership at token time; expired bindings are excluded.
-          const now = Date.now();
-          const groups = (
-            await config.store.find('groupMembers', {
-              tenantId: account.tenantId,
-              identityId: account.id,
-            })
-          ).map((membership) => String(membership.groupId));
-          const roles = (await config.store.find('bindings', { tenantId: account.tenantId }))
-            .filter(
-              (binding) =>
-                (typeof binding.expiresAt !== 'number' || binding.expiresAt > now) &&
-                ((binding.subjectType === 'identity' && binding.subjectId === account.id) ||
-                  (binding.subjectType === 'group' && groups.includes(String(binding.subjectId)))),
+          // Roles and groups in force at token time, as decisions see them: a role that grants nothing yet (an eligible
+          // binding not activated, one not started or outside its window) is never claimed.
+          let groups: string[];
+          let roles: string[];
+          if (config.liveGrants) {
+            const live = await config.liveGrants(account.id, account.tenantId);
+            groups = live.groupIds;
+            roles = live.roleIds;
+          } else {
+            const now = Date.now();
+            const live = (record: StoredRecord) =>
+              typeof record.expiresAt !== 'number' || record.expiresAt > now;
+            groups = (
+              await config.store.find('groupMembers', {
+                tenantId: account.tenantId,
+                identityId: account.id,
+              })
             )
-            .map((binding) => String(binding.roleId));
+              .filter(live)
+              .map((membership) => String(membership.groupId));
+            roles = (await config.store.find('bindings', { tenantId: account.tenantId }))
+              .filter(
+                (binding) =>
+                  live(binding) &&
+                  (typeof binding.startsAt !== 'number' || binding.startsAt <= now) &&
+                  // Judging activations and access windows needs the server; without `liveGrants` they are left out.
+                  binding.eligible !== true &&
+                  binding.window === undefined &&
+                  ((binding.subjectType === 'identity' && binding.subjectId === account.id) ||
+                    (binding.subjectType === 'group' && groups.includes(String(binding.subjectId)))),
+              )
+              .map((binding) => String(binding.roleId));
+          }
           return {
             ...base,
             roles: [...new Set(roles)].sort(),
@@ -602,10 +636,16 @@ export function createOAuthProvider(config: OAuthProviderConfig) {
       const row = token.clientId
         ? await config.store.get<ClientRow>('oauthClients', hash(token.clientId))
         : undefined;
+      // The service account stands behind the client's own (client-credentials) tokens only. A token issued to a
+      // person (authorization code, device, refresh) must never name it: resource servers and token exchange read
+      // `identity_id` as the account the token represents.
+      const forClient = !(token as { accountId?: unknown }).accountId;
       return row
         ? {
             tenant_id: row.tenantId,
-            ...(row.serviceAccountId && !exchange ? { identity_id: row.serviceAccountId } : {}),
+            ...(row.serviceAccountId && !exchange && forClient
+              ? { identity_id: row.serviceAccountId }
+              : {}),
             ...(exchange ? { act: exchange.act } : {}),
           }
         : {};
@@ -634,7 +674,15 @@ export function createOAuthProvider(config: OAuthProviderConfig) {
     const registration = config.registration;
     if (!registration) return;
     provider.use(async (ctx, next) => {
-      if (ctx.method !== 'POST' || ctx.path !== '/reg') return next();
+      // The provider's router matches paths case-insensitively, with a trailing slash and percent-encoding, so the
+      // gate must too (`/REG`, `/reg/` and `/%72eg` all reach registration).
+      let path = ctx.path;
+      try {
+        path = decodeURIComponent(path);
+      } catch {
+        /* Malformed escapes never match a route. */
+      }
+      if (ctx.method !== 'POST' || path.toLowerCase().replace(/\/+$/, '') !== '/reg') return next();
       const refuse = (description: string) => {
         ctx.status = 401;
         ctx.set('www-authenticate', 'Bearer error="invalid_token"');
@@ -875,7 +923,29 @@ export function createOAuthProvider(config: OAuthProviderConfig) {
           throw new errors.InvalidRequest('actor_token is not supported; the client is the actor.');
         const row = await config.store.get<ClientRow>('oauthClients', hash(client.clientId));
         if (!row || row.revoked) throw new errors.InvalidClient('Client is unavailable.');
+        // The handler issues bearer tokens only: a client that must hold sender-constrained tokens gets none this way.
+        if (client.dpopBoundAccessTokens === true)
+          throw new errors.InvalidRequest(
+            'This client requires DPoP-bound tokens, which token exchange does not issue.',
+          );
         const subject = await exchangedSubject(subjectToken, verificationKeys);
+        // A subject token stands only while what issued it does: its client (not revoked, same organization) and,
+        // for a person's token, their consent to that client. Opaque tokens are revoked with their grant; a JWT is
+        // judged here, or it would outlive a disconnected app until it expired.
+        const subjectRow = await config.store.get<ClientRow>(
+          'oauthClients',
+          hash(subject.clientId),
+        );
+        if (!subjectRow || subjectRow.revoked || subjectRow.tenantId !== row.tenantId)
+          throw new errors.InvalidGrant('The subject token is not usable by this client.');
+        if (
+          subject.format === 'jwt' &&
+          subject.personal &&
+          !(await accountGrants(row.tenantId, subject.identityId)).some(
+            (grant) => grant.summary.clientId === subject.clientId,
+          )
+        )
+          throw new errors.InvalidGrant('The subject token was revoked.');
         const identity = await config.store.get<Identity>('identities', subject.identityId);
         if (
           !identity ||
@@ -964,6 +1034,9 @@ export function createOAuthProvider(config: OAuthProviderConfig) {
     expiresAt: number;
     grantId?: string;
     act?: unknown;
+    format: 'jwt' | 'opaque';
+    /** Issued to a person through their consent (not the client's own client-credentials token). */
+    personal: boolean;
   }> {
     if (value.split('.').length === 3) {
       let claims: Record<string, unknown>;
@@ -978,14 +1051,21 @@ export function createOAuthProvider(config: OAuthProviderConfig) {
       }
       if ((claims.cnf as { jkt?: unknown } | undefined)?.jkt)
         throw new errors.InvalidGrant('Sender-constrained tokens cannot be exchanged.');
+      // `identity_id` names the service account of a client's own token (whose subject is the client); a person's
+      // token is always its subject.
       const identityId =
-        typeof claims.identity_id === 'string' ? claims.identity_id : String(claims.sub);
+        typeof claims.identity_id === 'string' && claims.sub === claims.client_id
+          ? claims.identity_id
+          : String(claims.sub);
       return {
         identityId,
         clientId: String(claims.client_id),
         scopes: typeof claims.scope === 'string' ? claims.scope.split(' ').filter(Boolean) : [],
         expiresAt: Number(claims.exp),
         ...(claims.act ? { act: claims.act } : {}),
+        format: 'jwt',
+        // An exchanged token names the person too, but its consent is the one the chain began with.
+        personal: claims.sub !== claims.client_id && !claims.act,
       };
     }
     const token = await provider.AccessToken.find(value);
@@ -1002,6 +1082,8 @@ export function createOAuthProvider(config: OAuthProviderConfig) {
       expiresAt: token.exp!,
       ...(token.grantId ? { grantId: token.grantId } : {}),
       ...(token.extra?.act ? { act: token.extra.act } : {}),
+      format: 'opaque',
+      personal: true,
     };
   }
   async function audit(
@@ -1933,6 +2015,30 @@ export function createOAuthProvider(config: OAuthProviderConfig) {
             res,
             { error: 'access_denied', error_description: 'Consent denied.' },
             { mergeWithLastSubmission: false },
+          );
+        // The provider takes any login result as fresh, so an application's `prompt=login` (sign in again now) and
+        // `max_age` (a sign-in at most this old) are judged here against the session's own sign-in time.
+        const params = details.params as Record<string, unknown>;
+        const maxAge =
+          typeof params.max_age === 'string' || typeof params.max_age === 'number'
+            ? Number(params.max_age)
+            : undefined;
+        // `iat` has whole seconds: a sign-in counts as after the request only from the next second on (the provider
+        // turns `max_age=0` into `prompt=login`).
+        const started = typeof details.iat === 'number' ? (details.iat + 1) * 1000 : Date.now();
+        if (
+          (maxAge !== undefined &&
+            Number.isFinite(maxAge) &&
+            Date.now() - principal.session.authenticatedAt > maxAge * 1000) ||
+          (String(params.prompt ?? '')
+            .split(' ')
+            .includes('login') &&
+            principal.session.authenticatedAt < started)
+        )
+          throw new IamError(
+            'LOGIN_REQUIRED',
+            'The application asked for a fresh sign-in: sign in again, then continue.',
+            401,
           );
         // Extend the account's existing consent for this client instead of accumulating grants.
         const existing = details.grantId ? await provider.Grant.find(details.grantId) : undefined;

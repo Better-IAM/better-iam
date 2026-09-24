@@ -213,7 +213,8 @@ describe('tenant-managed SAML connections', () => {
     expect(completed).toEqual([
       expect.objectContaining({
         tenantId: 'a',
-        providerId: 'acme',
+        // Links are keyed by a random provider key of this very connection, never by its reusable ID.
+        providerId: expect.stringMatching(/^saml:acme:[A-Za-z0-9_-]{16}$/),
         issuer: 'https://idp.test',
         subject: 'employee-42',
         email: 'ada@acme.test',

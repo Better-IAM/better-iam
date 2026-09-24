@@ -49,7 +49,8 @@ export interface WebIdentityTrustCreateInput {
   roleId: string;
   /**
    * Claim conditions: a policy statement's `conditions` block over `token.<claim>` keys (at most 20 entries). It must
-   * pin `token.sub` with StringEquals or StringLike and no leading wildcard (else WEAK_TRUST_CONDITIONS).
+   * pin `token.sub` with StringEquals, or StringLike with any wildcard only after two complete segments such as
+   * `repo:acme/*` (else WEAK_TRUST_CONDITIONS).
    */
   conditions: TrustConditions;
   /** Session tag key to flattened claim name (`token.<claim>`), at most 10. */

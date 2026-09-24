@@ -312,6 +312,14 @@ export function createContext(
         await tx.delete('sessions', session.id);
     },
     async grantingAuthority(tx, principal, tenantId, authorityId) {
+      // A "view as" session would spend the member's authority, not the administrator's: nobody grants, edits
+      // grant-bearing records, or adds people to granting groups while impersonating.
+      if (principal.session.impersonatorId)
+        throw new IamError(
+          'IMPERSONATION_RESTRICTED',
+          'Access cannot be granted while impersonating',
+          403,
+        );
       if (authorityId) {
         const authority = await helpers.scoped<GrantAuthority>(
           tx,

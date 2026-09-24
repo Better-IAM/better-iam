@@ -54,10 +54,14 @@ function optionalText(value: unknown, field: string): string | undefined {
   return trimmed;
 }
 function projectId(input: unknown): string {
-  if (typeof input !== 'string' || !input.trim())
+  // Project IDs are generated UUIDs; anything else (wildcards, slashes) could never name one and must not reach the
+  // resource the endpoint is authorized on.
+  if (typeof input !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(input))
     throw new IamError('INVALID_INPUT', 'projectId is required');
   return input;
 }
+/** Endpoints on one project are authorized on `iam/project/{id}`, so policies about that project apply. */
+const onProject = (input: Record<string, unknown>) => `project/${String(input.projectId)}`;
 async function load(store: ReadStore, id: string, tenantId: string): Promise<Project> {
   const project = await store.get<Project>(COLLECTION, id);
   if (!project || project.tenantId !== tenantId)
@@ -152,6 +156,7 @@ export function createProjectsPlugin(): IamPlugin {
         method: 'POST',
         path: 'get',
         action: 'projects:read',
+        resource: onProject,
         validate(value) {
           const input = object(value);
           rejectUnknown(input, ['tenantId', 'projectId']);
@@ -165,6 +170,7 @@ export function createProjectsPlugin(): IamPlugin {
         method: 'POST',
         path: 'update',
         action: 'projects:write',
+        resource: onProject,
         validate(value) {
           const input = object(value);
           rejectUnknown(input, ['tenantId', 'projectId', 'name', 'description']);
@@ -200,6 +206,7 @@ export function createProjectsPlugin(): IamPlugin {
         method: 'POST',
         path: 'archive',
         action: 'projects:write',
+        resource: onProject,
         validate(value) {
           const input = object(value);
           rejectUnknown(input, ['tenantId', 'projectId']);
@@ -220,6 +227,7 @@ export function createProjectsPlugin(): IamPlugin {
         method: 'POST',
         path: 'restore',
         action: 'projects:write',
+        resource: onProject,
         validate(value) {
           const input = object(value);
           rejectUnknown(input, ['tenantId', 'projectId']);

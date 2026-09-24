@@ -18,7 +18,7 @@ environment (`BETTER_IAM_SECRET`, database location, `BETTER_IAM_PREVIOUS_SECRET
 Commands come in three kinds:
 
 - **Deployment operations** (`migrate`, `bootstrap`, `recover-root`, `doctor`, `outbox`, `purge`, `sweep`, `digest`,
-  `remind`, `reconcile`, `close-certifications`, `monitor-invariants`, `audit-verify`, `audit-export`,
+  `remind`, `reconcile`, `close-certifications`, `monitor-invariants`, `detect-threats`, `audit-verify`, `audit-export`,
   `audit-prune`, `audit-archive`, `rotate-secrets`, and the `store-*` commands) need no credential. They work on
   storage with the deployment's authority, and the ones that change access record audit events as
   `deployment-operator`. Whoever can run them with your configuration holds the database and the secret, so protect
@@ -58,6 +58,7 @@ rerun and to overlap with itself, and `doctor` reports the ones that have stoppe
 | Command | Cadence | Why |
 | --- | --- | --- |
 | `outbox` | Every minute | Delivers email, SMS, and webhooks. `doctor` warns when messages wait more than 15 minutes. |
+| `detect-threats` | Every minute | Finds attacks on identities in the audit trail; the interval is how late a detection can be. |
 | `audit-archive` | Every few minutes, at least hourly | Keeps the independent audit copy current. `doctor` warns about unarchived events older than a day. |
 | `reconcile` | Every 15 minutes, after `purge` | Rule-based access packages only see SCIM, invitation, attribute, and group changes through it. |
 | `purge` | Hourly, at least daily | Ends expired access and removes deleted tenants. `doctor` warns when expired records are a day old. |
@@ -75,6 +76,8 @@ rerun and to overlap with itself, and `doctor` reports the ones that have stoppe
 CONFIG=/etc/better-iam/better-iam.config.mjs
 # Every minute: deliver email, SMS, and webhooks.
 * * * * *         better-iam outbox --config $CONFIG
+# Every minute: threat detection (its alert emails go out with the next outbox run).
+* * * * *         better-iam detect-threats --config $CONFIG
 # Every 5 minutes: continuous audit archiving.
 */5 * * * *       better-iam audit-archive --config $CONFIG
 # Hourly: expire, sweep, then apply package rules; reconcile again every quarter hour.
@@ -597,6 +600,34 @@ passes again, once per change, so a webhook subscribed to `invariant:*` alerts w
 better-iam monitor-invariants --config better-iam.config.mjs
 ```
 
+## detect-threats
+
+Reads every organization's new audit events and raises threat detections, incidents, and automatic responses.
+
+- **When:** every minute. The interval is how late a detection can be.
+- **Needs:** no credential. Recorded as `threat-detection`; alert emails also need `authentication.sendEmail` and an
+  `outbox` run.
+- **Fails with:** `NOT_FOUND` for an unknown `--tenant`; `INVALID_ARGUMENT` for a `--max-events` outside 1 to 20,000.
+- **Calls:** [`iam.detectThreats()`](/docs/reference/api#detectthreats).
+
+Flags:
+
+- `--tenant ID` limits the run to one organization (default: every active organization).
+- `--max-events N` (1 to 20,000, default 2000) is the most unread audit events one run reads per organization.
+
+For each organization it reads the audit trail from where the last run stopped, verifies the hash chain (a break is
+reported as an `audit-tampering` detection), evaluates the detection rules, records detections grouped into
+incidents, updates identity risk, and runs the organization's playbooks for new detections. It prints
+`{ tenants, eventsScanned, detections, incidentsOpened, responses, braked, chainBreaks, pending }` and exits 0 whenever
+it runs: alert from a webhook subscribed to `threat:*`, or from a non-zero `chainBreaks`. `pending` counts
+organizations with more unread events than one run reads; the next run continues where this one stopped, so raise
+`--max-events` or run it more often when it stays above zero. Reruns and overlapping runs never record anything twice.
+See [threat detection](/docs/reference/api/threats).
+
+```bash
+better-iam detect-threats --config better-iam.config.mjs --query chainBreaks
+```
+
 ## store-export
 
 Writes every record of the database to a JSON Lines snapshot file.
@@ -1089,3 +1120,115 @@ Flags:
 
 A person, team or meter counts as spiking when its spend on the day is at least the factor times its average over
 the 14 days before and at least the minimum more; new spending counts when it reaches the minimum.
+
+## vault-get
+
+Prints the value of a vault secret.
+
+- **When:** in scripts and terminals, to read one secret, for example into a variable with `$(...)`.
+- **Needs:** `BETTER_IAM_TOKEN` with `iam:vault:reveal` on `iam/vault/secrets/{name}`. Every reveal is audited as
+  `vault:reveal` and shows in the secret's access log.
+- **Fails with:** `NOT_FOUND` for an unknown secret, version, stage or field; `CHECKOUT_REQUIRED` for secrets handed out
+  only through check-outs; `VERSION_DISABLED` / `VERSION_DESTROYED`; `SECRET_PENDING_DELETION`.
+
+Flags:
+
+- `--tenant ID` (or `BETTER_IAM_TENANT`) is the tenant the secret lives in.
+- `--version N` or `--stage LABEL` picks another version than the current one.
+- `--field NAME` prints one field of a json secret.
+
+```bash
+export DATABASE_PASSWORD="$(better-iam vault-get prod/payments/db-password)"
+```
+
+## vault-put
+
+Stores a new version of a vault secret.
+
+- **When:** after a credential was issued or changed outside the vault, or to stage a value for a later promotion.
+- **Needs:** `BETTER_IAM_TOKEN` with `iam:vault:write`. Audited as `vault:put`.
+- **Fails with:** `INVALID_ARGUMENT` when standard input is empty or the `--value-env` variable is unset;
+  `INVALID_INPUT` for a value the secret refuses (too large, not a JSON object for a json secret).
+
+The value comes from standard input (a trailing newline is removed), from the environment variable `--value-env`
+names, or `--generate` makes a random 32-character one. Values are never taken from the command line itself, where they
+would land in shell history and process listings.
+
+Flags:
+
+- `--tenant ID` (or `BETTER_IAM_TENANT`).
+- `--value-env VARIABLE` reads the value from that variable.
+- `--generate` stores a random value.
+- `--stage current|pending` makes it current now (default) or stages it for `vault.promote`.
+
+```bash
+printf %s "$NEW_PASSWORD" | better-iam vault-put prod/payments/db-password
+```
+
+## vault-run
+
+Runs a command with vault secrets in its environment.
+
+- **When:** to start an application or a one-off script with its secrets, without writing them to disk or `.env`
+  files.
+- **Needs:** `BETTER_IAM_TOKEN` with `iam:vault:reveal` on every secret it reads (and, with `--prefix`, the secrets
+  listed are those the token may read). Each reveal is audited as `vault:reveal`.
+- **Fails with:** `INVALID_ARGUMENT` without `--env` or `--prefix`, or for a malformed mapping; `COMMAND_NOT_FOUND`
+  when the command does not exist; `COMMAND_FAILED` when it exits with a non-zero status, which then becomes
+  `vault-run`'s own exit status.
+
+`--env` maps variables to secrets, comma-separated: `VAR=name`, or `VAR=name#field` for one field of a json secret.
+`--prefix` adds every static secret under a path, named after the rest of its name in upper case
+(`prod/app/db-password` under `prod/app/` becomes `DB_PASSWORD`); a json secret adds one variable per field
+(`SMTP_HOST`, `SMTP_PASSWORD`). A secret under the prefix that cannot be revealed is skipped with a note on standard
+error. `--env` wins over `--prefix`. The command inherits the terminal (standard input, output and error) and the rest
+of the environment, except `BETTER_IAM_TOKEN`, which is removed unless `--keep-token`.
+
+Flags:
+
+- `--tenant ID` (or `BETTER_IAM_TENANT`).
+- `--env VAR=NAME[#FIELD],...` and `--prefix PATH/` choose the secrets.
+- `--keep-token` passes `BETTER_IAM_TOKEN` on to the command.
+
+```bash
+better-iam vault-run --prefix prod/payments/ --env STRIPE_KEY=prod/stripe#secret -- node server.js
+```
+
+## vault-rotate-due
+
+Rotates every vault secret whose scheduled rotation is due.
+
+- **When:** hourly.
+- **Needs:** no credential; acts as `deployment-operator`. Rotations are audited as `vault:rotate`, and due secrets
+  without a generator or rotator as `vault:rotation-due` once per due date.
+- **Calls:** `iam.vault.rotateDue()`.
+
+Secrets with a rotator are rotated through it; a failure keeps the pending version, is reported under `failed`, and is
+retried later with the same value. A secret that rotates on check-in waits while it is checked out.
+
+Flags:
+
+- `--tenant ID` rotates only that tenant's secrets.
+
+## vault-expire-leases
+
+Ends expired vault check-outs and dynamic leases.
+
+- **When:** every few minutes.
+- **Needs:** no credential; acts as `deployment-operator`. Recorded as `vault:checkout-expired`, `vault:lease-expired`
+  and, after 20 failed revocations, `vault:revoke-failed`.
+- **Calls:** `iam.vault.expireLeases()`.
+
+Expired check-outs end (and secrets that rotate on check-in rotate), expired dynamic leases and those of people who
+are no longer active are revoked at their engine, failed revocations are retried, and lease history past
+`vault.accessRetentionDays` is deleted.
+
+## vault-purge-deleted
+
+Deletes vault secrets whose recovery window has ended.
+
+- **When:** daily.
+- **Needs:** no credential; acts as `deployment-operator`. Each secret is recorded as `vault:purge`.
+- **Calls:** `iam.vault.purgeDeleted()`.
+
+The secret goes with its versions, leases and access records; live dynamic leases are revoked at their engine first.

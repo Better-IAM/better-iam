@@ -32,6 +32,7 @@ better-iam close-certifications --config better-iam.config.mjs
 better-iam mine-roles --config better-iam.config.mjs --tenant TENANT_ID --peer-by attribute:department
 better-iam check-invariants --config better-iam.config.mjs --tenant TENANT_ID --fail-on-broken
 better-iam monitor-invariants --config better-iam.config.mjs
+better-iam detect-threats --config better-iam.config.mjs --max-events 2000
 better-iam store-export --config better-iam.config.mjs --output snapshot.jsonl
 better-iam store-import --config better-iam.config.mjs --input snapshot.jsonl
 better-iam store-copy --config better-iam.config.mjs --target-config target.config.mjs
@@ -78,6 +79,8 @@ Before bootstrap, supply `BETTER_IAM_ROOT_EMAIL`, `BETTER_IAM_ROOT_NAME`, and `B
 
 `close-certifications` (`iam.closeOverdueCertifications`) applies every access-certification campaign created with `autoClose` whose due date has passed (or only one `--tenant`'s), each in its own transaction, under the campaign creator's grant authority, and prints `{ closed, skipped }`; each run is recorded as `certification:auto-close`. It needs no credential and no email transport; schedule it with the others.
 
+`detect-threats` (`iam.detectThreats`) runs [threat detection](threat-detection.md): for every active organization (or one `--tenant`) it reads up to `--max-events` (2000, at most 20,000) unread audit events from the organization's cursor, verifies their hash chain, raises detections and incidents, updates identity risk, and runs the response playbooks. It prints `{ tenants, eventsScanned, detections, incidentsOpened, responses, braked, chainBreaks, pending }`; `pending` counts organizations with more to read, which the next run continues. Schedule it every minute, followed by `outbox` for the alert emails; it needs no credential and is safe to overlap.
+
 The CLI loads the default export of a trusted `.mjs` configuration file, either options or a factory. Initialization refuses to overwrite an existing configuration.
 
 ## Persistence and operations
@@ -96,7 +99,7 @@ Record lookups run in SQL. Scalar filter fields become typed JSON conditions, an
 - **Ordered reads:** audit listings, exports, and retention pruning page through events in timestamp or sequence order in SQL (`IamStore.findOrdered`, migration `0003_ordered_indexes`), so their cost follows the page size rather than the length of the log. Migration `0005_lookup_indexes` indexes `sourceSessionId` and `trustId` on SQLite and libSQL for session cascades (PostgreSQL's document index already covers them). Migration `0004_expiry_indexes` adds collection-wide indexes on `expiresAt`, `deliveredAt`, and `failedAt` for the retention sweep; like `0002`, it builds them inside the migration transaction, so run it in a maintenance window on a large database.
 - **Retention sweep:** sign-ins, OAuth and SAML flows, and deliveries leave records behind after they stop mattering. Without a sweep, storage and some scans grow with traffic; `dispatchOutbox`, for example, reads the whole outbox. Schedule `iam.sweepExpired()` (CLI `sweep`) beside `purge`, every hour or daily. It walks the expiry indexes oldest first in batches of 500 per transaction and deletes at most `limit` (10,000) records per run. When it stops at that limit it reports `truncated: true`; more records may be due, so run it again. It deletes:
   - user and role sessions, session tokens, trusted devices, and relationship tuples past their expiry;
-  - redeemed web-identity token records (`webIdentityReplays`) once the token they record could no longer be presented (its expiry plus the provider's clock tolerance);
+  - redeemed web-identity token records (`webIdentityReplays`) once the token they record could no longer be presented (its expiry plus the largest clock tolerance a provider may be given, 120 seconds, so raising a provider's tolerance later cannot reopen a redeemed token);
   - OAuth artifacts and login states, and SAML request, relay-state, and assertion-replay records past their expiry. OAuth grants stay 31 days past their expiry, so back-channel logout still reaches the client when a bound session ends later;
   - delivered or abandoned outbox messages, and abandoned Shared Signals deliveries, once they are older than `deliveryRetentionMs` (CLI `--retention-days`, default 30 days). Age is counted from delivery or abandonment. This also bounds the webhook delivery history and `redeliver`;
   - audit hook rows already dispatched.

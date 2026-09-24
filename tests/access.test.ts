@@ -177,11 +177,14 @@ describe('policy variables through the server', () => {
       type: 'folder',
       id: `home-${alice.identity.id}`,
     });
-    await f.iam.api.resources.register(f.ownerCredential, {
-      tenantId: f.tenantId,
-      type: 'folder',
-      id: 'home-*',
-    });
+    // An id holding a wildcard would read as a pattern in iam/{type}/{id}: registration refuses it.
+    await expect(
+      f.iam.api.resources.register(f.ownerCredential, {
+        tenantId: f.tenantId,
+        type: 'folder',
+        id: 'home-*',
+      }),
+    ).rejects.toMatchObject({ code: 'INVALID_INPUT' });
     const check = (
       who: { credential: { token: string } },
       action: string,
@@ -198,8 +201,6 @@ describe('policy variables through the server', () => {
     expect((await check(bob, 'folders:read', 'folder', `home-${alice.identity.id}`)).allowed).toBe(
       false,
     );
-    // A registered id that happens to contain a wildcard never matches a substituted variable.
-    expect((await check(alice, 'folders:read', 'folder', 'home-*')).allowed).toBe(false);
     await expect(
       f.iam.api.roles.create(f.ownerCredential, {
         tenantId: f.tenantId,

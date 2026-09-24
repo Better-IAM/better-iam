@@ -14,6 +14,7 @@ import {
 } from '@/components/ui';
 import { orgPage } from '@/lib/org';
 import { tryRead } from '@/lib/session';
+import { riskTone } from '@/lib/threats';
 
 export default async function Member({ params }: { params: Promise<{ org: string; id: string }> }) {
   const { org, id } = await params;
@@ -52,6 +53,8 @@ export default async function Member({ params }: { params: Promise<{ org: string
     tryRead(() => iam.api.teams.list(auth, { tenantId })),
     tryRead(() => iam.api.departments.list(auth, { tenantId })),
   ]);
+  // Threat detection's risk for this identity (threats.ts; needs iam:threats:read on iam/threats/risk/{id}).
+  const risk = await tryRead(() => iam.api.threats.getRisk(auth, { tenantId, identityId: id }));
   return (
     <>
       <PageHeader
@@ -357,6 +360,44 @@ export default async function Member({ params }: { params: Promise<{ org: string
             )}
           </Card>
         </div>
+        {risk && (
+          <Card
+            title="Risk"
+            description="Threat detection's view of this identity; policies read it as principal.riskLevel."
+            actions={
+              <Link
+                className="btn small secondary"
+                href={`${base}/threats/incidents?identityId=${encodeURIComponent(id)}`}
+              >
+                Incidents
+              </Link>
+            }
+          >
+            <div className="row">
+              <Badge tone={riskTone(risk.level)}>{risk.level}</Badge>
+              <span className="small muted">score {risk.score}</span>
+              {risk.contained && <Badge tone="danger">contained</Badge>}
+              {risk.override?.active && (
+                <Badge tone="accent">{`override: ${risk.override.level}`}</Badge>
+              )}
+              <span className="small muted">
+                {risk.contained ? (
+                  <>
+                    Contained <Time value={risk.contained.at} />: {risk.contained.reason}
+                  </>
+                ) : risk.contributions[0] ? (
+                  <>
+                    {risk.contributions.length} detection
+                    {risk.contributions.length === 1 ? '' : 's'}, latest{' '}
+                    <Time value={risk.contributions[0].at} />
+                  </>
+                ) : (
+                  'Nothing detected.'
+                )}
+              </span>
+            </div>
+          </Card>
+        )}
         <div className="grid cols-2">
           <Card
             title="Effective roles"

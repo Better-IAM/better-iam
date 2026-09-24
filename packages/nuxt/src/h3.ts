@@ -151,7 +151,20 @@ export function eventHeaders(event: H3EventLike): Headers {
   return headers;
 }
 
-/** A Web request for an h3 v1 or v2 event; the Node fallback buffers the body, so call it before anything reads it. */
+/** The largest body the Node fallback buffers (the IAM handler itself accepts far less). */
+const maxBody = 2097152;
+/** Thrown by the Node fallback past `maxBody`; the IAM route answers it with 413. */
+class BodyTooLarge extends Error {
+  constructor() {
+    super('Request body too large for the IAM handler');
+    this.name = 'BodyTooLarge';
+  }
+}
+
+/**
+ * A Web request for an h3 v1 or v2 event; the Node fallback buffers the body (at most 2 MiB, else it throws), so call
+ * it before anything reads it.
+ */
 export async function eventRequest(event: H3EventLike): Promise<Request> {
   if (event.req instanceof Request) return event.req;
   if (event.web?.request) return event.web.request;
@@ -165,11 +178,16 @@ export async function eventRequest(event: H3EventLike): Promise<Request> {
   const method = (node.method ?? 'GET').toUpperCase();
   if (method === 'GET' || method === 'HEAD') return new Request(url, { method, headers });
   const chunks: Uint8Array[] = [];
-  for await (const chunk of node)
-    chunks.push(
-      typeof chunk === 'string' ? new TextEncoder().encode(chunk) : (chunk as Uint8Array),
-    );
-  const body = new Uint8Array(chunks.reduce((total, chunk) => total + chunk.byteLength, 0));
+  let size = 0;
+  for await (const chunk of node) {
+    const bytes =
+      typeof chunk === 'string' ? new TextEncoder().encode(chunk) : (chunk as Uint8Array);
+    // Bounded like the other adapters: an unauthenticated caller must not make the process buffer without limit.
+    size += bytes.byteLength;
+    if (size > maxBody) throw new BodyTooLarge();
+    chunks.push(bytes);
+  }
+  const body = new Uint8Array(size);
   let offset = 0;
   for (const chunk of chunks) {
     body.set(chunk, offset);
@@ -319,7 +337,18 @@ export function createIamH3<T extends IamLike>(
     },
     /** The IAM HTTP handler for an h3 route (`/api/iam/**`); returns the Web `Response`, which h3 sends as is. */
     async handler(event: H3EventLike): Promise<Response> {
-      return (await resolve()).handler(await toRequest(event));
+      let request: Request;
+      try {
+        request = await toRequest(event);
+      } catch (error) {
+        if (error instanceof BodyTooLarge)
+          return Response.json(
+            { error: { code: 'PAYLOAD_TOO_LARGE', message: 'Request body too large' } },
+            { status: 413 },
+          );
+        throw error;
+      }
+      return (await resolve()).handler(request);
     },
   };
 }

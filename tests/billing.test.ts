@@ -378,7 +378,12 @@ describe('billing and spend', () => {
         .filter(Boolean)
         .sort(),
     ).toEqual(['department-head', 'team-maintainer']);
-    expect(reads.filter((event) => event.outcome === 'deny')).toHaveLength(1);
+    // Alice's attempt against the platform tenant is recorded here too, in her own tenant, naming its target.
+    const denials = reads.filter((event) => event.outcome === 'deny');
+    expect(denials.filter((event) => !event.metadata?.targetTenantId)).toHaveLength(1);
+    expect(denials.filter((event) => event.metadata?.targetTenantId)).toMatchObject([
+      { metadata: { targetTenantId: f.root.tenant.id } },
+    ]);
   });
 
   it('alerts on budget thresholds once and enforces spent budgets', async () => {

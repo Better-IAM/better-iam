@@ -1,6 +1,6 @@
 ---
 title: Error codes
-description: "What each of the 144 Better IAM error codes means, why it happens, and how to handle it, grouped by HTTP status."
+description: "What each of the 182 Better IAM error codes means, why it happens, and how to handle it, grouped by HTTP status."
 icon: OctagonAlert
 ---
 
@@ -94,6 +94,24 @@ The CLI does not know the command you typed.
 
 **How to fix:** run `better-iam help` for the list of commands, or check the [CLI reference](/docs/reference/cli).
 
+## ROOT_SSH_RESTRICTED
+
+A platform root administrator asked for an SSH certificate into another organization.
+
+The root override never opens an organization's servers: SSH access there needs a role in that organization, like
+anyone else's. Only the root tenant's own hosts are the root administrators'.
+
+**How to fix:** grant the person `ssh:login` through a role in the organization.
+
+## SECURITY_KEY_REQUIRED
+
+The organization only certifies hardware security keys for SSH.
+
+With `requireSecurityKey` in the SSH settings, `ssh.issueCertificate` accepts only FIDO keys
+(`sk-ssh-ed25519@openssh.com`, `sk-ecdsa-sha2-nistp256@openssh.com`).
+
+**How to fix:** create one with `ssh-keygen -t ed25519-sk` and request the certificate for it.
+
 ## 400 Bad request
 
 The request itself is the problem: an input failed validation, or the operation is not allowed in the current state of the record. Fix the input or the order of operations; retrying the same request will fail the same way.
@@ -107,21 +125,26 @@ The request itself is the problem: an input failed validation, or the operation 
 | [`CONFIG_DRIFT`](#config_drift) | `config-plan --fail-on-drift` found differences between the tenant and the configuration file. |
 | [`CONFIG_EXISTS`](#config_exists) | `better-iam init` found an existing configuration file and left it untouched. |
 | [`CONFIG_WARNINGS`](#config_warnings) | … unresolved reference(s) |
+| [`CONFIRMATION_INVALID`](#confirmation_invalid) | The link that confirms a public data-subject request is wrong, already used, or expired. |
 | [`CREDENTIAL_CHAINING_DISABLED`](#credential_chaining_disabled) | A session token cannot be minted from a credential that is itself temporary. |
 | [`DELIVERY_REQUIRED`](#delivery_required) | The operation sends email, but the deployment has no email delivery callback. |
 | [`DOCTOR_FINDINGS`](#doctor_findings) | `doctor --strict` found problems more serious than informational notes. |
 | [`DOMAIN_NOT_ALLOWED`](#domain_not_allowed) | The domain belongs to a shared mailbox provider, so no organization can claim it. |
 | [`FINDINGS`](#findings) | `analyze --fail-on` found access findings at or above the chosen severity. |
+| [`HOST_OUTSIDE_PATTERNS`](#host_outside_patterns) | An SSH host name or address falls outside the organization's host patterns. |
 | [`HOSTNAME_NOT_ALLOWED`](#hostname_not_allowed) | The hostname belongs to the deployment itself, so no organization can claim it. |
 | [`INVALID_ACTION`](#invalid_action) | The action name is not in the catalog, or a tenant-defined action is malformed. |
+| [`INVALID_CIPHERTEXT`](#invalid_ciphertext) | A key management ciphertext could not be decrypted. |
 | [`INVALID_CONFIG`](#invalid_config) | The server, a storage adapter, or the CLI was given an invalid configuration. |
 | [`INVALID_CREDENTIAL`](#invalid_credential) | The credential id passed to a `credentials` method does not refer to an API key. |
+| [`INVALID_CSR`](#invalid_csr) | A certificate request could not be used. |
 | [`INVALID_FILTER`](#invalid_filter) | A storage query was given an invalid filter, ordering, or pagination. |
+| [`INVALID_NONCE`](#invalid_nonce) | The holder proof names no valid nonce. |
 | [`INVALID_POLICY`](#invalid_policy) | A policy document or access-package rule does not follow the policy grammar. |
+| [`INVALID_PROOF`](#invalid_proof) | The holder proof does not verify. |
 | [`INVALID_RECORD`](#invalid_record) | A record written to storage is not plain JSON or breaks a storage limit. |
 | [`INVALID_REQUEST`](#invalid_request) | A policy evaluation input or an HTTP request target could not be understood. |
 | [`INVALID_RESOURCE_TYPE`](#invalid_resource_type) | The resource type is unknown, reserved, or cannot be used this way. |
-| [`INVALID_SEALED_VALUE`](#invalid_sealed_value) | A stored secret could not be decrypted with the configured secrets. |
 | [`INVALID_SPONSOR`](#invalid_sponsor) | The AI agent's sponsor is missing or is not an active person of the agent's tenant. |
 | [`INVALID_TICKET`](#invalid_ticket) | The inference ticket given to `inference.record` is unknown, already used, expired, or its caller no longer exists. |
 | [`INVARIANTS_BROKEN`](#invariants_broken) | `check-invariants --fail-on-broken` found invariants that are broken or cannot be evaluated. |
@@ -138,9 +161,13 @@ The request itself is the problem: an input failed validation, or the operation 
 | [`RESOURCE_RESOLVER_REQUIRED`](#resource_resolver_required) | An authorization check names an application resource type, but no `resolveResource` callback is configured. |
 | [`ROLE_CHAINING_DISABLED`](#role_chaining_disabled) | A role cannot be assumed from a session that is itself an assumed role. |
 | [`ROLLBACK`](#rollback) | A deliberate signal inside the storage conformance suite that discards a test transaction. |
+| [`SIGNAL_REJECTED`](#signal_rejected) | The Shared Signals receiver refused a security event token. |
 | [`SNAPSHOT_INVALID`](#snapshot_invalid) | The file given to `store-import` is not a valid Better IAM snapshot. |
 | [`SNAPSHOT_TRUNCATED`](#snapshot_truncated) | The snapshot ended early, or its record counts do not match its trailer. |
+| [`SOURCE_ADDRESS_UNKNOWN`](#source_address_unknown) | The organization binds SSH certificates to the caller's address, and the server could not determine it. |
+| [`TOO_MANY_HOSTS`](#too_many_hosts) | An SSH certificate would name more hosts or principals than allowed. |
 | [`UNREADABLE_SECRETS`](#unreadable_secrets) | `rotate-secrets` found stored values that none of the configured secrets can open. |
+| [`UNSUPPORTED_FILTER`](#unsupported_filter) | A query plan's filter uses a condition the chosen target cannot express. |
 | [`VERIFIED_EMAIL_REQUIRED`](#verified_email_required) | A first sign-in through an external provider did not come with a verified email address. |
 | [`WEAK_PASSWORD`](#weak_password) | The new password does not meet the password rules. |
 | [`WEAK_TRUST_CONDITIONS`](#weak_trust_conditions) | A web-identity trust must name exactly which workload may use it, and these conditions do not. |
@@ -173,6 +200,10 @@ the result, including the failure reason and sequence, before it exits.
 database (`audit-verify`) and your backups ([audit chain](/docs/guides/events/audit-chain)).
 
 <small>HTTP `400` · thrown by `@better-iam/cli`</small>
+
+Example messages:
+
+- No archived events of … were found
 
 ### AUDIT_CHAIN_BROKEN
 
@@ -244,6 +275,24 @@ Example messages:
 
 - … unresolved reference(s)
 
+### CONFIRMATION_INVALID
+
+The link that confirms a public data-subject request is wrong, already used, or expired.
+
+[`privacy.confirmPublic`](/docs/reference/api/privacy#confirmpublic) accepts the token emailed to the requester once,
+within seven days of the request, and only while the request still waits for confirmation. Unknown request IDs get the
+same answer, so the call reveals nothing about which requests exist. Attempts are rate limited per request.
+
+**How to fix:** open the latest confirmation email and use its link. If the request lapsed or was already confirmed,
+file a new one with [`privacy.submitPublic`](/docs/reference/api/privacy#submitpublic)
+([privacy guide](/docs/guides/governance/privacy)).
+
+<small>HTTP `400` · thrown by `@better-iam/server`</small>
+
+Example messages:
+
+- This confirmation link is invalid or has expired
+
 ### CREDENTIAL_CHAINING_DISABLED
 
 A session token cannot be minted from a credential that is itself temporary.
@@ -259,6 +308,7 @@ tokens are refused, so a temporary credential can never be renewed or extended b
 Example messages:
 
 - Temporary credentials cannot mint session tokens
+- Delegated sessions cannot assume roles
 
 ### DELIVERY_REQUIRED
 
@@ -277,9 +327,10 @@ Example messages:
 
 - Reminders require an email delivery callback
 - Member invitations require an email delivery callback
+- Public requests need an email delivery callback
+- Public requests need an email delivery callback to confirm addresses
 - Organization invitations require an email delivery callback
 - The access digest requires an email delivery callback
-- Expiry reminders require an email delivery callback
 
 ### DOCTOR_FINDINGS
 
@@ -328,6 +379,24 @@ Example messages:
 
 - … finding(s) at or above … severity
 
+### HOST_OUTSIDE_PATTERNS
+
+An SSH host name or address falls outside the organization's host patterns.
+
+When `hostPatterns` is set in the SSH settings, the host authority only vouches for names matching it, so
+`ssh.createHost` and `ssh.updateHost` refuse other names and addresses, and `ssh.updateSettings` refuses patterns
+that would leave an existing host uncovered.
+
+**How to fix:** use a name inside the patterns, or widen them with
+[`ssh.updateSettings`](/docs/reference/api/ssh#updatesettings).
+
+<small>HTTP `400` · thrown by `@better-iam/server`</small>
+
+Example messages:
+
+- Pattern … must end in a verified domain of this organization or fix an address prefix
+- … is outside the names this organization can vouch for (verify its domain or set hostPatterns)
+
 ### HOSTNAME_NOT_ALLOWED
 
 The hostname belongs to the deployment itself, so no organization can claim it.
@@ -362,6 +431,26 @@ Example messages:
 - Unknown action …
 - Tenant actions must be \{resourceType\}:\{verb\} under a tenant-defined resource type
 - Register resource type … before its actions
+
+### INVALID_CIPHERTEXT
+
+A key management ciphertext could not be decrypted.
+
+[`keys.decrypt`](/docs/reference/api/keys#decrypt) and `reEncrypt` refuse a ciphertext that is malformed, was
+modified, was produced by another key than the `keyId` you insisted on, or is presented with a different encryption
+context than it was encrypted with. The reasons are deliberately indistinguishable. A failure after the call was
+authorized is audited as a denied `iam:kms:decrypt` with `reason: 'invalid-ciphertext'`.
+
+**How to fix:** pass exactly the encryption context the data was encrypted with (the same keys and values), and store
+ciphertexts unchanged.
+
+<small>HTTP `400` · thrown by `@better-iam/server`</small>
+
+Example messages:
+
+- The ciphertext was not produced by that key
+- The ciphertext is not valid
+- The ciphertext could not be decrypted with this key and encryption context
 
 ### INVALID_CONFIG
 
@@ -402,6 +491,28 @@ Example messages:
 - Not an API key credential
 - Only API keys can rotate
 
+### INVALID_CSR
+
+A certificate request could not be used.
+
+[`pki.issueCertificate`](/docs/reference/api/pki#issuecertificate) and `requestCertificate` need a PEM PKCS#10 request
+signed by its own key. The request is refused when it is not valid DER, its signature does not verify, it uses an
+unsupported algorithm (such as RSA-PSS), or its key is not ECDSA P-256/P-384, Ed25519 or RSA of 2048 to 8192 bits.
+
+**How to fix:** build the request with `createCertificateRequest` from `better-iam`, or with OpenSSL
+(`openssl req -new -key key.pem`).
+
+<small>HTTP `400` · thrown by `@better-iam/server`</small>
+
+Example messages:
+
+- The certificate request is not valid DER
+- The requested key must be ECDSA P-256 or P-384, Ed25519, or RSA of 2048 to 8192 bits
+- The request names an unsupported kind of name
+- csr must be a PEM certificate request
+- The request carries an unreadable public key
+- The request is signed with an unsupported algorithm
+
 ### INVALID_FILTER
 
 A storage query was given an invalid filter, ordering, or pagination.
@@ -423,6 +534,22 @@ Example messages:
 - The pagination cursor must be an id
 - Order options are required
 
+### INVALID_NONCE
+
+The holder proof names no valid nonce.
+
+Every proof must carry a fresh nonce from
+[`verifiableCredentials.nonce`](/docs/reference/api/verifiable-credentials#nonce) (or the issuer's nonce endpoint). Nonces
+work once, for five minutes, for one organization.
+
+**How to fix:** fetch a new nonce, sign a new proof with it, and send the request again.
+
+<small>HTTP `400` · thrown by `@better-iam/server`</small>
+
+Example messages:
+
+- The proof needs a fresh nonce from verifiableCredentials.nonce
+
 ### INVALID_POLICY
 
 A policy document or access-package rule does not follow the policy grammar.
@@ -438,6 +565,17 @@ before you save it ([policies](/docs/guides/authorization/policies)).
 Example messages:
 
 - …: …
+
+### INVALID_PROOF
+
+The holder proof does not verify.
+
+A proof is an `openid4vci-proof+jwt` signed with the holder key (ES256, ES384 or EdDSA) whose public half is in the
+`jwk` header, with the organization's issuer URL as `aud` and an `iat` within the last five minutes.
+
+**How to fix:** sign the proof with the key the credential should be bound to, for the right issuer URL.
+
+<small>HTTP `400` · thrown by `@better-iam/server`</small>
 
 ### INVALID_RECORD
 
@@ -497,26 +635,6 @@ Example messages:
 - Unknown resource type
 - This resource type is resolved by the application, not registered with IAM
 - Unknown resource type …
-
-### INVALID_SEALED_VALUE
-
-A stored secret could not be decrypted with the configured secrets.
-
-Better IAM seals sensitive values at rest (webhook signing secrets, queued delivery payloads, downstream SCIM tokens,
-and others) with the deployment `secret`. When that secret changed and the old one is not in `previousSecrets`, or the
-stored value was damaged, the value cannot be opened.
-
-**How to fix:** add the secret that sealed the value to `previousSecrets`, then run `rotate-secrets` to re-seal
-everything under the current secret ([secrets](/docs/operations/deployment/secrets)).
-
-<small>HTTP `400` · thrown by `@better-iam/auth`, `@better-iam/scim`, `@better-iam/server`</small>
-
-Example messages:
-
-- Invalid sealed value
-- Outbox payload is not sealed
-- The stored downstream token cannot be opened.
-- Webhook payload is incomplete
 
 ### INVALID_SPONSOR
 
@@ -586,6 +704,8 @@ Example messages:
 
 - Invitation is invalid
 - Invitation authority revoked
+- The inviter can no longer invite
+- The inviter can no longer grant this access
 
 ### LINKING_DISABLED
 
@@ -780,6 +900,24 @@ Example messages:
 
 - discard
 
+### SIGNAL_REJECTED
+
+The Shared Signals receiver refused a security event token.
+
+`iam.signals.receive` throws it as a `SignalRejectedError` whose `err` is the RFC 8935 error code: `invalid_key` (a
+key, algorithm, or signature problem), `invalid_issuer`, `invalid_audience`, or `invalid_request` (the token type, its
+age, its claims, its subject, or its size). The message says which check failed. The push endpoint answers the same
+refusal as `400` with `{ "err", "description" }`, and polling reports it to the provider in `setErrs`, so providers
+never see this code itself. `temporary: true` means the source's keys could not be fetched: the same token may pass
+later, so pushes answer `503` and polled events stay unacknowledged.
+
+**How to fix:** compare the token with the source (`signals.getSource` shows the refusal as `lastError`): its issuer
+and aliases, audiences, keys, algorithms, and `requireTyp`, then fix the source with `signals.updateSource` or the
+provider's configuration ([verification](/docs/reference/api/signals#verification)). A temporary refusal needs no
+change once the provider's key set is reachable again.
+
+<small>HTTP `400` · thrown by `@better-iam/server`</small>
+
 ### SNAPSHOT_INVALID
 
 The file given to `store-import` is not a valid Better IAM snapshot.
@@ -818,6 +956,37 @@ Example messages:
 - The snapshot has no trailer; nothing was imported
 - Record counts do not match the snapshot trailer; nothing was imported
 
+### SOURCE_ADDRESS_UNKNOWN
+
+The organization binds SSH certificates to the caller's address, and the server could not determine it.
+
+With `bindSourceAddress`, every certificate carries a `source-address` option with the IP it was requested from. The
+IP comes from `http.clientInfo`, which must be configured to read it (behind a proxy you trust).
+
+**How to fix:** configure `http.clientInfo` to return `ip`, or turn `bindSourceAddress` off.
+
+<small>HTTP `400` · thrown by `@better-iam/server`</small>
+
+Example messages:
+
+- This organization binds certificates to your address, which could not be determined
+
+### TOO_MANY_HOSTS
+
+An SSH certificate would name more hosts or principals than allowed.
+
+One certificate names at most `ssh.maxHostsPerCertificate` hosts (64 by default) and 256 principals.
+
+**How to fix:** name the hosts you need with `hosts` (and `logins`) in
+[`ssh.issueCertificate`](/docs/reference/api/ssh#issuecertificate).
+
+<small>HTTP `400` · thrown by `@better-iam/server`</small>
+
+Example messages:
+
+- The certificate would name … hosts; name at most … with hosts
+- Name fewer hosts or logins (at most 256 principals)
+
 ### UNREADABLE_SECRETS
 
 `rotate-secrets` found stored values that none of the configured secrets can open.
@@ -833,6 +1002,27 @@ open, which means the secret that sealed them is missing from the configuration.
 Example messages:
 
 - … stored value(s) open with no configured secret; add the secret that sealed them to previousSecrets
+
+### UNSUPPORTED_FILTER
+
+A query plan's filter uses a condition the chosen target cannot express.
+
+[`iam.planResources`](/docs/reference/api#planresources) returns a filter with the policy engine's full
+semantics; `filterToSql` has no equivalent for IP address and array conditions, and `filterToPrisma` and
+`filterToMongo` lack some of dates, IP addresses, and wildcard patterns that are not a prefix, suffix or substring.
+Compiling refuses rather than returning a filter that would include or leave out the wrong rows.
+
+**How to fix:** fetch candidate rows with a coarser query and keep those that pass `filterMatches(plan.filter, row)`,
+which supports every filter exactly, or check each row with `authorize`
+([filters](/docs/reference/api/filters)).
+
+<small>HTTP `400` · thrown by `@better-iam/core`</small>
+
+Example messages:
+
+- … conditions cannot be expressed in …; filter these resources with filterMatches or authorize
+- These policies are too complex to plan as a filter; check the resources with authorize
+- A policy compares a value with …, one of the resource’s own attributes, which a filter cannot express; check the resources with authorize
 
 ### VERIFIED_EMAIL_REQUIRED
 
@@ -888,7 +1078,7 @@ could assume the role.
 
 Example messages:
 
-- Web identity trusts must pin token.sub with StringEquals or StringLike (no leading wildcard)
+- Web identity trusts must pin token.sub with StringEquals or StringLike (a wildcard only after two complete segments, such as repo:acme/*)
 
 ## 401 Unauthenticated
 
@@ -896,6 +1086,7 @@ Better IAM could not establish who is calling, or the proof it was given is no l
 
 | Code | Meaning |
 | --- | --- |
+| [`CERTIFICATE_INVALID`](#certificate_invalid) | `iam.pki.verify` refused a presented certificate. |
 | [`DELEGATION_TOKEN_INVALID`](#delegation_token_invalid) | A delegation token did not verify, or the delegation behind it has ended. |
 | [`INVALID_ASSERTION`](#invalid_assertion) | A stateless assertion failed verification. |
 | [`INVALID_CHALLENGE`](#invalid_challenge) | A one-time link, code, or sign-in step is wrong, expired, or already used. |
@@ -903,10 +1094,33 @@ Better IAM could not establish who is calling, or the proof it was given is no l
 | [`INVALID_MFA`](#invalid_mfa) | The authenticator code or recovery code is wrong, expired, or already used. |
 | [`INVALID_PASSKEY`](#invalid_passkey) | The passkey response could not be verified or does not belong to this account. |
 | [`INVALID_TOKEN`](#invalid_token) | The OAuth access token, or its DPoP proof, is missing, invalid, or expired. |
+| [`LOGIN_REQUIRED`](#login_required) | The application asked for a fresh sign-in: sign in again, then continue. |
 | [`OAUTH_PROFILE`](#oauth_profile) | The identity provider's answer did not identify the person. |
 | [`SAML_INVALID`](#saml_invalid) | The SAML response could not be accepted. |
+| [`SESSION_EXPIRING`](#session_expiring) | The session asking for an SSH certificate ends within a minute. |
 | [`SESSION_NETWORK_MISMATCH`](#session_network_mismatch) | The session is bound to the network it was signed in from and was used from a different one. |
 | [`UNAUTHENTICATED`](#unauthenticated) | The request has no valid credential, or its credential has expired or been revoked. |
+
+### CERTIFICATE_INVALID
+
+`iam.pki.verify` refused a presented certificate.
+
+The certificate was not issued by this deployment (or differs from the stored one), is revoked, expired or not yet
+valid, is a CA certificate, does not allow the requested usage, or chains to an authority that is no longer active.
+
+**How to fix:** present a current certificate issued by the tenant's authority, with its usage matching the side of
+the connection, and renew certificates before they expire.
+
+<small>HTTP `401` · thrown by `@better-iam/server`</small>
+
+Example messages:
+
+- No certificate was presented
+- The certificate cannot be read
+- The certificate was not issued here
+- The certificate has been revoked
+- A CA certificate cannot authenticate
+- The certificate is not for … use
 
 ### DELEGATION_TOKEN_INVALID
 
@@ -957,12 +1171,12 @@ code also fails when the email or phone changed after it was sent.
 
 Example messages:
 
+- Email has changed
 - Invalid verification code
 - Challenge is invalid or expired
 - MFA enrollment is invalid or expired
 - Invalid passkey challenge
 - Sign-in challenge is invalid or expired
-- Email has changed
 
 ### INVALID_CREDENTIALS
 
@@ -981,7 +1195,6 @@ Example messages:
 
 - Invalid current password
 - Invalid password
-- Authentication is unavailable for this account
 - Invalid email or password
 
 ### INVALID_MFA
@@ -1035,7 +1248,19 @@ configured bearer token with an invalid format.
 **How to fix:** obtain a new access token (refresh it or sign in again) and send it with the right scheme
 ([resource servers](/docs/federation/oauth-resource-servers)).
 
+<small>HTTP `401` · thrown by `@better-iam/oauth`, `@better-iam/server`</small>
+
+Example messages:
+
+- Invalid or expired host token
+
+### LOGIN_REQUIRED
+
 <small>HTTP `401` · thrown by `@better-iam/oauth`</small>
+
+Example messages:
+
+- The application asked for a fresh sign-in: sign in again, then continue.
 
 ### OAUTH_PROFILE
 
@@ -1079,6 +1304,20 @@ Example messages:
 - SAML subject recipient is invalid.
 - An unsolicited response cannot answer a request.
 - Invalid SAML response.
+
+### SESSION_EXPIRING
+
+The session asking for an SSH certificate ends within a minute.
+
+A certificate never outlives the session that requested it.
+
+**How to fix:** sign in again, then request the certificate.
+
+<small>HTTP `401` · thrown by `@better-iam/server`</small>
+
+Example messages:
+
+- This session or the access that allows it ends within a minute; renew it first
 
 ### SESSION_NETWORK_MISMATCH
 
@@ -1146,6 +1385,7 @@ The caller is known, but this action is not allowed for them: no role or policy 
 | [`METHOD_NOT_ALLOWED`](#method_not_allowed) | The organization does not permit this sign-in method, or the HTTP method is not supported on this route. |
 | [`MFA_NOT_ENROLLED`](#mfa_not_enrolled) | The operation needs a second factor, but the person has not enrolled one. |
 | [`MFA_REQUIRED`](#mfa_required) | The session has not completed multi-factor authentication, and this action or organization requires it. |
+| [`NAME_NOT_PERMITTED`](#name_not_permitted) | A certificate would name something its authority may not certify. |
 | [`OAUTH_TENANT`](#oauth_tenant) | The person's Microsoft directory is not allowed to sign in through this connection. |
 | [`PASSWORD_EXPIRED`](#password_expired) | The password is correct but older than the organization's maximum password age. |
 | [`PROTECTED_OPERATION`](#protected_operation) | An OAuth client was about to be stored outside the authenticated registration path. |
@@ -1333,7 +1573,7 @@ operates the whole platform.
 **How to fix:** sign people up in an organization tenant, and create root identities with `bootstrap`,
 `recover-root`, or an administrator.
 
-<small>HTTP `403` · thrown by `@better-iam/auth`</small>
+<small>HTTP `403` · thrown by `@better-iam/auth`, `@better-iam/server`</small>
 
 Example messages:
 
@@ -1397,7 +1637,7 @@ Example messages:
 - This operation is unavailable while impersonating a member
 - Consent cannot be granted while impersonating a member.
 - Access paths are not available while impersonating
-- Agreements cannot be accepted while impersonating
+- Requests cannot be decided while impersonating
 
 ### INSUFFICIENT_SCOPE
 
@@ -1561,6 +1801,25 @@ Example messages:
 - Use an existing MFA factor before changing enrollment
 - MFA is required by this tenant
 - Activation requires an MFA-verified session
+- Sign in with multi-factor authentication to get this credential
+
+### NAME_NOT_PERMITTED
+
+A certificate would name something its authority may not certify.
+
+Every name on a certificate must fit the name constraints (`permitted`) of the issuing authority and every authority
+above it, and a SPIFFE ID must be in the authority's trust domain. This holds for everyone, owners and root
+administrators included.
+
+**How to fix:** request names within the constraints, or issue from an authority whose constraints cover them.
+
+<small>HTTP `403` · thrown by `@better-iam/server`</small>
+
+Example messages:
+
+- A requested name is outside the authority's name constraints
+- This authority issues SPIFFE IDs only in …
+- spiffe://…/…/… names an identity; it is issued only to that identity (requestCertificate)
 
 ### OAUTH_TENANT
 
@@ -1616,7 +1875,9 @@ The target is a protected owner role or policy, or belongs to a higher grant aut
 Owner roles cannot be requested, approved, bound, packaged, inherited, or assumed through trust, and protected roles
 and the owner policy cannot be edited or deleted; ownership moves only through
 [`identities.setOwner`](/docs/reference/api/identities#setowner). Roles and policies created under a superior
-authority can be edited only by that authority.
+authority can be edited only by that authority. Lifecycle workflows fail a run with it when a step that takes access
+away, or sets attributes or an expiry, reaches an owner or a root administrator: workflows never disable, delete, sign
+out, strip, or edit them.
 
 **How to fix:** use owner transfer for ownership, and ask the administrator whose authority created the role or
 policy to make the change.
@@ -1704,9 +1965,9 @@ Example messages:
 - Tenant is unavailable.
 - Tenant unavailable.
 - Tenant must be active
-- The organization is not active
-- New parent ancestry must be active
-- Parent must be active
+- The tenant is not active
+- Tenant inactive
+- This organization is not active
 
 ### TENANT_MISMATCH
 
@@ -1797,16 +2058,16 @@ elsewhere. Deleted identities, unregistered managed resources, unknown routes, a
 
 **How to fix:** check the id and the `tenantId` you passed, and refresh lists that may be stale.
 
-<small>HTTP `404` · thrown by `@better-iam/auth`, `@better-iam/cli`, `@better-iam/core`, `@better-iam/oauth`, `@better-iam/projects`, `@better-iam/saml`, `@better-iam/scim`, `@better-iam/server`</small>
+<small>HTTP `400`, `404` · thrown by `@better-iam/auth`, `@better-iam/cli`, `@better-iam/core`, `@better-iam/oauth`, `@better-iam/projects`, `@better-iam/saml`, `@better-iam/scim`, `@better-iam/server`</small>
 
 Example messages:
 
 - Passkey not found
 - Device not found
 - Session not found
+- No tenant …
 - Endpoint not found
 - Cannot update a missing record
-- OAuth connection not found.
 
 ### OAUTH_CLIENT
 
@@ -1844,38 +2105,72 @@ The request conflicts with the current state: a duplicate name or email, a versi
 
 | Code | Meaning |
 | --- | --- |
+| [`ACCESS_EXPIRING`](#access_expiring) | The access that allows this verifiable credential ends within a minute. |
 | [`ACCOUNT_LINK_CONFLICT`](#account_link_conflict) | The external account you are linking is already linked to a different account in this tenant. |
 | [`ACCOUNT_LINK_REQUIRED`](#account_link_required) | A first sign-in through an external provider used an email that already belongs to an account in this tenant, so the accounts must be linked explicitly. |
 | [`ALREADY_INITIALIZED`](#already_initialized) | Bootstrap was run on a database that already has a root tenant. |
 | [`ARCHIVE_CONFLICT`](#archive_conflict) | The audit archive already holds a file for this batch of events with different contents. |
+| [`AUTHORITY_UNAVAILABLE`](#authority_unavailable) | A certificate authority cannot sign: it, or an authority above it, is disabled, revoked or expired. |
 | [`BILLING_PERIOD_CLOSED`](#billing_period_closed) | The month has already been invoiced for this billing account, so its usage and prices can no longer change. |
+| [`CHECKOUT_REQUIRED`](#checkout_required) | A vault secret is handed out only through check-outs, so it cannot be revealed directly. |
+| [`CLAIM_UNAVAILABLE`](#claim_unavailable) | A verifiable credential type requires a claim this person has no value for. |
 | [`CONFLICT`](#conflict) | The request conflicts with a record that already exists or with the record's current state. |
 | [`DATABASE_IN_USE`](#database_in_use) | Code running inside a transaction tried to use the same SQLite or libSQL database through a second adapter instance. |
 | [`DELEGATION_EXISTS`](#delegation_exists) | An AI agent and a person already have a pending request or an active delegation between them. |
 | [`DELEGATION_PENDING`](#delegation_pending) | The person has not approved this delegation yet. |
 | [`DOMAIN_TAKEN`](#domain_taken) | Another organization has already verified this email domain. |
 | [`FEATURE_LOCKED`](#feature_locked) | A tenant tried to choose its own value for a feature flag (`features.setOverride`) that the flag's owners decide for it. |
+| [`HOST_KEY_CHANGED`](#host_key_changed) | The host key sent with an SSH host's renewal token is not the key the host enrolled with. |
+| [`HOST_KEY_IN_USE`](#host_key_in_use) | The SSH host key is another enrolled host's key. |
+| [`HOST_NAME_TAKEN`](#host_name_taken) | Another SSH host of the organization already uses this name or address. |
 | [`HOSTNAME_TAKEN`](#hostname_taken) | Another organization has already verified this custom hostname. |
 | [`IDENTITY_EXISTS`](#identity_exists) | An identity with this email address already exists in the tenant. |
+| [`IDENTITY_INACTIVE`](#identity_inactive) | Credentials are issued to active members only. |
 | [`INVALID_IDENTITY`](#invalid_identity) | The identity involved is not in a state that allows this operation. |
 | [`INVALID_TRANSITION`](#invalid_transition) | The record is not in a state that allows this step. |
 | [`INVARIANT_VIOLATION`](#invariant_violation) | The change would break an enforced access invariant, so it was rolled back. |
+| [`KEY_MANAGED`](#key_managed) | A key management key belongs to another module. |
+| [`KEY_STATE_INVALID`](#key_state_invalid) | A key management key is not in a state that allows the call. |
 | [`LAST_AUTHENTICATOR`](#last_authenticator) | Deleting this passkey would leave the account with no way to sign in. |
 | [`LAST_OWNER`](#last_owner) | The operation would leave the organization without an active owner. |
 | [`LAST_ROOT_ADMIN`](#last_root_admin) | The operation would leave the platform without an active root administrator. |
+| [`LDAP_BASE_TAKEN`](#ldap_base_taken) | Another organization of this deployment already publishes its LDAP directory under this base DN. |
+| [`LEGAL_HOLD`](#legal_hold) | The person or subject is under a legal hold, so they cannot be erased or deleted. |
 | [`LIMIT_EXCEEDED`](#limit_exceeded) | The tenant has reached a limit on how many of these records it may have. |
 | [`METER_ARCHIVED`](#meter_archived) | The billing meter is archived and accepts no new usage. |
 | [`MFA_ALREADY_ENABLED`](#mfa_already_enabled) | The person already has an authenticator app enrolled. |
+| [`OWNER_INACTIVE`](#owner_inactive) | The owner of a lifecycle workflow run is no longer active, so the run cannot go on. |
 | [`PASSKEY_EXISTS`](#passkey_exists) | This passkey is already registered. |
 | [`PHONE_EXISTS`](#phone_exists) | Another person in this organization has already verified this phone number. |
 | [`RESOURCE_IN_USE`](#resource_in_use) | The record is still referenced by other records, so it cannot be deleted or changed this way. |
 | [`SAME_DATABASE`](#same_database) | The source and target of a store copy are the same database. |
+| [`SECRET_CHECKED_OUT`](#secret_checked_out) | Someone already holds an exclusive check-out of this vault secret, or you hold one yourself. |
+| [`SECRET_PENDING_DELETION`](#secret_pending_deletion) | The vault secret is scheduled for deletion, so it cannot be read, changed, or leased. |
 | [`SLUG_TAKEN`](#slug_taken) | Another organization already uses this slug. |
 | [`SOD_CONFLICT`](#sod_conflict) | The change would give one person a combination of roles that a separation-of-duties rule forbids. |
+| [`SSH_NOT_CONFIGURED`](#ssh_not_configured) | The organization has no SSH certificate authority yet. |
 | [`STORE_NOT_EMPTY`](#store_not_empty) | The target database of an import or copy already holds records. |
 | [`TEAM_MANAGED`](#team_managed) | The group belongs to a team, and its members come from the team. |
 | [`TRANSACTION_ABORTED`](#transaction_aborted) | A database operation failed inside a transaction, so the whole transaction was rolled back. |
+| [`TYPE_DISABLED`](#type_disabled) | The credential type is disabled. |
 | [`VERSION_CONFLICT`](#version_conflict) | The record changed since you read it, so your change or acceptance was refused. |
+| [`VERSION_DISABLED`](#version_disabled) | The version is disabled, so it cannot be revealed or made current. |
+
+### ACCESS_EXPIRING
+
+The access that allows this verifiable credential ends within a minute.
+
+A self-service credential never outlives the grant that allowed `vc:request`: an expiring binding or group membership,
+a just-in-time activation, an access window, or the assumed role or temporary credentials the request came from.
+
+**How to fix:** renew the access (activate the eligible role again, or ask for the binding to be extended), then
+request the credential.
+
+<small>HTTP `409` · thrown by `@better-iam/server`</small>
+
+Example messages:
+
+- The access that allows this credential ends within a minute
 
 ### ACCOUNT_LINK_CONFLICT
 
@@ -1946,6 +2241,24 @@ Example messages:
 
 - …/… already holds different events
 
+### AUTHORITY_UNAVAILABLE
+
+A certificate authority cannot sign: it, or an authority above it, is disabled, revoked or expired.
+
+[`pki.issueCertificate`](/docs/reference/api/pki#issuecertificate), `requestCertificate` and `createAuthority` (for a
+parent) refuse. A revoked authority cannot be changed at all.
+
+**How to fix:** re-enable a disabled authority with [`updateAuthority`](/docs/reference/api/pki#updateauthority), or
+issue from another authority. A revoked or expired authority has to be replaced.
+
+<small>HTTP `409` · thrown by `@better-iam/server`</small>
+
+Example messages:
+
+- A revoked authority cannot change
+- The certificate authority … is …
+- The certificate authority … has expired
+
 ### BILLING_PERIOD_CLOSED
 
 The month has already been invoiced for this billing account, so its usage and prices can no longer change.
@@ -1963,6 +2276,40 @@ Example messages:
 - A period from effectiveFrom on has already been invoiced; invoiced periods keep their prices
 - … has already been invoiced; leave period out to bill the next invoice
 - … has already been invoiced for this billing account
+
+### CHECKOUT_REQUIRED
+
+A vault secret is handed out only through check-outs, so it cannot be revealed directly.
+
+Secrets with a check-out policy that has `required` (shared privileged credentials) refuse
+[`vault.reveal`](/docs/reference/api/vault#reveal), so every use is time-limited, attributed and, when the policy says
+so, explained. The holder of a live check-out may reveal the version they checked out.
+
+**How to fix:** call [`vault.checkout`](/docs/reference/api/vault#checkout) (with a `reason` when the policy asks
+for one) and [`checkin`](/docs/reference/api/vault#checkin) when done.
+
+<small>HTTP `409` · thrown by `@better-iam/server`</small>
+
+Example messages:
+
+- This secret is handed out only through check-outs (vault.checkout)
+- A check-out reveals only the version it handed out
+
+### CLAIM_UNAVAILABLE
+
+A verifiable credential type requires a claim this person has no value for.
+
+Claims marked `required` in the credential type are never left out, so issuing is refused instead (for example, a
+`title` taken from an identity attribute that was never set).
+
+**How to fix:** set the value on the person (such as the identity attribute), or make the claim optional with
+[`verifiableCredentials.updateType`](/docs/reference/api/verifiable-credentials#updatetype).
+
+<small>HTTP `409` · thrown by `@better-iam/server`</small>
+
+Example messages:
+
+- This person has no value for the claim …
 
 ### CONFLICT
 
@@ -1986,7 +2333,7 @@ Example messages:
 - Client ID already exists; tenant binding is immutable.
 - A project with this name already exists
 - A SAML connection with this ID already exists.
-- A revoked connection cannot be rotated.
+- The connection changed while it was being updated; try again.
 
 ### DATABASE_IN_USE
 
@@ -2071,6 +2418,52 @@ Example messages:
 - This flag does not let tenants choose their own value
 - A locked target decides this flag for the tenant
 
+### HOST_KEY_CHANGED
+
+The host key sent with an SSH host's renewal token is not the key the host enrolled with.
+
+`ssh.syncHost` never moves a host to another key, so a stolen renewal token cannot produce a host certificate for an
+attacker's key.
+
+**How to fix:** after rebuilding a server, re-enroll it: get a new join token with
+[`ssh.resetJoinToken`](/docs/reference/api/ssh#resetjointoken) and run `better-iam ssh-host-enroll`.
+
+<small>HTTP `409` · thrown by `@better-iam/server`</small>
+
+Example messages:
+
+- This host key differs from the enrolled one; re-enroll the host with a new join token
+
+### HOST_KEY_IN_USE
+
+The SSH host key is another enrolled host's key.
+
+Each host's key identifies it to clients, and revoking a host publishes its key as revoked, so two hosts never share
+one (a cloned image, or a key copied from another server).
+
+**How to fix:** generate a fresh host key on the server (`ssh-keygen -A` after removing the copied keys), then enroll.
+
+<small>HTTP `409` · thrown by `@better-iam/server`</small>
+
+Example messages:
+
+- Host … already uses this key
+
+### HOST_NAME_TAKEN
+
+Another SSH host of the organization already uses this name or address.
+
+A host certificate vouches for every name and address of its host, so each belongs to one host only.
+
+**How to fix:** remove the address from the other host with [`ssh.updateHost`](/docs/reference/api/ssh#updatehost), or use
+another name.
+
+<small>HTTP `409` · thrown by `@better-iam/server`</small>
+
+Example messages:
+
+- Host … already uses …
+
 ### HOSTNAME_TAKEN
 
 Another organization has already verified this custom hostname.
@@ -2103,6 +2496,21 @@ Example messages:
 
 - Email is already in use in this tenant
 - An identity with this email already exists in this tenant
+
+### IDENTITY_INACTIVE
+
+Credentials are issued to active members only.
+
+The person the credential or offer is for is disabled, deleted, past their scheduled account expiry, or not a member of
+this organization.
+
+**How to fix:** reactivate the account first, or offer the credential to someone else.
+
+<small>HTTP `409` · thrown by `@better-iam/server`</small>
+
+Example messages:
+
+- Credentials are issued to active members only
 
 ### INVALID_IDENTITY
 
@@ -2168,6 +2576,38 @@ Example messages:
 - Access invariant "…" could no longer be evaluated (…); change or delete the invariant first
 - Access invariant "…": … would … … on …/…
 
+### KEY_MANAGED
+
+A key management key belongs to another module.
+
+Keys a certificate authority signs with (`managedBy: 'pki'`) and keys a data protection profile encrypts with
+(`managedBy: 'protection'`) are used only by that module. The keys API refuses to encrypt, decrypt, sign, generate
+data keys or MACs with them, or grant them, so nobody can sign a certificate body or open a value the module did not
+decide on. Binding such a key to another authority or profile is refused too.
+
+**How to fix:** use a key of your own, or go through the module ([`pki.issueCertificate`](/docs/reference/api/pki#issuecertificate),
+[`protection.detokenize`](/docs/reference/api/protection#detokenize)). The key can still be disabled or scheduled for
+deletion, which stops the module.
+
+<small>HTTP `409` · thrown by `@better-iam/server`</small>
+
+### KEY_STATE_INVALID
+
+A key management key is not in a state that allows the call.
+
+Cryptographic calls ([`keys.encrypt`](/docs/reference/api/keys#encrypt), `decrypt`, `sign`, `verify`, the MAC and
+token calls) need an enabled key; a disabled key or a key pending deletion refuses them. State changes are refused
+when they do not apply, such as enabling a key pending deletion or rotating a disabled one.
+
+**How to fix:** [`enable`](/docs/reference/api/keys#enable) the key, or
+[`cancelDeletion`](/docs/reference/api/keys#canceldeletion) first (the key then comes back disabled).
+
+<small>HTTP `409` · thrown by `@better-iam/server`</small>
+
+Example messages:
+
+- A key that is … cannot be …
+
 ### LAST_AUTHENTICATOR
 
 Deleting this passkey would leave the account with no way to sign in.
@@ -2197,6 +2637,7 @@ first, then retry.
 
 Example messages:
 
+- The last owner without an expiry cannot be given one
 - Cannot remove the final active owner
 
 ### LAST_ROOT_ADMIN
@@ -2215,6 +2656,42 @@ Example messages:
 
 - Cannot remove the final root administrator
 
+### LDAP_BASE_TAKEN
+
+Another organization of this deployment already publishes its LDAP directory under this base DN.
+
+The LDAP gateway finds the organization of a bind or search by its base DN, so each base DN belongs to one
+organization.
+
+**How to fix:** choose a base DN of your own, such as your domain (`dc=acme,dc=com`).
+
+<small>HTTP `409` · thrown by `@better-iam/server`</small>
+
+Example messages:
+
+- Another organization publishes its directory under this base DN
+
+### LEGAL_HOLD
+
+The person or subject is under a legal hold, so they cannot be erased or deleted.
+
+A [legal hold](/docs/reference/api/privacy#placehold) keeps a subject's data while litigation or an investigation
+needs it. While it is live, fulfilling an erasure request is refused, and so is every deletion of the person's
+account, because identity deletion checks for holds itself: both `identities.delete` and an erasure request stop
+here. Offboarding and SCIM deprovisioning only disable an account, so they still work and keep the data.
+
+**How to fix:** release the hold with [`privacy.releaseHold`](/docs/reference/api/privacy#releasehold) once it is no
+longer needed, or wait for its `expiresAt`. To refuse an erasure request because the data must be kept, reject it with
+reason `exempt` ([privacy guide](/docs/guides/governance/privacy#legal-holds)).
+
+<small>HTTP `409` · thrown by `@better-iam/server`</small>
+
+Example messages:
+
+- This subject is under a legal hold; release it or reject the request as exempt
+- This person is under a legal hold; release the hold before deleting them
+- People in this organization are under a legal hold; release the holds before deleting it
+
 ### LIMIT_EXCEEDED
 
 The tenant has reached a limit on how many of these records it may have.
@@ -2227,16 +2704,16 @@ bindings per certification campaign.
 **How to fix:** remove records you no longer need, ask the platform operator to raise the limit, or narrow the
 campaign by role or subject type; `tenants.usage` shows the current counts.
 
-<small>HTTP `409` · thrown by `@better-iam/auth`, `@better-iam/server`</small>
+<small>HTTP `409` · thrown by `@better-iam/auth`, `@better-iam/scim`, `@better-iam/server`</small>
 
 Example messages:
 
 - This tenant has reached its member limit (…)
+- This tenant has reached its … limit (…).
 - At most … agreements
+- At most … apps
+- At most … assignments per app; assign groups instead
 - A tenant can define at most … meters
-- A tenant can have at most … budgets
-- At most … plans
-- A campaign covers at most … bindings; narrow it by role or subject type
 
 ### METER_ARCHIVED
 
@@ -2268,6 +2745,26 @@ enroll again ([managing factors](/docs/guides/authentication/mfa#managing-factor
 Example messages:
 
 - MFA is already enabled
+
+### OWNER_INACTIVE
+
+The owner of a lifecycle workflow run is no longer active, so the run cannot go on.
+
+A workflow run uses the rights of the workflow's owner when it started (or of whoever last retried it), and every
+step checks first that this owner is still active and unexpired. A step reached after the owner was disabled,
+offboarded, deleted, or passed their `expiresAt` fails its run with this code (recorded on the run and as
+`workflow:run:fail`); no call returns it. New runs fail the same way until someone takes the workflow over.
+
+**How to fix:** an administrator who holds the steps' permissions retries the failed runs with
+[`workflows.retryRun`](/docs/reference/api/workflows#retryrun), which makes them the runs' owner, or cancels them,
+and saves the workflow with [`workflows.update`](/docs/reference/api/workflows#update) so new runs start with an
+active owner ([lifecycle workflows](/docs/guides/governance/workflows#authority)).
+
+<small>HTTP `409` · thrown by `@better-iam/server`</small>
+
+Example messages:
+
+- The owner of these steps is no longer active; cancel the run, or save the workflow again and start a new one
 
 ### PASSKEY_EXISTS
 
@@ -2334,6 +2831,42 @@ Example messages:
 
 - The source and target are the same database
 
+### SECRET_CHECKED_OUT
+
+Someone already holds an exclusive check-out of this vault secret, or you hold one yourself.
+
+An exclusive check-out policy hands a shared credential to one holder at a time; a caller who already holds a
+check-out of the secret gets this code too rather than a second check-out.
+
+**How to fix:** wait until the holder checks it in or the check-out expires (`vault.get` shows the holder and when),
+renew your own with [`renewLease`](/docs/reference/api/vault#renewlease), or have an administrator end the other
+check-out with [`revokeLease`](/docs/reference/api/vault#revokelease).
+
+<small>HTTP `409` · thrown by `@better-iam/server`</small>
+
+Example messages:
+
+- You already hold a check-out of this secret; check it in or renew it
+- Someone else has this secret checked out; try again when it is checked in
+
+### SECRET_PENDING_DELETION
+
+The vault secret is scheduled for deletion, so it cannot be read, changed, or leased.
+
+[`vault.delete`](/docs/reference/api/vault#delete) keeps a secret for a recovery window of 7 to 30 days before
+`iam.vault.purgeDeleted` removes it; meanwhile only `get`, `restore`, and an immediate `delete` work, and the
+name stays taken.
+
+**How to fix:** [`restore`](/docs/reference/api/vault#restore) the secret if it is still needed.
+
+<small>HTTP `409` · thrown by `@better-iam/server`</small>
+
+Example messages:
+
+- This secret is scheduled for deletion; restore it first
+- This secret is already scheduled for deletion
+- This secret is scheduled for deletion
+
 ### SLUG_TAKEN
 
 Another organization already uses this slug.
@@ -2366,6 +2899,18 @@ Example messages:
 
 - Separation of duties (…): one person cannot hold …
 
+### SSH_NOT_CONFIGURED
+
+The organization has no SSH certificate authority yet.
+
+**How to fix:** create the authorities with [`ssh.setup`](/docs/reference/api/ssh#setup) (before registering hosts).
+
+<small>HTTP `409` · thrown by `@better-iam/server`</small>
+
+Example messages:
+
+- Set up the SSH certificate authority first (ssh.setup)
+
 ### STORE_NOT_EMPTY
 
 The target database of an import or copy already holds records.
@@ -2390,7 +2935,7 @@ The group belongs to a team, and its members come from the team.
 Every team owns a backing group (`team:{slug}`) holding the members of the team and of the teams below it. Only the
 [`teams`](/docs/reference/api/teams) API changes who is in it: `groups.addMember`, `groups.updateMember`,
 `groups.removeMember`, and `groups.delete` refuse it, and access packages, invitations, and onboarding flows cannot
-name it.
+name it. Lifecycle workflow group steps cannot name it either.
 
 **How to fix:** add or remove people with `teams.addMember` / `teams.removeMember`, or delete the team with
 `teams.delete`. Binding roles to the backing group with `bindings.create` is how a team gets access, and is allowed.
@@ -2399,6 +2944,7 @@ name it.
 
 Example messages:
 
+- … belongs to a team; add people to the team instead
 - This group belongs to a team; manage its members with the teams API
 
 ### TRANSACTION_ABORTED
@@ -2418,6 +2964,21 @@ Example messages:
 
 - A nested database operation failed; transaction rolled back
 
+### TYPE_DISABLED
+
+The credential type is disabled.
+
+Disabled types issue no new credentials and are left out of the issuer metadata. Credentials issued earlier are not
+affected.
+
+**How to fix:** enable the type with [`verifiableCredentials.updateType`](/docs/reference/api/verifiable-credentials#updatetype).
+
+<small>HTTP `409` · thrown by `@better-iam/server`</small>
+
+Example messages:
+
+- This credential type is disabled
+
 ### VERSION_CONFLICT
 
 The record changed since you read it, so your change or acceptance was refused.
@@ -2434,6 +2995,23 @@ Example messages:
 
 - The agreement changed; review the current version before accepting
 - Policy version changed
+- The purpose changed; review the current version before deciding
+
+### VERSION_DISABLED
+
+The version is disabled, so it cannot be revealed or made current.
+
+[`vault.setVersionState`](/docs/reference/api/vault#setversionstate) disables a version without erasing it, for
+example while an old credential is being retired.
+
+**How to fix:** enable it again with `setVersionState`, or use another version.
+
+<small>HTTP `409` · thrown by `@better-iam/server`</small>
+
+Example messages:
+
+- Only enabled versions can become current
+- This version is disabled
 
 ## 429 Rate limited
 
@@ -2441,8 +3019,26 @@ Too many attempts in a short time. The error carries `retryAfterMs` and the HTTP
 
 | Code | Meaning |
 | --- | --- |
+| [`QUOTA_EXCEEDED`](#quota_exceeded) | The caller's usage plan does not allow this much use of the meter right now. |
 | [`RATE_LIMITED`](#rate_limited) | There were too many attempts in a short time, so the caller must wait before trying again. |
 | [`TOO_MANY_REQUESTS`](#too_many_requests) | The person already has too many pending access requests. |
+
+### QUOTA_EXCEEDED
+
+The caller's usage plan does not allow this much use of the meter right now.
+
+`iam.quotas.enforce` refuses a call that would go over the plan's throttle (its token bucket is empty) or one of its
+period limits (the day's or month's allowance is spent), counting nothing. The error carries `retryAfterMs`, when the
+bucket has refilled enough or the window starts over, and the HTTP response a `Retry-After` header. It has no
+`retryAfterMs` when the call's cost is larger than the plan could ever allow. The plan that applies is the one assigned
+to the API key, the agent, the person or one of their groups, else the organization's default plan for the meter
+([`quotas`](/docs/reference/api/quotas)).
+
+**How to fix:** wait for `Retry-After` and retry; show the caller their allowance with
+[`quotas.status`](/docs/reference/api/quotas#status), or have an administrator assign a larger plan with
+[`quotas.assign`](/docs/reference/api/quotas#assign).
+
+<small>HTTP `429` · thrown by `@better-iam/server`</small>
 
 ### RATE_LIMITED
 
@@ -2457,11 +3053,13 @@ need to wait, and the HTTP response a `Retry-After` header.
 counters with `identities.unlock`
 ([failed attempts and lockouts](/docs/guides/authentication/sign-in-methods#failed-attempts-and-lockouts)).
 
-<small>HTTP `429` · thrown by `@better-iam/auth`</small>
+<small>HTTP `429` · thrown by `@better-iam/auth`, `@better-iam/server`</small>
 
 Example messages:
 
 - Too many attempts; try again later
+- The controls were evaluated less than a minute ago
+- A key rotates on demand at most ten times a day
 
 ### TOO_MANY_REQUESTS
 
@@ -2501,6 +3099,27 @@ budget's owners; `billing.check` tells callers in advance ([billing](/docs/refer
 Example messages:
 
 - The budget “…” is spent
+
+## 410 HTTP 410
+
+| Code | Meaning |
+| --- | --- |
+| [`VERSION_DESTROYED`](#version_destroyed) | The version's value was destroyed (HTTP 410 Gone). |
+
+### VERSION_DESTROYED
+
+The version's value was destroyed (HTTP 410 Gone).
+
+[`vault.destroyVersion`](/docs/reference/api/vault#destroyversion) erases a version's value for good and keeps its
+record as history, so it can never be revealed or made current again.
+
+**How to fix:** use another version; `vault.listVersions` lists them with their state.
+
+<small>HTTP `410` · thrown by `@better-iam/server`</small>
+
+Example messages:
+
+- This version was destroyed
 
 ## 413 HTTP 413
 
@@ -2573,6 +3192,8 @@ the organization's sign-in URL in its own region (`IamClientError.region` and `.
 | --- | --- |
 | [`INTERNAL_ERROR`](#internal_error) | Something failed on the server that Better IAM does not describe to the caller. |
 | [`INVALID_HIERARCHY`](#invalid_hierarchy) | The tenant hierarchy does not allow this parent and child, or the stored hierarchy is broken. |
+| [`INVALID_SEALED_VALUE`](#invalid_sealed_value) | A stored secret could not be decrypted with the configured secrets. |
+| [`KEY_MATERIAL_UNAVAILABLE`](#key_material_unavailable) | A key management key's material, or a value it protects, could not be opened. |
 | [`SCHEMA_VERSION`](#schema_version) | The database was created by an incompatible version of Better IAM. |
 | [`STORAGE_CORRUPT`](#storage_corrupt) | A stored record could not be decoded. |
 | [`STORAGE_ERROR`](#storage_error) | A database operation failed for a reason other than a conflict or a busy database. |
@@ -2599,6 +3220,7 @@ Example messages:
 
 - Access paths did not complete
 - Impact preview did not complete
+- The CA certificate is malformed
 
 ### INVALID_HIERARCHY
 
@@ -2619,6 +3241,47 @@ Example messages:
 - Child type is not permitted under the new parent
 - Cannot move a tenant under its own subtree
 - Invalid tenant hierarchy
+- The authority chain is broken
+
+### INVALID_SEALED_VALUE
+
+A stored secret could not be decrypted with the configured secrets.
+
+Better IAM seals sensitive values at rest (webhook signing secrets, queued delivery payloads, downstream SCIM tokens,
+and others) with the deployment `secret`. When that secret changed and the old one is not in `previousSecrets`, or the
+stored value was damaged, the value cannot be opened.
+
+**How to fix:** add the secret that sealed the value to `previousSecrets`, then run `rotate-secrets` to re-seal
+everything under the current secret ([secrets](/docs/operations/deployment/secrets)).
+
+<small>HTTP `400`, `500` · thrown by `@better-iam/auth`, `@better-iam/scim`, `@better-iam/server`</small>
+
+Example messages:
+
+- Invalid sealed value
+- Outbox payload is not sealed
+- The stored downstream token cannot be opened.
+- Webhook payload is incomplete
+- The secret value cannot be opened
+
+### KEY_MATERIAL_UNAVAILABLE
+
+A key management key's material, or a value it protects, could not be opened.
+
+Key material is sealed under the deployment `secret`. This error means none of the configured secrets (`secret` and
+`previousSecrets`) opens it: the secret that sealed it was removed before `iam.rotateSecrets()` re-sealed everything.
+Data protection also reports a stored value that fails authentication (altered in storage) this way.
+
+**How to fix:** put the old secret back in `previousSecrets`, run `iam.rotateSecrets()` until it reports `done`, and
+only then remove it. A stored value that was altered cannot be recovered: restore it from a backup or delete the
+token.
+
+<small>HTTP `500` · thrown by `@better-iam/server`</small>
+
+Example messages:
+
+- The key material cannot be opened with the configured secrets
+- A stored value cannot be opened
 
 ### SCHEMA_VERSION
 
@@ -2772,8 +3435,25 @@ Example messages:
 
 | Code | Meaning |
 | --- | --- |
+| [`ENGINE_FAILED`](#engine_failed) | A dynamic secret's engine failed to issue or renew a credential. |
 | [`OAUTH_DISCOVERY`](#oauth_discovery) | The Microsoft Entra ID metadata for a sign-in connection could not be fetched or is not trustworthy. |
+| [`ROTATION_FAILED`](#rotation_failed) | A vault secret's rotator failed to apply the new value. |
 | [`WEBHOOK_REJECTED`](#webhook_rejected) | A webhook endpoint answered a delivery with a non-success HTTP status. |
+| [`WEBHOOK_UNREACHABLE`](#webhook_unreachable) | — |
+
+### ENGINE_FAILED
+
+A dynamic secret's engine failed to issue or renew a credential.
+
+[`vault.lease`](/docs/reference/api/vault#lease) asks the engine configured on the deployment (`vault.engines`) to
+mint a credential for the caller; the engine threw, timed out (`vault.callTimeoutMs`, 30 seconds by default), or
+returned something that does not fit the secret's format. No lease is left behind, and credentials minted for a lease
+that was revoked meanwhile are revoked at once.
+
+**How to fix:** check the system the engine talks to and the engine's logs, then call `lease` again. The lease's
+`vault:lease` audit event (outcome `deny`) carries the error.
+
+<small>HTTP `400`, `502` · thrown by `@better-iam/server`</small>
 
 ### OAUTH_DISCOVERY
 
@@ -2794,6 +3474,20 @@ Example messages:
 - Microsoft metadata is incomplete.
 - Microsoft endpoints must use the authority.
 
+### ROTATION_FAILED
+
+A vault secret's rotator failed to apply the new value.
+
+[`vault.rotate`](/docs/reference/api/vault#rotate) (and the scheduled `iam.vault.rotateDue`) stage a new version
+as `pending` and call the secret's rotator to apply it to the system it unlocks; the rotator threw or timed out. The
+current version stays current and the pending one is kept, so the next attempt passes the rotator the same value. The
+error is recorded on the secret (`rotation.lastFailure`, with secret values redacted) and in a `vault:rotate`
+audit event with outcome `deny`; scheduled retries back off from one hour to a day.
+
+**How to fix:** fix what the rotator reported, then rotate again. Rotators must be idempotent.
+
+<small>HTTP `502` · thrown by `@better-iam/server`</small>
+
 ### WEBHOOK_REJECTED
 
 A webhook endpoint answered a delivery with a non-success HTTP status.
@@ -2809,6 +3503,10 @@ use `webhooks.redeliver` once it is fixed ([retries](/docs/guides/events/webhook
 Example messages:
 
 - Webhook endpoint responded with status …
+
+### WEBHOOK_UNREACHABLE
+
+<small>HTTP `502` · thrown by `@better-iam/server`</small>
 
 ## 503 HTTP 503
 

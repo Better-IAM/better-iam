@@ -1,11 +1,13 @@
 import {
   IamError,
+  type AuditEvent,
   type CredentialInput,
   type IamStore,
   type Identity,
   type ResourceRef,
   type Session,
 } from '@better-iam/core';
+import { appClientAllowed } from './applications.js';
 import { attributeValues } from './catalog.js';
 import type { ServerContext } from './context.js';
 import type { Binding } from './models.js';
@@ -124,6 +126,14 @@ export function createFederation(ctx: ServerContext, bindings: BindingApi) {
             'VERIFIED_EMAIL_REQUIRED',
             'Federation enrollment needs a verified email',
           );
+        // As with self sign-up, nobody joins the platform (root) tenant by signing in somewhere else: platform accounts
+        // are created by an administrator, then linked.
+        if ((await ctx.tenant(tx, input.tenantId)).parentId === null)
+          throw new IamError(
+            'FORBIDDEN',
+            'Root identity provisioning requires an administrator',
+            403,
+          );
         if (
           (
             await tx.find<Identity>('identities', {
@@ -205,6 +215,65 @@ export function createFederation(ctx: ServerContext, bindings: BindingApi) {
       }),
     completeAuthentication,
     syncRoleMappings,
+    /** Records a protocol's audit event and fans it out (webhooks, plugins, `iam.events` subscribers). */
+    recordAudit: (tx: IamStore, event: AuditEvent) => ctx.events.recordAudit(tx, event),
+    /**
+     * The groups and roles an identity holds right now, as decisions see them: live memberships, and bindings that have
+     * started, not ended, are inside their access window, and (when eligible) activated. For claims protocols put in
+     * tokens (the OAuth provider's `iam` scope), so a token never lists a role that grants nothing yet.
+     */
+    liveGrants: (identityId: string, tenantId: string) =>
+      store.transaction(async (tx) => {
+        const sources = await ctx.decisions.grantSources(tx, identityId, tenantId);
+        return {
+          groupIds: [...sources.groupIds],
+          roleIds: [...new Set(sources.bindings.map((binding) => binding.roleId))],
+        };
+      }),
+    /**
+     * Whether a person may get tokens for an OAuth client: false when an app of the catalog governs the client and the
+     * person does not have it (applications.ts). The OAuth provider asks on every code, token refresh and userinfo.
+     */
+    clientAllowed: (identityId: string, tenantId: string, clientId: string) =>
+      appClientAllowed(ctx, identityId, tenantId, clientId),
+    /**
+     * Before a tenant-managed sign-in connection trusts something new (an IdP issuer, a signing certificate): whoever
+     * controls that trust can sign in as every account linked through it (`providerId`). So the change needs a recent
+     * sign-in in person, and when owners or root administrators are linked through it, a caller who could control
+     * those accounts anyway: a root principal, or for owners another owner of the tenant (as `assertAccountControl`
+     * requires for their sign-in address). Refusals are 403 ACCESS_DENIED.
+     */
+    assertTrustChange: async (
+      credential: CredentialInput,
+      input: { tenantId: string; providerId: string },
+    ) => {
+      const authenticated = await ctx.principals.authenticate(credential);
+      await store.transaction(async (tx) => {
+        const principal = await ctx.principals.currentPrincipal(tx, authenticated);
+        auth.requireRecent(principal);
+        const root = await ctx.rootPrincipal(tx, principal);
+        const owner =
+          principal.session.kind === 'user' &&
+          principal.identity.owner &&
+          principal.identity.tenantId === input.tenantId &&
+          principal.session.tenantId === input.tenantId;
+        for (const link of await tx.find('externalIdentities', {
+          tenantId: input.tenantId,
+          providerId: input.providerId,
+        })) {
+          const linked = await tx.get<Identity>('identities', String(link.identityId));
+          if (!linked || (!linked.owner && !linked.rootAdmin) || root) continue;
+          if (!linked.rootAdmin && owner) continue;
+          throw new IamError(
+            'ACCESS_DENIED',
+            linked.rootAdmin
+              ? 'A root administrator signs in through this connection; only a root administrator can change what it trusts'
+              : 'An owner signs in through this connection; only an owner can change what it trusts',
+            403,
+          );
+        }
+      });
+    },
   };
   return { completeAuthentication, syncRoleMappings, protocolHost };
 }

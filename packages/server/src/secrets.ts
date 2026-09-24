@@ -1,6 +1,7 @@
 import { encryptSecret, openSecret } from '@better-iam/auth';
 import { IamError, type IamStore, type StoredRecord } from '@better-iam/core';
 import type { ServerContext } from './context.js';
+import { kmsSealedField } from './kms.js';
 
 export interface SecretRotationOptions {
   /** Report what would change without writing anything. */
@@ -76,6 +77,57 @@ const FIELDS: SealedField[] = [
     read: (record) => (typeof record.keySealed === 'string' ? record.keySealed : undefined),
     write: (record, sealed) => ({ ...record, keySealed: sealed }),
     context: (record) => `inference-provider:${record.id}`,
+  },
+  // KMS key material sealed under the deployment secret (kms.ts); data protection keys are wrapped under KMS keys.
+  kmsSealedField,
+  {
+    // Vault secret values (vault.ts `versionContext`); destroyed versions hold none, and values under a
+    // customer-managed key are KMS ciphertexts (the key's own material is re-sealed with the KMS entry).
+    collection: 'vaultVersions',
+    filter: {},
+    read: (record) =>
+      typeof record.sealed === 'string' && record.kmsKeyId === undefined ? record.sealed : undefined,
+    write: (record, sealed) => ({ ...record, sealed }),
+    context: (record) =>
+      `vault:${String(record.tenantId)}:${String(record.secretId)}:${String(record.version)}`,
+  },
+  {
+    // Dynamic secret engines' revocation handles (vault.ts `leaseHandleContext`).
+    collection: 'vaultLeases',
+    filter: {},
+    read: (record) => (typeof record.handleSealed === 'string' ? record.handleSealed : undefined),
+    write: (record, sealed) => ({ ...record, handleSealed: sealed }),
+    context: (record) => `vault-lease:${record.id}`,
+  },
+  {
+    // SSH certificate authority keys (ssh.ts `authorityContext`).
+    collection: 'sshAuthorities',
+    filter: {},
+    read: (record) => (typeof record.keySealed === 'string' ? record.keySealed : undefined),
+    write: (record, sealed) => ({ ...record, keySealed: sealed }),
+    context: (record) => `ssh-authority:${record.id}`,
+  },
+  {
+    // Verifiable credential issuer keys (vc.ts `keyContext`).
+    collection: 'vcIssuerKeys',
+    filter: {},
+    read: (record) => (typeof record.keySealed === 'string' ? record.keySealed : undefined),
+    write: (record, sealed) => ({ ...record, keySealed: sealed }),
+    context: (record) => `vc-issuer-key:${record.id}`,
+  },
+  {
+    // Shared Signals poll sources' bearer tokens (signal-receiver.ts `pollTokenContext`).
+    collection: 'signalSources',
+    filter: {},
+    read: (record) => {
+      const poll = record.poll as { tokenSealed?: unknown } | undefined;
+      return typeof poll?.tokenSealed === 'string' ? poll.tokenSealed : undefined;
+    },
+    write: (record, sealed) => ({
+      ...record,
+      poll: { ...(record.poll as object), tokenSealed: sealed },
+    }),
+    context: (record) => `signal-poll:${record.id}`,
   },
 ];
 

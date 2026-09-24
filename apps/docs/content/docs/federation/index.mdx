@@ -6,7 +6,7 @@ packages: ['@better-iam/oauth', '@better-iam/saml', '@better-iam/scim', '@better
 sources: ['docs/protocols.md', 'docs/enterprise.md', 'packages/server/src/federation.ts', 'packages/server/src/http.ts']
 ---
 
-import { ArrowDownToLine, ArrowUpFromLine, Bot, Building, KeyRound, LogIn, RadioTower, Server, ShieldCheck } from '@/lib/icons';
+import { ArrowDownToLine, ArrowUpFromLine, Bot, Building, IdCard, KeyRound, ListTree, LogIn, Radar, RadioTower, Server, ShieldCheck } from '@/lib/icons';
 
 Federation means trusting another system to tell you who someone is, or telling another system yourself. It is
 how Better IAM fits into the identity systems around it.
@@ -78,6 +78,9 @@ the page that covers it.
 | Let a customer's directory push users and groups to you | SCIM 2.0 (inbound) | `createScimService` | [SCIM inbound](/docs/federation/scim) |
 | Push your members to SaaS apps such as Slack or GitHub | SCIM 2.0 (outbound) | `createScimProvisioner` | [SCIM outbound](/docs/federation/scim-outbound) |
 | Tell security monitoring systems (SIEMs) and apps about revoked sessions and disabled accounts | Shared Signals (CAEP, RISC) | `createSharedSignalsTransmitter` | [Shared Signals](/docs/federation/shared-signals) |
+| Hear from a customer's IdP when a session is revoked, credentials leak, or an account is disabled | Shared Signals (CAEP, RISC) receiver | `signals` API group, `iam.signals.poll()` | [Shared Signals receiver](/docs/federation/shared-signals-receiver) |
+| Give people signed credentials (an employee badge) they keep in a digital wallet | OpenID4VCI, SD-JWT VC, Token Status List | `verifiableCredentials` API group | [Verifiable credentials](/docs/federation/verifiable-credentials) |
+| Let VPNs, NAS devices and legacy apps look up people and check passwords | LDAPv3 | `createLdapServer` | [LDAP directory gateway](/docs/federation/ldap) |
 
 ## How the data flows
 
@@ -209,6 +212,15 @@ umbrella package. All factories are server-only.
   </Card>
   <Card icon={<ArrowUpFromLine />} title="SCIM outbound" href="/docs/federation/scim-outbound">
     Keep downstream SaaS directories in step with your members.
+  </Card>
+  <Card icon={<IdCard />} title="Verifiable credentials" href="/docs/federation/verifiable-credentials">
+    SD-JWT credentials issued to digital wallets over OpenID4VCI, with status lists for revocation.
+  </Card>
+  <Card icon={<Radar />} title="Shared Signals receiver" href="/docs/federation/shared-signals-receiver">
+    Receive CAEP and RISC events from upstream identity providers by push or poll.
+  </Card>
+  <Card icon={<ListTree />} title="LDAP directory gateway" href="/docs/federation/ldap">
+    A read-only LDAPv3 server for VPNs, NAS devices and other apps that only speak LDAP.
   </Card>
 </Cards>
 

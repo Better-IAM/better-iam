@@ -47,9 +47,10 @@ import {
   type OnboardingStepRecord,
   type ResolvedOnboardingSettings,
 } from '../onboarding.js';
+import { invariantSnapshot, invariantVerify } from '../invariants.js';
 import { actsInOwnRight } from '../session-kinds.js';
 import { sodAssertIdentity } from '../sod.js';
-import { assertNotTeamGroup } from '../teams.js';
+import { assertNotTeamGroup, teamChainBindings, teamsSyncingFrom } from '../teams.js';
 import { id } from '../utils.js';
 import { text } from '../validation.js';
 import { afterIdentityChange } from './package-automation.js';
@@ -224,9 +225,67 @@ function descendantTypes(ctx: ServerContext, type: string): Set<string> {
 const sameJson = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 
 /**
+ * Whether `principal` may put people into a completion group: iam:groups:update on it and the use of the grant
+ * authority behind each of its bindings, and behind those of the teams that sync from it (and of the teams above
+ * them), since team sync copies the group's members there.
+ */
+async function authorizeCompletionGroup(
+  ctx: ServerContext,
+  tx: IamStore,
+  principal: AuthenticatedPrincipal,
+  tenantId: string,
+  groupId: string,
+): Promise<void> {
+  await allow(
+    ctx,
+    tx,
+    principal,
+    tenantId,
+    'iam:groups:update',
+    groupId,
+    'add people to a completion group',
+  );
+  const syncing = (await teamsSyncingFrom(tx, tenantId, groupId)).map((team) => team.id);
+  for (const binding of [
+    ...(await tx.find<Binding>('bindings', { tenantId, subjectType: 'group', subjectId: groupId })),
+    ...(await teamChainBindings(tx, tenantId, syncing)),
+  ])
+    await ctx.grantingAuthority(tx, principal, tenantId, binding.authorityId);
+}
+
+/**
+ * Whether the flow's owner (`groupsOwnerId`) may still put people into a completion group: active, and passing the
+ * check `saveFlow` made. Groups whose authority the owner lost (demoted, revoked, left) are skipped, like the
+ * automatic rules of access packages whose owner lost the rights.
+ */
+async function ownerMayGrant(
+  ctx: ServerContext,
+  tx: IamStore,
+  owner: Identity | undefined,
+  tenantId: string,
+  groupId: string,
+): Promise<boolean> {
+  if (!owner || owner.status !== 'active' || ctx.identityExpired(owner)) return false;
+  try {
+    await authorizeCompletionGroup(
+      ctx,
+      tx,
+      ctx.decisions.simulatedPrincipal(owner, true),
+      tenantId,
+      groupId,
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Validates and stores a flow (a new one without `previous`). Answers that fill identity attributes need
  * iam:identities:update, and completion groups need iam:groups:update on each group plus the use of the grant
- * authorities behind the group's bindings, because finishing the flow makes the person a member.
+ * authorities behind the group's bindings, because finishing the flow makes the person a member. Every completion
+ * group is checked again whenever a change alters who completes the flow or when (steps, rule, scope,
+ * includeExisting, new groups), and the editor then becomes the owner the groups are applied under.
  */
 async function saveFlow(
   ctx: ServerContext,
@@ -348,7 +407,18 @@ async function saveFlow(
   const newGroups = (completionGroupIds ?? []).filter(
     (groupId) => !previous?.completionGroupIds?.includes(groupId),
   );
-  if (mapsAttributes || newGroups.length) {
+  // Finishing the flow puts people into its completion groups, so a change to who finishes it or when (easier steps,
+  // a wider rule or scope, existing people, resuming it, another group) re-checks every group, not only new ones.
+  const reauthorize =
+    Boolean(completionGroupIds?.length) &&
+    (!previous ||
+      newGroups.length > 0 ||
+      !sameJson(previous.steps, steps) ||
+      !sameJson(previous.rule, rule) ||
+      previous.appliesTo !== appliesTo ||
+      previous.includeExisting !== includeExisting ||
+      (enabled && !previous.enabled));
+  if (mapsAttributes || reauthorize) {
     if (!actsInOwnRight(principal.session))
       throw new IamError(
         'INVALID_INPUT',
@@ -366,23 +436,30 @@ async function saveFlow(
       tenant.id,
       'let answers fill identity attributes',
     );
-  for (const groupId of newGroups) {
-    await allow(
-      ctx,
-      tx,
-      principal,
-      tenant.id,
-      'iam:groups:update',
-      groupId,
-      'add people to a completion group',
-    );
-    for (const binding of await tx.find<Binding>('bindings', {
-      tenantId: tenant.id,
-      subjectType: 'group',
-      subjectId: groupId,
-    }))
-      await ctx.grantingAuthority(tx, principal, tenant.id, binding.authorityId);
-  }
+  if (reauthorize)
+    for (const groupId of completionGroupIds!)
+      await authorizeCompletionGroup(ctx, tx, principal, tenant.id, groupId);
+  // The groups stand on the authority of whoever last passed that check (kept by edits that change nothing of it).
+  let groupsOwnerId = reauthorize
+    ? principal.identity.id
+    : (previous?.groupsOwnerId ?? previous?.authorId);
+  // Naming the groups again hands them to an editor who passes the check (how an administrator takes over the groups
+  // of an owner who lost the authority); an editor who does not pass it leaves the owner as it was.
+  if (
+    !reauthorize &&
+    completionGroupIds?.length &&
+    input.completionGroupIds !== undefined &&
+    groupsOwnerId !== principal.identity.id &&
+    actsInOwnRight(principal.session) &&
+    !principal.session.impersonatorId
+  )
+    try {
+      for (const groupId of completionGroupIds)
+        await authorizeCompletionGroup(ctx, tx, principal, tenant.id, groupId);
+      groupsOwnerId = principal.identity.id;
+    } catch {
+      /* the owner stays */
+    }
   const others = (await tx.find<OnboardingFlow>('onboardingFlows', { tenantId: tenant.id })).filter(
     (flow) => flow.id !== previous?.id,
   );
@@ -414,6 +491,7 @@ async function saveFlow(
         : {}),
     steps,
     ...(completionGroupIds?.length ? { completionGroupIds } : {}),
+    ...(completionGroupIds?.length && groupsOwnerId !== undefined ? { groupsOwnerId } : {}),
     version: previous ? previous.version + (sameJson(previous.steps, steps) ? 0 : 1) : 1,
     authorId: principal.identity.id,
     createdAt: previous?.createdAt ?? now,
@@ -540,8 +618,9 @@ async function recordCompletions(
 
 /**
  * Makes a person a member of the completion groups of flows they finished, one transaction per flow so a
- * separation-of-duties refusal in one leaves the others (and the recorded completion) in place. A refusal is kept
- * on the progress record as `completionError` and retried the next time the person's onboarding is read.
+ * separation-of-duties or invariant refusal in one leaves the others (and the recorded completion) in place. A refusal
+ * is kept on the progress record as `completionError` and retried the next time the person's onboarding is read, and
+ * so is a group the flow's owner may no longer add people to (audited once as `onboarding:groups-skipped`).
  */
 async function applyCompletionGroups(
   ctx: ServerContext,
@@ -570,7 +649,12 @@ async function applyCompletionGroups(
           )
             return false;
           const now = ctx.now();
-          const added: string[] = [];
+          // The groups are applied under the authority of the flow's owner (saveFlow), checked again now: a group
+          // they can no longer add people to is skipped, reported, and retried on the next read.
+          const ownerId = flow.groupsOwnerId ?? flow.authorId;
+          const owner = ownerId ? await tx.get<Identity>('identities', ownerId) : undefined;
+          const planned: Array<{ groupId: string; uniqueKey: string; existing?: GroupMember }> = [];
+          const skipped: string[] = [];
           for (const groupId of flow.completionGroupIds) {
             const group = await tx.get<Group>('groups', groupId);
             if (group?.tenantId !== tenantId) continue;
@@ -580,6 +664,15 @@ async function applyCompletionGroups(
             )[0];
             if (existing && (existing.expiresAt === undefined || existing.expiresAt > now))
               continue;
+            if (!(await ownerMayGrant(ctx, tx, owner, tenantId, groupId))) skipped.push(groupId);
+            else planned.push({ groupId, uniqueKey, ...(existing ? { existing } : {}) });
+          }
+          // Enforced invariants and separation of duties hold for completion groups as for groups.addMember.
+          const guardrails = planned.length
+            ? await invariantSnapshot(ctx, tx, tenantId, 'iam:groups:update')
+            : undefined;
+          const added: string[] = [];
+          for (const { groupId, uniqueKey, existing } of planned) {
             if (existing) {
               const { expiresAt: _ended, packageAssignmentId: _tag, ...kept } = existing;
               await tx.put<GroupMember>('groupMembers', kept);
@@ -593,12 +686,36 @@ async function applyCompletionGroups(
               });
             added.push(groupId);
           }
-          if (added.length) await sodAssertIdentity(ctx, tx, tenantId, identityId);
-          const { completionError: _error, ...rest } = progress;
-          await tx.put<OnboardingProgress>('onboardingProgress', {
-            ...rest,
-            groupsAppliedVersion: flow.version,
-          });
+          if (added.length) {
+            await sodAssertIdentity(ctx, tx, tenantId, identityId);
+            await invariantVerify(ctx, tx, tenantId, guardrails);
+          }
+          const { completionError: previousError, ...rest } = progress;
+          const refusal = skipped.length
+            ? `Completion groups skipped: the flow's owner can no longer add people to ${skipped.length === 1 ? 'group' : 'groups'} ${skipped.join(', ')}; an administrator who can should save the flow's completion groups again`
+            : undefined;
+          await tx.put<OnboardingProgress>(
+            'onboardingProgress',
+            refusal
+              ? { ...rest, completionError: refusal }
+              : { ...rest, groupsAppliedVersion: flow.version },
+          );
+          if (refusal && refusal !== previousError)
+            await ctx.events.recordAudit(tx, {
+              id: id(),
+              tenantId,
+              actorId: identityId,
+              action: 'onboarding:groups-skipped',
+              resourceId: identityId,
+              timestamp: Date.now(),
+              outcome: 'deny',
+              metadata: {
+                flowId,
+                flow: flow.name,
+                groupIds: skipped,
+                ...(ownerId ? { ownerId } : {}),
+              },
+            });
           if (added.length)
             await ctx.events.recordAudit(tx, {
               id: id(),
@@ -1465,7 +1582,8 @@ export function createOnboardingApi(ctx: ServerContext) {
     /**
      * Clears progress so people (or tenants) go through a flow, or one step of it, again. The tenant that defines the
      * flow may reset anyone it reaches (everyone when `subjectId` is omitted); a tenant the flow reaches may reset its
-     * own people. Audited as `onboarding:reset`.
+     * own people. Resetting one's own progress through a flow with completion groups needs the right to add oneself to
+     * those groups. Audited as `onboarding:reset`.
      */
     resetProgress: async (
       credential: CredentialInput,
@@ -1499,6 +1617,25 @@ export function createOnboardingApi(ctx: ServerContext) {
               ...(subjectId !== undefined ? { subjectId } : {}),
             })
           ).filter((record) => definer || record.tenantId === tenant.id);
+          // Finishing the flow again would put the caller back into its completion groups (after an administrator
+          // took them out, say), so resetting one's own progress needs the right to add oneself to them.
+          if (
+            flow.completionGroupIds?.length &&
+            records.some(
+              (record) =>
+                record.subjectId === principal.identity.id && record.tenantId === flow.tenantId,
+            )
+          )
+            try {
+              for (const groupId of flow.completionGroupIds)
+                await authorizeCompletionGroup(ctx, tx, principal, flow.tenantId, groupId);
+            } catch {
+              throw new IamError(
+                'ACCESS_DENIED',
+                'Resetting your own progress through a flow with completion groups needs the right to add yourself to them',
+                403,
+              );
+            }
           for (const record of records) {
             if (stepId === undefined) await tx.delete('onboardingProgress', record.id);
             else {

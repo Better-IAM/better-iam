@@ -150,6 +150,87 @@ const tenantCollections = [
   'billingSubscriptions',
   'billingCoupons',
   'billingDiscounts',
+  // Key management (kms.ts): keys, their sealed versions, aliases and grants.
+  'kmsKeys',
+  'kmsKeyVersions',
+  'kmsAliases',
+  'kmsGrants',
+  // Private certificate authority (pki.ts): authorities and the certificates they issued.
+  'pkiAuthorities',
+  'pkiCertificates',
+  // Data protection (tokenization.ts): tokenization profiles and the tokens they issued.
+  'protectionProfiles',
+  'protectionTokens',
+  // Secrets vault (vault.ts): secrets, their sealed versions, check-outs and leases, access records.
+  'vaultSecrets',
+  'vaultVersions',
+  'vaultLeases',
+  'vaultAccess',
+  // API usage plans and quotas (quotas.ts): plans, their assignments, and the window counters and throttle buckets.
+  'quotaPlans',
+  'quotaAssignments',
+  'quotaCounters',
+  // Privacy and consent (privacy.ts): purposes, current decisions and their history, data-subject requests and their
+  // exports, legal holds, restrictions of processing, and the tenant's privacy settings.
+  'privacyPurposes',
+  'privacyConsents',
+  'privacyConsentEvents',
+  'privacyRequests',
+  'privacyExports',
+  'privacyHolds',
+  'privacyRestrictions',
+  'privacySettings',
+  // Lifecycle workflows (workflows.ts): definitions, their runs, and the mover/leaver baselines.
+  'workflows',
+  'workflowRuns',
+  'workflowSubjects',
+  // Compliance center (compliance.ts): controls, exceptions, evaluation results and runs.
+  'complianceControls',
+  'complianceExceptions',
+  'complianceResults',
+  'complianceRuns',
+  'complianceCheckpoints',
+  // Application catalog (applications.ts): apps, their assignments, and each person's launches.
+  'applications',
+  'appAssignments',
+  'appLaunches',
+  // SSH certificate authority (ssh.ts): settings, authority keys, hosts, and issued certificates.
+  'sshSettings',
+  'sshAuthorities',
+  'sshHosts',
+  'sshCertificates',
+  // Verifiable credentials (vc.ts): issuer keys, credential types, issued credentials, status lists, wallet offers and
+  // proof nonces.
+  'vcIssuerKeys',
+  'vcCredentialTypes',
+  'vcIssued',
+  'vcStatusLists',
+  'vcOffers',
+  'vcNonces',
+  // LDAP directory gateway (ldap.ts): the tenant's settings and its entry in the base DN index.
+  'ldapSettings',
+  'ldapBases',
+  // Threat detection and response (threats.ts): detections, incidents and their notes, identity risk, sign-in
+  // baselines, the audit-reading cursor, settings, playbooks, and the responses taken.
+  'threatDetections',
+  'threatIncidents',
+  'threatNotes',
+  'identityRisk',
+  'threatBaselines',
+  'threatCursors',
+  'threatSettings',
+  'threatPlaybooks',
+  'threatResponses',
+  // Device posture (devices.ts): registered devices, their keys (ids are global thumbprints; rows carry the tenant),
+  // enrollment codes, integrations, and the tenant's compliance settings.
+  'registeredDevices',
+  'deviceKeys',
+  'deviceEnrollments',
+  'deviceIntegrations',
+  'deviceSettings',
+  // Shared Signals receiver (signal-receiver.ts): the tenant's transmitters and the security events they sent.
+  'signalSources',
+  'signalEvents',
 ];
 
 export interface AccessDigestResult {
@@ -206,11 +287,19 @@ export function createLifecycle(ctx: ServerContext) {
           if (typeof realm.deletedAt !== 'number')
             await tx.put('tenants', { ...realm, deletedAt: Date.now() });
       });
-      // Audit events recorded before the hash chain existed are chained once, in timestamp order per tenant.
+      // Audit events recorded before the hash chain existed are chained once, in timestamp order per tenant. Only a
+      // tenant without a chain yet is backfilled: once it has one, every writer chains, so an unchained event there
+      // was inserted around them and must stay visible to audit.verify rather than be folded in on the next start.
       await store.transaction(async (tx) => {
         // Filtered in the database: only the (normally zero) unchained events are read at startup.
-        const pending = (await tx.find<AuditEvent>('audit', { sequence: undefined }))
-          .filter((event) => typeof event.sequence !== 'number')
+        const loose = (await tx.find<AuditEvent>('audit', { sequence: undefined })).filter(
+          (event) => typeof event.sequence !== 'number',
+        );
+        const chainless = new Set<string>();
+        for (const tenantId of new Set(loose.map((event) => event.tenantId)))
+          if (!(await tx.get('auditChains', tenantId))) chainless.add(tenantId);
+        const pending = loose
+          .filter((event) => chainless.has(event.tenantId))
           .sort(
             (a, b) =>
               (a.tenantId < b.tenantId ? -1 : a.tenantId > b.tenantId ? 1 : 0) ||

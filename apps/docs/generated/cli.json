@@ -1,5 +1,5 @@
 {
- "version": "0.1.0",
+ "version": "0.2.0",
  "commands": [
   {
    "name": "init",
@@ -585,6 +585,55 @@
    ],
    "examples": [],
    "description": "monitor-invariants evaluates every organization's invariants (or one --tenant's) and records invariant:broken / invariant:restored audit events when their status changes, so webhooks can alert; a deployment operation for cron."
+  },
+  {
+   "name": "detect-threats",
+   "group": "Operations",
+   "summary": "Read each organization's new audit events and raise threat detections",
+   "usage": "better-iam detect-threats --config better-iam.config.mjs [--tenant TENANT_ID] [--max-events N]",
+   "target": "config",
+   "args": [],
+   "flags": [
+    {
+     "flag": "--tenant",
+     "value": "TENANT_ID",
+     "optional": true,
+     "description": "Only this organization (default: every active one)"
+    },
+    {
+     "flag": "--max-events",
+     "value": "N",
+     "optional": true,
+     "description": "Most unread audit events read per organization and run",
+     "default": 2000
+    },
+    {
+     "flag": "--config",
+     "value": "PATH",
+     "optional": true,
+     "description": "Configuration module; default: the nearest better-iam.config.mjs, .js, or .ts",
+     "env": "BETTER_IAM_CONFIG"
+    },
+    {
+     "flag": "--format",
+     "value": "FORMAT",
+     "optional": true,
+     "description": "Output as json (indented, default), compact (one line), or table",
+     "choices": [
+      "json",
+      "compact",
+      "table"
+     ]
+    },
+    {
+     "flag": "--query",
+     "value": "PATH",
+     "optional": true,
+     "description": "Print only part of the result, e.g. summary.create or findings[].kind (strings print raw)"
+    }
+   ],
+   "examples": [],
+   "description": "detect-threats runs identity threat detection for every active organization (or one --tenant): it reads up to --max-events (2000) unread audit events from the organization's cursor, verifies their hash chain (a break is reported as audit-tampering), evaluates the detection rules, records detections and incidents, updates identity risk, and runs the organization's response playbooks. It prints what the run did; pending counts organizations with more unread events than one run reads, which the next run continues. A deployment operation for cron, every minute."
   },
   {
    "name": "rotate-secrets",
@@ -2162,6 +2211,722 @@
    "description": "who-can lists every active identity of the tenant that could perform ACTION on RESOURCE, with the reason (policies.whoCan, which needs iam:policies:simulate); root administrators are not listed because their override applies everywhere."
   },
   {
+   "name": "ssh-cert",
+   "group": "Access",
+   "summary": "Get a short-lived SSH certificate for your key",
+   "usage": "better-iam ssh-cert --config better-iam.config.mjs --tenant TENANT_ID [--key PATH] [--hosts HOST,...] [--logins LOGIN,...] [--ttl-minutes N] [--reason TEXT] [--known-hosts PATH] [--no-write] [--url URL] [--profile NAME]",
+   "target": "token",
+   "args": [],
+   "flags": [
+    {
+     "flag": "--tenant",
+     "value": "TENANT_ID",
+     "optional": false,
+     "description": "The tenant to act in",
+     "env": "BETTER_IAM_TENANT"
+    },
+    {
+     "flag": "--key",
+     "value": "PATH",
+     "optional": true,
+     "description": "Your OpenSSH public key (default ~/.ssh/id_ed25519.pub)"
+    },
+    {
+     "flag": "--hosts",
+     "value": "HOST,...",
+     "optional": true,
+     "description": "Only these hosts"
+    },
+    {
+     "flag": "--logins",
+     "value": "LOGIN,...",
+     "optional": true,
+     "description": "Only these logins"
+    },
+    {
+     "flag": "--ttl-minutes",
+     "value": "N",
+     "optional": true,
+     "description": "Lifetime (default and maximum from the organization's settings)"
+    },
+    {
+     "flag": "--reason",
+     "value": "TEXT",
+     "optional": true,
+     "description": "Why you need access (audited)"
+    },
+    {
+     "flag": "--known-hosts",
+     "value": "PATH",
+     "optional": true,
+     "description": "Where to write the known_hosts lines (default ~/.ssh/better-iam_known_hosts)"
+    },
+    {
+     "flag": "--no-write",
+     "optional": true,
+     "description": "Print the certificate instead of saving files"
+    },
+    {
+     "flag": "--config",
+     "value": "PATH",
+     "optional": true,
+     "description": "Configuration module; default: the nearest better-iam.config.mjs, .js, or .ts",
+     "env": "BETTER_IAM_CONFIG"
+    },
+    {
+     "flag": "--url",
+     "value": "URL",
+     "optional": true,
+     "description": "Call a running IAM server (https://host or https://host/api/iam) instead of loading the configuration",
+     "env": "BETTER_IAM_URL"
+    },
+    {
+     "flag": "--profile",
+     "value": "NAME",
+     "optional": true,
+     "description": "Saved session to act as (see login); ignored while BETTER_IAM_TOKEN is set",
+     "env": "BETTER_IAM_PROFILE"
+    },
+    {
+     "flag": "--format",
+     "value": "FORMAT",
+     "optional": true,
+     "description": "Output as json (indented, default), compact (one line), or table",
+     "choices": [
+      "json",
+      "compact",
+      "table"
+     ]
+    },
+    {
+     "flag": "--query",
+     "value": "PATH",
+     "optional": true,
+     "description": "Print only part of the result, e.g. summary.create or findings[].kind (strings print raw)"
+    }
+   ],
+   "examples": [
+    "better-iam ssh-cert --tenant ten_123",
+    "better-iam ssh-cert --hosts web-01 --logins deploy --ttl-minutes 30 --reason \"hotfix 42\""
+   ],
+   "description": "ssh-cert sends your public key (--key, default ~/.ssh/id_ed25519.pub) to the organization's SSH certificate authority as BETTER_IAM_TOKEN or the session saved by login, and saves the certificate it returns next to the key (id_ed25519-cert.pub), where ssh picks it up. The certificate names every enrolled host and login policies allow you (ssh:login on ssh-login/{host}/{login}), or only --hosts and --logins. It also writes the organization's host authority to --known-hosts (default ~/.ssh/better-iam_known_hosts): add that file to UserKnownHostsFile in ~/.ssh/config so hosts are verified by certificate, and the host revocation list written beside it (better-iam_revoked_hosts) to RevokedHostKeys."
+  },
+  {
+   "name": "ssh-host-enroll",
+   "group": "Setup",
+   "summary": "Enroll this server with the SSH certificate authority",
+   "usage": "better-iam ssh-host-enroll --config better-iam.config.mjs --join-token TOKEN [--host-key PATH] [--root DIR] [--dry-run] [--url URL] [--profile NAME]",
+   "target": "token",
+   "args": [],
+   "flags": [
+    {
+     "flag": "--join-token",
+     "value": "TOKEN",
+     "optional": false,
+     "description": "The one-time join token from ssh.createHost or ssh.resetJoinToken",
+     "env": "BETTER_IAM_SSH_JOIN_TOKEN"
+    },
+    {
+     "flag": "--host-key",
+     "value": "PATH",
+     "optional": true,
+     "description": "The server's public host key",
+     "default": "/etc/ssh/ssh_host_ed25519_key.pub"
+    },
+    {
+     "flag": "--root",
+     "value": "DIR",
+     "optional": true,
+     "description": "Write under this directory instead of / (for images and tests)",
+     "default": "/"
+    },
+    {
+     "flag": "--dry-run",
+     "optional": true,
+     "description": "List the files without writing them"
+    },
+    {
+     "flag": "--config",
+     "value": "PATH",
+     "optional": true,
+     "description": "Configuration module; default: the nearest better-iam.config.mjs, .js, or .ts",
+     "env": "BETTER_IAM_CONFIG"
+    },
+    {
+     "flag": "--url",
+     "value": "URL",
+     "optional": true,
+     "description": "Call a running IAM server (https://host or https://host/api/iam) instead of loading the configuration",
+     "env": "BETTER_IAM_URL"
+    },
+    {
+     "flag": "--profile",
+     "value": "NAME",
+     "optional": true,
+     "description": "Saved session to act as (see login); ignored while BETTER_IAM_TOKEN is set",
+     "env": "BETTER_IAM_PROFILE"
+    },
+    {
+     "flag": "--format",
+     "value": "FORMAT",
+     "optional": true,
+     "description": "Output as json (indented, default), compact (one line), or table",
+     "choices": [
+      "json",
+      "compact",
+      "table"
+     ]
+    },
+    {
+     "flag": "--query",
+     "value": "PATH",
+     "optional": true,
+     "description": "Print only part of the result, e.g. summary.create or findings[].kind (strings print raw)"
+    }
+   ],
+   "examples": [
+    "BETTER_IAM_SSH_JOIN_TOKEN=biam_sshj.... better-iam ssh-host-enroll --url https://iam.example.com"
+   ],
+   "description": "ssh-host-enroll runs on a server: it sends the server's public host key (--host-key, default /etc/ssh/ssh_host_ed25519_key.pub) with the one-time join token from ssh.createHost, and writes what sshd needs under /etc/ssh: the host certificate, the trusted user authority, one principals file per login, the key revocation list, an sshd_config.d drop-in, and the renewal token (root-only) that ssh-host-sync uses from then on. Needs no session; point it at the server with --url."
+  },
+  {
+   "name": "ssh-host-sync",
+   "group": "Operations",
+   "summary": "Refresh this server's SSH trust, principals, revocations and certificate",
+   "usage": "better-iam ssh-host-sync --config better-iam.config.mjs [--renewal-token-file PATH] [--renew] [--root DIR] [--dry-run] [--url URL] [--profile NAME]",
+   "target": "token",
+   "args": [],
+   "flags": [
+    {
+     "flag": "--renewal-token-file",
+     "value": "PATH",
+     "optional": true,
+     "description": "Where ssh-host-enroll saved the renewal token",
+     "default": "/etc/ssh/better-iam/renewal-token"
+    },
+    {
+     "flag": "--renew",
+     "optional": true,
+     "description": "Issue a new host certificate now"
+    },
+    {
+     "flag": "--root",
+     "value": "DIR",
+     "optional": true,
+     "description": "Write under this directory instead of / (for images and tests)",
+     "default": "/"
+    },
+    {
+     "flag": "--dry-run",
+     "optional": true,
+     "description": "List the files without writing them"
+    },
+    {
+     "flag": "--config",
+     "value": "PATH",
+     "optional": true,
+     "description": "Configuration module; default: the nearest better-iam.config.mjs, .js, or .ts",
+     "env": "BETTER_IAM_CONFIG"
+    },
+    {
+     "flag": "--url",
+     "value": "URL",
+     "optional": true,
+     "description": "Call a running IAM server (https://host or https://host/api/iam) instead of loading the configuration",
+     "env": "BETTER_IAM_URL"
+    },
+    {
+     "flag": "--profile",
+     "value": "NAME",
+     "optional": true,
+     "description": "Saved session to act as (see login); ignored while BETTER_IAM_TOKEN is set",
+     "env": "BETTER_IAM_PROFILE"
+    },
+    {
+     "flag": "--format",
+     "value": "FORMAT",
+     "optional": true,
+     "description": "Output as json (indented, default), compact (one line), or table",
+     "choices": [
+      "json",
+      "compact",
+      "table"
+     ]
+    },
+    {
+     "flag": "--query",
+     "value": "PATH",
+     "optional": true,
+     "description": "Print only part of the result, e.g. summary.create or findings[].kind (strings print raw)"
+    }
+   ],
+   "examples": [],
+   "description": "ssh-host-sync runs on an enrolled server (every few minutes, from cron or a systemd timer): with the renewal token ssh-host-enroll saved, it fetches the current trusted user authorities, principals files and key revocation list, and a new host certificate when the current one nears its end or the host's addresses changed, and rewrites the files. Reload sshd when the certificate or trust changed; revocations and principals apply to the next login without a reload."
+  },
+  {
+   "name": "ssh-sweep",
+   "group": "Operations",
+   "summary": "Revoke SSH certificates whose holder or access went away",
+   "usage": "better-iam ssh-sweep --config better-iam.config.mjs [--tenant TENANT_ID]",
+   "target": "config",
+   "args": [],
+   "flags": [
+    {
+     "flag": "--tenant",
+     "value": "TENANT_ID",
+     "optional": true,
+     "description": "Only this tenant"
+    },
+    {
+     "flag": "--config",
+     "value": "PATH",
+     "optional": true,
+     "description": "Configuration module; default: the nearest better-iam.config.mjs, .js, or .ts",
+     "env": "BETTER_IAM_CONFIG"
+    },
+    {
+     "flag": "--format",
+     "value": "FORMAT",
+     "optional": true,
+     "description": "Output as json (indented, default), compact (one line), or table",
+     "choices": [
+      "json",
+      "compact",
+      "table"
+     ]
+    },
+    {
+     "flag": "--query",
+     "value": "PATH",
+     "optional": true,
+     "description": "Print only part of the result, e.g. summary.create or findings[].kind (strings print raw)"
+    }
+   ],
+   "examples": [],
+   "description": "ssh-sweep re-checks every live SSH user certificate (or one --tenant's): certificates of people and machines who are no longer active, whose temporary session ended, or whose hosts and logins policies no longer allow are revoked and published in the revocation list hosts fetch with ssh-host-sync. A deployment operation; run it every few minutes."
+  },
+  {
+   "name": "vc-sweep",
+   "group": "Operations",
+   "summary": "Revoke verifiable credentials of people who left",
+   "usage": "better-iam vc-sweep --config better-iam.config.mjs [--tenant TENANT_ID]",
+   "target": "config",
+   "args": [],
+   "flags": [
+    {
+     "flag": "--tenant",
+     "value": "TENANT_ID",
+     "optional": true,
+     "description": "Only this tenant"
+    },
+    {
+     "flag": "--config",
+     "value": "PATH",
+     "optional": true,
+     "description": "Configuration module; default: the nearest better-iam.config.mjs, .js, or .ts",
+     "env": "BETTER_IAM_CONFIG"
+    },
+    {
+     "flag": "--format",
+     "value": "FORMAT",
+     "optional": true,
+     "description": "Output as json (indented, default), compact (one line), or table",
+     "choices": [
+      "json",
+      "compact",
+      "table"
+     ]
+    },
+    {
+     "flag": "--query",
+     "value": "PATH",
+     "optional": true,
+     "description": "Print only part of the result, e.g. summary.create or findings[].kind (strings print raw)"
+    }
+   ],
+   "examples": [],
+   "description": "vc-sweep revokes every valid verifiable credential (or one --tenant's) whose holder is no longer an active member, in the Token Status List verifiers read, and audits each as vc:credential:revoke. A deployment operation; run it hourly."
+  },
+  {
+   "name": "compliance-evaluate",
+   "group": "Operations",
+   "summary": "Evaluate compliance controls",
+   "usage": "better-iam compliance-evaluate --config better-iam.config.mjs [--tenant TENANT_ID]",
+   "target": "config",
+   "args": [],
+   "flags": [
+    {
+     "flag": "--tenant",
+     "value": "TENANT_ID",
+     "optional": true,
+     "description": "Only this tenant"
+    },
+    {
+     "flag": "--config",
+     "value": "PATH",
+     "optional": true,
+     "description": "Configuration module; default: the nearest better-iam.config.mjs, .js, or .ts",
+     "env": "BETTER_IAM_CONFIG"
+    },
+    {
+     "flag": "--format",
+     "value": "FORMAT",
+     "optional": true,
+     "description": "Output as json (indented, default), compact (one line), or table",
+     "choices": [
+      "json",
+      "compact",
+      "table"
+     ]
+    },
+    {
+     "flag": "--query",
+     "value": "PATH",
+     "optional": true,
+     "description": "Print only part of the result, e.g. summary.create or findings[].kind (strings print raw)"
+    }
+   ],
+   "examples": [],
+   "description": "compliance-evaluate runs the enabled compliance controls of every active tenant (or one --tenant's), records the results and a run, and audits it as compliance:evaluate. Tenants whose evaluation failed are listed under failed; their controls show as stale after three days. A deployment operation; run it daily."
+  },
+  {
+   "name": "vault-get",
+   "group": "Access",
+   "summary": "Print a secret from the vault",
+   "usage": "better-iam vault-get --config better-iam.config.mjs NAME --tenant TENANT_ID [--version N] [--stage LABEL] [--field FIELD] [--url URL] [--profile NAME]",
+   "target": "token",
+   "args": [
+    {
+     "name": "name",
+     "description": "The secret, such as prod/payments/db-password",
+     "required": true
+    }
+   ],
+   "flags": [
+    {
+     "flag": "--tenant",
+     "value": "TENANT_ID",
+     "optional": false,
+     "description": "The tenant to act in",
+     "env": "BETTER_IAM_TENANT"
+    },
+    {
+     "flag": "--version",
+     "value": "N",
+     "optional": true,
+     "description": "A version"
+    },
+    {
+     "flag": "--stage",
+     "value": "LABEL",
+     "optional": true,
+     "description": "A stage label such as previous"
+    },
+    {
+     "flag": "--field",
+     "value": "FIELD",
+     "optional": true,
+     "description": "One field of a json secret"
+    },
+    {
+     "flag": "--config",
+     "value": "PATH",
+     "optional": true,
+     "description": "Configuration module; default: the nearest better-iam.config.mjs, .js, or .ts",
+     "env": "BETTER_IAM_CONFIG"
+    },
+    {
+     "flag": "--url",
+     "value": "URL",
+     "optional": true,
+     "description": "Call a running IAM server (https://host or https://host/api/iam) instead of loading the configuration",
+     "env": "BETTER_IAM_URL"
+    },
+    {
+     "flag": "--profile",
+     "value": "NAME",
+     "optional": true,
+     "description": "Saved session to act as (see login); ignored while BETTER_IAM_TOKEN is set",
+     "env": "BETTER_IAM_PROFILE"
+    }
+   ],
+   "examples": [
+    "better-iam vault-get prod/payments/db-password --tenant acme-id",
+    "better-iam vault-get prod/smtp --field password"
+   ],
+   "description": "vault-get prints the value of a secret as BETTER_IAM_TOKEN (iam:vault:reveal): the current version, or --version / --stage, and with --field one field of a json secret. The value is printed on its own, so it can be captured with $(...); every reveal is audited as vault:reveal. Secrets handed out only through check-outs refuse with CHECKOUT_REQUIRED."
+  },
+  {
+   "name": "vault-put",
+   "group": "Access",
+   "summary": "Store a new version of a secret",
+   "usage": "better-iam vault-put --config better-iam.config.mjs NAME --tenant TENANT_ID [--value-env VARIABLE] [--generate] [--stage current|pending] [--url URL] [--profile NAME]",
+   "target": "token",
+   "args": [
+    {
+     "name": "name",
+     "description": "The secret",
+     "required": true
+    }
+   ],
+   "flags": [
+    {
+     "flag": "--tenant",
+     "value": "TENANT_ID",
+     "optional": false,
+     "description": "The tenant to act in",
+     "env": "BETTER_IAM_TENANT"
+    },
+    {
+     "flag": "--value-env",
+     "value": "VARIABLE",
+     "optional": true,
+     "description": "Read the value from this environment variable"
+    },
+    {
+     "flag": "--generate",
+     "optional": true,
+     "description": "Generate a random 32-character value"
+    },
+    {
+     "flag": "--stage",
+     "value": "current|pending",
+     "optional": true,
+     "description": "Make it current now, or stage it for promotion",
+     "default": "current",
+     "choices": [
+      "current",
+      "pending"
+     ]
+    },
+    {
+     "flag": "--config",
+     "value": "PATH",
+     "optional": true,
+     "description": "Configuration module; default: the nearest better-iam.config.mjs, .js, or .ts",
+     "env": "BETTER_IAM_CONFIG"
+    },
+    {
+     "flag": "--url",
+     "value": "URL",
+     "optional": true,
+     "description": "Call a running IAM server (https://host or https://host/api/iam) instead of loading the configuration",
+     "env": "BETTER_IAM_URL"
+    },
+    {
+     "flag": "--profile",
+     "value": "NAME",
+     "optional": true,
+     "description": "Saved session to act as (see login); ignored while BETTER_IAM_TOKEN is set",
+     "env": "BETTER_IAM_PROFILE"
+    },
+    {
+     "flag": "--format",
+     "value": "FORMAT",
+     "optional": true,
+     "description": "Output as json (indented, default), compact (one line), or table",
+     "choices": [
+      "json",
+      "compact",
+      "table"
+     ]
+    },
+    {
+     "flag": "--query",
+     "value": "PATH",
+     "optional": true,
+     "description": "Print only part of the result, e.g. summary.create or findings[].kind (strings print raw)"
+    }
+   ],
+   "examples": [
+    "printf %s \"$PASSWORD\" | better-iam vault-put prod/payments/db-password",
+    "better-iam vault-put prod/signing-key --value-env SIGNING_KEY --stage pending",
+    "better-iam vault-put staging/api-token --generate"
+   ],
+   "description": "vault-put stores a new version of a secret as BETTER_IAM_TOKEN (iam:vault:write) from standard input (the default, or --value -), from --value-env (the name of an environment variable holding it), or --generate for a random value; secrets are never taken from the command line itself. The version becomes current unless --stage pending. Trailing newlines on standard input are removed."
+  },
+  {
+   "name": "vault-run",
+   "group": "Access",
+   "summary": "Run a command with secrets in its environment",
+   "usage": "better-iam vault-run --config better-iam.config.mjs COMMAND... --tenant TENANT_ID [--env VAR=NAME[#FIELD],...] [--prefix PATH/] [--keep-token] [--url URL] [--profile NAME]",
+   "target": "token",
+   "args": [
+    {
+     "name": "command",
+     "description": "The command and its arguments, after --",
+     "required": true,
+     "variadic": true
+    }
+   ],
+   "flags": [
+    {
+     "flag": "--tenant",
+     "value": "TENANT_ID",
+     "optional": false,
+     "description": "The tenant to act in",
+     "env": "BETTER_IAM_TENANT"
+    },
+    {
+     "flag": "--env",
+     "value": "VAR=NAME[#FIELD],...",
+     "optional": true,
+     "description": "Variables to set from secrets"
+    },
+    {
+     "flag": "--prefix",
+     "value": "PATH/",
+     "optional": true,
+     "description": "Add every secret under this path, named after the rest of its name"
+    },
+    {
+     "flag": "--keep-token",
+     "optional": true,
+     "description": "Pass BETTER_IAM_TOKEN on to the command"
+    },
+    {
+     "flag": "--config",
+     "value": "PATH",
+     "optional": true,
+     "description": "Configuration module; default: the nearest better-iam.config.mjs, .js, or .ts",
+     "env": "BETTER_IAM_CONFIG"
+    },
+    {
+     "flag": "--url",
+     "value": "URL",
+     "optional": true,
+     "description": "Call a running IAM server (https://host or https://host/api/iam) instead of loading the configuration",
+     "env": "BETTER_IAM_URL"
+    },
+    {
+     "flag": "--profile",
+     "value": "NAME",
+     "optional": true,
+     "description": "Saved session to act as (see login); ignored while BETTER_IAM_TOKEN is set",
+     "env": "BETTER_IAM_PROFILE"
+    }
+   ],
+   "examples": [
+    "better-iam vault-run --env DATABASE_PASSWORD=prod/payments/db-password -- node server.js",
+    "better-iam vault-run --prefix prod/payments/ -- npm start"
+   ],
+   "description": "vault-run reveals secrets as BETTER_IAM_TOKEN (iam:vault:reveal on each) and runs the command after -- with them as environment variables, so they never touch disk or shell history. --env maps variables to secrets (VAR=name, or VAR=name#field for one field of a json secret; comma-separated). --prefix adds every static secret under a path you may reveal, named after the rest of its path (prod/app/db-password under prod/app/ becomes DB_PASSWORD; a json secret adds one variable per field, DB_PASSWORD_USERNAME). --env wins over --prefix. The command inherits the terminal and its exit status becomes vault-run's. BETTER_IAM_TOKEN is removed from the command's environment unless --keep-token."
+  },
+  {
+   "name": "vault-rotate-due",
+   "group": "Operations",
+   "summary": "Rotate vault secrets whose scheduled rotation is due",
+   "usage": "better-iam vault-rotate-due --config better-iam.config.mjs [--tenant TENANT_ID]",
+   "target": "config",
+   "args": [],
+   "flags": [
+    {
+     "flag": "--tenant",
+     "value": "TENANT_ID",
+     "optional": true,
+     "description": "Only this tenant"
+    },
+    {
+     "flag": "--config",
+     "value": "PATH",
+     "optional": true,
+     "description": "Configuration module; default: the nearest better-iam.config.mjs, .js, or .ts",
+     "env": "BETTER_IAM_CONFIG"
+    },
+    {
+     "flag": "--format",
+     "value": "FORMAT",
+     "optional": true,
+     "description": "Output as json (indented, default), compact (one line), or table",
+     "choices": [
+      "json",
+      "compact",
+      "table"
+     ]
+    },
+    {
+     "flag": "--query",
+     "value": "PATH",
+     "optional": true,
+     "description": "Print only part of the result, e.g. summary.create or findings[].kind (strings print raw)"
+    }
+   ],
+   "examples": [],
+   "description": "vault-rotate-due rotates every static secret (or those of --tenant) whose rotation.intervalDays has passed and that has a generator or a rotator, acting as deployment-operator; due secrets with neither are recorded once per due date as vault:rotation-due. Failed rotations keep their pending version and retry with growing delays. Run it hourly."
+  },
+  {
+   "name": "vault-expire-leases",
+   "group": "Operations",
+   "summary": "End expired vault check-outs and leases",
+   "usage": "better-iam vault-expire-leases --config better-iam.config.mjs",
+   "target": "config",
+   "args": [],
+   "flags": [
+    {
+     "flag": "--config",
+     "value": "PATH",
+     "optional": true,
+     "description": "Configuration module; default: the nearest better-iam.config.mjs, .js, or .ts",
+     "env": "BETTER_IAM_CONFIG"
+    },
+    {
+     "flag": "--format",
+     "value": "FORMAT",
+     "optional": true,
+     "description": "Output as json (indented, default), compact (one line), or table",
+     "choices": [
+      "json",
+      "compact",
+      "table"
+     ]
+    },
+    {
+     "flag": "--query",
+     "value": "PATH",
+     "optional": true,
+     "description": "Print only part of the result, e.g. summary.create or findings[].kind (strings print raw)"
+    }
+   ],
+   "examples": [],
+   "description": "vault-expire-leases ends expired check-outs (rotating secrets that rotate on check-in), revokes expired dynamic leases and those of people who are no longer active at their engine, retries failed revocations, and deletes lease history past vault.accessRetentionDays. Run it every few minutes."
+  },
+  {
+   "name": "vault-purge-deleted",
+   "group": "Operations",
+   "summary": "Delete vault secrets whose recovery window has ended",
+   "usage": "better-iam vault-purge-deleted --config better-iam.config.mjs",
+   "target": "config",
+   "args": [],
+   "flags": [
+    {
+     "flag": "--config",
+     "value": "PATH",
+     "optional": true,
+     "description": "Configuration module; default: the nearest better-iam.config.mjs, .js, or .ts",
+     "env": "BETTER_IAM_CONFIG"
+    },
+    {
+     "flag": "--format",
+     "value": "FORMAT",
+     "optional": true,
+     "description": "Output as json (indented, default), compact (one line), or table",
+     "choices": [
+      "json",
+      "compact",
+      "table"
+     ]
+    },
+    {
+     "flag": "--query",
+     "value": "PATH",
+     "optional": true,
+     "description": "Print only part of the result, e.g. summary.create or findings[].kind (strings print raw)"
+    }
+   ],
+   "examples": [],
+   "description": "vault-purge-deleted removes every secret scheduled for deletion whose recovery window has ended, with its versions, leases and access records (live dynamic leases are revoked at their engine first); each is audited as vault:purge. Run it daily."
+  },
+  {
    "name": "api",
    "group": "API",
    "summary": "Call any IAM API method as the current token",
@@ -2174,7 +2939,7 @@
     },
     {
      "name": "fields",
-     "description": "key=value, key:=json, key:=@file.json, key=@file.txt",
+     "description": "key=value, key:=json, key:=@file.json, key=@file.txt (key=\\@text sends a literal @text)",
      "variadic": true
     }
    ],
@@ -2540,5 +3305,5 @@
    "description": "Without a configuration file: the deployment secret"
   }
  ],
- "notes": "init writes a starter better-iam.config.mjs (or better-iam.config.ts with --typescript): a configuration factory for the chosen database that reads the secret and URLs from the environment, CLI flag defaults, and an empty list of project commands. It never overwrites an existing file. migrate creates or upgrades the database schema and applies plugin migrations. Run it on every deploy before the application starts. bootstrap creates the root administrator from BETTER_IAM_ROOT_EMAIL, BETTER_IAM_ROOT_NAME, and BETTER_IAM_ROOT_PASSWORD (secrets are never accepted in command-line arguments). The root must enroll MFA before use. recover-root creates a new root administrator from the same environment variables as bootstrap, for when every root credential is lost; the action is audited as root:recover. doctor connects to the database and lists findings (schema behind, not bootstrapped, weak secret, risky durability, missing email transport, jobs that are not running); --strict exits non-zero when any error or warning is found; pass the --retention-days your sweep uses so its backlog is judged the same way. secret prints a new random value for BETTER_IAM_SECRET (64 URL-safe characters by default) from the operating system random generator; --env prints it as a BETTER_IAM_SECRET= line for a .env file. It reads no configuration and stores nothing. outbox delivers pending transactional messages from the encrypted delivery outbox and then dispatches audit hooks (webhooks); a deployment operation for a scheduler. Purge removes tenants deleted more than N days ago (default 30) including their data, and records the action in the audit log. Audit records remain. sweep deletes expired sessions, devices, relationship tuples, OAuth and SAML artifacts, and deliveries older than --retention-days (30) in short batches, at most --limit (10000) records per run; schedule it beside purge. digest emails the access report to the owners of every active organization (or one --tenant) that has something to report, at most once a day per organization; a deployment operation for cron, like purge. remind emails each person whose account, role bindings, group memberships, or packages end within --within-days (7), once per item and end date; a deployment operation like digest. reconcile applies access-package rules (birthright access): identities that match a package's autoAssign rule receive it and automatic holders that stopped matching lose it, at most --limit (1000) changes per organization and run, under each rule owner's grant authority; a deployment operation for cron (run it after purge). Unusually large changes are held back until confirmed with --tenant ID --package ID --confirm; --fail-on-attention exits non-zero when a change failed, was held back, or a rule is suspended. close-certifications closes every access-certification campaign created with autoClose whose due date has passed (or only one --tenant's), applying its decisions under the creator's authority; a deployment operation for cron. monitor-invariants evaluates every organization's invariants (or one --tenant's) and records invariant:broken / invariant:restored audit events when their status changes, so webhooks can alert; a deployment operation for cron. rotate-secrets re-seals authenticator secrets, webhook secrets, and pending deliveries sealed with previousSecrets using the current secret; --dry-run only counts them. billing-close invoices every billing account with something to bill in --period (default: last month): usage, subscription fees and seats, and pending invoice items. It skips accounts already invoiced, applies coupons and credit, emails the invoices, and deletes raw usage events past their retention; a deployment operation for a daily scheduler. With --draft (or billing.autoFinalize: false) invoices stay drafts, refreshed on each run, until finalized. billing-reminders emails the billing contacts of every finalized invoice with an amount due as payment-reminder at the steps of billing.paymentReminderDays (default 3 days before the due date, on it, and 7 and 14 days after), once per step; each is audited as billing:payment-reminder. Run it daily. billing-alerts checks every spend budget (or those one --tenant owns) and alerts, once per threshold and window, on thresholds reached and projections past the budget: audited as billing:budget-alert and emailed as spend-alert when mail is configured. Run it hourly. billing-anomalies checks every billing account (or the one paying for --tenant) for people, teams and meters whose spend on --day (default yesterday) is --factor (3) times their average over the 14 days before and --minimum (10) currency units more; each is audited as billing:anomaly once and emailed as spend-anomaly when mail is configured. Run it daily. billing-seats records one unit of --meter (default seats) for every active person of every tenant the meter reaches, once per day; a sum meter then counts seat-days and a unique meter active seats per month. Run it daily. spend prints the spend of the tenant and the tenants below it as BETTER_IAM_TOKEN (iam:billing:read), grouped by --group-by (default meter) and optionally narrowed to a --team, --department, --identity or --meter; the current month also carries a linear forecast. audit-verify recomputes a tenant's audit hash chain from storage and exits non-zero (AUDIT_CHAIN_BROKEN) when it does not verify; it records nothing. audit-export writes a tenant's audit chain as JSON Lines for archiving (never overwriting a file); it records nothing. audit-prune deletes a tenant's events older than --retention-days (365) after you archived them and appends an audit:prune checkpoint so the remaining chain still verifies. With an auditArchive configured, it only deletes events the archive already holds. audit-archive copies new audit events, verified and in chain order, to the configured auditArchive; with an archive configured, audit-prune only deletes events it already holds. audit-verify-archive verifies one tenant's archived chain from createJsonlAuditArchive files alone, without the database: every sequence present once, hashes recomputed, links intact. store-export writes every record of the database as a JSON Lines snapshot (one consistent transaction; the file holds credential hashes and encrypted secrets, so protect it like the database). It never overwrites a file. store-import loads a snapshot into an empty database in one transaction; it migrates the target first and changes nothing on failure. Run migrate afterwards to apply plugin migrations. store-copy copies the configured database into the empty database of --target-config (for example SQLite to PostgreSQL); it migrates the target first and changes nothing on failure. config-export writes a tenant's roles, policies, groups, resource types, group bindings, packages, invariants, and agreements as JSON (or as a typed module when --output ends in .ts or .mjs). The config commands act as the session or API key in BETTER_IAM_TOKEN (or the session saved by login) and are authorized and audited like console operations. config-plan shows what config-apply would change (--prune also plans deleting items the file omits); --fail-on-drift exits non-zero when anything would change, for CI. The input can be JSON or a JavaScript/TypeScript module whose default export is the configuration or a factory receiving { tenantId, env }. config-apply applies a configuration in one transaction (--prune also deletes items the file omits), authorized and audited like console operations. config-validate checks a configuration file offline: its shape, and names it refers to that the file does not define (those must already exist in the tenant, or planning fails). --strict exits non-zero on such warnings. It needs no configuration, database, or token, so it fits pre-commit hooks and CI. analyze prints the tenant's access-analysis findings (as BETTER_IAM_TOKEN, which needs iam:analysis:read); with --fail-on it exits non-zero when an unsuppressed finding of that severity or higher exists, for CI and cron. report prints the tenant's access report as BETTER_IAM_TOKEN: identities and bindings ending within --within-days (30), keys unused for --unused-days (30) or ending soon, live activations, and pending activation requests. mine-roles prints role-mining suggestions (role bundles, roles to bind to a group, redundant direct bindings, duplicate roles) and peer outliers grouped by --peer-by (default manager) as BETTER_IAM_TOKEN, which needs iam:analysis:read. check-invariants evaluates the tenant's access invariants as BETTER_IAM_TOKEN (iam:invariants:read); --fail-on-broken exits non-zero when one is broken or cannot be evaluated, for CI after config-apply. whoami prints who BETTER_IAM_TOKEN acts as (sts.getCallerIdentity): identity, tenant, session kind and id, format, MFA, expiry, and any role, trust, session name, or web identity; it needs no permission and records nothing, so it also checks that a session, API key, role session, or session token (opaque or JWT) is still valid. Without BETTER_IAM_TOKEN it reports the session saved by login. can asks whether the token may perform ACTION on RESOURCE (type/id) in the tenant and prints the decision with its reason; it exits non-zero (ACCESS_DENIED) when the answer is no, so scripts can branch on it. The decision is recorded like any authorization check. explain simulates the decision for another identity (by ID or email) without signing in as them: the matching statements, boundaries, and reason (policies.simulate, which needs iam:policies:simulate). --assume-mfa evaluates as if they had used MFA. who-can lists every active identity of the tenant that could perform ACTION on RESOURCE, with the reason (policies.whoCan, which needs iam:policies:simulate); root administrators are not listed because their override applies everywhere. api calls any method of the HTTP API (the same routes and permission checks as POST {basePath}/{group}/{method}) as BETTER_IAM_TOKEN or the session saved by login, in process through the configuration or against --url, and prints the result. Build the input with --data (JSON, @file.json, or - for standard input) and key=value items: name=Admin sets a string, limit:=10 or actions:='[\"a\",\"b\"]' sets JSON, document:=@policy.json reads a JSON file, content=@terms.md reads a text file, resource.type=project nests, and actions[]=a appends. --tenant (or BETTER_IAM_TENANT, or the saved profile) fills tenantId when the input has none. api --list [GROUP] lists every route with whether it needs a credential. login signs in with an email and password (and an authenticator or emailed code when MFA is required) and saves the session in the credentials file as a profile (--profile, default the current profile or \"default\"; a profile that holds a session for another deployment is only replaced when named with --profile), so later token commands need no BETTER_IAM_TOKEN. The password comes from BETTER_IAM_PASSWORD or a hidden prompt and the code from BETTER_IAM_MFA_CODE or a prompt, never from flags. --with-token saves a token read from standard input instead (an API key for CI, or a session from elsewhere) after checking it. The profile remembers the server (--url) or configuration it was created with, and --tenant/--org sets the default tenant of later commands. logout signs a saved user session out on the server (best effort; API keys and other machine credentials saved with --with-token are only forgotten, never revoked) and removes the profile from the credentials file. profiles lists the sessions saved by login (never their tokens) and marks the current one; profiles use NAME makes NAME current, and profiles remove NAME forgets one without signing it out. token prints the bearer token token commands would use (BETTER_IAM_TOKEN, else the saved profile's), for scripts and other tools: export BETTER_IAM_TOKEN=$(better-iam token). It is a secret; do not log it. completion prints a completion script for bash, zsh, fish, or PowerShell covering every command, its flags, and the values of flags with fixed choices; load it from your shell profile. Project commands from the configuration are included when it is found."
+ "notes": "init writes a starter better-iam.config.mjs (or better-iam.config.ts with --typescript): a configuration factory for the chosen database that reads the secret and URLs from the environment, CLI flag defaults, and an empty list of project commands. It never overwrites an existing file. migrate creates or upgrades the database schema and applies plugin migrations. Run it on every deploy before the application starts. bootstrap creates the root administrator from BETTER_IAM_ROOT_EMAIL, BETTER_IAM_ROOT_NAME, and BETTER_IAM_ROOT_PASSWORD (secrets are never accepted in command-line arguments). The root must enroll MFA before use. recover-root creates a new root administrator from the same environment variables as bootstrap, for when every root credential is lost; the action is audited as root:recover. doctor connects to the database and lists findings (schema behind, not bootstrapped, weak secret, risky durability, missing email transport, jobs that are not running); --strict exits non-zero when any error or warning is found; pass the --retention-days your sweep uses so its backlog is judged the same way. secret prints a new random value for BETTER_IAM_SECRET (64 URL-safe characters by default) from the operating system random generator; --env prints it as a BETTER_IAM_SECRET= line for a .env file. It reads no configuration and stores nothing. outbox delivers pending transactional messages from the encrypted delivery outbox and then dispatches audit hooks (webhooks); a deployment operation for a scheduler. Purge removes tenants deleted more than N days ago (default 30) including their data, and records the action in the audit log. Audit records remain. sweep deletes expired sessions, devices, relationship tuples, OAuth and SAML artifacts, and deliveries older than --retention-days (30) in short batches, at most --limit (10000) records per run; schedule it beside purge. digest emails the access report to the owners of every active organization (or one --tenant) that has something to report, at most once a day per organization; a deployment operation for cron, like purge. remind emails each person whose account, role bindings, group memberships, or packages end within --within-days (7), once per item and end date; a deployment operation like digest. reconcile applies access-package rules (birthright access): identities that match a package's autoAssign rule receive it and automatic holders that stopped matching lose it, at most --limit (1000) changes per organization and run, under each rule owner's grant authority; a deployment operation for cron (run it after purge). Unusually large changes are held back until confirmed with --tenant ID --package ID --confirm; --fail-on-attention exits non-zero when a change failed, was held back, or a rule is suspended. close-certifications closes every access-certification campaign created with autoClose whose due date has passed (or only one --tenant's), applying its decisions under the creator's authority; a deployment operation for cron. monitor-invariants evaluates every organization's invariants (or one --tenant's) and records invariant:broken / invariant:restored audit events when their status changes, so webhooks can alert; a deployment operation for cron. detect-threats runs identity threat detection for every active organization (or one --tenant): it reads up to --max-events (2000) unread audit events from the organization's cursor, verifies their hash chain (a break is reported as audit-tampering), evaluates the detection rules, records detections and incidents, updates identity risk, and runs the organization's response playbooks. It prints what the run did; pending counts organizations with more unread events than one run reads, which the next run continues. A deployment operation for cron, every minute. rotate-secrets re-seals authenticator secrets, webhook secrets, and pending deliveries sealed with previousSecrets using the current secret; --dry-run only counts them. billing-close invoices every billing account with something to bill in --period (default: last month): usage, subscription fees and seats, and pending invoice items. It skips accounts already invoiced, applies coupons and credit, emails the invoices, and deletes raw usage events past their retention; a deployment operation for a daily scheduler. With --draft (or billing.autoFinalize: false) invoices stay drafts, refreshed on each run, until finalized. billing-reminders emails the billing contacts of every finalized invoice with an amount due as payment-reminder at the steps of billing.paymentReminderDays (default 3 days before the due date, on it, and 7 and 14 days after), once per step; each is audited as billing:payment-reminder. Run it daily. billing-alerts checks every spend budget (or those one --tenant owns) and alerts, once per threshold and window, on thresholds reached and projections past the budget: audited as billing:budget-alert and emailed as spend-alert when mail is configured. Run it hourly. billing-anomalies checks every billing account (or the one paying for --tenant) for people, teams and meters whose spend on --day (default yesterday) is --factor (3) times their average over the 14 days before and --minimum (10) currency units more; each is audited as billing:anomaly once and emailed as spend-anomaly when mail is configured. Run it daily. billing-seats records one unit of --meter (default seats) for every active person of every tenant the meter reaches, once per day; a sum meter then counts seat-days and a unique meter active seats per month. Run it daily. spend prints the spend of the tenant and the tenants below it as BETTER_IAM_TOKEN (iam:billing:read), grouped by --group-by (default meter) and optionally narrowed to a --team, --department, --identity or --meter; the current month also carries a linear forecast. audit-verify recomputes a tenant's audit hash chain from storage and exits non-zero (AUDIT_CHAIN_BROKEN) when it does not verify; it records nothing. audit-export writes a tenant's audit chain as JSON Lines for archiving (never overwriting a file); it records nothing. audit-prune deletes a tenant's events older than --retention-days (365) after you archived them and appends an audit:prune checkpoint so the remaining chain still verifies. With an auditArchive configured, it only deletes events the archive already holds. audit-archive copies new audit events, verified and in chain order, to the configured auditArchive; with an archive configured, audit-prune only deletes events it already holds. audit-verify-archive verifies one tenant's archived chain from createJsonlAuditArchive files alone, without the database: every sequence present once, hashes recomputed, links intact. store-export writes every record of the database as a JSON Lines snapshot (one consistent transaction; the file holds credential hashes and encrypted secrets, so protect it like the database). It never overwrites a file. store-import loads a snapshot into an empty database in one transaction; it migrates the target first and changes nothing on failure. Run migrate afterwards to apply plugin migrations. store-copy copies the configured database into the empty database of --target-config (for example SQLite to PostgreSQL); it migrates the target first and changes nothing on failure. config-export writes a tenant's roles, policies, groups, resource types, group bindings, packages, invariants, and agreements as JSON (or as a typed module when --output ends in .ts or .mjs). The config commands act as the session or API key in BETTER_IAM_TOKEN (or the session saved by login) and are authorized and audited like console operations. config-plan shows what config-apply would change (--prune also plans deleting items the file omits); --fail-on-drift exits non-zero when anything would change, for CI. The input can be JSON or a JavaScript/TypeScript module whose default export is the configuration or a factory receiving { tenantId, env }. config-apply applies a configuration in one transaction (--prune also deletes items the file omits), authorized and audited like console operations. config-validate checks a configuration file offline: its shape, and names it refers to that the file does not define (those must already exist in the tenant, or planning fails). --strict exits non-zero on such warnings. It needs no configuration, database, or token, so it fits pre-commit hooks and CI. analyze prints the tenant's access-analysis findings (as BETTER_IAM_TOKEN, which needs iam:analysis:read); with --fail-on it exits non-zero when an unsuppressed finding of that severity or higher exists, for CI and cron. report prints the tenant's access report as BETTER_IAM_TOKEN: identities and bindings ending within --within-days (30), keys unused for --unused-days (30) or ending soon, live activations, and pending activation requests. mine-roles prints role-mining suggestions (role bundles, roles to bind to a group, redundant direct bindings, duplicate roles) and peer outliers grouped by --peer-by (default manager) as BETTER_IAM_TOKEN, which needs iam:analysis:read. check-invariants evaluates the tenant's access invariants as BETTER_IAM_TOKEN (iam:invariants:read); --fail-on-broken exits non-zero when one is broken or cannot be evaluated, for CI after config-apply. whoami prints who BETTER_IAM_TOKEN acts as (sts.getCallerIdentity): identity, tenant, session kind and id, format, MFA, expiry, and any role, trust, session name, or web identity; it needs no permission and records nothing, so it also checks that a session, API key, role session, or session token (opaque or JWT) is still valid. Without BETTER_IAM_TOKEN it reports the session saved by login. can asks whether the token may perform ACTION on RESOURCE (type/id) in the tenant and prints the decision with its reason; it exits non-zero (ACCESS_DENIED) when the answer is no, so scripts can branch on it. The decision is recorded like any authorization check. explain simulates the decision for another identity (by ID or email) without signing in as them: the matching statements, boundaries, and reason (policies.simulate, which needs iam:policies:simulate). --assume-mfa evaluates as if they had used MFA. who-can lists every active identity of the tenant that could perform ACTION on RESOURCE, with the reason (policies.whoCan, which needs iam:policies:simulate); root administrators are not listed because their override applies everywhere. ssh-cert sends your public key (--key, default ~/.ssh/id_ed25519.pub) to the organization's SSH certificate authority as BETTER_IAM_TOKEN or the session saved by login, and saves the certificate it returns next to the key (id_ed25519-cert.pub), where ssh picks it up. The certificate names every enrolled host and login policies allow you (ssh:login on ssh-login/{host}/{login}), or only --hosts and --logins. It also writes the organization's host authority to --known-hosts (default ~/.ssh/better-iam_known_hosts): add that file to UserKnownHostsFile in ~/.ssh/config so hosts are verified by certificate, and the host revocation list written beside it (better-iam_revoked_hosts) to RevokedHostKeys. ssh-host-enroll runs on a server: it sends the server's public host key (--host-key, default /etc/ssh/ssh_host_ed25519_key.pub) with the one-time join token from ssh.createHost, and writes what sshd needs under /etc/ssh: the host certificate, the trusted user authority, one principals file per login, the key revocation list, an sshd_config.d drop-in, and the renewal token (root-only) that ssh-host-sync uses from then on. Needs no session; point it at the server with --url. ssh-host-sync runs on an enrolled server (every few minutes, from cron or a systemd timer): with the renewal token ssh-host-enroll saved, it fetches the current trusted user authorities, principals files and key revocation list, and a new host certificate when the current one nears its end or the host's addresses changed, and rewrites the files. Reload sshd when the certificate or trust changed; revocations and principals apply to the next login without a reload. ssh-sweep re-checks every live SSH user certificate (or one --tenant's): certificates of people and machines who are no longer active, whose temporary session ended, or whose hosts and logins policies no longer allow are revoked and published in the revocation list hosts fetch with ssh-host-sync. A deployment operation; run it every few minutes. vc-sweep revokes every valid verifiable credential (or one --tenant's) whose holder is no longer an active member, in the Token Status List verifiers read, and audits each as vc:credential:revoke. A deployment operation; run it hourly. compliance-evaluate runs the enabled compliance controls of every active tenant (or one --tenant's), records the results and a run, and audits it as compliance:evaluate. Tenants whose evaluation failed are listed under failed; their controls show as stale after three days. A deployment operation; run it daily. vault-get prints the value of a secret as BETTER_IAM_TOKEN (iam:vault:reveal): the current version, or --version / --stage, and with --field one field of a json secret. The value is printed on its own, so it can be captured with $(...); every reveal is audited as vault:reveal. Secrets handed out only through check-outs refuse with CHECKOUT_REQUIRED. vault-put stores a new version of a secret as BETTER_IAM_TOKEN (iam:vault:write) from standard input (the default, or --value -), from --value-env (the name of an environment variable holding it), or --generate for a random value; secrets are never taken from the command line itself. The version becomes current unless --stage pending. Trailing newlines on standard input are removed. vault-run reveals secrets as BETTER_IAM_TOKEN (iam:vault:reveal on each) and runs the command after -- with them as environment variables, so they never touch disk or shell history. --env maps variables to secrets (VAR=name, or VAR=name#field for one field of a json secret; comma-separated). --prefix adds every static secret under a path you may reveal, named after the rest of its path (prod/app/db-password under prod/app/ becomes DB_PASSWORD; a json secret adds one variable per field, DB_PASSWORD_USERNAME). --env wins over --prefix. The command inherits the terminal and its exit status becomes vault-run's. BETTER_IAM_TOKEN is removed from the command's environment unless --keep-token. vault-rotate-due rotates every static secret (or those of --tenant) whose rotation.intervalDays has passed and that has a generator or a rotator, acting as deployment-operator; due secrets with neither are recorded once per due date as vault:rotation-due. Failed rotations keep their pending version and retry with growing delays. Run it hourly. vault-expire-leases ends expired check-outs (rotating secrets that rotate on check-in), revokes expired dynamic leases and those of people who are no longer active at their engine, retries failed revocations, and deletes lease history past vault.accessRetentionDays. Run it every few minutes. vault-purge-deleted removes every secret scheduled for deletion whose recovery window has ended, with its versions, leases and access records (live dynamic leases are revoked at their engine first); each is audited as vault:purge. Run it daily. api calls any method of the HTTP API (the same routes and permission checks as POST {basePath}/{group}/{method}) as BETTER_IAM_TOKEN or the session saved by login, in process through the configuration or against --url, and prints the result. Build the input with --data (JSON, @file.json, or - for standard input) and key=value items: name=Admin sets a string, limit:=10 or actions:='[\"a\",\"b\"]' sets JSON, document:=@policy.json reads a JSON file, content=@terms.md reads a text file, resource.type=project nests, and actions[]=a appends. --tenant (or BETTER_IAM_TENANT, or the saved profile) fills tenantId when the input has none. api --list [GROUP] lists every route with whether it needs a credential. login signs in with an email and password (and an authenticator or emailed code when MFA is required) and saves the session in the credentials file as a profile (--profile, default the current profile or \"default\"; a profile that holds a session for another deployment is only replaced when named with --profile), so later token commands need no BETTER_IAM_TOKEN. The password comes from BETTER_IAM_PASSWORD or a hidden prompt and the code from BETTER_IAM_MFA_CODE or a prompt, never from flags. --with-token saves a token read from standard input instead (an API key for CI, or a session from elsewhere) after checking it. The profile remembers the server (--url) or configuration it was created with, and --tenant/--org sets the default tenant of later commands. logout signs a saved user session out on the server (best effort; API keys and other machine credentials saved with --with-token are only forgotten, never revoked) and removes the profile from the credentials file. profiles lists the sessions saved by login (never their tokens) and marks the current one; profiles use NAME makes NAME current, and profiles remove NAME forgets one without signing it out. token prints the bearer token token commands would use (BETTER_IAM_TOKEN, else the saved profile's), for scripts and other tools: export BETTER_IAM_TOKEN=$(better-iam token). It is a secret; do not log it. completion prints a completion script for bash, zsh, fish, or PowerShell covering every command, its flags, and the values of flags with fixed choices; load it from your shell profile. Project commands from the configuration are included when it is found."
 }

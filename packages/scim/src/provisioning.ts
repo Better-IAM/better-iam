@@ -5,6 +5,7 @@ import {
   type CredentialInput,
   type IamStore,
   type Identity,
+  type Tenant,
 } from '@better-iam/core';
 import {
   ENTERPRISE_SCHEMA,
@@ -69,15 +70,18 @@ export function createProvisioning(config: ScimConfig) {
     resourceId: string,
     actorId = `scim:${connection.id}`,
   ): Promise<void> {
-    await appendAuditEvent(tx, {
+    const event = {
       id: randomUUID(),
       tenantId: connection.tenantId,
       actorId,
       action,
       resourceId,
       timestamp: Date.now(),
-      outcome: 'allow',
-    });
+      outcome: 'allow' as const,
+    };
+    // Through the host when it can fan events out (webhooks, subscribers such as an outbound provisioner).
+    if (config.recordAudit) await config.recordAudit(tx, event);
+    else await appendAuditEvent(tx, event);
   }
   async function authenticate(
     tx: IamStore,
@@ -102,11 +106,40 @@ export function createProvisioning(config: ScimConfig) {
     }
     return connection;
   }
+  /**
+   * Ends everything that keeps a person signed in or lets them skip a step, as an administrator's disable does:
+   * sessions (and those acting as them), remembered MFA devices and pending sign-in challenges.
+   */
   async function revokeSessions(tx: IamStore, identityId: string): Promise<void> {
     for (const session of await tx.find('sessions', { identityId }))
       await tx.delete('sessions', session.id);
     for (const session of await tx.find('sessions', { originalIdentityId: identityId }))
       await tx.delete('sessions', session.id);
+    for (const device of await tx.find('authDevices', { identityId }))
+      await tx.delete('authDevices', device.id);
+    for (const challenge of await tx.find('authChallenges', { identityId }))
+      await tx.delete('authChallenges', challenge.id);
+  }
+  /** The tenant's plan limit (`Tenant.limits`) holds for SCIM as for every other way people and groups are added. */
+  async function withinLimit(
+    tx: IamStore,
+    tenantId: string,
+    key: 'identities' | 'groups',
+  ): Promise<void> {
+    const limit = (await tx.get<Tenant>('tenants', tenantId))?.limits?.[key];
+    if (limit === undefined) return;
+    const count =
+      key === 'identities'
+        ? (await tx.find<Identity>('identities', { tenantId, kind: 'user' })).filter(
+            (item) => item.status !== 'deleted',
+          ).length
+        : (await tx.find('groups', { tenantId })).length;
+    if (count >= limit)
+      throw new IamError(
+        'LIMIT_EXCEEDED',
+        `This tenant has reached its ${key === 'identities' ? 'member' : 'group'} limit (${limit}).`,
+        409,
+      );
   }
   /** The local identity behind a SCIM user; owners and root administrators are never provisioning targets. */
   async function identity(tx: IamStore, link: UserLink): Promise<Identity> {
@@ -354,6 +387,7 @@ export function createProvisioning(config: ScimConfig) {
       ]);
       for (const [field, value] of Object.entries(name)) text(value, `name.${field}`);
     }
+    let addressChanged = false;
     const primaryEmail = emails
       ? (emails.find((value) => object(value).primary === true) ?? emails[0])
       : undefined;
@@ -372,12 +406,18 @@ export function createProvisioning(config: ScimConfig) {
           'Email belongs to an existing identity; automatic linking is disabled.',
           409,
         );
+      // A new sign-in address ends what the old one opened, as an administrator's email change does.
+      if (existing && record.email !== undefined && record.email !== email) addressChanged = true;
       if (record.email !== email) record.emailVerified = false;
       record.email = email;
       record.uniqueKey = `email:${email}`;
     }
     record.name = displayName;
-    record.status = active ? 'active' : 'disabled';
+    // SCIM owns `active` only when the IdP changes it: an update that leaves it alone never re-enables someone an
+    // administrator disabled, and the IdP re-enables only an identity it disabled itself.
+    if (!existing) record.status = active ? 'active' : 'disabled';
+    else if (!active) record.status = 'disabled';
+    else if (existing.active === false && record.status === 'disabled') record.status = 'active';
     if (config.mapAttributes) {
       const mapped = config.mapAttributes({
         userName,
@@ -431,8 +471,11 @@ export function createProvisioning(config: ScimConfig) {
       else if (owned && value !== previous) delete record.managerId;
     }
     if (existing) await tx.put('identities', record);
-    else await tx.insert('identities', record);
-    if (!active) await revokeSessions(tx, record.id);
+    else {
+      await withinLimit(tx, connection.tenantId, 'identities');
+      await tx.insert('identities', record);
+    }
+    if (record.status !== 'active' || addressChanged) await revokeSessions(tx, record.id);
     if (existing) await tx.put('scimUsers', link);
     else await tx.insert('scimUsers', link);
     await audit(
@@ -479,13 +522,15 @@ export function createProvisioning(config: ScimConfig) {
         tenantId: link.tenantId,
         name: displayName,
       });
-    else
+    else {
+      await withinLimit(tx, connection.tenantId, 'groups');
       await tx.insert('groups', {
         id: link.groupId,
         tenantId: link.tenantId,
         name: displayName,
         createdAt: now,
       });
+    }
     if (existing) await tx.put('scimGroups', link);
     else await tx.insert('scimGroups', link);
     await syncGroup(tx, connection, link);

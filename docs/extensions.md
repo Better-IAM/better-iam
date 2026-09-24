@@ -73,6 +73,12 @@ const labels = {
 
 Mount at `POST /api/iam/plugins/labels/create`. Plugin validation and registered action authorization run before the handler; the handler receives a transaction and verified principal. Use the SDK's `$request` for plugin routes. Trusted plugins must not bypass scope checks by accessing another collection/tenant arbitrarily.
 
+By default an endpoint's action is authorized on the tenant itself (`iam/{tenantId}`), which suits tenant-wide operations such as `create` and `list`. An endpoint that acts on one record should name it with `resource(input)`, called with the validated input, so the action is authorized on `iam/{resource}` and policies about that record apply (a Deny on `iam/label/legal`, say):
+
+```ts
+{ method: 'POST', path: 'archive', action: 'labels:archive', validate, resource: (input) => `label/${input.labelId}`, handler }
+```
+
 The `@better-iam/projects` package is a complete reference plugin built on these contracts. Registering `createProjectsPlugin()` adds the `projects:read` and `projects:write` actions and mounts `create`, `list`, `get`, `update`, `archive`, and `restore` endpoints for tenant-scoped project records; its purge callback removes a purged tenant's project records in the same transaction as the tenant purge.
 
 Plugin migrations should be idempotent and use the provided transaction. Version migration records explicitly in the plugin's namespace. `afterAudit` executes from the audit dispatcher after commit and must tolerate at-least-once invocation. `purge` runs inside the tenant purge transaction before the server deletes the purged tenants' own records. Plugins cannot register reserved `iam:` or tenant action namespaces.

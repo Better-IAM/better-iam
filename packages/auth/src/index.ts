@@ -10,9 +10,22 @@ export {
 } from './crypto.js';
 export type { CredentialTokenType } from './crypto.js';
 export { createMemoryRateLimiter, createStoreRateLimiter } from './rate-limit.js';
-export { renderDeliveryMessage } from './templates.js';
+export { describeUserAgent, renderDeliveryMessage } from './templates.js';
 export type { RenderedMessage, TemplateLinks, TemplateOptions } from './templates.js';
 export { characterClasses, isCommonPassword, pwnedPasswords } from './password-policy.js';
+export {
+  checkFetchUrl,
+  createGuardedFetch,
+  fetchJsonSafely,
+  isPublicAddress,
+  SafeFetchError,
+} from './safe-fetch.js';
+export type {
+  GuardedFetchOptions,
+  SafeFetchAddressOptions,
+  SafeFetchFailureReason,
+  SafeFetchOptions,
+} from './safe-fetch.js';
 export type { PasswordPolicyOptions } from './password-policy.js';
 export type { DispatchResult } from './outbox.js';
 export type {

@@ -1,0 +1,178 @@
+---
+title: Compliance center
+description: Automated identity checks mapped to SOC 2, ISO 27001, NIST 800-53 and GDPR, with exceptions and signed evidence for auditors.
+metaTitle: Compliance checks and evidence for SOC 2, ISO 27001 and NIST
+icon: ClipboardList
+status: new
+packages: ['@better-iam/server', '@better-iam/client']
+sources:
+  - docs/compliance.md
+  - packages/server/src/compliance.ts
+  - packages/server/src/api/compliance.ts
+  - packages/cli/src/commands/compliance.ts
+---
+
+Every audit asks the same questions about identity: must people use a second factor, and do they? Do sessions and
+API keys end? Do leavers lose their access? Is access reviewed, and how many people can do everything? Can anyone
+edit the logs? Answering them usually means screenshots and spreadsheets pulled together once a year.
+
+The **compliance center** answers them continuously. Built-in **checks** read the tenant's identity and access state;
+a tenant turns them into **controls**, evaluates them every day, accepts individual findings with time-boxed
+**exceptions** that a second person approves, sees the status of each framework requirement, and hands its auditors
+a signed **evidence pack** they can verify offline.
+
+<Callout title="Evidence, not coverage" type="warn">
+  Each check is mapped to requirements of SOC 2, ISO 27001, NIST SP 800-53 and GDPR as evidence for them, not as full
+  coverage. Those requirements also cover systems, processes and documents Better IAM never sees, so a passing
+  requirement passes only for the part the checks measure, and your auditor still assesses the rest.
+</Callout>
+
+```ts
+await iam.api.compliance.adoptFramework(admin, { tenantId, framework: 'soc2' });
+const { run, results } = await iam.api.compliance.evaluate(admin, { tenantId });
+const [soc2] = await iam.api.compliance.status(admin, { tenantId, framework: 'soc2' });
+```
+
+## Checks
+
+| Check                  | Measures                                                                          | Parameters (default)             | Evidence for                                  |
+| ---------------------- | --------------------------------------------------------------------------------- | -------------------------------- | --------------------------------------------- |
+| `mfa-enforced`         | The sign-in policy requires a second factor (`warn` when only owners must).       | none                             | SOC 2 CC6.1, ISO 8.5, NIST IA-2(1)            |
+| `mfa-coverage`         | The share of active people with an authenticator app (or a passkey, when the deployment enables passkeys). | `minimumPercent` (100)           | SOC 2 CC6.1, ISO 8.5, NIST IA-2(1), GDPR 32   |
+| `password-length`      | The enforced minimum password length, or no passwords at all.                     | `minimum` (12)                   | SOC 2 CC6.1, ISO 5.17, NIST IA-5              |
+| `session-lifetime`     | The longest session and idle time before sign-out.                                | `maxHours` (168), `idleMinutes` (1440) | SOC 2 CC6.1, ISO 8.5, NIST AC-12              |
+| `inactive-accounts`    | Active people without a sign-in for a while.                                      | `days` (90)                      | SOC 2 CC6.2, ISO 5.16, NIST AC-2              |
+| `leaver-access`        | Disabled or expired accounts still holding sessions, keys, bindings or groups.    | none                             | SOC 2 CC6.2, ISO 5.16, NIST AC-2, GDPR 32     |
+| `stale-api-keys`       | Live API keys unused for a while.                                                 | `days` (90)                      | SOC 2 CC6.3, ISO 5.18, NIST IA-5              |
+| `api-key-lifetime`     | Live API keys that live too long.                                                 | `maxDays` (365)                  | SOC 2 CC6.1, ISO 5.17, NIST IA-5              |
+| `access-reviews`       | A review that reviewers mostly decided closed recently and covered the roles people hold; none is overdue. | `intervalDays` (90), `minDecidedPercent` (80), `minCoveragePercent` (100) | SOC 2 CC6.3, ISO 5.18, NIST AC-6(7)           |
+| `privileged-access`    | Everyone who can administer the organization: owners, root administrators, holders of admin roles by any path (groups, inherited roles, activated or approval-free eligible bindings), and trusts that assume them. | `maxHolders` (5)                 | SOC 2 CC6.3, ISO 8.2, NIST AC-6               |
+| `owner-redundancy`     | At least two active owners (`warn` with one, `fail` with none).                   | none                             | ISO 8.2                                       |
+| `separation-of-duties` | Nobody breaks a separation-of-duties rule (`warn` without rules).                 | none                             | SOC 2 CC6.3, ISO 5.3, NIST AC-5               |
+| `audit-integrity`      | The audit hash chain verifies, continuing each time from the last checkpoint. Its findings cannot be excepted. | none                             | SOC 2 CC7.2, ISO 8.15, NIST AU-9, GDPR 32     |
+| `privacy-deadlines`    | No data-subject request is past its deadline.                                     | none                             | ISO 5.34, GDPR 12                             |
+
+Each check returns a status (`pass`, `fail`, `warn` or `not-applicable`), metrics, and findings that name what needs
+attention: `identity:ID`, `session:ID` (an API key), `trust:ID`, `role:ID`, `campaign:ID`, `request:ID`, or
+`tenant:ID:condition` for an organization-wide setting (`tenant:ID:mfa-optional`). Stored findings identify people
+only by ID; people's names are added when results are read, for callers who may read the directory
+(`iam:identities:read`). The [API reference](/docs/reference/api/compliance#catalog) and `catalog` list every parameter
+with its range, and `@better-iam/server` exports the checks and mappings as `complianceChecks` and
+`complianceFrameworks`.
+
+## Controls
+
+A **control** is a check as your organization runs it: a key, a name, parameters, and the requirements it evidences.
+
+- `adoptFramework` (`soc2`, `iso27001`, `nist-800-53` or `gdpr`) creates one control per check the framework uses,
+  keyed by the check's id and mapped as `framework:requirement` (`soc2:CC6.1`). Frameworks share controls: adopting
+  a second one adds its mappings to the controls that exist.
+- `createControl` runs a check with your own parameters and mappings, for example inactive accounts after 30 days,
+  mapped to an internal policy as well as to SOC 2.
+
+```ts
+await iam.api.compliance.createControl(admin, {
+  tenantId,
+  key: 'inactive-30',
+  name: 'Accounts unused for 30 days are reviewed',
+  checkId: 'inactive-accounts',
+  params: { days: 30 },
+  mappings: ['internal:POL-7', 'soc2:CC6.2'],
+});
+```
+
+A tenant holds at most 200 controls. `updateControl` changes parameters, mappings or `enabled`; disabled controls are
+not evaluated, and keep the requirements they are mapped to from passing. `deleteControl` revokes the control's
+exceptions, which stay as history.
+
+## Evaluating
+
+`evaluate` (`iam:compliance:evaluate`) runs the enabled controls, at most once a minute per organization
+(`RATE_LIMITED` otherwise). The checks read outside any transaction, so a large directory never holds the store's
+write lock; the results are then written in one short transaction. Each result records the status, the status before
+exceptions (`rawStatus`), a summary, metrics and up to 200 findings; `evaluate` returns the statuses and counts, and
+`listResults` the findings. A check that cannot run fails its control rather than passing by omission. The run keeps
+`counts` per status and a SHA-256 `digest` of its results, which is also written to the tamper-evident audit log as
+`compliance:evaluate`. When a control starts or stops failing, the run records `compliance:control:fail` or
+`compliance:control:recover`: subscribe a <Term id="webhook">webhook</Term> to hear about regressions.
+
+Results more than three days old are marked `stale`, and a stale control counts as not evaluated in the requirement
+status, so a scheduler that stopped running cannot leave old passes standing.
+
+<Callout title="Schedule the compliance job">
+  Run `iam.compliance.evaluateAll()` once a day, or `better-iam compliance-evaluate` (optionally with `--tenant`) from
+  a scheduler. It evaluates every active organization with enabled controls, one after another, as
+  `deployment-operator`, and lists the organizations whose evaluation failed under `failed` without stopping the
+  others. Results and runs are kept 400 days, then `iam.sweepExpired()` removes them.
+</Callout>
+
+## Exceptions
+
+Some findings are accepted for a while: a person on leave, a service account with a compensating control, a fix that
+is planned. `createException` names the control, the finding's subject, a reason, and an expiry at most a year away.
+The exception starts `pending`; once a second person approves it with `approveException`, and until it expires, the
+finding is marked `excepted` and no longer counts toward its control's status. There are no permanent exceptions.
+
+```ts
+const exception = await iam.api.compliance.createException(admin, {
+  tenantId,
+  controlKey: 'inactive-30',
+  subject: `identity:${aliceId}`,
+  reason: 'On parental leave until December',
+  expiresAt: Date.parse('2026-12-31T00:00:00Z'),
+});
+// Someone else with iam:compliance:manage approves it.
+await iam.api.compliance.approveException(otherAdmin, { tenantId, exceptionId: exception.id });
+```
+
+Nobody may propose or approve an exception for a finding about themselves, and `audit-integrity` findings cannot be
+excepted at all. `revokeException` ends an exception or withdraws a pending one; revoked exceptions stay as history,
+in `listExceptions` and in evidence packs, until the retention sweep removes them 400 days after they expire.
+
+## Requirement status
+
+`status` shows each requirement of a framework with its controls: `no-control` when nothing evidences it, and
+otherwise the worst of its controls, where a disabled control counts as `disabled` and one without a fresh result as
+`not-evaluated`, so neither lets the requirement pass. `total`, `covered` and `passing` count the requirements, those
+with a control, and those that pass.
+
+## Evidence for auditors
+
+`exportEvidence` returns a JSON pack with the controls (of one framework, or all; disabled ones marked), their
+parameters, mappings, latest results and findings, every exception with its approval and revocation history, the
+latest 30 runs with their digests, and the audit chain head. The pack carries a SHA-256 `digest` of its content and
+an Ed25519 `signature` by a key derived from the deployment secret; the digest is also recorded in the audit chain
+when the pack is exported.
+
+```ts
+import { verifyEvidencePack } from '@better-iam/server';
+
+const pack = await iam.api.compliance.exportEvidence(admin, { tenantId, framework: 'soc2' });
+const jwks = await iam.api.compliance.evidenceKeys(admin, { tenantId });
+// The auditor, offline, with no access to your deployment:
+const { valid, reason } = verifyEvidencePack(pack, jwks);
+```
+
+`evidenceKeys` publishes the public keys as a JWKS, the current secret's first and then those of
+`previousSecrets`, so packs keep verifying across secret rotations. `verifyEvidence` makes the same check on the
+server, and also accepts version 1 packs, which were signed with an HMAC before evidence keys existed. Packs name
+people by ID, and by email address for callers who may read the directory, so handle them as personal data.
+
+## Permissions
+
+`iam:compliance:read` covers the readers, `status`, evidence and its keys; `iam:compliance:evaluate` running
+evaluations; and `iam:compliance:manage` adopting frameworks, controls, and proposing, approving and revoking
+exceptions. Evaluations read the whole directory whoever starts them, so readers see findings about people they might
+not otherwise read, by ID unless they may also read the directory. The console page is **Governance › Compliance**.
+
+<Cards>
+  <Card title="compliance API reference" href="/docs/reference/api/compliance">
+    Every method with its permission, audit events, and errors.
+  </Card>
+  <Card title="Certifications" href="/docs/guides/governance/certifications">
+    The access reviews the access-reviews check looks for.
+  </Card>
+  <Card title="Audit chain" href="/docs/guides/events/audit-chain">
+    The tamper-evident log the audit-integrity check verifies.
+  </Card>
+</Cards>

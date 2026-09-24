@@ -4,6 +4,7 @@ import {
   IamError,
   type AuthMethod,
   type CredentialInput,
+  type IamStore,
   type StoredRecord,
   type Tenant,
 } from '@better-iam/core';
@@ -96,6 +97,32 @@ export function domainName(value: unknown): string {
 }
 
 /**
+ * The decision `operation` makes (`action` on `iam/{resourceId}`), taken ahead of work that must happen outside its
+ * transaction, such as a DNS query, so that work is done only for a caller the operation will admit. A refusal is not
+ * recorded here: the operation that follows refuses the caller again and records it.
+ */
+export async function permittedAhead(
+  ctx: ServerContext,
+  credential: CredentialInput,
+  tenantId: string,
+  action: string,
+  resourceId: string,
+): Promise<boolean> {
+  const authenticated = await ctx.principals.authenticate(credential);
+  return ctx.store.transaction(
+    async (tx) =>
+      (
+        await ctx.decisions.decide(
+          tx,
+          await ctx.principals.currentPrincipal(tx, authenticated),
+          { tenantId, action, resource: { type: 'iam', id: resourceId } },
+          true,
+        )
+      ).allowed,
+  );
+}
+
+/**
  * Verified email domains and home-realm discovery. An organization claims a domain, publishes the TXT record it is
  * given, and verifies it; a verified domain is owned by exactly one tenant, and `discover` maps an email address to
  * that tenant (and its sign-in requirements) so login screens need neither a tenant ID nor a slug.
@@ -124,6 +151,27 @@ export function createDomainsApi(ctx: ServerContext) {
     lastCheckedAt: record.lastCheckedAt,
     dnsRecord: instructions(record),
   });
+  /**
+   * Actions on a claim are authorized on `domains/{domain}`, so a grant can name the domain. The claim is read ahead
+   * only to pick that resource: an ID that is not one of this tenant's claims is authorized as `domains/{id}` and
+   * reported missing inside the operation, after authorization, so a caller it refuses cannot tell whether it exists.
+   */
+  const claimResource = async (tenantId: string, domainId: string): Promise<string> => {
+    const record = await ctx.store.get<TenantDomain>('tenantDomains', domainId);
+    return record?.tenantId === tenantId ? `domains/${record.domain}` : `domains/${domainId}`;
+  };
+  /** The claim inside an operation: this tenant's, and the one its authorized resource names. */
+  const authorizedClaim = async (
+    tx: IamStore,
+    tenantId: string,
+    domainId: string,
+    resourceId: string,
+  ): Promise<TenantDomain> => {
+    const record = await ctx.scoped<TenantDomain>(tx, 'tenantDomains', domainId, tenantId);
+    if (`domains/${record.domain}` !== resourceId)
+      throw new IamError('NOT_FOUND', 'Resource not found', 404);
+    return record;
+  };
 
   return {
     /** Claims a domain for the tenant and returns the TXT record to publish. Requires iam:domains:create. */
@@ -168,34 +216,33 @@ export function createDomainsApi(ctx: ServerContext) {
       ),
     /**
      * Looks up the TXT record and, when it matches, marks the domain verified. DNS is queried before the
-     * transaction opens; the result reports `verified: false` (and the expected record) while it is not yet visible.
+     * transaction opens, and only for a caller allowed to verify the claim; the result reports `verified: false` (and
+     * the expected record) while it is not yet visible.
      */
     verify: async (credential: CredentialInput, input: { tenantId: string; domainId: string }) => {
       const tenantId = text(input.tenantId, 'tenantId');
-      await ctx.principals.authenticate(credential);
-      const claimed = await ctx.scoped<TenantDomain>(
-        ctx.store,
-        'tenantDomains',
-        text(input.domainId, 'domainId'),
-        tenantId,
-      );
-      const expected = instructions(claimed);
+      const domainId = text(input.domainId, 'domainId');
+      const resourceId = await claimResource(tenantId, domainId);
       let found = false;
-      if (claimed.status !== 'verified') {
-        try {
-          const records = await lookup(expected.name);
-          found = records.some((chunks) => chunks.join('').trim() === expected.value);
-        } catch {
-          found = false;
+      if (await permittedAhead(ctx, credential, tenantId, 'iam:domains:update', resourceId)) {
+        const claimed = await ctx.store.get<TenantDomain>('tenantDomains', domainId);
+        if (claimed?.tenantId === tenantId && claimed.status !== 'verified') {
+          const expected = instructions(claimed);
+          try {
+            const records = await lookup(expected.name);
+            found = records.some((chunks) => chunks.join('').trim() === expected.value);
+          } catch {
+            found = false;
+          }
         }
       }
       return operation(
         credential,
         tenantId,
         'iam:domains:update',
-        `domains/${claimed.domain}`,
+        resourceId,
         async ({ tx }) => {
-          const record = await ctx.scoped<TenantDomain>(tx, 'tenantDomains', claimed.id, tenantId);
+          const record = await authorizedClaim(tx, tenantId, domainId, resourceId);
           if (record.status === 'verified') return { verified: true, domain: present(record) };
           const now = ctx.now();
           if (!found) {
@@ -225,19 +272,15 @@ export function createDomainsApi(ctx: ServerContext) {
     /** Releases a claim; a verified domain stops resolving to the tenant immediately. Requires iam:domains:delete. */
     delete: async (credential: CredentialInput, input: { tenantId: string; domainId: string }) => {
       const tenantId = text(input.tenantId, 'tenantId');
-      const claimed = await ctx.scoped<TenantDomain>(
-        ctx.store,
-        'tenantDomains',
-        text(input.domainId, 'domainId'),
-        tenantId,
-      );
+      const domainId = text(input.domainId, 'domainId');
+      const resourceId = await claimResource(tenantId, domainId);
       return operation(
         credential,
         tenantId,
         'iam:domains:delete',
-        `domains/${claimed.domain}`,
+        resourceId,
         async ({ tx }) => {
-          const record = await ctx.scoped<TenantDomain>(tx, 'tenantDomains', claimed.id, tenantId);
+          const record = await authorizedClaim(tx, tenantId, domainId, resourceId);
           const owner = await tx.get<DomainOwner>('domainOwners', record.domain);
           if (owner?.tenantId === tenantId) await tx.delete('domainOwners', record.domain);
           await tx.delete('tenantDomains', record.id);

@@ -402,14 +402,15 @@ describe('application-level integration through HTTP and the typed client', () =
       password: 'a strong beta owner password',
     });
     if (!('token' in aliceBeta)) throw new Error('Unexpected MFA');
-    // A resource owned by Acme cannot be evaluated under Beta's tenant, and Beta's resources are invisible to an Acme session.
-    await expect(
-      aliceBrowser.client.authorize({
+    // A resource owned by Acme cannot be evaluated under Beta's tenant, and Beta's resources are invisible to an Acme
+    // session: a principal of another tenant is refused before any resource is resolved, so it learns nothing.
+    expect(
+      await aliceBrowser.client.authorize({
         tenantId: beta.tenant.id,
         action: 'documents:read',
         resource: { type: 'document', id: 'handbook' },
       }),
-    ).rejects.toMatchObject({ code: 'RESOURCE_MISMATCH', status: 403 });
+    ).toMatchObject({ allowed: false });
     await aliceBetaBrowser.client.resources.register({
       tenantId: beta.tenant.id,
       type: 'project',

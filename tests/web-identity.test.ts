@@ -791,8 +791,9 @@ describe('sts.assumeRoleWithWebIdentity', () => {
       id: expect.stringMatching(/^[0-9a-f]{64}$/),
       tenantId: f.tenantId,
       providerId: s.provider.id,
-      // The token's exp plus the provider's clock tolerance, so it outlives the acceptance window.
-      expiresAt: (payload.exp as number) * 1000 + 30_000,
+      // The token's exp plus the largest clock tolerance a provider may have (120 s), so it outlives the acceptance
+      // window even if the provider's tolerance is raised later.
+      expiresAt: (payload.exp as number) * 1000 + 120_000,
     });
     // Tokens without a jti are keyed by their signed content (header.payload).
     const anonymous = s.token({ jti: undefined });
@@ -825,6 +826,22 @@ describe('sts.assumeRoleWithWebIdentity', () => {
     expect(first.session.id).not.toBe(second.session.id);
     // One record each for `external`, `anonymous` and the re-spelled `fresh`; none while protection is off.
     expect(await f.iam.store.find('webIdentityReplays')).toHaveLength(3);
+  });
+
+  it('counts exchanges per client address when one is known, so junk from one source cannot lock a trust', async () => {
+    const s = await setup({ webIdentity: { maxExchangesPerWindow: 3 } });
+    const from = <T>(ip: string, fn: () => Promise<T>) =>
+      s.f.iam.auth.withClient({ ip, userAgent: 'ci' }, fn);
+    // An attacker who knows the (public) trust id posts junk until its own budget is gone.
+    for (let attempt = 0; attempt < 3; attempt++)
+      await expect(from('198.51.100.66', () => s.exchange(s.token({ aud: 'wrong' })))).rejects.toMatchObject(
+        { code: 'WEB_IDENTITY_REJECTED' },
+      );
+    await expect(from('198.51.100.66', () => s.exchange(s.token()))).rejects.toMatchObject({
+      code: 'RATE_LIMITED',
+    });
+    // The real workload, from its own address, still exchanges.
+    expect((await from('203.0.113.9', () => s.exchange(s.token()))).session.kind).toBe('role');
   });
 
   it('counts exchanges per trust before any lookup (RATE_LIMITED)', async () => {

@@ -9,7 +9,7 @@ import {
   type Tenant,
 } from '@better-iam/core';
 import { hashToken } from '../crypto.js';
-import type { SignInResult } from '../types.js';
+import type { Challenge, SignInResult } from '../types.js';
 import { email, password, phone, text } from '../validation.js';
 import { SessionAuth } from './sessions.js';
 
@@ -35,7 +35,13 @@ export class AccountAuth extends SessionAuth {
         })
       )[0];
       if (identity && !identity.emailVerified) {
-        const token = await this.challenge(tx, identity, 'verify-email', {}, 24 * 60 * 60_000);
+        const token = await this.challenge(
+          tx,
+          identity,
+          'verify-email',
+          { email: normalized },
+          24 * 60 * 60_000,
+        );
         await this.enqueue(tx, identity, 'email', normalized, 'verify-email', { token });
       }
       return { success: true };
@@ -50,7 +56,12 @@ export class AccountAuth extends SessionAuth {
     return this.options.store.transaction(async (tx) => {
       const challenge = await this.readChallenge(tx, input.tenantId, input.token, 'verify-email');
       const identity = await this.user(tx, challenge.identityId, input.tenantId);
+      // The link proves control of the address it was mailed to, and only that one: after any change of address
+      // (including by an identity provider or SCIM), it verifies nothing.
+      this.assertSameAddress(challenge, identity);
       identity.emailVerified = true;
+      // The address owner completed the sign-up themselves, so the password they chose stands.
+      delete identity.unprovenPassword;
       await tx.put('identities', identity);
       await tx.delete('authChallenges', challenge.id);
       await this.audit(tx, identity, 'auth:email:verify');
@@ -78,7 +89,7 @@ export class AccountAuth extends SessionAuth {
         })
       )[0];
       if (identity?.emailVerified) {
-        const token = await this.challenge(tx, identity, 'password-reset', {});
+        const token = await this.challenge(tx, identity, 'password-reset', { email: normalized });
         await this.enqueue(tx, identity, 'email', normalized, 'password-reset', { token });
       }
       return { success: true };
@@ -91,8 +102,14 @@ export class AccountAuth extends SessionAuth {
       throw new IamError('FEATURE_DISABLED', 'Password recovery is unavailable');
     if (identity.kind !== 'user' || identity.status !== 'active' || !identity.email)
       throw new IamError('INVALID_INPUT', 'Only active people with an email can reset a password');
-    const token = await this.challenge(tx, identity, 'password-reset', {});
+    const token = await this.challenge(tx, identity, 'password-reset', { email: identity.email });
     await this.enqueue(tx, identity, 'email', identity.email, 'password-reset', { token });
+  }
+
+  /** Refuses a mailed link once the identity's address is no longer the one it was sent to. */
+  protected assertSameAddress(challenge: Challenge, identity: Identity): void {
+    if (!identity.email || challenge.payload.email !== identity.email)
+      throw new IamError('INVALID_CHALLENGE', 'Email has changed', 401);
   }
 
   async resetPassword(input: {
@@ -110,6 +127,9 @@ export class AccountAuth extends SessionAuth {
     return this.options.store.transaction(async (tx) => {
       const challenge = await this.readChallenge(tx, input.tenantId, input.token, 'password-reset');
       const identity = await this.user(tx, challenge.identityId, input.tenantId);
+      this.assertSameAddress(challenge, identity);
+      // A password chosen through the mailed link is the address owner's.
+      delete identity.unprovenPassword;
       await this.setPassword(
         tx,
         await tx.get<Tenant>('tenants', identity.tenantId),
@@ -168,6 +188,8 @@ export class AccountAuth extends SessionAuth {
     credentials: CredentialInput,
     input: { password: string },
   ): Promise<SignInResult> {
+    if (this.options.emailPassword === false)
+      throw new IamError('FEATURE_DISABLED', 'Password authentication is disabled', 403);
     text(input.password, 'password', 1024);
     const initial = await this.authenticate(credentials);
     if (initial.session.impersonatorId)
@@ -191,6 +213,8 @@ export class AccountAuth extends SessionAuth {
           failed = principal.identity;
           throw new IamError('INVALID_CREDENTIALS', 'Invalid password', 401);
         }
+        // As at sign-in: an expired password is refused once verified, so each new session cannot dodge the expiry.
+        await this.assertPasswordCurrent(tx, principal.identity);
         return await this.completeAuthentication(tx, principal.identity, 'password');
       });
     } catch (error) {

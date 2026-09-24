@@ -11,11 +11,15 @@ import {
 } from '@better-iam/core';
 import { encryptSecret } from '@better-iam/auth';
 import { handOverAgents } from '../agents.js';
+import { releaseAppRecordsOf } from '../applications.js';
 import { attributeValues } from '../catalog.js';
 import type { ServerContext } from '../context.js';
 import { revokeDelegationsOf } from '../delegations.js';
 import { releaseDepartments } from '../departments.js';
+import { releaseDevicesOf } from '../devices.js';
+import { assertNoLegalHold, releasePrivacyRecords } from '../privacy.js';
 import { assertNotTeamGroup, removeFromAllTeams } from '../teams.js';
+import { endContainment } from '../threats.js';
 import type {
   AccessRequest,
   Binding,
@@ -54,8 +58,12 @@ export async function deleteIdentity(
     throw new IamError('INVALID_INPUT', 'An identity cannot delete itself');
   if (identity.rootAdmin && !(await ctx.rootPrincipal(tx, principal)))
     throw new IamError('ACCESS_DENIED', 'Root capability is protected', 403);
+  await assertOwnerControl(ctx, tx, principal, identity, 'Only an owner can delete an owner');
   await ctx.protectLastOwner(tx, identity);
+  // A legal hold (privacy.ts) keeps the person: no deletion path removes what litigation needs kept.
+  await assertNoLegalHold(tx, identity, ctx.now());
   await ctx.revokeAll(tx, identity.id);
+  await revokeInvitationsBy(tx, identity.id);
   const remove = async (collection: string, filter: Record<string, unknown>) => {
     for (const row of await tx.find(collection, filter)) await tx.delete(collection, row.id);
   };
@@ -82,6 +90,12 @@ export async function deleteIdentity(
   await remove('externalIdentities', { tenantId: identity.tenantId, identityId: identity.id });
   // Onboarding progress carries the person's form answers.
   await remove('onboardingProgress', { tenantId: identity.tenantId, subjectId: identity.id });
+  // Threat detection (threats.ts): the sign-in baseline (networks, user agents) and the risk record go with the
+  // person; detections and incidents stay as the investigation record.
+  await remove('threatBaselines', { tenantId: identity.tenantId, identityId: identity.id });
+  await remove('identityRisk', { tenantId: identity.tenantId, identityId: identity.id });
+  // Device posture (devices.ts): self-enrolled devices retire with their keys, managed ones lose their owner.
+  await releaseDevicesOf(tx, identity, ctx.now());
   // Teams and departments (teams.ts, departments.ts): memberships end, departments they head lose their head.
   await removeFromAllTeams(tx, identity.tenantId, identity.id, ctx.now());
   await releaseDepartments(tx, identity.tenantId, identity.id, ctx.now());
@@ -92,6 +106,10 @@ export async function deleteIdentity(
   });
   // Delegations the person gave AI agents (or an agent held) end with the identity (delegations.ts).
   await revokeDelegationsOf(ctx, tx, identity, principal.identity.id);
+  // Current consent decisions and restrictions go; their history stays as proof (privacy.ts).
+  await releasePrivacyRecords(tx, identity);
+  // App assignments and launch history go; apps they owned lose them as an owner (applications.ts).
+  await releaseAppRecordsOf(tx, identity);
   if (await tx.get('authMfa', identity.id)) await tx.delete('authMfa', identity.id);
   for (const authority of await tx.find<GrantAuthority>('grantAuthorities', {
     tenantId: identity.tenantId,
@@ -171,6 +189,66 @@ function ownsTenant(principal: AuthenticatedPrincipal, tenantId: string): boolea
   );
 }
 
+/**
+ * Deleting, disabling, or scheduling the deactivation of an owner removes an owner as surely as `setOwner(false)` or
+ * `offboard` does, so it needs the same caller: an owner of the tenant in person or a root principal, never
+ * iam:identities:update or iam:identities:delete alone. The refusal is audited as a denial.
+ */
+export async function assertOwnerControl(
+  ctx: ServerContext,
+  tx: IamStore,
+  principal: AuthenticatedPrincipal,
+  identity: Identity,
+  message: string,
+): Promise<void> {
+  if (!identity.owner) return;
+  if (ownsTenant(principal, identity.tenantId) || (await ctx.rootPrincipal(tx, principal))) return;
+  throw new OperationDenied(message);
+}
+
+/**
+ * Attributes and a manager feed birthright package rules and policy conditions, so choosing them when creating an
+ * identity is an update: it needs iam:identities:update on the tenant besides iam:identities:create.
+ */
+async function assertMaySetProfile(
+  ctx: ServerContext,
+  tx: IamStore,
+  principal: AuthenticatedPrincipal,
+  tenantId: string,
+): Promise<void> {
+  const decision = await ctx.decisions.decide(
+    tx,
+    principal,
+    { tenantId, action: 'iam:identities:update', resource: { type: 'iam', id: tenantId } },
+    true,
+  );
+  if (!decision.allowed)
+    throw new OperationDenied('Setting attributes or a manager requires iam:identities:update');
+}
+
+/** Attribute maps compared by content, whatever order their keys were written in. */
+function sameAttributes(a: Record<string, Json> = {}, b: Record<string, Json> = {}): boolean {
+  const canonical = (value: Record<string, Json>) =>
+    JSON.stringify(
+      Object.keys(value)
+        .sort()
+        .map((key) => [key, value[key]]),
+    );
+  return canonical(a) === canonical(b);
+}
+
+/**
+ * The member invitations an identity sent and nobody redeemed yet are revoked when it is disabled or leaves (redemption
+ * refuses an inactive inviter anyway; this keeps `listInvitations` truthful and the tokens dead if it comes back).
+ */
+export async function revokeInvitationsBy(tx: IamStore, identityId: string): Promise<void> {
+  for (const invitation of await tx.find<MemberInvitation>('memberInvitations', {
+    inviterId: identityId,
+  }))
+    if (!invitation.consumed && !invitation.revoked)
+      await tx.put('memberInvitations', { ...invitation, revoked: true });
+}
+
 /** A manager is another active identity of the tenant, never the person or one of their own reports (no cycles). */
 async function managerFor(
   ctx: ServerContext,
@@ -196,7 +274,10 @@ export function createIdentitiesApi(ctx: ServerContext) {
   const { auth, options, config, catalog } = ctx;
   const { operation } = ctx.operations;
   return {
-    /** `expiresAt` schedules deactivation (contractors): credentials stop working at that time and the worker disables the identity. */
+    /**
+     * `expiresAt` schedules deactivation (contractors): credentials stop working at that time and the worker disables
+     * the identity. A `managerId` also needs iam:identities:update on the tenant.
+     */
     create: (
       credential: CredentialInput,
       input: {
@@ -214,9 +295,11 @@ export function createIdentitiesApi(ctx: ServerContext) {
         input.tenantId,
         'iam:identities:create',
         input.tenantId,
-        async ({ tx }) => {
+        async ({ tx, principal }) => {
           const expiresAt =
             input.expiresAt !== undefined ? ctx.bindingExpiry(input.expiresAt) : undefined;
+          if (input.managerId !== undefined)
+            await assertMaySetProfile(ctx, tx, principal, input.tenantId);
           const identity = await auth.createIdentity(tx, {
             tenantId: input.tenantId,
             email: email(input.email),
@@ -241,7 +324,8 @@ export function createIdentitiesApi(ctx: ServerContext) {
     /**
      * Creates up to 100 identities atomically with optional attributes, roles, and groups (bulk onboarding). Roles and
      * groups are authorized once like invitations: `iam:bindings:create` on each role under the caller's grant
-     * authority and `iam:groups:update` on each group. One failure rejects the whole batch.
+     * authority and `iam:groups:update` on each group; attributes need iam:identities:update on the tenant. One failure
+     * rejects the whole batch.
      */
     createMany: (
       credential: CredentialInput,
@@ -285,6 +369,8 @@ export function createIdentitiesApi(ctx: ServerContext) {
                 value.expiresAt !== undefined ? ctx.bindingExpiry(value.expiresAt) : undefined,
             };
           });
+          if (items.some((item) => Object.keys(item.attributes).length))
+            await assertMaySetProfile(ctx, tx, principal, realm.id);
           const roleIds = new Set(items.flatMap((item) => item.roleIds));
           const groupIds = new Set(items.flatMap((item) => item.groupIds));
           const authority = roleIds.size
@@ -773,7 +859,7 @@ export function createIdentitiesApi(ctx: ServerContext) {
     /**
      * Offboarding in one transaction: disables the identity, ends every session and key, removes its role
      * bindings (under the caller's authority, like `bindings.delete`), group memberships, activations,
-     * relationships, and pending access requests, revokes the grant authorities it holds, and hands the managed
+     * relationships, pending access requests and member invitations, revokes the grant authorities it holds, and hands the managed
      * resources it owns to `successorId` (or reports them). Ownership is removed like `setOwner`, which needs an
      * owner or root caller; the last owner and root administrators are protected. The record stays as a disabled
      * identity for retention; `identities.delete` tombstones it later. Requires recent authentication and
@@ -988,11 +1074,14 @@ export function createIdentitiesApi(ctx: ServerContext) {
             ...(delegationsRevoked ? { delegationsRevoked } : {}),
           };
           await ctx.revokeAll(tx, identity.id);
+          await revokeInvitationsBy(tx, identity.id);
           const disabled = await tx.put<Identity>('identities', {
             ...identity,
             status: 'disabled',
             owner: false,
           });
+          // An offboarded identity stays disabled: a threats containment of it can no longer be released.
+          await endContainment(tx, identity.id, ctx.now());
           await ctx.events.audit(
             tx,
             principal,
@@ -1018,7 +1107,9 @@ export function createIdentitiesApi(ctx: ServerContext) {
      * changes its email, or schedules/clears its deactivation (`expiresAt`, null to clear). An email change requires
      * recent authentication, marks the address unverified, revokes the identity's sessions, and is audited as
      * `identity:email-change`. Changing the expiry of an owner or root administrator needs the same protection as
-     * disabling them; shortening it to the past is refused (disable the identity instead).
+     * disabling them (an owner or root caller), the last owner without an expiry cannot be given one, and shortening
+     * it to the past is refused (disable the identity instead). Changing your own attributes, manager, or expiry needs
+     * an owner or root caller.
      */
     update: (
       credential: CredentialInput,
@@ -1055,15 +1146,55 @@ export function createIdentitiesApi(ctx: ServerContext) {
           if (input.expiresAt !== undefined) {
             if (identity.rootAdmin && !(await ctx.rootPrincipal(tx, principal)))
               throw new IamError('ACCESS_DENIED', 'Root capability is protected', 403);
+            await assertOwnerControl(
+              ctx,
+              tx,
+              principal,
+              identity,
+              'Only an owner can change an owner’s expiry',
+            );
             if (input.expiresAt === null) delete next.expiresAt;
             else {
-              if (identity.owner) await ctx.protectLastOwner(tx, identity);
+              if (identity.owner) {
+                await ctx.protectLastOwner(tx, identity);
+                // An owner past their expiry is locked out like a disabled one: the last owner without an expiry
+                // keeps none, or every owner could be scheduled away with nobody left to undo it.
+                if (
+                  typeof identity.expiresAt !== 'number' &&
+                  !(
+                    await tx.find<Identity>('identities', {
+                      tenantId: identity.tenantId,
+                      owner: true,
+                      status: 'active',
+                    })
+                  ).some((other) => other.id !== identity.id && typeof other.expiresAt !== 'number')
+                )
+                  throw new IamError(
+                    'LAST_OWNER',
+                    'The last owner without an expiry cannot be given one',
+                    409,
+                  );
+              }
               next.expiresAt = ctx.bindingExpiry(input.expiresAt);
             }
           }
           if (input.managerId === null) delete next.managerId;
           else if (input.managerId !== undefined && input.managerId !== identity.managerId)
             next.managerId = await managerFor(ctx, tx, identity, input.managerId);
+          // Attributes, the reporting line and the expiry feed birthright package rules and policy conditions, so
+          // changing your own would grant you access: only an owner of the tenant or root may. Re-sending the current
+          // values is not a change.
+          if (
+            identity.id === principal.identity.id &&
+            (!sameAttributes(next.attributes, identity.attributes) ||
+              next.managerId !== identity.managerId ||
+              next.expiresAt !== identity.expiresAt) &&
+            !ownsTenant(principal, input.tenantId) &&
+            !(await ctx.rootPrincipal(tx, principal))
+          )
+            throw new OperationDenied(
+              'Your own attributes, manager and expiry are changed by another administrator',
+            );
           let previousEmail: string | undefined;
           if (input.email !== undefined) {
             auth.requireRecent(principal);
@@ -1421,6 +1552,10 @@ export function createIdentitiesApi(ctx: ServerContext) {
       name?: string;
       password: string;
     }) => ctx.flows.acceptMemberInvitation(input),
+    /**
+     * Disables (ending its sessions, keys and pending invitations) or re-enables an identity. Disabling an owner needs
+     * an owner or root caller; agents are stopped and restarted with `agents.suspend` and `agents.resume` instead.
+     */
     setStatus: (
       credential: CredentialInput,
       input: { tenantId: string; identityId: string; status: 'active' | 'disabled' },
@@ -1435,9 +1570,19 @@ export function createIdentitiesApi(ctx: ServerContext) {
           if (!['active', 'disabled'].includes(input.status))
             throw new IamError('INVALID_INPUT', 'Invalid identity status');
           const identity = await ctx.activeIdentity(tx, input.identityId, input.tenantId);
+          // An agent's status follows its own rules (agents.ts): re-enabling it here would lift a suspension that
+          // only agents.resume, with its own permission and recent sign-in, may lift.
+          if (identity.kind === 'agent')
+            throw new IamError(
+              'INVALID_INPUT',
+              'Use agents.suspend and agents.resume to stop or restart an agent',
+            );
           if (identity.rootAdmin && !(await ctx.rootPrincipal(tx, principal)))
             throw new IamError('ACCESS_DENIED', 'Root capability is protected', 403);
-          if (input.status === 'disabled') await ctx.protectLastOwner(tx, identity);
+          if (input.status === 'disabled') {
+            await assertOwnerControl(ctx, tx, principal, identity, 'Only an owner can disable an owner');
+            await ctx.protectLastOwner(tx, identity);
+          }
           if (input.status === 'active' && ctx.identityExpired(identity))
             throw new IamError(
               'INVALID_TRANSITION',
@@ -1445,11 +1590,19 @@ export function createIdentitiesApi(ctx: ServerContext) {
               409,
             );
           const updated = await tx.put('identities', { ...identity, status: input.status });
-          if (input.status === 'disabled') await ctx.revokeAll(tx, identity.id);
+          // The status is now this call's: a threats containment is over (released here, or held by this disable).
+          await endContainment(tx, identity.id, ctx.now());
+          if (input.status === 'disabled') {
+            await ctx.revokeAll(tx, identity.id);
+            await revokeInvitationsBy(tx, identity.id);
+          }
           return publicIdentity(updated);
         },
       ).then((updated) => afterIdentityChange(ctx, input.tenantId, [updated.id], updated)),
-    /** Ownership transfer: grants or removes the protected Owner role; the last active owner is protected. */
+    /**
+     * Ownership transfer: grants or removes the protected Owner role; the last active owner is protected. A former
+     * owner's owner grant authority passes to a remaining owner, so what they granted stays and they grant no more.
+     */
     setOwner: (
       credential: CredentialInput,
       input: { tenantId: string; identityId: string; owner: boolean },
@@ -1494,14 +1647,35 @@ export function createIdentitiesApi(ctx: ServerContext) {
               authorityId: authority.id,
             });
           }
-          if (!input.owner)
+          if (!input.owner) {
+            // The unlimited grant authority the Owner role came with (from setOwner or the owner invitation) leaves
+            // the former owner too. It passes to an owner who stays (the caller, or else the longest-standing other
+            // owner) instead of being revoked: revoking it would also end every grant made under it, including the
+            // authorities of owners promoted through it.
+            const successorId =
+              ownsTenant(principal, input.tenantId) && principal.identity.id !== identity.id
+                ? principal.identity.id
+                : (
+                    await tx.find<Identity>('identities', {
+                      tenantId: input.tenantId,
+                      owner: true,
+                      status: 'active',
+                    })
+                  )
+                    .filter((other) => other.id !== identity.id)
+                    .sort((a, b) => a.createdAt - b.createdAt || (a.id < b.id ? -1 : 1))[0]?.id;
             for (const binding of await tx.find<Binding>('bindings', {
               tenantId: input.tenantId,
               subjectType: 'identity',
               subjectId: identity.id,
               roleId: ownerRole.id,
-            }))
+            })) {
               await tx.delete('bindings', binding.id);
+              const authority = await tx.get<GrantAuthority>('grantAuthorities', binding.authorityId);
+              if (authority?.identityId === identity.id && successorId !== undefined)
+                await tx.put('grantAuthorities', { ...authority, identityId: successorId });
+            }
+          }
           return publicIdentity(await tx.put('identities', { ...identity, owner: input.owner }));
         },
       ),

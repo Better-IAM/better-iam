@@ -127,6 +127,10 @@ export async function createOptions(overrides = {}) {
     accessUsage: true,
     // AI model access, budgets and metering for the Models & budgets page (and the /api/ai gateway).
     inference: true,
+    // The SSH certificate authority for the SSH access page (hosts enroll and sync over /api/iam/ssh/*).
+    ssh: true,
+    // Verifiable credentials for the Credentials page; wallets reach the issuer at /api/iam/vc/{tenantId}.
+    verifiableCredentials: true,
     // Attested A2A agent cards (Agents page); the public keys are served at /api/a2a/jwks.json.
     ...(cardKey
       ? {

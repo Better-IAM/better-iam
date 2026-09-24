@@ -116,6 +116,8 @@ function onlyKeys(value: Record<string, unknown>, allowed: string[]): void {
  */
 const variable = /\$\{([A-Za-z_][A-Za-z0-9_.:-]{0,127})\}/y;
 const variableMarker = '${';
+// Without the `u` flag the class sees UTF-16 code units, so it finds the halves of any astral character.
+const surrogate = /[\uD800-\uDFFF]/;
 type Token = { kind: 'star' } | { kind: 'any' } | { kind: 'char'; value: string };
 
 function globTokens(pattern: string, into: Token[]): void {
@@ -161,14 +163,29 @@ function tokenize(
   globTokens(pattern.slice(cursor), tokens);
   return tokens;
 }
+/**
+ * Work left in the running evaluation, in characters examined (roughly). evaluatePolicy sets it; matching outside an
+ * evaluation is unbounded. The engine is synchronous, so one oversized document or context value would otherwise hold
+ * the event loop (and, with a database lock, every tenant) for as long as it takes.
+ */
+let workLeft = Infinity;
+const evaluationWork = 4_000_000;
+class EvaluationLimit extends Error {}
+function spend(units: number): void {
+  workLeft -= units;
+  if (workLeft < 0) throw new EvaluationLimit('Policy evaluation limit');
+}
+
 function matchTokens(tokens: Token[], value: string): boolean {
   // Greedy wildcard matching avoids catastrophic regular-expression backtracking.
   const chars = [...value];
+  spend(chars.length + tokens.length);
   let p = 0;
   let v = 0;
   let star = -1;
   let retry = 0;
   while (v < chars.length) {
+    spend(1);
     const token = tokens[p];
     if (token && (token.kind === 'any' || (token.kind === 'char' && token.value === chars[v]))) {
       p++;
@@ -216,24 +233,43 @@ export function matchPattern(
     const tokens = tokenize(pattern, context);
     return tokens !== undefined && matchTokens(tokens, value);
   }
-  let p = 0;
-  let v = 0;
-  let star = -1;
-  let retry = 0;
-  while (v < value.length) {
-    if (pattern[p] === '?' || (p < pattern.length && pattern[p] === value[v])) {
-      p++;
-      v++;
-    } else if (pattern[p] === '*') {
-      star = p++;
-      retry = v;
-    } else if (star !== -1) {
-      p = star + 1;
-      v = ++retry;
-    } else return false;
+  // `?` is one character (code point) on every path; astral characters take the token path, which counts them so.
+  if (pattern.includes('?') || surrogate.test(pattern) || surrogate.test(value)) {
+    const tokens: Token[] = [];
+    globTokens(pattern, tokens);
+    return matchTokens(tokens, value);
   }
-  while (pattern[p] === '*') p++;
-  return p === pattern.length;
+  return matchStars(pattern, value);
+}
+
+/**
+ * A glob whose only operator is `*`: the text before the first `*` and after the last must anchor the value, and each
+ * piece in between is found at its leftmost place after the previous one (which is optimal for `*`). The searches are
+ * the engine's native substring search, so a long pattern against a long value costs about their combined length. A
+ * literal `*` in the value is ordinary text here, so it never stands in for the pattern's wildcard.
+ */
+function matchStars(pattern: string, value: string): boolean {
+  spend(pattern.length + value.length);
+  const pieces = pattern.split('*');
+  if (pieces.length === 1) return pattern === value;
+  const first = pieces[0]!;
+  const last = pieces[pieces.length - 1]!;
+  if (
+    value.length < first.length + last.length ||
+    !value.startsWith(first) ||
+    !value.endsWith(last)
+  )
+    return false;
+  const end = value.length - last.length;
+  let cursor = first.length;
+  for (let index = 1; index < pieces.length - 1; index++) {
+    const piece = pieces[index]!;
+    if (!piece) continue;
+    const at = value.indexOf(piece, cursor);
+    if (at === -1 || at + piece.length > end) return false;
+    cursor = at + piece.length;
+  }
+  return true;
 }
 
 interface Address {
@@ -489,6 +525,7 @@ function member(
   context: Record<string, unknown> | undefined,
 ): boolean {
   const wanted = typeof expected === 'string' ? resolvePolicyValue(expected, context) : expected;
+  spend(actual.length);
   return wanted !== undefined && actual.includes(wanted);
 }
 
@@ -608,6 +645,7 @@ function matches(statement: PolicyStatement, request: EvaluationRequest): boolea
       if (negated.has(operator) && !wellTyped(operator, actual)) return false;
       const values = Array.isArray(expected) ? expected : [expected];
       const test = (item: ConditionValue) => {
+        spend(1 + (typeof actual === 'string' ? actual.length : 0));
         const outcome = compare(operator, actual, item, request.context);
         return negated.has(operator) ? !outcome : outcome;
       };
@@ -637,19 +675,30 @@ export function evaluatePolicy(input: EvaluationInput): Decision {
   let granted = false;
   const boundaryAllows = boundaries.map(() => false);
   let denied = false;
-  for (const [kind, policies] of [
-    ['grant', input.grants],
-    ['boundary', boundaries],
-  ] as const) {
-    policies.forEach((document, policyIndex) =>
-      document.statements.forEach((statement, statementIndex) => {
-        if (!matches(statement, input)) return;
-        matched.push(`${kind}:${policyIndex}:${statement.sid ?? statementIndex}`);
-        if (statement.effect === 'deny') denied = true;
-        else if (kind === 'grant') granted = true;
-        else boundaryAllows[policyIndex] = true;
-      }),
-    );
+  const outer = workLeft;
+  workLeft = evaluationWork;
+  try {
+    for (const [kind, policies] of [
+      ['grant', input.grants],
+      ['boundary', boundaries],
+    ] as const) {
+      policies.forEach((document, policyIndex) =>
+        document.statements.forEach((statement, statementIndex) => {
+          if (!matches(statement, input)) return;
+          matched.push(`${kind}:${policyIndex}:${statement.sid ?? statementIndex}`);
+          if (statement.effect === 'deny') denied = true;
+          else if (kind === 'grant') granted = true;
+          else boundaryAllows[policyIndex] = true;
+        }),
+      );
+    }
+  } catch (error) {
+    // Too much matching work refuses, like a deny: nothing is granted on a partial evaluation.
+    if (error instanceof EvaluationLimit)
+      return { allowed: false, reason: 'evaluation-limit', matched };
+    throw error;
+  } finally {
+    workLeft = outer;
   }
   if (denied) return { allowed: false, reason: 'explicit-deny', matched };
   if (!granted) return { allowed: false, reason: 'no-grant', matched };

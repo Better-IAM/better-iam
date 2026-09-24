@@ -3,12 +3,14 @@ import {
   IamError,
   appendAuditEvent,
   tenantTreeActive,
+  type AuditEvent,
   type CredentialInput,
   type IamStore,
   type Identity,
   type ResourceRef,
   type StoredRecord,
 } from '@better-iam/core';
+import { checkFetchUrl, createGuardedFetch } from '@better-iam/auth';
 
 const USER_SCHEMA = 'urn:ietf:params:scim:schemas:core:2.0:User';
 const ENTERPRISE_SCHEMA = 'urn:ietf:params:scim:schemas:extension:enterprise:2.0:User';
@@ -33,9 +35,17 @@ export interface ProvisioningConfig {
   previousEncryptionKeys?: string[];
   /** Allows `http://` targets on loopback addresses, for local development and tests only. */
   allowInsecureLocalhost?: boolean;
+  /**
+   * Lets targets resolve to private and reserved addresses (`10.0.0.0/8`, `169.254.169.254`, …). Off by default:
+   * tenant administrators choose target URLs, so without this they could make the server call into its own network.
+   */
+  allowPrivateNetworks?: boolean;
   /** Per-request timeout for downstream calls (default 10 seconds). */
   timeoutMs?: number;
+  /** Replaces the default transport, which enforces the address rules above; a replacement must enforce its own. */
   fetch?: typeof fetch;
+  /** Records an audit event and fans it out (webhooks, subscribers); `iam.protocolHost` supplies it. */
+  recordAudit?(tx: IamStore, event: AuditEvent): Promise<void>;
   /**
    * Where `handler` serves the JSON management API (`{basePath}/targets/{list,get,create,update,delete,sync}`),
    * default `/scim/provisioning`. Mount under the IAM API path (for example `/api/iam/provisioning`) to reach it with
@@ -152,6 +162,24 @@ class DownstreamError extends Error {
 }
 
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
+/** Reads a request body, refusing it (413) as soon as it exceeds `limit` bytes instead of buffering all of it. */
+async function boundedText(request: Request, limit: number): Promise<string> {
+  const reader = request.body?.getReader();
+  if (!reader) return '';
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const item = await reader.read();
+    if (item.done) break;
+    size += item.value.byteLength;
+    if (size > limit) {
+      await reader.cancel();
+      throw new IamError('INVALID_INPUT', 'Request too large.', 413);
+    }
+    chunks.push(item.value);
+  }
+  return Buffer.concat(chunks).toString('utf8');
+}
 /** Temporary and access-package memberships stop counting at `expiresAt`, before the purge worker removes them. */
 const liveMembership = (membership: StoredRecord) =>
   typeof membership.expiresAt !== 'number' || membership.expiresAt > Date.now();
@@ -173,7 +201,14 @@ export function createScimProvisioner(config: ProvisioningConfig) {
       'configuration',
       'Each previous provisioning encryption key must encode exactly 32 bytes.',
     );
-  const request = config.fetch ?? fetch;
+  // Tenant administrators choose target URLs, so the default transport refuses private and reserved addresses at
+  // connect time (a hostname cannot be re-pointed at the internal network after validation) and bounds responses.
+  const addressRules = {
+    anyPort: true,
+    allowInsecureLocalhost: config.allowInsecureLocalhost === true,
+    allowPrivateNetworks: config.allowPrivateNetworks === true,
+  };
+  const request = config.fetch ?? createGuardedFetch({ ...addressRules, maxBytes: 1_000_000 });
   const timeoutMs = config.timeoutMs ?? 10_000;
   const running = new Map<string, Promise<ProvisioningRun>>();
 
@@ -233,6 +268,15 @@ export function createScimProvisioner(config: ProvisioningConfig) {
       parsed.search
     )
       throw new IamError('INVALID_INPUT', 'The SCIM base URL must be an absolute HTTPS URL.');
+    // IP literals are judged now; hostnames are judged by the transport each time it connects.
+    try {
+      checkFetchUrl(parsed, addressRules);
+    } catch {
+      throw new IamError(
+        'INVALID_INPUT',
+        'The SCIM base URL must point at a public address (see allowPrivateNetworks).',
+      );
+    }
     return `${parsed.origin}${parsed.pathname.replace(/\/$/, '')}`;
   }
   function settings(input: Partial<ProvisioningTargetInput>, current?: TargetRecord) {
@@ -317,6 +361,14 @@ export function createScimProvisioner(config: ProvisioningConfig) {
       type: 'scim',
       id: `outbound/${targetId}`,
     });
+    // Configuring, syncing and previewing a target send (or show) every member in scope: name, email, mapped
+    // attributes and groups. That is reading the directory, so it needs that permission too, not only the target's.
+    if (action !== 'iam:scim:targets:read' && action !== 'iam:scim:targets:delete')
+      await config.authorize(credential, 'iam:identities:read', {
+        tenantId,
+        type: 'iam',
+        id: tenantId,
+      });
     return config.authenticate(credential);
   }
   async function owned(store: IamStore, tenantId: string, targetId: string) {
@@ -335,15 +387,18 @@ export function createScimProvisioner(config: ProvisioningConfig) {
     action: string,
     resourceId: string,
   ) {
-    await appendAuditEvent(tx, {
+    const event = {
       id: randomUUID(),
       tenantId,
       actorId,
       action,
       resourceId,
       timestamp: Date.now(),
-      outcome: 'allow',
-    });
+      outcome: 'allow' as const,
+    };
+    // Through the host when it fans events out to webhooks and subscribers; `subscribe` ignores these itself.
+    if (config.recordAudit) await config.recordAudit(tx, event);
+    else await appendAuditEvent(tx, event);
   }
 
   /** One downstream SCIM call with the target's bearer token. */
@@ -373,7 +428,12 @@ export function createScimProvisioner(config: ProvisioningConfig) {
           : 'The SCIM service is unreachable.',
       );
     }
-    const text = await response.text();
+    let text: string;
+    try {
+      text = await response.text();
+    } catch {
+      throw new DownstreamError('The SCIM response is too large or was cut off.');
+    }
     if (text.length > 1_000_000) throw new DownstreamError('The SCIM response is too large.');
     let json: Record<string, unknown> | undefined;
     try {
@@ -430,13 +490,27 @@ export function createScimProvisioner(config: ProvisioningConfig) {
     }
     return undefined;
   }
-  const quoted = (value: string) => `"${value.replace(/["\\]/g, '')}"`;
-  /** An existing downstream user for the same person, so a first sync adopts instead of duplicating. */
-  function adopt(target: TargetRecord, identity: Identity): Promise<string | undefined> {
-    return lookup(target, 'Users', [
-      `externalId eq ${quoted(identity.id)}`,
-      `userName eq ${quoted(identity.email!)}`,
-    ]);
+  /** A filter value (RFC 7644 compValue, a JSON string): escaped, never stripped, so it matches only itself. */
+  const quoted = (value: string) => JSON.stringify(value);
+  /**
+   * An existing downstream user for the same person, so a first sync adopts instead of duplicating: the one this
+   * target created for them (`externalId`), or, only when their address is verified, the account whose `userName` is
+   * that address. Someone who merely typed another person's address never takes over their downstream account, and an
+   * account another person's link already holds is never adopted twice.
+   */
+  async function adopt(target: TargetRecord, identity: Identity): Promise<string | undefined> {
+    const filters = [`externalId eq ${quoted(identity.id)}`];
+    if (identity.emailVerified === true && identity.email)
+      filters.push(`userName eq ${quoted(identity.email)}`);
+    const remoteId = await lookup(target, 'Users', filters);
+    if (remoteId === undefined) return undefined;
+    const holders = await config.store.find<LinkRecord>('provisioningLinks', {
+      targetId: target.id,
+      remoteId,
+    });
+    if (holders.some((link) => link.identityId !== identity.id))
+      throw new DownstreamError('The matching downstream account is linked to someone else.');
+    return remoteId;
   }
 
   /**
@@ -835,9 +909,17 @@ export function createScimProvisioner(config: ProvisioningConfig) {
       return config.store.transaction(async (tx) => {
         const current = await owned(tx, input.tenantId, input.targetId);
         const now = Date.now();
+        const values = settings(input, current);
+        // The stored token is write-only: pointing the target somewhere else must not send it along, so a new base
+        // URL needs the token again (whoever sets it proves they hold a credential for the new service).
+        if (values.baseUrl !== current.baseUrl && input.token === undefined)
+          throw new IamError(
+            'INVALID_INPUT',
+            'Changing the SCIM base URL needs the downstream token again.',
+          );
         const record: TargetRecord = {
           ...current,
-          ...settings(input, current),
+          ...values,
           ...(input.token !== undefined
             ? { sealedToken: seal(token(input.token)), tokenUpdatedAt: now }
             : {}),
@@ -875,6 +957,12 @@ export function createScimProvisioner(config: ProvisioningConfig) {
       input: { tenantId: string; targetId: string },
     ): Promise<ProvisioningPreview> {
       await authorized(credential, 'iam:scim:targets:read', input.tenantId, input.targetId);
+      // The preview lists members' addresses and looks them up downstream: reading the directory.
+      await config.authorize(credential, 'iam:identities:read', {
+        tenantId: input.tenantId,
+        type: 'iam',
+        id: input.tenantId,
+      });
       return preview(await owned(config.store, input.tenantId, input.targetId));
     },
     /** Reconciles one target now (`iam:scim:targets:sync`) and returns the run. */ async syncTarget(
@@ -963,7 +1051,8 @@ export function createScimProvisioner(config: ProvisioningConfig) {
   async function handler(request: Request): Promise<Response | undefined> {
     const url = new URL(request.url);
     if (!url.pathname.startsWith(`${basePath}/`)) return undefined;
-    const route = routes[url.pathname.slice(basePath.length + 1)];
+    const name = url.pathname.slice(basePath.length + 1);
+    const route = Object.hasOwn(routes, name) ? routes[name] : undefined;
     const reply = (body: unknown, status = 200) =>
       Response.json(body, { status, headers: { 'cache-control': 'no-store' } });
     if (!route) return reply({ error: { code: 'NOT_FOUND', message: 'Unknown route.' } }, 404);
@@ -974,8 +1063,7 @@ export function createScimProvisioner(config: ProvisioningConfig) {
         !request.headers.get('content-type')?.startsWith('application/json')
       )
         throw new IamError('CSRF_REJECTED', 'JSON requests require X-Better-IAM: 1.', 403);
-      const text = await request.text();
-      if (text.length > 64 * 1024) throw new IamError('INVALID_INPUT', 'Request too large.', 413);
+      const text = await boundedText(request, 64 * 1024);
       let body: unknown;
       try {
         body = text ? JSON.parse(text) : {};

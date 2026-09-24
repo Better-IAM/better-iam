@@ -171,6 +171,231 @@ Beyond the `iam:*` operation names, the access lifecycle features record their o
 | `billing:coupon-redeem`            | A billing account redeemed a coupon code                                                                                       | `code`, `couponId`                                                                                                                                                          |
 | `billing:discount-remove`          | A root administrator ended an account's discount                                                                               | `code`                                                                                                                                                                      |
 
+## Key management events
+
+Every `keys` call records its own action (`iam:kms:create`, `iam:kms:encrypt`, `iam:kms:decrypt`, `iam:kms:sign` and
+so on) on resource `kms/{keyId}` (`kms` for tenant-wide calls), with `keyVersion`, `encryptionContext`, `algorithm`
+and `grantId` in its metadata where they apply. It never records plaintexts, key material or signatures. A decryption
+that fails after the call was authorized is recorded as `deny` with `reason: 'invalid-ciphertext'`. The scheduler job
+and grantees record these as well:
+
+| Action             | When                                                                                                 | Metadata                  |
+| ------------------ | ---------------------------------------------------------------------------------------------------- | ------------------------- |
+| `kms:key-rotate`   | `iam.kms.maintain()` rotated a key whose rotation period came due (actor `deployment-operator`)      | `keyVersion`, `automatic` |
+| `kms:key-destroy`  | `iam.kms.maintain()` destroyed a key after its deletion waiting period (actor `deployment-operator`) | `keySpec`, `versions`     |
+| `kms:grant-retire` | A grantee gave up a key grant made to it                                                             | `grantId`                 |
+
+See [Key management](key-management.md).
+
+## Certificate authority events
+
+Every `pki` call records its own action (`iam:pki:create`, `iam:pki:issue`, `iam:pki:request`, `iam:pki:revoke` and
+so on) on resource `pki/{authorityId}` (`pki` for tenant-wide calls). Issuing records `serialNumber`, every name as
+`{nameType}:{name}`, `usage` and `notAfter`; workload certificates record the `spiffeId`; revocations record the
+`serialNumber` and `reason`. Signatures made with an authority's KMS key are also recorded on the key as
+`iam:kms:sign` with `via: 'pki'`. See [Private certificate authority](private-ca.md).
+
+## Data protection events
+
+Every `protection` call records its own action (`iam:protection:tokenize`, `iam:protection:detokenize`,
+`iam:protection:mask`, `iam:protection:delete`, `iam:protection:manage`, `iam:protection:read`) on resource
+`protection/{profile}`, with the `profile` and counts (`count`, `created`, `found`, `deleted`), the `purpose` of a
+detokenization and the `style` of a mask. Refusals carry the `profile` and `purpose` too. Values and tokens are never
+recorded. The KMS data keys behind them are audited on the key with `via: 'protection'`. See
+[Data protection](data-protection.md).
+
+| Action                        | When                                                                                             | Metadata                   |
+| ----------------------------- | ------------------------------------------------------------------------------------------------ | -------------------------- |
+| `protection:retention-sweep`  | `iam.protection.sweep()` deleted tokens past a profile's retention (actor `deployment-operator`) | `deleted`, `retentionDays` |
+
+## Secrets vault events
+
+Every `vault` call records its operation event (`iam:vault:read`, `iam:vault:reveal`, `iam:vault:manage` and so on) on
+resource `vault/secrets/{name}`, and calls that change a secret or hand out a value also record one of these, on the
+same resource. None carries a value. Jobs record them with actor `deployment-operator`.
+
+| Action                   | When                                                                              | Metadata                                                                                    |
+| ------------------------ | --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| `vault:create`           | `vault.create` created a secret                                                   | `name`, `kind`, `format`, `tags`, `version`, `engine`, `kmsKeyId`                           |
+| `vault:update`           | `vault.update` changed its settings                                               | `name`, `tags`, `maxVersions`, `rotation`, `rotator`, `checkout`, `kmsKeyId`, `reencrypted` |
+| `vault:delete`           | `vault.delete` scheduled (or, with `recoveryDays: 0`, started) a deletion         | `name`, `recoveryDays`, `deletionAt`                                                        |
+| `vault:restore`          | `vault.restore` cancelled a scheduled deletion                                    | `name`                                                                                      |
+| `vault:purge`            | The secret was deleted for good with its versions, leases and access records      | `name`, `versions`                                                                          |
+| `vault:reveal`           | `vault.reveal` returned a value                                                   | `name`, `version`                                                                           |
+| `vault:put`              | `vault.put` stored a new version                                                  | `name`, `version`, `stage`                                                                  |
+| `vault:promote`          | `vault.promote` made a version current                                            | `name`, `version`, `previous`                                                               |
+| `vault:stage`            | `vault.setStage` moved or removed a stage label                                   | `name`, `stage`, `version`                                                                  |
+| `vault:version-state`    | `vault.setVersionState` disabled or enabled a version                             | `name`, `version`, `state`                                                                  |
+| `vault:destroy-version`  | `vault.destroyVersion` erased a version's value                                   | `name`, `version`                                                                           |
+| `vault:rotate`           | A rotation promoted its pending version (`allow`) or its rotator failed (`deny`)  | `name`, `version`, `rotator`, `error` (redacted)                                            |
+| `vault:rotation-due`     | `iam.vault.rotateDue` found a scheduled rotation due with no generator or rotator | `name`, `dueAt`                                                                             |
+| `vault:checkout`         | `vault.checkout` handed out a check-out                                           | `name`, `version`, `leaseId`, `expiresAt`, `reason`                                         |
+| `vault:checkin`          | The holder (or an administrator) returned a check-out                             | `leaseId`, `kind`, `holderId`                                                               |
+| `vault:checkout-expired` | `iam.vault.expireLeases` ended an expired check-out                               | `name`, `leaseId`, `holderId`                                                               |
+| `vault:lease`            | `vault.lease` issued a dynamic credential (`allow`) or the engine failed (`deny`) | `name`, `leaseId`, `expiresAt`, `error`                                                     |
+| `vault:renew`            | `vault.renewLease` extended a lease                                               | `leaseId`, `kind`                                                                           |
+| `vault:revoke`           | `vault.revokeLease` ended a lease                                                 | `leaseId`, `kind`, `holderId`                                                               |
+| `vault:lease-expired`    | `iam.vault.expireLeases` revoked an expired lease at its engine                   | `name`, `leaseId`, `holderId`                                                               |
+| `vault:revoke-failed`    | The engine kept refusing a revocation for seven days; the lease is given up       | `name`, `leaseId`, `error`                                                                  |
+
+Values under a customer-managed key also show on the key's trail as `iam:kms:encrypt` / `iam:kms:decrypt` with
+`metadata.via: 'vault'`. See [Secrets vault](secrets-vault.md).
+
+## Privacy events
+
+Every `privacy` call made with a permission records its operation event (`iam:privacy:read`, `iam:privacy:manage`,
+`iam:privacy:record`, `iam:privacy:check` or `iam:privacy:handle`). These record what happened, subscribable as
+`privacy:*`. Consent, erasure, hold and restriction events name the account (or a subject key such as
+`external:cus_100`) as their resource; request events name the request. Public intake records them with actor
+`public-intake`, the deadline job with actor `deployment-operator`, and `iam.privacy.record` with actor `application`.
+
+| Action                            | When                                                                                                  | Metadata                                                                       |
+| --------------------------------- | ----------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| `privacy:consent`                 | A consent decision was recorded (`privacy.decide`, `privacy.record`, `iam.privacy.record`)            | `purposeKey`, `granted`, `purposeVersion`, `source`, `receiptId`, `externalId` |
+| `privacy:consent-import`          | `privacy.importDecisions` imported decisions from another system                                      | `count`, `current`, `purposes`                                                 |
+| `privacy:request:submit`          | A data-subject request was filed by the person, by staff, or through public intake                    | `number`, `type`, `regulation`, `channel`                                      |
+| `privacy:request:email-confirmed` | A public request naming an `externalId` had its address confirmed; a handler must still verify it     | `number`                                                                       |
+| `privacy:request:verify`          | A request was verified (`privacy.verifyRequest`, or `privacy.confirmPublic` through the emailed link) | `number`, `method`, `linked`                                                   |
+| `privacy:request:link`            | `privacy.linkRequest` linked a request known only by email to an account or application subject       | `number`, `subjectKind`                                                        |
+| `privacy:request:cancel`          | The person withdrew their own request                                                                 | `number`, `type`                                                               |
+| `privacy:request:extend`          | `privacy.extendRequest` extended the deadline                                                         | `number`, `dueAt`                                                              |
+| `privacy:request:complete`        | `privacy.fulfilRequest` completed a request                                                           | `number`, `type`, `actions`                                                    |
+| `privacy:request:reject`          | `privacy.rejectRequest` declined a request                                                            | `number`, `type`, `reason`                                                     |
+| `privacy:request:due-soon`        | `iam.privacy.sendDeadlineReminders` found an open request due soon                                    | `number`, `type`, `dueAt`                                                      |
+| `privacy:request:overdue`         | `iam.privacy.sendDeadlineReminders` found an open request past its deadline                           | `number`, `type`, `dueAt`                                                      |
+| `privacy:erasure`                 | An erasure request was fulfilled; erase the person's data downstream                                  | `requestId`, `subjectKind`, `externalId`                                       |
+| `privacy:export:download`         | An access or portability export was downloaded                                                        | `number`, `by` (`subject` or `handler`)                                        |
+| `privacy:hold:place`              | A legal hold was placed                                                                               | `holdId`, `expiresAt`                                                          |
+| `privacy:hold:release`            | A legal hold was released                                                                             | `holdId`                                                                       |
+| `privacy:restriction:lift`        | A restriction of processing was lifted                                                                |                                                                                |
+
+An erasure that deletes an account also records `identity:delete` with `{ kind, erasure: true }` and no email
+address. See [Privacy and consent](privacy.md).
+
+## Workflow events
+
+Every `workflows` call records its operation event (`iam:workflows:manage`, `iam:workflows:read` or
+`iam:workflows:run`). [Lifecycle workflow](workflows.md) runs record these, subscribable as `workflow:*`. Run events
+name the run as their resource, `workflow:brake` the workflow, and `workflow:event` the person.
+
+| Action                  | When                                                                                               | Metadata                                               |
+| ----------------------- | -------------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
+| `workflow:run:start`    | A trigger started a run (actor `deployment-operator`), or someone started one with `workflows.run` | `workflowId`, `identityId`, `occurrence`               |
+| `workflow:step`         | A step other than a wait was done or skipped (actor `deployment-operator`)                         | `workflowId`, `identityId`, `index`, `kind`, `outcome` |
+| `workflow:run:complete` | A run finished its last step (actor `deployment-operator`)                                         | `workflowId`, `identityId`                             |
+| `workflow:run:fail`     | A step failed and stopped the run (actor `deployment-operator`, outcome `deny`)                    | `workflowId`, `identityId`, `index`, `code`            |
+| `workflow:brake`        | The daily brake held runs back, once a day (actor `deployment-operator`, outcome `deny`)           | `held`, `startedToday`, `maxRunsPerDay`                |
+| `workflow:event`        | An `emit-event` step ran (actor: the run's owner)                                                  | `name`, `via`, `workflowId`, `runId`                   |
+
+The changes steps make are recorded as their ordinary events (`iam:groups:update`, `package:assign`,
+`package:revoke`, `identity:revoke-sessions`, `iam:identities:update`, `identity:delete`), with the run's owner (the
+workflow's owner when the run started, or whoever retried it) as the actor and `via: 'workflow'`, `workflowId` and
+`runId` in the metadata.
+
+## Compliance events
+
+Every `compliance` call records its operation event (`iam:compliance:read`, `iam:compliance:evaluate` or
+`iam:compliance:manage`). The [compliance center](compliance.md) also records these, subscribable as `compliance:*`.
+Evaluations record them with the caller as the actor, or `deployment-operator` for `iam.compliance.evaluateAll()`.
+
+| Action                       | When                                                                               | Metadata                                           |
+| ---------------------------- | ---------------------------------------------------------------------------------- | -------------------------------------------------- |
+| `compliance:evaluate`        | An evaluation ran (resource: the run); `digest` is the SHA-256 of its results      | `pass`, `fail`, `warn`, `not-applicable`, `digest` |
+| `compliance:control:fail`    | A control failed after another status in its previous evaluation (outcome `deny`)  | `key`, `checkId`, `status`, `previous`, `summary`  |
+| `compliance:control:recover` | A control that failed has another status now (resource: the control)               | `key`, `checkId`, `status`, `previous`, `summary`  |
+| `compliance:exception`       | `compliance.createException` accepted a finding until `expiresAt`                  | `controlKey`, `subject`, `expiresAt`               |
+| `compliance:evidence-export` | `compliance.exportEvidence` produced a signed evidence pack (resource: the tenant) | `framework`, `controls`                            |
+
+## Threat detection events
+
+Every `threats` call made with a permission records its operation event (`iam:threats:read`, `iam:threats:manage` or
+`iam:threats:respond`). [Threat detection](threat-detection.md) records these as well, subscribable as `threat:*`.
+Detections, incidents, and everything playbooks do are recorded by the actor `threat-detection`; changes and
+responses made through the API by the person who made them. Responses name the identity as their resource (so
+receivers can match them to the account), network blocks `threats/networks/{network}`, and the rest the record they
+concern (`threats/detections/{id}`, `threats/incidents/{id}`, `threats/playbooks/{id}`, `threats/settings`). Every
+event is `allow`. `incidentId`, `detectionId` and `playbookId` appear on responses when they were taken for one.
+
+| Action                     | When                                                                                                                    | Metadata                                                                                   |
+| -------------------------- | ----------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| `threat:detection`         | A rule fired, `threats.configure` turned a rule off, or a person reported suspicious activity                           | `ruleId`, `severity`, `subjectType`, `subjectId`, `identityId`, `network`, `incidentId`    |
+| `threat:incident-open`     | A detection opened a new incident about its subject                                                                     | `ruleId`, `severity`, `subjectType`, `subjectId`, `identityId`                             |
+| `threat:risk-change`       | An identity's risk level changed (resource: the identity; actor `threat-detection` or the person whose action moved it) | `from`, `to`, `score`                                                                      |
+| `threat:settings`          | `threats.configure` saved the tenant's settings                                                                         | `changed` (setting names), `changedRules`, `disabledRules`                                 |
+| `threat:detection-dismiss` | `threats.dismissDetection` marked a detection a false alarm                                                             | `ruleId`, `severity`, `reason`, `identityId`, `incidentId`                                 |
+| `threat:incident-update`   | `threats.updateIncident` changed status, assignee or severity                                                           | `changes`, `status`, `severity`, `assigneeId` (`null` when unassigned)                     |
+| `threat:note`              | `threats.addNote` added a note (without its text)                                                                       | `noteId`, `length`                                                                         |
+| `threat:incident-resolve`  | `threats.resolveIncident` closed an incident                                                                            | `resolution`, `severity`, `subjectType`, `subjectId`, `detectionsResolved`, `identityId`   |
+| `threat:risk-override`     | `threats.setRisk` set or cleared an identity's risk level (resource: the identity)                                      | `level`, `reason`, `expiresAt`, `clearedContributions` (for `none`)                        |
+| `threat:revoke-sessions`   | A `revoke-sessions` response ended the identity's sessions (resource: the identity)                                     | `revoked`, `keptApiKeys`, `reason`, `incidentId`, `detectionId`, `playbookId`              |
+| `threat:forget-devices`    | A `forget-devices` response removed remembered devices (resource: the identity)                                         | `removed`, `reason`, `incidentId`, `detectionId`, `playbookId`                             |
+| `threat:contain`           | A `contain` response disabled the identity (resource: the identity)                                                     | `reason`, `sessionsEnded`, `incidentId`, `detectionId`, `playbookId`                       |
+| `threat:release`           | `threats.release` lifted a containment (resource: the identity)                                                         | `note`, `containedAt`, `incidentId`                                                        |
+| `threat:block-network`     | A `block-network` response blocked a network (resource `threats/networks/{network}`)                                    | `network`, `expiresAt`, `renewed`, `reason`, `incidentId`, `detectionId`, `playbookId`     |
+| `threat:notify`            | A `notify` response queued `threat-alert` emails (resource: the incident)                                               | `recipients` (count), `severity`, `incidentId`                                             |
+| `threat:response-braked`   | Playbooks reached `maxAutomaticContainments` in a run and held further containments back, once per run                  | `threshold`, `identityId` (the first held back), `incidentId`, `detectionId`, `playbookId` |
+| `threat:playbook-create`   | `threats.createPlaybook` defined a playbook                                                                             | `name`, `enabled`, `trigger`, `actions`                                                    |
+| `threat:playbook-update`   | `threats.updatePlaybook` changed one                                                                                    | `before`, `after` (the settings)                                                           |
+| `threat:playbook-delete`   | `threats.deletePlaybook` removed one                                                                                    | `name`                                                                                     |
+| `threat:user-report`       | A person reported suspicious activity on their own account (`threats.reportSuspicious`; resource: the person)           | `detectionId`, `incidentId`, `sessionsEnded`, `devicesForgotten`, `withNote`, `sessionId`  |
+
+With the Shared Signals transmitter, `threat:revoke-sessions` is sent as CAEP `session-revoked` and `threat:contain`
+as RISC `account-disabled` ([protocols](protocols.md#shared-signals-caep-and-risc)). The detection engine never reads
+these events back as input for its rules, but it verifies them as part of the chain.
+
+## Shared Signals receiver events
+
+Every `signals` call records its operation event (`iam:signals:read` or `iam:signals:manage`). The
+[Shared Signals receiver](shared-signals-receiver.md) also records these, subscribable as `signal:*`. Events about
+received security events are recorded by the actor `signal:{sourceId}`, changes to sources by the administrator who
+made them. Sources are named `signals/sources/{sourceId}` and received events `signals/events/{eventId}`. Every event
+is `allow`, and none carries a token or a SET.
+
+| Action                   | When                                                                                                                    | Metadata                                                                                                |
+| ------------------------ | ----------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `signal:received`        | A security event was recorded, or reprocessed and now matches someone (resource: the matched identity, else the source) | `sourceId`, `eventType`, `jti`, `status`, `identityId`, `reasonAdmin`, `currentLevel`, `credentialType` |
+| `signal:revoke-sessions` | A source's `revoke-sessions` action ended the matched person's sessions except API keys (resource: the identity)        | `sourceId`, `eventType`, `jti`, `revoked`                                                               |
+| `signal:source-create`   | `signals.createSource` registered a transmitter                                                                         | `name`, `issuer`, `delivery`                                                                            |
+| `signal:source-update`   | `signals.updateSource` changed one                                                                                      | `changed` (field names)                                                                                 |
+| `signal:source-delete`   | `signals.deleteSource` removed one                                                                                      | `name`, `issuer`                                                                                        |
+| `signal:source-rotate`   | `signals.rotatePushToken` replaced a push source's bearer token (or gave it its first one)                              | `replaced`                                                                                              |
+| `signal:reprocess`       | `signals.reprocess` mapped an unmatched or failed event again (resource: the event)                                     | `sourceId`, `eventType`, `jti`, `previousStatus`, `status`, `identityId`                                |
+
+`reasonAdmin` (the event's `reason_admin`, at most 256 characters), `currentLevel` (the upper-cased `current_level` of a
+`risk-level-change`) and `credentialType` appear only when the event carries them, and `identityId` only for a match.
+Threat detection reads `signal:received`. The Shared Signals transmitter maps none of these actions, so what the
+receiver does is never sent back upstream.
+
+## Device posture events
+
+Every administrative `devices` call records its operation event (`iam:devices:read`, `iam:devices:manage` or
+`iam:devices:report`). [Device posture](device-posture.md) changes also record one of these, subscribable as
+`device:*`. The resource is the device (`devices/{deviceId}`), `devices/enrollments`, `devices/settings`, or the
+integration (`devices/integrations/{integrationId}`). The actor is the person, administrator or reporting service
+account that made the call, and every event is `allow`. `devices.mine` and `devices.check` record nothing. No event
+carries a key, a proof or an enrollment code; `keyId` is the public key's thumbprint. These are separate from
+`auth:device:*`, which records remembered devices.
+
+| Action                      | When                                                                                                   | Metadata                                                                            |
+| --------------------------- | ------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------- |
+| `device:enroll`             | A person enrolled a key (`devices.enroll`), creating a device or binding the key to one with a code    | `deviceId`, `keyId`, `platform`, `created`, `managed`, `enrollmentId` (with a code) |
+| `device:retire`             | The owner (`devices.retireMine`, `self: true`) or an administrator (`devices.retire`) retired a device | `deviceId`, `keysRemoved`, `self`                                                   |
+| `device:update`             | `devices.update` renamed a device, changed its owner, or marked it lost or active                      | `deviceId`, `before`, `after` (`name`, `status`, `ownerIdentityId`), `keysRemoved`  |
+| `device:delete`             | `devices.delete` removed a device with its keys and enrollment codes                                   | `deviceId`, `name`, `managed`, `keysRemoved`, `enrollmentsRemoved`                  |
+| `device:key-remove`         | `devices.removeKey` removed one key                                                                    | `deviceId`, `keyId`                                                                 |
+| `device:enrollment-create`  | `devices.createEnrollment` issued an enrollment code                                                   | `enrollmentId`, `deviceId`, `ownerIdentityId`, `expiresAt`                          |
+| `device:enrollment-revoke`  | `devices.revokeEnrollment` withdrew one                                                                | `enrollmentId`, `deviceId`, `used`                                                  |
+| `device:settings`           | `devices.configure` changed the compliance requirements                                                | `before`, `after` (the requirements)                                                |
+| `device:integration-create` | `devices.createIntegration` added an MDM or EDR integration                                            | `integrationId`, `name`, `vendor`, `status`, `trustVendorCompliance`                |
+| `device:integration-update` | `devices.updateIntegration` renamed, disabled or enabled one, or changed `trustVendorCompliance`       | `integrationId`, `before`, `after`                                                  |
+| `device:integration-delete` | `devices.deleteIntegration` removed one                                                                | `integrationId`, `name`, `detached` (devices left unmanaged)                        |
+| `device:report`             | An integration reported devices (`devices.report`); once per call                                      | `integrationId`, `received`, `created`, `updated`, `unchanged`, `complianceChanged` |
+| `device:compliance-change`  | A report made an existing device compliant or took it out of compliance (resource: the device)         | `deviceId`, `integrationId`, `from`, `to`, `reasons`                                |
+
+`device:compliance-change` comes from reports only. Compliance that changes because the requirements changed, an
+integration was disabled, or a device stopped checking in shows up in decisions and in `devices.list` but records no
+event.
+
 ## Temporary credential events
 
 Issuing and revoking [temporary credentials](temporary-credentials.md) records these events besides the operation events (`iam:roles:assume`, `iam:session-tokens:create`, `iam:roles:revoke-sessions`, `iam:trust:*`, `iam:oidc-providers:*`), subscribable as `role:*`, `session-token:*` and `auth:mfa:*`:
@@ -193,7 +418,7 @@ Every audit event the server records for an authenticated principal (each operat
 
 Every tenant's audit log is a hash chain. Each event carries `sequence` (its position, from 1), `previousHash` (the hash of the previous event, or sixty-four zeros for the first), and `hash`: SHA-256 over the canonical JSON of the event without `hash` (keys sorted recursively, `undefined` omitted; see `canonicalJson`). The chain head per tenant is stored in `auditChains` and advanced inside the transaction that records the event. Every writer goes through the same append: provisioning operations, denials, authentication events, SCIM provisioning, the OAuth provider, and deployment operations. Events recorded by versions without the chain are chained once, in timestamp order per tenant, the next time `initialize()` runs.
 
-- `audit.verify({ tenantId, fromSequence?, toSequence? })` (`iam:audit:read`) walks the stored events: contiguous sequences, linked hashes, recomputable hashes, and, for a full verification, a chain head equal to the last event. It returns `{ valid, checked, unchained, first, last, lastHash, head, failure? }` where `failure` names the sequence, event ID, and reason (`sequence-gap`, `previous-hash-mismatch`, `hash-mismatch`, `head-mismatch`).
+- `audit.verify({ tenantId, fromSequence?, toSequence? })` (`iam:audit:read`) walks the stored events: contiguous sequences, linked hashes, recomputable hashes, and, for a full verification, a chain head equal to the last event. It returns `{ valid, checked, unchained, first, last, lastHash, head, failure? }` where `failure` names the sequence, event ID, and reason (`sequence-gap`, `previous-hash-mismatch`, `hash-mismatch`, `head-mismatch`, `missing-prefix`, `unchained`). A full verification also shows deletions at either end: the chain must start at sequence 1 or right after an `audit:prune` checkpoint recorded inside it (`missing-prefix` otherwise), deleting every event fails the head check, and an event without chain fields fails as `unchained` (every writer chains, so it was inserted around them). `initialize()` chains legacy unchained events only for tenants that have no chain yet.
 - `audit.export({ tenantId, fromSequence?, limit? })` returns chained events in sequence order as JSON Lines (`body`), with `firstSequence`, `lastSequence`, `nextSequence` for the following page, and the current `head`. Archive pages as they are.
 - `verifyAuditChain(events, { previousHash?, head? })`, exported by `better-iam` and `@better-iam/core`, verifies an archive anywhere: pass the last hash of the previous page as `previousHash` so pages link. It uses Web Crypto and runs in browsers and workers.
 

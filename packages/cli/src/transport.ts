@@ -1,3 +1,4 @@
+import { lookup } from 'node:dns/promises';
 import { IamError, type CredentialInput } from '@better-iam/core';
 import {
   authenticatedAuthMethods,
@@ -197,11 +198,19 @@ export function remoteTransport(
   fetcher?: typeof globalThis.fetch,
 ): ApiTransport {
   const endpoint = parseEndpoint(url);
+  const host = new URL(endpoint.origin);
+  // Plain http is allowed for `*.localhost` names only because they mean this machine, but Node resolves them through
+  // the system resolver, which may answer anything: check that the name really is loopback before a password or token
+  // goes out in clear text.
+  const transport =
+    !fetcher && host.protocol === 'http:' && host.hostname.endsWith('.localhost')
+      ? loopbackOnly(host.hostname)
+      : fetcher;
   const client = createIamClient<{ api: unknown }>({
     baseURL: endpoint.origin,
     basePath: endpoint.basePath,
     ...(token ? { token } : {}),
-    ...(fetcher ? { fetch: fetcher } : {}),
+    ...(transport ? { fetch: transport } : {}),
     requestId: true,
     retryRateLimited: true,
   });
@@ -212,6 +221,22 @@ export function remoteTransport(
       return client.$request<Output>(path, input);
     },
   };
+}
+
+/** `fetch` for a plain-http `*.localhost` endpoint: refused unless every address the name resolves to is loopback. */
+function loopbackOnly(hostname: string): typeof globalThis.fetch {
+  return (async (input: string | URL | Request, init?: RequestInit) => {
+    const addresses = await lookup(hostname, { all: true }).catch(() => []);
+    if (
+      !addresses.length ||
+      !addresses.every(({ address }) => address.startsWith('127.') || address === '::1')
+    )
+      throw usageError(
+        `${hostname} does not resolve to this machine, so it needs https`,
+        'Use http://localhost or https://.',
+      );
+    return globalThis.fetch(input, init);
+  }) as typeof globalThis.fetch;
 }
 
 /** Every route the HTTP API serves for an instance, with whether it needs a credential. */

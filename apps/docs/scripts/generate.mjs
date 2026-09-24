@@ -812,6 +812,70 @@ const groupInfo = {
   agents: ['Bot', 'AI agents as accounts: sponsors, ceilings, and a kill switch.'],
   delegations: ['Handshake', "Agents acting on a person's behalf, within a scope and for a time."],
   inference: ['Cpu', 'Model access, provider keys, budgets, and metering.'],
+  privacy: [
+    'Fingerprint',
+    'Privacy and consent: purposes, consent receipts, data-subject requests with deadlines, and legal holds.',
+  ],
+  workflows: [
+    'Workflow',
+    'Lifecycle workflows: joiner, mover, and leaver automation with triggers, scopes, steps, and a daily brake.',
+  ],
+  compliance: [
+    'ClipboardList',
+    'The compliance center: automated checks mapped to SOC 2, ISO 27001, NIST 800-53, and GDPR, with signed evidence.',
+  ],
+  threats: [
+    'OctagonAlert',
+    'Identity threat detection and response: detection rules, incidents, identity risk, responses, and playbooks.',
+  ],
+  signals: [
+    'RadioTower',
+    'The Shared Signals receiver: CAEP and RISC security events from upstream identity providers, by push or poll.',
+  ],
+  devices: [
+    'MonitorSmartphone',
+    'Device posture: registered devices, session-bound device proofs, MDM and EDR compliance, and enrollment codes.',
+  ],
+  applications: [
+    'Blocks',
+    'The application catalog behind My apps: apps assigned to people and groups, requests, launches, and usage.',
+  ],
+  filters: [
+    'Funnel',
+    'Data filtering: which resources of a type the caller may act on, as a filter for your database query.',
+  ],
+  quotas: [
+    'Timer',
+    'API usage plans: throttles and quotas per API key, agent, person, group, or organization.',
+  ],
+  keys: [
+    'KeyRound',
+    'Key management: tenant keys for encryption, signatures, MACs, and JWTs whose material never leaves the server.',
+  ],
+  vault: [
+    'LockKeyhole',
+    'The secrets vault: versioned secrets, rotation, check-outs of shared credentials, and dynamic leases.',
+  ],
+  pki: [
+    'BadgeCheck',
+    'The private certificate authority: X.509 roots and intermediates, certificates, SPIFFE SVIDs, and revocation.',
+  ],
+  protection: [
+    'FileBraces',
+    'Data protection by tokenization: profiles, tokens, masks, and purpose-bound detokenization.',
+  ],
+  ssh: [
+    'SquareTerminal',
+    'SSH access: short-lived OpenSSH certificates decided by policy, host enrollment, and revocation lists.',
+  ],
+  verifiableCredentials: [
+    'IdCard',
+    'Verifiable credentials: SD-JWT VCs issued to wallets over OpenID4VCI, status lists, and verification.',
+  ],
+  ldap: [
+    'ListTree',
+    'The LDAP directory gateway: publish an organization directory to applications that only speak LDAP.',
+  ],
 };
 
 function signature(group, method) {
@@ -1085,6 +1149,7 @@ async function generateApiPages(filter) {
           'links',
           'domains',
           'security',
+          'devices',
         ],
       ],
       [
@@ -1105,17 +1170,26 @@ async function generateApiPages(filter) {
           'actions',
           'resources',
           'relationships',
+          'filters',
         ],
       ],
       [
         'Access lifecycle',
         'Granting access for a purpose and a time, and reporting on it.',
-        ['packages', 'accessRequests', 'accessPaths', 'reports', 'config'],
+        [
+          'packages',
+          'accessRequests',
+          'accessPaths',
+          'reports',
+          'config',
+          'workflows',
+          'applications',
+        ],
       ],
       [
         'Governance',
         'Reviewing, analyzing, and constraining access over time.',
-        ['certifications', 'analysis', 'roleMining', 'sod', 'invariants', 'impact', 'agreements'],
+        ['certifications', 'analysis', 'roleMining', 'sod', 'invariants', 'impact', 'agreements', 'compliance'],
       ],
       [
         'Events and integrations',
@@ -1128,9 +1202,29 @@ async function generateApiPages(filter) {
         ['agents', 'delegations', 'inference'],
       ],
       [
-        'Billing',
-        'What people, teams, and organizations spend, and the budgets and statements around it.',
-        ['billing'],
+        'Billing and usage',
+        'What people, teams, and organizations spend, the budgets and statements around it, and API usage plans.',
+        ['billing', 'quotas'],
+      ],
+      [
+        'Secrets, keys, and certificates',
+        'Cryptographic keys, secrets, tokenized data, and certificates for people, workloads, and servers.',
+        ['keys', 'vault', 'protection', 'pki', 'ssh'],
+      ],
+      [
+        'Directory and credentials',
+        'The directory served to LDAP applications, and credentials people carry in their wallets.',
+        ['ldap', 'verifiableCredentials'],
+      ],
+      [
+        'Privacy',
+        'Consent to processing purposes, data-subject requests with statutory deadlines, and legal holds.',
+        ['privacy'],
+      ],
+      [
+        'Threat detection and response',
+        'Attacks on identities found in the audit trail or reported by upstream identity providers, the incidents and risk they raise, and the responses to them.',
+        ['threats', 'signals'],
       ],
     ];
     const live = api.groups.filter((entry) => entry.methods.length);

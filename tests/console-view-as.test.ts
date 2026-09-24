@@ -3,7 +3,14 @@ import { closeFixtures, organizationFixture } from './support/organization.js';
 
 // The console's routes import `@/lib/*`; the IAM instance is the test fixture's.
 const state = vi.hoisted(() => ({ iam: undefined as unknown }));
-vi.mock('@/lib/iam', () => ({ getIam: async () => state.iam }));
+vi.mock('@/lib/iam', () => ({
+  getIam: async () => state.iam,
+  // The deployment's client details for a request (no trusted proxy here: the User-Agent only).
+  requestClient: async (request: Request) => {
+    const userAgent = request.headers.get('user-agent');
+    return userAgent ? { userAgent } : undefined;
+  },
+}));
 vi.mock('@/lib/errors', () => import('../apps/console/src/lib/errors.js'));
 vi.mock('@/lib/view-as', () => import('../apps/console/src/lib/view-as.js'));
 

@@ -134,6 +134,35 @@ function sweepTargets(
     expired('agentCards', appNow),
     // Team memberships past their end (teams.ts); the backing group's copy lapsed with them. Join requests are history.
     expired('teamMembers', appNow),
+    // Vault access records past `vault.accessRetentionDays` (vault.ts); leases are ended by `iam.vault.expireLeases`.
+    expired('vaultAccess', appNow),
+    // Quota window counters a day after their window, and idle throttle buckets once full again (quotas.ts).
+    expired('quotaCounters', appNow),
+    // Data-subject request exports past their download window (api/privacy.ts); the request keeps its record.
+    expired('privacyExports', appNow),
+    // Finished workflow runs 180 days after they ended (api/workflows.ts); active runs carry no expiry.
+    expired('workflowRuns', appNow),
+    // Compliance results and runs 400 days after their evaluation (api/compliance.ts).
+    expired('complianceResults', appNow),
+    expired('complianceRuns', appNow),
+    // Compliance exceptions (revoked ones too) 400 days after they expired, so evidence packs keep their history.
+    expired(
+      'complianceExceptions',
+      appNow,
+      (record) => (record.expiresAt as number) > appNow - 400 * 86_400_000,
+    ),
+    // App assignments past their end (api/applications.ts).
+    expired('appAssignments', appNow),
+    // SSH certificate records `ssh.recordRetentionDays` after the certificate expired (ssh.ts).
+    expired('sshCertificates', appNow),
+    // Verifiable credential records past their retention, used or lapsed wallet offers, and proof nonces (vc.ts).
+    expired('vcIssued', appNow),
+    expired('vcOffers', appNow),
+    expired('vcNonces', appNow),
+    // Device enrollment codes past their expiry, used or not (devices.ts); the audit trail keeps their use.
+    expired('deviceEnrollments', appNow),
+    // Received Shared Signals events 90 days after receipt (signal-receiver.ts); the audit trail keeps them.
+    expired('signalEvents', appNow),
     { collection: 'outbox', field: 'deliveredAt', cutoff: appNow - retention },
     { collection: 'outbox', field: 'failedAt', cutoff: appNow - retention },
     { collection: 'ssfDeliveries', field: 'failedAt', cutoff: wallNow - retention },

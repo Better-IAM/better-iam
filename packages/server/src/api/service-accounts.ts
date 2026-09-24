@@ -1,5 +1,6 @@
 import {
   IamError,
+  matchPattern,
   type CredentialInput,
   type IamStore,
   type Identity,
@@ -11,6 +12,7 @@ import { newCredentialToken } from '@better-iam/auth';
 import { agentStanding, machineIdentity } from '../agents.js';
 import { attributeValues } from '../catalog.js';
 import type { ServerContext } from '../context.js';
+import { endContainment } from '../threats.js';
 import { hash, id, publicIdentity } from '../utils.js';
 import { integer, strings, text } from '../validation.js';
 import { deleteIdentity } from './identities.js';
@@ -137,6 +139,8 @@ export function createServiceAccountsApi(ctx: ServerContext) {
               409,
             );
           const updated = await tx.put('identities', { ...account, status: input.status });
+          // The status is now this call's: a threats containment is over (released here, or held by this disable).
+          await endContainment(tx, account.id, ctx.now());
           if (input.status === 'disabled') await ctx.revokeAll(tx, account.id);
           return publicIdentity(updated);
         },
@@ -203,6 +207,30 @@ function policyScopes(policy: PolicyDocument | undefined): string[] | undefined 
     !statement.conditions
     ? [...statement.actions]
     : undefined;
+}
+
+const wildcard = /[*?]|\$\{/;
+/** Whether every action `inner` names is also named by `outer`; a wildcard scope needs an equal or broader prefix. */
+function scopeCovers(outer: string, inner: string): boolean {
+  if (outer === inner) return true;
+  if (!wildcard.test(inner)) return matchPattern(outer, inner);
+  const prefix = outer.slice(0, -1);
+  return outer.endsWith('*') && !wildcard.test(prefix) && inner.startsWith(prefix);
+}
+/**
+ * Whether a key policy stays within a caller key's own: the same document, or scopes that each fall within one of the
+ * caller's scopes. Anything else (a broader or an unrelated custom policy, or none) does not.
+ */
+function withinKeyPolicy(outer: PolicyDocument, inner: PolicyDocument | undefined): boolean {
+  if (!inner) return false;
+  if (JSON.stringify(outer) === JSON.stringify(inner)) return true;
+  const outerScopes = policyScopes(outer);
+  const innerScopes = policyScopes(inner);
+  return Boolean(
+    outerScopes &&
+      innerScopes &&
+      innerScopes.every((scope) => outerScopes.some((allowed) => scopeCovers(allowed, scope))),
+  );
 }
 
 export function credentialSummary(session: Session, now: number): CredentialSummary {
@@ -285,7 +313,8 @@ export function createCredentialsApi(ctx: ServerContext) {
       ),
     /**
      * Issues an opaque API key for a service account, bounded by the issuer's grant authority and an optional
-     * session policy. `name` and `description` label the key for reviews; the plaintext is returned once.
+     * session policy. `name` and `description` label the key for reviews; the plaintext is returned once. An API key
+     * with scopes (or a session policy) issues only keys within them; without scopes of their own, they inherit its.
      */
     create: (
       credential: CredentialInput,
@@ -330,6 +359,18 @@ export function createCredentialsApi(ctx: ServerContext) {
             if (!scopes.length)
               throw new IamError('INVALID_INPUT', 'scopes must name at least one action');
             input = { ...input, policy: scopesPolicy(scopes) };
+          }
+          // A key never mints a broader key: a caller key with scopes or a session policy passes them on (a new key
+          // without its own gets the caller's), and a new key's own scopes must fall within the caller's.
+          const callerPolicy = principal.session.policy;
+          if (callerPolicy) {
+            if (input.policy === undefined) input = { ...input, policy: callerPolicy };
+            else if (!withinKeyPolicy(callerPolicy, input.policy))
+              throw new IamError(
+                'ACCESS_DENIED',
+                'A key can only issue keys within its own scopes or policy',
+                403,
+              );
           }
           if (input.policy) await catalog.validate(tx, input.tenantId, input.policy);
           // Typed and checksummed (`biam_key_…`) so secret scanners recognise leaked keys.
@@ -440,6 +481,13 @@ export function createCredentialsApi(ctx: ServerContext) {
           const old = await ctx.scoped<Session>(tx, 'sessions', input.credentialId, input.tenantId);
           if (old.kind !== 'api-key')
             throw new IamError('INVALID_CREDENTIAL', 'Only API keys can rotate');
+          // Rotating hands over the new token, so a key may only rotate keys within its own scopes (as `create`).
+          if (principal.session.policy && !withinKeyPolicy(principal.session.policy, old.policy))
+            throw new IamError(
+              'ACCESS_DENIED',
+              'A key can only rotate keys within its own scopes or policy',
+              403,
+            );
           const authority = await ctx.grantingAuthority(
             tx,
             principal,

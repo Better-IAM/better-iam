@@ -1,11 +1,11 @@
 import { randomBytes } from 'node:crypto';
 import { resolveTxt } from 'node:dns/promises';
-import { IamError, type CredentialInput } from '@better-iam/core';
+import { IamError, type CredentialInput, type IamStore } from '@better-iam/core';
 import type { ServerContext } from '../context.js';
 import type { HostnameOwner, TenantHostname } from '../hosts.js';
 import { byNewest, id } from '../utils.js';
 import { text } from '../validation.js';
-import { domainName } from './domains.js';
+import { domainName, permittedAhead } from './domains.js';
 
 /** The most hostnames one organization may claim. */
 const MAX_HOSTNAMES = 20;
@@ -72,13 +72,30 @@ export function createHostnamesApi(ctx: ServerContext) {
         : {}),
     },
   });
-  const claimed = (tenantId: string, hostnameId: unknown) =>
-    ctx.scoped<TenantHostname>(
-      ctx.store,
-      'tenantHostnames',
-      text(hostnameId, 'hostnameId'),
-      tenantId,
-    );
+  /**
+   * Actions on a claim are authorized on `hostnames/{hostname}`, so a grant can name the hostname. The claim is read
+   * ahead only to pick that resource: an ID that is not one of this tenant's claims is authorized as
+   * `hostnames/{id}` and reported missing inside the operation, after authorization, so a caller it refuses cannot
+   * tell whether it exists.
+   */
+  const claimResource = async (tenantId: string, hostnameId: string): Promise<string> => {
+    const record = await ctx.store.get<TenantHostname>('tenantHostnames', hostnameId);
+    return record?.tenantId === tenantId
+      ? `hostnames/${record.hostname}`
+      : `hostnames/${hostnameId}`;
+  };
+  /** The claim inside an operation: this tenant's, and the one its authorized resource names. */
+  const authorizedClaim = async (
+    tx: IamStore,
+    tenantId: string,
+    hostnameId: string,
+    resourceId: string,
+  ): Promise<TenantHostname> => {
+    const record = await ctx.scoped<TenantHostname>(tx, 'tenantHostnames', hostnameId, tenantId);
+    if (`hostnames/${record.hostname}` !== resourceId)
+      throw new IamError('NOT_FOUND', 'Resource not found', 404);
+    return record;
+  };
 
   return {
     /**
@@ -136,8 +153,8 @@ export function createHostnamesApi(ctx: ServerContext) {
       ),
     /**
      * Looks up the TXT record and, when it matches, marks the hostname verified so it starts resolving to the
-     * organization. DNS is queried before the transaction opens; `verified: false` means the record is not visible
-     * yet. Requires iam:hostnames:update.
+     * organization. DNS is queried before the transaction opens, and only for a caller allowed to verify the claim;
+     * `verified: false` means the record is not visible yet. Requires iam:hostnames:update.
      */
     verify: async (
       credential: CredentialInput,
@@ -145,31 +162,29 @@ export function createHostnamesApi(ctx: ServerContext) {
     ) => {
       enabled();
       const tenantId = text(input.tenantId, 'tenantId');
-      await ctx.principals.authenticate(credential);
-      const record = await claimed(tenantId, input.hostnameId);
-      const expected = present(record).dnsRecords.verification;
+      const hostnameId = text(input.hostnameId, 'hostnameId');
+      const resourceId = await claimResource(tenantId, hostnameId);
       let found = false;
-      if (record.status !== 'verified') {
-        ctx.hosts.assertClaimable(record.hostname);
-        try {
-          const answers = await lookup(expected.name);
-          found = answers.some((chunks) => chunks.join('').trim() === expected.value);
-        } catch {
-          found = false;
+      if (await permittedAhead(ctx, credential, tenantId, 'iam:hostnames:update', resourceId)) {
+        const record = await ctx.store.get<TenantHostname>('tenantHostnames', hostnameId);
+        if (record?.tenantId === tenantId && record.status !== 'verified') {
+          ctx.hosts.assertClaimable(record.hostname);
+          const expected = present(record).dnsRecords.verification;
+          try {
+            const answers = await lookup(expected.name);
+            found = answers.some((chunks) => chunks.join('').trim() === expected.value);
+          } catch {
+            found = false;
+          }
         }
       }
       return operation(
         credential,
         tenantId,
         'iam:hostnames:update',
-        `hostnames/${record.hostname}`,
+        resourceId,
         async ({ tx }) => {
-          const current = await ctx.scoped<TenantHostname>(
-            tx,
-            'tenantHostnames',
-            record.id,
-            tenantId,
-          );
+          const current = await authorizedClaim(tx, tenantId, hostnameId, resourceId);
           if (current.status === 'verified') return { verified: true, hostname: present(current) };
           const now = ctx.now();
           if (!found) {
@@ -210,24 +225,22 @@ export function createHostnamesApi(ctx: ServerContext) {
     ) => {
       enabled();
       const tenantId = text(input.tenantId, 'tenantId');
-      const target =
-        input.hostnameId === null ? undefined : await claimed(tenantId, input.hostnameId);
+      const hostnameId =
+        input.hostnameId === null ? undefined : text(input.hostnameId, 'hostnameId');
+      const resourceId =
+        hostnameId === undefined ? 'hostnames/*' : await claimResource(tenantId, hostnameId);
       return operation(
         credential,
         tenantId,
         'iam:hostnames:update',
-        target ? `hostnames/${target.hostname}` : 'hostnames/*',
+        resourceId,
         async ({ tx }) => {
-          if (target) {
-            const current = await ctx.scoped<TenantHostname>(
-              tx,
-              'tenantHostnames',
-              target.id,
-              tenantId,
-            );
-            if (current.status !== 'verified')
-              throw new IamError('INVALID_INPUT', 'Verify the hostname before making it primary');
-          }
+          const target =
+            hostnameId === undefined
+              ? undefined
+              : await authorizedClaim(tx, tenantId, hostnameId, resourceId);
+          if (target && target.status !== 'verified')
+            throw new IamError('INVALID_INPUT', 'Verify the hostname before making it primary');
           const records = await tx.find<TenantHostname>('tenantHostnames', { tenantId });
           for (const record of records) {
             const primary = record.id === target?.id;
@@ -248,19 +261,15 @@ export function createHostnamesApi(ctx: ServerContext) {
       input: { tenantId: string; hostnameId: string },
     ) => {
       const tenantId = text(input.tenantId, 'tenantId');
-      const record = await claimed(tenantId, input.hostnameId);
+      const hostnameId = text(input.hostnameId, 'hostnameId');
+      const resourceId = await claimResource(tenantId, hostnameId);
       return operation(
         credential,
         tenantId,
         'iam:hostnames:delete',
-        `hostnames/${record.hostname}`,
+        resourceId,
         async ({ tx }) => {
-          const current = await ctx.scoped<TenantHostname>(
-            tx,
-            'tenantHostnames',
-            record.id,
-            tenantId,
-          );
+          const current = await authorizedClaim(tx, tenantId, hostnameId, resourceId);
           const owner = await tx.get<HostnameOwner>('hostnameOwners', current.hostname);
           if (owner?.tenantId === tenantId) await tx.delete('hostnameOwners', current.hostname);
           await tx.delete('tenantHostnames', current.id);

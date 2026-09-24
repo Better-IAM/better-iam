@@ -106,6 +106,22 @@ export const routeGroups = new Set([
   'teams',
   'departments',
   'billing',
+  'keys',
+  'pki',
+  'protection',
+  'vault',
+  'privacy',
+  'ssh',
+  'threats',
+  'workflows',
+  'compliance',
+  'applications',
+  'verifiableCredentials',
+  'ldap',
+  'devices',
+  'filters',
+  'signals',
+  'quotas',
 ]);
 export const publicApiMethods = new Set([
   'tenants/acceptInvitation',
@@ -114,6 +130,21 @@ export const publicApiMethods = new Set([
   'identities/acceptInvitation',
   // The external OIDC token is the credential; the exchange is rate limited per trust before any lookup.
   'sts/assumeRoleWithWebIdentity',
+  // Data-subject requests from people without an account (api/privacy.ts): only when the organization turned public
+  // intake on, rate limited per organization and address, and confirmed through an emailed link.
+  'privacy/submitPublic',
+  'privacy/confirmPublic',
+  // SSH hosts (api/ssh.ts): the one-time join token or the host's renewal token is the credential; trust and the key
+  // revocation list hold public keys and serials only.
+  'ssh/enrollHost',
+  'ssh/syncHost',
+  'ssh/trust',
+  'ssh/revocationList',
+  // Verifiable credentials (api/verifiable-credentials.ts): proof nonces, presentation checks and issuer metadata are
+  // for wallets and verifiers without an account.
+  'verifiableCredentials/nonce',
+  'verifiableCredentials/verify',
+  'verifiableCredentials/issuerMetadata',
 ]);
 /**
  * Public routes that act in one organization named by `tenantId`: on an organization's own address they act in that
@@ -124,6 +155,11 @@ const tenantBoundPublicMethods = new Set([
   'tenants/acceptInvitation',
   'identities/acceptInvitation',
   'sts/assumeRoleWithWebIdentity',
+  'privacy/submitPublic',
+  'privacy/confirmPublic',
+  // An organization's SSH trust and revocation lists are served on its own address only for it.
+  'ssh/trust',
+  'ssh/revocationList',
 ]);
 /**
  * Routes whose session becomes the browser's session, so their answer sets the session cookie: sign-in ceremonies,
@@ -570,7 +606,7 @@ export function createHttp(
             headers: {
               'access-control-allow-methods': 'GET, POST, OPTIONS',
               'access-control-allow-headers':
-                'content-type, x-better-iam, authorization, x-request-id, x-better-iam-persistent',
+                'content-type, x-better-iam, authorization, x-request-id, x-better-iam-persistent, x-better-iam-device',
             },
           }),
         );
@@ -600,16 +636,27 @@ export function createHttp(
       // An organization another region serves is answered with WRONG_REGION and its sign-in URL there.
       const pinned = await ctx.hosts.requestTenant(request);
       if (publicRoute && (group === 'auth' || tenantBoundPublicMethods.has(path))) {
-        if (pinned) {
-          if (body.tenantId === undefined) body.tenantId = pinned.tenantId;
-          else if (body.tenantId !== pinned.tenantId)
-            throw new IamError(
-              'HOST_MISMATCH',
-              'This address belongs to another organization',
-              403,
-            );
-        } else if (typeof body.tenantId === 'string')
-          await ctx.hosts.assertTenantServedHere(body.tenantId);
+        // confirmMfa names its tenant inside `credential` (the login challenge), so that tenant is pinned too.
+        const nested =
+          path === 'auth/confirmMfa' &&
+          body.credential &&
+          typeof body.credential === 'object' &&
+          !Array.isArray(body.credential)
+            ? (body.credential as Record<string, unknown>)
+            : undefined;
+        for (const holder of nested ? [body, nested] : [body]) {
+          if (holder === body && nested && body.tenantId === undefined) continue;
+          if (pinned) {
+            if (holder.tenantId === undefined) holder.tenantId = pinned.tenantId;
+            else if (holder.tenantId !== pinned.tenantId)
+              throw new IamError(
+                'HOST_MISMATCH',
+                'This address belongs to another organization',
+                403,
+              );
+          } else if (typeof holder.tenantId === 'string')
+            await ctx.hosts.assertTenantServedHere(holder.tenantId);
+        }
       }
       const tenantId = typeof body.tenantId === 'string' ? body.tenantId : undefined;
       // A bearer credential takes precedence over the cookie (as in `auth.authenticate`), so a bearer-authenticated

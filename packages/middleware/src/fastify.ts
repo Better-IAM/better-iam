@@ -14,6 +14,9 @@ import {
   type SessionOf,
 } from './index.js';
 
+/** The largest request body the fallback path buffers for the IAM handler (as the Express adapter). */
+const maxBody = 2097152;
+
 /** The Fastify (4 or 5) request fields the plugin reads. */
 export interface FastifyRequestLike {
   raw: IncomingMessage;
@@ -167,8 +170,19 @@ export function createIamFastify<T extends IamLike>(
         return;
       }
       const chunks: Buffer[] = [];
+      let size = 0;
       if (request.method !== 'GET' && request.method !== 'HEAD')
-        for await (const chunk of request.raw) chunks.push(Buffer.from(chunk as Uint8Array));
+        for await (const chunk of request.raw) {
+          const buffer = Buffer.from(chunk as Uint8Array);
+          // Bounded like the Express adapter: an unauthenticated caller must not make the process buffer without limit.
+          size += buffer.length;
+          if (size > maxBody) {
+            reply.raw.statusCode = 413;
+            reply.raw.end('Request too large');
+            return;
+          }
+          chunks.push(buffer);
+        }
       const response = await iam.handler(
         new Request(requestUrl(request), {
           method: request.method,

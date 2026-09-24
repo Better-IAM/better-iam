@@ -86,6 +86,9 @@ export function openSecret(
   const parts = typeof value === 'string' ? value.split('.') : [];
   if (parts.length !== 3) return undefined;
   const [iv, tag, encrypted] = parts.map((part) => Buffer.from(part, 'base64url'));
+  // Exactly what encryptSecret writes: a 96-bit IV and a full 128-bit tag. Node would otherwise accept truncated
+  // tags (down to 32 bits), which makes forging a sealed value far cheaper.
+  if (iv!.length !== 12 || tag!.length !== 16) return undefined;
   const keyring = typeof secrets === 'string' ? [secrets] : secrets;
   for (const [index, secret] of keyring.entries()) {
     try {
@@ -93,6 +96,7 @@ export function openSecret(
         'aes-256-gcm',
         createHash('sha256').update(secret).digest(),
         iv!,
+        { authTagLength: 16 },
       );
       cipher.setAAD(Buffer.from(context));
       cipher.setAuthTag(tag!);

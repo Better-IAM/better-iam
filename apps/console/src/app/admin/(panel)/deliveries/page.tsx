@@ -55,8 +55,8 @@ export default async function Deliveries() {
         ) : (
           <Alert tone="warning">
             No <code>DELIVERY_WEBHOOK_URL</code> is configured, so messages are kept in memory for
-            this development process and shown here to root administrators. Configure a webhook
-            before exposing the console publicly.
+            this development process and shown here to root administrators. In production they are
+            refused (and retried) instead: configure a webhook before exposing the console publicly.
           </Alert>
         )}
         <Card title="Recent messages" flush>

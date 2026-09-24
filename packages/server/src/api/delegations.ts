@@ -1412,7 +1412,8 @@ export function createDelegationsApi(ctx: ServerContext) {
      * An agent acting for a person (with its delegated session) asks them to confirm one action the delegation holds
      * back (`confirm`): `action` on `resource`, with a `reason` shown to the person. The request waits up to 30 minutes
      * and is emailed to the person (template `delegation-confirmation`); an identical pending request is returned as
-     * it is. Once approved, that action on that resource is allowed for `validSeconds` (30 to 3600; 300 by default).
+     * it is. Once approved, that action on that resource is allowed once (the call uses the approval up), within
+     * `validSeconds` (30 to 3600; 300 by default).
      * Rate limited per delegation. Audited as `delegation:confirmation-request`.
      */
     requestConfirmation: async (
@@ -1529,8 +1530,8 @@ export function createDelegationsApi(ctx: ServerContext) {
 
     /**
      * The person approves (`approve: true`) or rejects an agent's pending confirmation request from their own session.
-     * An approval allows exactly that action on that resource, for the agent acting for them, for the request's
-     * `validSeconds`. Audited as `delegation:confirm` or `delegation:reject`.
+     * An approval allows exactly that action on that resource, once, for the agent acting for them, within the
+     * request's `validSeconds` (status `used` afterwards). Audited as `delegation:confirm` or `delegation:reject`.
      */
     decideConfirmation: async (
       credential: CredentialInput,

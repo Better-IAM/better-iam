@@ -23,6 +23,7 @@ import type { AccessUsageRecord, AccessUsageTracking } from '../usage.js';
 import type { CertificationItem } from './certifications.js';
 import { allow } from './packages.js';
 import { createBinding, deleteBinding } from './bindings.js';
+import { assertNotTeamGroup, isTeamGroup } from '../teams.js';
 import { integer, text } from '../validation.js';
 
 export type RoleSuggestionKind =
@@ -60,6 +61,11 @@ export interface RoleMiningResult {
   generatedAt: number;
   summary: Record<RoleSuggestionKind, number>;
   suggestions: RoleSuggestion[];
+  /**
+   * Set when more role combinations qualified as bundles than are reported (2,000): only those saving the most grants
+   * are listed and counted in `summary.bundle`.
+   */
+  bundlesTruncated?: true;
 }
 /** A role an identity holds that few of its peers hold, or one most of its peers hold that it lacks. */
 export interface PeerRoleShare {
@@ -148,6 +154,8 @@ const label = (identity: Identity) => identity.email ?? identity.name;
 const round = (value: number) => Math.round(value * 100) / 100;
 /** Distinct role sets considered as bundle seeds; pairwise intersections of these are the candidates. */
 const maxSeedSets = 300;
+/** Bundles reported at most: the ones saving the most grants (`bundlesTruncated` says when more qualified). */
+const maxBundles = 2000;
 
 interface Snapshot {
   roles: Role[];
@@ -201,11 +209,12 @@ const plainDirect = (binding: Binding) =>
 
 /** Role IDs each active identity holds, directly or through groups (`eligible` includes just-in-time bindings). */
 function heldRoles(data: Snapshot, options: { eligible: boolean }): Map<string, Set<string>> {
-  const groupsOf = new Map<string, Set<string>>();
+  // Members by group, so a group binding reaches its members without a pass over everyone.
+  const membersOf = new Map<string, string[]>();
   for (const member of data.members) {
-    const set = groupsOf.get(member.identityId) ?? new Set<string>();
-    set.add(member.groupId);
-    groupsOf.set(member.identityId, set);
+    const list = membersOf.get(member.groupId) ?? [];
+    list.push(member.identityId);
+    membersOf.set(member.groupId, list);
   }
   const held = new Map<string, Set<string>>();
   for (const identity of data.identities) held.set(identity.id, new Set());
@@ -214,8 +223,8 @@ function heldRoles(data: Snapshot, options: { eligible: boolean }): Map<string, 
     if (data.roleById.get(binding.roleId)?.protected !== false) continue;
     if (binding.subjectType === 'identity') held.get(binding.subjectId)?.add(binding.roleId);
     else
-      for (const [identityId, groups] of groupsOf)
-        if (groups.has(binding.subjectId)) held.get(identityId)?.add(binding.roleId);
+      for (const identityId of membersOf.get(binding.subjectId) ?? [])
+        held.get(identityId)?.add(binding.roleId);
   }
   return held;
 }
@@ -283,7 +292,7 @@ function roleActions(data: Snapshot, role: Role, known: string[]): string[] {
 function mine(
   data: Snapshot,
   settings: { minIdentities: number; minRoles: number },
-): RoleSuggestion[] {
+): { suggestions: RoleSuggestion[]; bundlesTruncated: boolean } {
   const suggestions: RoleSuggestion[] = [];
   const roleRef = (roleId: string): MiningRef => ({
     id: roleId,
@@ -298,16 +307,23 @@ function mine(
   // Bundles: role combinations many people hold together, found as closed itemsets over the distinct role sets
   // and their pairwise intersections (every maximal shared combination is an intersection of two holders' sets).
   const held = heldRoles(data, { eligible: false });
-  const distinct = new Map<string, { roles: string[]; count: number }>();
-  for (const roles of held.values()) {
+  const people = [...held.keys()];
+  // Each distinct role set with the people (positions in `people`, ascending) who hold exactly it.
+  const distinct = new Map<
+    string,
+    { key: string; roles: string[]; count: number; holders: number[] }
+  >();
+  for (let position = 0; position < people.length; position++) {
+    const roles = held.get(people[position]!)!;
     if (roles.size < settings.minRoles) continue;
     const key = setKey(roles);
-    const entry = distinct.get(key) ?? { roles: [...roles].sort(), count: 0 };
+    const entry = distinct.get(key) ?? { key, roles: [...roles].sort(), count: 0, holders: [] };
     entry.count++;
+    entry.holders.push(position);
     distinct.set(key, entry);
   }
   const seeds = [...distinct.values()]
-    .sort((a, b) => b.count - a.count || a.roles.join().localeCompare(b.roles.join()))
+    .sort((a, b) => b.count - a.count || a.key.localeCompare(b.key))
     .slice(0, maxSeedSets);
   const candidates = new Map<string, string[]>();
   for (let i = 0; i < seeds.length; i++) {
@@ -318,34 +334,76 @@ function mine(
       if (common.length >= settings.minRoles) candidates.set(setKey(common), common);
     }
   }
-  const holderSets = [...held.entries()].filter(([, roles]) => roles.size >= settings.minRoles);
-  const supported = [...candidates.values()]
-    .map((roles) => ({
-      roles,
-      holders: holderSets
-        .filter(([, set]) => roles.every((roleId) => set.has(roleId)))
-        .map(([identityId]) => identityId),
-    }))
-    .filter((candidate) => candidate.holders.length >= settings.minIdentities);
-  // Closed sets only: a combination is dropped when a larger one has exactly the same holders.
-  const closed = supported.filter(
-    (candidate) =>
-      !supported.some(
-        (other) =>
-          other.roles.length > candidate.roles.length &&
-          other.holders.length === candidate.holders.length &&
-          candidate.roles.every((roleId) => other.roles.includes(roleId)),
-      ),
-  );
+  // Holders are counted over the distinct role sets, with one bitset per role (bit i: the i-th set includes it): the
+  // sets holding a combination are the AND of its roles' bitsets. No candidate is compared with every person or
+  // with every other candidate, so the work grows with the number of candidates, never with its square.
+  const sets = [...distinct.values()];
+  const words = Math.ceil(sets.length / 32);
+  const roleBits = new Map<string, Uint32Array>();
+  sets.forEach((entry, index) => {
+    for (const roleId of entry.roles) {
+      let bits = roleBits.get(roleId);
+      if (!bits) roleBits.set(roleId, (bits = new Uint32Array(words)));
+      bits[index >>> 5] = bits[index >>> 5]! | (1 << (index & 31));
+    }
+  });
+  /** The distinct role sets (indexes into `sets`) that include every role of a combination. */
+  const holding = (roles: string[]): number[] => {
+    const bits = roleBits.get(roles[0]!)!.slice();
+    for (const roleId of roles.slice(1)) {
+      const other = roleBits.get(roleId)!;
+      for (let word = 0; word < words; word++) bits[word] = bits[word]! & other[word]!;
+    }
+    const indexes: number[] = [];
+    for (let word = 0; word < words; word++)
+      for (let rest = bits[word]!; rest !== 0; rest &= rest - 1)
+        indexes.push(word * 32 + 31 - Math.clz32(rest & -rest));
+    return indexes;
+  };
   const packaged = new Set(
     data.packages.filter((pkg) => pkg.groupIds.length === 0).map((pkg) => setKey(pkg.roleIds)),
   );
   const composite = new Set(
     data.roles.filter((role) => role.inherits?.length).map((role) => setKey(role.inherits!)),
   );
-  for (const candidate of closed) {
-    const key = setKey(candidate.roles);
+  const supported: { key: string; roles: string[]; holders: number; order: number }[] = [];
+  for (const [key, roles] of candidates) {
     if (packaged.has(key) || composite.has(key)) continue;
+    const holders = holding(roles).reduce((total, index) => total + sets[index]!.count, 0);
+    if (holders >= settings.minIdentities)
+      supported.push({ key, roles, holders, order: supported.length });
+  }
+  // When more combinations qualify than are reported, the ones saving the most grants are kept.
+  const bundlesTruncated = supported.length > maxBundles;
+  const reported = bundlesTruncated
+    ? supported
+        .sort(
+          (a, b) =>
+            b.holders * (b.roles.length - 1) - a.holders * (a.roles.length - 1) ||
+            a.order - b.order,
+        )
+        .slice(0, maxBundles)
+        .sort((a, b) => a.order - b.order)
+    : supported;
+  // Closed sets only: of combinations with exactly the same holders, the largest stands for them. (Every candidate
+  // is the intersection of the role sets of the people holding one or two seeds exactly, so each is already closed;
+  // grouping by holders keeps that true without comparing candidates pairwise.)
+  const closed = new Map<string, { key: string; roles: string[]; holders: string[] }>();
+  for (const candidate of reported) {
+    const positions = holding(candidate.roles)
+      .flatMap((index) => sets[index]!.holders)
+      .sort((a, b) => a - b);
+    const signature = positions.join(',');
+    const current = closed.get(signature);
+    if (!current || candidate.roles.length > current.roles.length)
+      closed.set(signature, {
+        key: candidate.key,
+        roles: candidate.roles,
+        holders: positions.map((position) => people[position]!),
+      });
+  }
+  for (const candidate of closed.values()) {
+    const key = candidate.key;
     const names = candidate.roles.map((roleId) => roleRef(roleId).name);
     suggestions.push({
       id: suggestionId('bundle', key),
@@ -360,7 +418,9 @@ function mine(
     });
   }
 
-  // Group bindings: a role every permanent member of a group holds through their own direct binding.
+  // Group bindings: a role every permanent member of a group holds through their own direct binding. A team's
+  // backing group is left out: the team's maintainers decide who belongs to it (teams.ts), so a role bound to it
+  // would be theirs to hand out.
   const membersOf = new Map<string, GroupMember[]>();
   // Every live membership counts, including disabled or expired members: binding the role to the group would reach
   // them too (on re-activation), so a group qualifies only when all of them are active holders.
@@ -369,28 +429,33 @@ function mine(
     list.push(member);
     membersOf.set(member.groupId, list);
   }
+  // The roles bound to each group, and each person's plain direct bindings of unprotected roles.
+  const groupRolesOf = new Map<string, Set<string>>();
+  const directOf = new Map<string, Binding[]>();
+  for (const binding of data.bindings)
+    if (binding.subjectType === 'group') {
+      const set = groupRolesOf.get(binding.subjectId) ?? new Set<string>();
+      set.add(binding.roleId);
+      groupRolesOf.set(binding.subjectId, set);
+    } else if (plainDirect(binding) && data.roleById.get(binding.roleId)?.protected === false) {
+      const list = directOf.get(binding.subjectId) ?? [];
+      list.push(binding);
+      directOf.set(binding.subjectId, list);
+    }
   for (const [groupId, members] of membersOf) {
     const group = groupById.get(groupId);
-    if (!group || members.length < settings.minIdentities) continue;
+    if (!group || isTeamGroup(group) || members.length < settings.minIdentities) continue;
     if (members.some((member) => member.expiresAt !== undefined)) continue;
     if (members.some((member) => !data.identityById.has(member.identityId))) continue;
-    const groupRoles = new Set(
-      data.bindings
-        .filter((binding) => binding.subjectType === 'group' && binding.subjectId === groupId)
-        .map((binding) => binding.roleId),
-    );
+    const groupRoles = groupRolesOf.get(groupId) ?? new Set<string>();
     const direct = new Map<string, Binding[]>();
-    for (const binding of data.bindings)
-      if (
-        plainDirect(binding) &&
-        !groupRoles.has(binding.roleId) &&
-        data.roleById.get(binding.roleId)?.protected === false &&
-        members.some((member) => member.identityId === binding.subjectId)
-      ) {
-        const list = direct.get(binding.roleId) ?? [];
-        list.push(binding);
-        direct.set(binding.roleId, list);
-      }
+    for (const identityId of new Set(members.map((member) => member.identityId)))
+      for (const binding of directOf.get(identityId) ?? [])
+        if (!groupRoles.has(binding.roleId)) {
+          const list = direct.get(binding.roleId) ?? [];
+          list.push(binding);
+          direct.set(binding.roleId, list);
+        }
     for (const [roleId, list] of direct) {
       const holders = new Set(list.map((binding) => binding.subjectId));
       if (!members.every((member) => holders.has(member.identityId))) continue;
@@ -413,7 +478,15 @@ function mine(
   }
 
   // Redundant direct bindings: the same role already reaches the person through a permanent group membership,
-  // under the same authority (so the same ceiling) and at least as broadly.
+  // under the same authority (so the same ceiling) and at least as broadly. A team's backing group does not count:
+  // relying on it would hand control of the access to the team's maintainers.
+  const groupBindingsOf = new Map<string, Binding[]>();
+  for (const other of data.bindings)
+    if (other.subjectType === 'group' && !isTeamGroup(groupById.get(other.subjectId))) {
+      const list = groupBindingsOf.get(other.roleId) ?? [];
+      list.push(other);
+      groupBindingsOf.set(other.roleId, list);
+    }
   const permanentGroups = new Map<string, Set<string>>();
   // Package-owned memberships end with their assignment, so they cannot stand in for a direct binding.
   for (const member of data.members)
@@ -434,11 +507,9 @@ function mine(
       continue;
     const groups = permanentGroups.get(binding.subjectId);
     if (!groups) continue;
-    const cover = data.bindings.find(
+    const cover = (groupBindingsOf.get(binding.roleId) ?? []).find(
       (other) =>
-        other.subjectType === 'group' &&
         groups.has(other.subjectId) &&
-        other.roleId === binding.roleId &&
         other.authorityId === binding.authorityId &&
         standing(other) &&
         other.startsAt === undefined &&
@@ -494,7 +565,7 @@ function mine(
       applicable: false,
     });
   }
-  return suggestions;
+  return { suggestions, bundlesTruncated };
 }
 
 const kindRank: Record<RoleSuggestionKind, number> = {
@@ -543,7 +614,8 @@ export function createRoleMiningApi(ctx: ServerContext) {
         'iam:analysis:read',
         'analysis/*',
         async ({ tx, tenant }) => {
-          const all = mine(await snapshot(ctx, tx, tenant.id), settings).filter(
+          const mined = mine(await snapshot(ctx, tx, tenant.id), settings);
+          const all = mined.suggestions.filter(
             (suggestion) => !kinds || kinds.has(suggestion.kind),
           );
           const summary: Record<RoleSuggestionKind, number> = {
@@ -559,7 +631,14 @@ export function createRoleMiningApi(ctx: ServerContext) {
               b.savings - a.savings ||
               a.id.localeCompare(b.id),
           );
-          return { generatedAt: ctx.now(), summary, suggestions: all.slice(0, limit) };
+          return {
+            generatedAt: ctx.now(),
+            summary,
+            suggestions: all.slice(0, limit),
+            ...(mined.bundlesTruncated && (!kinds || kinds.has('bundle'))
+              ? { bundlesTruncated: true as const }
+              : {}),
+          };
         },
       );
     },
@@ -684,7 +763,7 @@ export function createRoleMiningApi(ctx: ServerContext) {
         `analysis/${wanted}`,
         async ({ tx, tenant, principal }) => {
           const data = await snapshot(ctx, tx, tenant.id);
-          const suggestion = mine(data, settings).find((entry) => entry.id === wanted);
+          const suggestion = mine(data, settings).suggestions.find((entry) => entry.id === wanted);
           if (!suggestion)
             throw new IamError(
               'NOT_FOUND',
@@ -705,6 +784,8 @@ export function createRoleMiningApi(ctx: ServerContext) {
           let created: string | undefined;
           if (suggestion.kind === 'group-binding') {
             const roleId = suggestion.roles[0]!.id;
+            // Never a team's backing group (mining leaves them out): its maintainers would hand the role out.
+            assertNotTeamGroup(data.groups.find((group) => group.id === suggestion.group!.id));
             await allow(
               ctx,
               tx,

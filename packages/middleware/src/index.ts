@@ -30,6 +30,10 @@ export interface IamLike {
       offset?: number;
     },
   ): Promise<unknown>;
+  /** Query planning: which resources of a type the caller may act on, as a filter (`iam.planResources`). */
+  planResources?(
+    request: CredentialInput & { tenantId: string; action: string; type: string },
+  ): Promise<unknown>;
   endpoint?: { origin: string; basePath: string; secure?: boolean };
   /** Organization sign-in addresses; when present, in-process calls keep the visitor's host so they are pinned. */
   hosts?: { resolve(host: string): Promise<unknown> };
@@ -60,6 +64,11 @@ export type AssertionOf<T extends IamLike> = T['api'] extends {
   : unknown;
 export type AccessibleOf<T extends IamLike> = T extends {
   listAccessible(...args: never[]): infer Result;
+}
+  ? Awaited<Result>
+  : never;
+export type PlanOf<T extends IamLike> = T extends {
+  planResources(...args: never[]): infer Result;
 }
   ? Awaited<Result>
   : never;
@@ -266,6 +275,8 @@ const forwardedHeaders = [
   'x-forwarded-proto',
   'x-real-ip',
   'x-request-id',
+  // A registered device's signed proof (verified by the server against the enrolled key and the session).
+  'x-better-iam-device',
 ];
 const sessionCookies = ['better-iam.session', '__Host-better-iam.session'];
 
@@ -295,6 +306,11 @@ export interface IamRequest<T extends IamLike> {
     limit?: number;
     offset?: number;
   }): Promise<AccessibleOf<T>>;
+  /**
+   * Which resources of a type the caller may perform an action on, as a filter for your own query (compile it with
+   * `filterToSql`, `filterToPrisma` or `filterToMongo` from `@better-iam/core`). Plans `never` when signed out.
+   */
+  plan(input: { action: string; type: string; tenantId?: string }): Promise<PlanOf<T>>;
   /** A short-lived signed assertion about the caller for a downstream service. */
   assertion(input: AssertionInput): Promise<AssertionOf<T>>;
   /** A typed client whose transport is `iam.handler` in this process; `Set-Cookie` answers go on this response. */
@@ -509,6 +525,25 @@ export function createRequestHelpers<T extends IamLike>(
         tenantId,
       })) as AccessibleOf<T>;
     },
+    async plan(input) {
+      const iam = await resolveIam();
+      if (!iam.planResources) throw new Error('This IAM server does not plan resources');
+      const tenantId = await tenantFor(input.tenantId);
+      if (!tenantId)
+        return {
+          tenantId: '',
+          action: input.action,
+          type: input.type,
+          kind: 'never',
+          filter: { kind: 'false' },
+        } as PlanOf<T>;
+      return (await iam.planResources({
+        ...credential(),
+        tenantId,
+        action: input.action,
+        type: input.type,
+      })) as PlanOf<T>;
+    },
     async assertion(input) {
       const iam = await resolveIam();
       if (!iam.api.assertions) throw new Error('This IAM server does not issue assertions');
@@ -591,6 +626,10 @@ export function checkRequestOrigin(
   if (headers.get('sec-fetch-site') === 'same-origin') return null;
   const origin = headers.get('origin');
   if (!origin) return new IamRequestError('CSRF_REJECTED', 'Cookie requests require Origin', 403);
+  // `null` is what sandboxed frames, redirects and no-referrer posts send, and also the `.origin` of non-http trusted
+  // entries such as `capacitor://localhost`, so it must never match anything.
+  if (origin === 'null')
+    return new IamRequestError('UNTRUSTED_ORIGIN', 'Origin is not trusted', 403);
   const forwardedHost = headers.get('x-forwarded-host')?.split(',')[0]?.trim();
   const forwardedProto = headers.get('x-forwarded-proto')?.split(',')[0]?.trim();
   const own = [

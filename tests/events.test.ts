@@ -1,4 +1,6 @@
+import { createServer, type IncomingHttpHeaders } from 'node:http';
 import { createRequire } from 'node:module';
+import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it } from 'vitest';
 import { betterIam, verifyWebhookSignature, type WebhookDelivery } from '@better-iam/server';
 import { sqliteAdapter } from '@better-iam/adapter-sqlite';
@@ -348,18 +350,31 @@ describe('webhooks', () => {
     expect(await f.iam.auth.dispatchOutbox()).toMatchObject({ delivered: 0, failed: 0 });
   });
 
-  it('lets root subscribe a platform endpoint to a whole subtree and uses the built-in HTTPS transport', async () => {
-    const requests: { url: string; init: RequestInit }[] = [];
-    const original = globalThis.fetch;
-    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
-      requests.push({ url: String(input), init: init ?? {} });
-      return new Response(null, { status: requests.length === 1 ? 500 : 204 });
-    }) as typeof fetch;
+  it('lets root subscribe a platform endpoint to a whole subtree and uses the built-in HTTP transport', async () => {
+    const requests: { url: string; method: string; headers: IncomingHttpHeaders; body: string }[] =
+      [];
+    const server = createServer((request, response) => {
+      const chunks: Buffer[] = [];
+      request.on('data', (chunk: Buffer) => chunks.push(chunk));
+      request.on('end', () => {
+        requests.push({
+          url: request.url ?? '',
+          method: request.method ?? '',
+          headers: request.headers,
+          body: Buffer.concat(chunks).toString('utf8'),
+        });
+        response.writeHead(requests.length === 1 ? 500 : 204);
+        response.end();
+      });
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     try {
-      const f = await fixture({ https: true });
+      // An http baseURL (development) lets webhooks reach loopback endpoints over http.
+      const f = await fixture();
+      const port = (server.address() as AddressInfo).port;
       const platform = await f.iam.api.webhooks.create(f.credential, {
         tenantId: f.root.tenant.id,
-        url: 'https://siem.example.test/ingest',
+        url: `http://127.0.0.1:${port}/ingest`,
         events: ['iam:groups:create'],
         scope: 'subtree',
       });
@@ -371,27 +386,26 @@ describe('webhooks', () => {
       f.advance(31_000);
       expect(await f.iam.auth.dispatchOutbox()).toMatchObject({ delivered: 1, failed: 0 });
       expect(requests).toHaveLength(2);
-      const { url, init } = requests[1]!;
-      expect(url).toBe('https://siem.example.test/ingest');
-      expect(init.method).toBe('POST');
-      expect(init.redirect).toBe('error');
-      const headers = new Headers(init.headers);
-      expect(headers.get('x-better-iam-event')).toBe('iam:groups:create');
+      const { url, method, headers, body } = requests[1]!;
+      expect(url).toBe('/ingest');
+      expect(method).toBe('POST');
+      expect(headers['x-better-iam-event']).toBe('iam:groups:create');
       expect(
         verifyWebhookSignature({
           secret: platform.secret,
-          timestamp: headers.get('x-better-iam-timestamp')!,
-          body: String(init.body),
-          signature: headers.get('x-better-iam-signature')!,
+          timestamp: String(headers['x-better-iam-timestamp']),
+          body,
+          signature: String(headers['x-better-iam-signature']),
           now: f.now(),
         }),
       ).toBe(true);
-      expect(JSON.parse(String(init.body))).toMatchObject({
+      expect(JSON.parse(body)).toMatchObject({
         type: 'iam:groups:create',
         tenantId: f.tenantId,
       });
     } finally {
-      globalThis.fetch = original;
+      server.closeAllConnections();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
     }
   });
 });

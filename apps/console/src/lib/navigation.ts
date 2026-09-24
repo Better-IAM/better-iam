@@ -61,6 +61,8 @@ export function orgAreas(base: string): NavArea[] {
           'Projects the organization registers as managed resources.',
         ),
         page('get-started', 'Get started', 'Your own onboarding checklist in this organization.'),
+        page('my-apps', 'My apps', 'The tools your organization gives you, one click away.'),
+        page('my-privacy', 'Your privacy', 'How your data is used, your choices, and data requests.'),
       ],
     },
     area(base, 'directory', 'Directory', 'Who belongs to the organization, and how they sign in.', [
@@ -78,6 +80,16 @@ export function orgAreas(base: string): NavArea[] {
         'Non-human identities for integrations, and their API keys.',
       ),
       page(
+        'devices',
+        'Devices',
+        'Registered laptops and phones: owners, assurance, and compliance.',
+      ),
+      page(
+        'device-management',
+        'Device management',
+        'Compliance requirements, MDM and EDR integrations, and enrollment codes.',
+      ),
+      page(
         'directory',
         'Directory sync',
         'Let your identity provider manage members and groups over SCIM.',
@@ -88,6 +100,11 @@ export function orgAreas(base: string): NavArea[] {
         'Verified email domains that route people straight to this organization.',
       ),
       page('sign-in-address', 'Sign-in address', 'Your own sign-in subdomain and hostnames.'),
+      page(
+        'verifiable-credentials',
+        'Credentials',
+        'Digital badges people keep in their wallets, with selective disclosure and revocation.',
+      ),
     ]),
     area(base, 'access', 'Access', 'What people may do, and every way access is granted.', [
       page('roles', 'Roles', 'Named sets of permissions, bound to members and groups.'),
@@ -104,6 +121,21 @@ export function orgAreas(base: string): NavArea[] {
         'Ask for a role; a reviewer approves under their own authority.',
       ),
       page('agreements', 'Terms of use', 'Agreements members accept, visible to policies.'),
+      page(
+        'ssh',
+        'SSH access',
+        'Short-lived SSH certificates for the servers and logins policies allow.',
+      ),
+      page(
+        'workflows',
+        'Workflows',
+        'Joiner, mover and leaver automation that runs with your rights.',
+      ),
+      page(
+        'applications',
+        'Applications',
+        'The app catalog on My apps: who sees each app, launches, and unused assignments.',
+      ),
     ]),
     area(
       base,
@@ -140,12 +172,31 @@ export function orgAreas(base: string): NavArea[] {
         ),
         page('separation-of-duties', 'Separation of duties', 'Roles nobody may hold together.'),
         page(
+          'compliance',
+          'Compliance',
+          'SOC 2, ISO 27001 and NIST controls checked daily, with exceptions and signed evidence.',
+        ),
+        page(
           'reports',
           'Reports',
           'What ends soon, who holds elevated roles now, and unused keys.',
         ),
       ],
     ),
+    area(base, 'security', 'Security', 'Attacks on accounts, and how the organization responds.', [
+      page('threats', 'Threats', 'Detections, open incidents, and identities at risk.'),
+      page('threats/incidents', 'Incidents', 'Every incident: triage, respond, and resolve.'),
+      page(
+        'threats/settings',
+        'Detection settings',
+        'Detection rules, trusted networks, alerts, and automatic playbooks.',
+      ),
+      page(
+        'signals',
+        'Shared Signals',
+        'Security events from your identity providers: revoked sessions, compromised credentials, risk.',
+      ),
+    ]),
     area(base, 'ai', 'AI', 'AI agents, what they may do for people, and access to models.', [
       page('agents', 'Agents', 'Agent accounts with sponsors, ceilings, keys, and attested cards.'),
       page('delegations', 'Delegations', 'Let agents act for you, only within what you allow.'),
@@ -169,6 +220,31 @@ export function orgAreas(base: string): NavArea[] {
         page('resources', 'Resources', 'Managed resources with owners, parents, and attributes.'),
         page('webhooks', 'Webhooks', 'Signed deliveries of audit events to your endpoints.'),
         page(
+          'keys',
+          'Keys',
+          'Encryption, signing and MAC keys your applications use without ever holding them.',
+        ),
+        page(
+          'certificates',
+          'Certificates',
+          'A private certificate authority for mutual TLS and SPIFFE workload identity.',
+        ),
+        page(
+          'data-protection',
+          'Data protection',
+          'Tokenize card numbers and personal data; read them back only for a purpose.',
+        ),
+        page(
+          'vault',
+          'Vault',
+          'Secrets with versions and rotation, check-outs of shared credentials, dynamic credentials.',
+        ),
+        page(
+          'data-filters',
+          'Data filters',
+          'Which rows someone may see, as SQL, Prisma, or MongoDB filters for your own queries.',
+        ),
+        page(
           'provisioning',
           'App provisioning',
           "Keep your SaaS apps' user directories in step over SCIM.",
@@ -189,6 +265,11 @@ export function orgAreas(base: string): NavArea[] {
         page('settings', 'Settings', 'Sign-in policy and organization details.'),
         page('billing', 'Billing', 'Spend, budgets, and statements.'),
         page('audit', 'Audit log', 'Every sign-in, change, and denial, in a tamper-evident chain.'),
+        page(
+          'privacy',
+          'Privacy',
+          'Purposes and consent, data-subject requests with deadlines, and legal holds.',
+        ),
         page('features', 'Features', 'Feature flags for this organization and its projects.'),
         page('onboarding', 'Onboarding', 'Checklists and flows for people who join.'),
         page(

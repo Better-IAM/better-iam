@@ -75,6 +75,10 @@ const missingKeyHints = new Map([
   ['principal.managerId', 'or declare it as an identity attribute'],
   ['request.ip', 'or use request.sourceIp, which the server sets from the client address'],
   ['principal.tokenIssuedAt', 'or use principal.tokenIssueTime'],
+  [
+    'principal.risk',
+    'or use principal.riskLevel (none, low, medium, high) or principal.riskScore (0-100)',
+  ],
 ]);
 const typeLabels: Record<KeyType, string> = {
   identifier: 'a string',

@@ -5,8 +5,14 @@ import {
   type IamStore,
   type Json,
 } from '@better-iam/core';
-import { attributeValues, managedResource, type CatalogResourceType } from '../catalog.js';
+import {
+  attributeValues,
+  managedResource,
+  resolvedManaged,
+  type CatalogResourceType,
+} from '../catalog.js';
 import type { ServerContext } from '../context.js';
+import { impersonatingActor } from '../decisions.js';
 import type { ResourceRecord } from '../models.js';
 import { id } from '../utils.js';
 import { integer, object, text } from '../validation.js';
@@ -63,6 +69,9 @@ export function createResourcesApi(ctx: ServerContext) {
     input: ResourceInput,
   ): Promise<ResourceRecord> {
     const definition = await catalog.managedDefinition(tx, tenantId, input.type);
+    // Resource patterns treat `*` and `?` as wildcards: an ID holding them would read as a pattern in `iam/{type}/{id}`.
+    if (/[*?]/.test(input.id))
+      throw new IamError('INVALID_INPUT', 'A resource ID cannot contain * or ?');
     if (await managedResource(tx, tenantId, definition.name, input.id))
       throw new IamError('CONFLICT', 'Resource is already registered', 409);
     const at = Date.now();
@@ -239,15 +248,37 @@ export function createResourcesApi(ctx: ServerContext) {
         input.tenantId,
         'iam:resources:read',
         input.type !== undefined ? `${text(input.type, 'resource type', 64)}/*` : '*',
-        async ({ tx }) => {
+        async ({ tx, principal, tenant }) => {
           const filter: Record<string, unknown> = { tenantId: input.tenantId };
           if (input.type !== undefined) filter.type = input.type;
           if (input.parentId !== undefined) filter.parentId = text(input.parentId, 'parentId', 128);
           if (input.ownerId !== undefined) filter.ownerId = text(input.ownerId, 'ownerId');
           const limit = integer(input.limit ?? 100, 'limit', 1, 1000);
           const offset = integer(input.offset ?? 0, 'offset', 0, 1000000);
+          // Listing is reading each record: one a policy keeps from the caller (a Deny on iam/document/payroll, an
+          // owner condition) is left out, as resources.get would refuse it. A "view as" session sees what both may.
+          const readers = [principal, await impersonatingActor(tx, principal)].filter(
+            (who) => who !== undefined,
+          );
+          const prepared = await Promise.all(
+            readers.map((who) =>
+              ctx.decisions.prepareDecision(tx, who, tenant, 'iam:resources:read'),
+            ),
+          );
+          const readable = (record: ResourceRecord) => {
+            const resource = {
+              tenantId: record.tenantId,
+              type: 'iam',
+              id: `${record.type}/${record.resourceId}`,
+              attributes: resolvedManaged(record).attributes,
+            };
+            return prepared.every(
+              (ready) => ('fixed' in ready ? ready.fixed : ready.evaluate(resource)).allowed,
+            );
+          };
           // Order by type/id rather than by opaque record ID so pages are meaningful to callers.
           return (await tx.find<ResourceRecord>('resources', filter))
+            .filter(readable)
             .sort(byResourceKey)
             .slice(offset, offset + limit);
         },

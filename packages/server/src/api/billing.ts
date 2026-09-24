@@ -65,6 +65,7 @@ import {
 import { maxPlansPerTenant, planKey, planSettings } from '../billing-plans.js';
 import {
   billingServiceOf,
+  builtInMeterKey,
   type AnomalyOptions,
   type BudgetStatus,
   type ClosePeriodResult,
@@ -80,6 +81,7 @@ import {
 import type { ServerContext } from '../context.js';
 import { departmentHeads, type Department } from '../departments.js';
 import { OperationDenied } from '../operations.js';
+import { actsInOwnRight } from '../session-kinds.js';
 import { isTeamMaintainer, type Team } from '../teams.js';
 import { id } from '../utils.js';
 import { email, integer, object, text } from '../validation.js';
@@ -117,7 +119,8 @@ export interface PriceView {
   price: PublicPriceSpec;
   note?: string;
   setAt: number;
-  setBy: string;
+  /** Who set it; shown only to the defining tenant and the tenants above it (never a platform administrator below). */
+  setBy?: string;
 }
 
 /** A meter as a tenant sees it. */
@@ -210,10 +213,15 @@ export interface TermsView {
   taxRatePercent?: number;
   taxLabel?: string;
   setAt?: number;
+  /** The root administrator who set them; shown to the platform only. */
   setBy?: string;
 }
 
-function termsView(accountId: string, terms: BillingTerms | undefined): TermsView {
+function termsView(
+  accountId: string,
+  terms: BillingTerms | undefined,
+  showSetBy: boolean,
+): TermsView {
   return {
     accountId,
     inherited: false,
@@ -226,7 +234,8 @@ function termsView(accountId: string, terms: BillingTerms | undefined): TermsVie
       : {}),
     ...(terms?.taxRatePercent !== undefined ? { taxRatePercent: terms.taxRatePercent } : {}),
     ...(terms?.taxLabel !== undefined ? { taxLabel: terms.taxLabel } : {}),
-    ...(terms ? { setAt: terms.setAt, setBy: terms.setBy } : {}),
+    ...(terms ? { setAt: terms.setAt } : {}),
+    ...(terms && showSetBy ? { setBy: terms.setBy } : {}),
   };
 }
 
@@ -624,7 +633,7 @@ function discountView(discount: BillingDiscount, period: string, timeZone: strin
   };
 }
 
-function priceView(price: BillingPrice, targetName?: string): PriceView {
+function priceView(price: BillingPrice, showSetBy: boolean, targetName?: string): PriceView {
   return {
     meter: price.meter,
     targetTenantId: price.tenantId,
@@ -634,7 +643,7 @@ function priceView(price: BillingPrice, targetName?: string): PriceView {
     price: publicPriceSpec(price.spec),
     ...(price.note !== undefined ? { note: price.note } : {}),
     setAt: price.setAt,
-    setBy: price.setBy,
+    ...(showSetBy ? { setBy: price.setBy } : {}),
   };
 }
 
@@ -678,7 +687,24 @@ export function createBillingApi(ctx: ServerContext) {
       : await ctx.ancestry(tx, realm);
     return priceFor(tx, meter, chain, period);
   }
-  async function meterView(tx: IamStore, realm: Tenant, meter: BillingMeter, rootId: string) {
+  /**
+   * Whether the caller sees who set a meter's prices: people of the tenant that defines the meter and of the tenants
+   * above it. Below, a platform meter's prices would name root administrators.
+   */
+  async function seesPriceSetter(
+    tx: IamStore,
+    principal: AuthenticatedPrincipal,
+    meter: BillingMeter,
+  ): Promise<boolean> {
+    return (await ctx.ancestorIds(tx, meter.tenantId)).includes(principal.identity.tenantId);
+  }
+  async function meterView(
+    tx: IamStore,
+    realm: Tenant,
+    meter: BillingMeter,
+    rootId: string,
+    principal: AuthenticatedPrincipal,
+  ) {
     const price =
       meter.pricing === 'rate-card'
         ? await effectivePrice(tx, realm, meter, service.currentPeriod())
@@ -694,7 +720,7 @@ export function createBillingApi(ctx: ServerContext) {
       definedBy: meter.tenantId,
       scope: meter.tenantId === rootId ? 'platform' : 'tenant',
       inherited: meter.tenantId !== realm.id,
-      ...(price ? { price: priceView(price) } : {}),
+      ...(price ? { price: priceView(price, await seesPriceSetter(tx, principal, meter)) } : {}),
       createdAt: meter.createdAt,
       updatedAt: meter.updatedAt,
     };
@@ -706,7 +732,8 @@ export function createBillingApi(ctx: ServerContext) {
 
   /**
    * A read allowed by `iam:billing:read` or by a role the caller holds over the data (team maintainer, department
-   * head): `via` names that role or returns undefined. Impersonation sessions only read through the permission.
+   * head): `via` names that role or returns undefined. The role counts only for a person signed in as themselves in
+   * their own tenant; impersonation, delegated, role-session and API-key credentials read through the permission.
    */
   async function readAs<T>(
     credential: CredentialInput,
@@ -724,10 +751,13 @@ export function createBillingApi(ctx: ServerContext) {
     const outcome = await ctx.store.transaction(async (tx) => {
       const principal = await ctx.principals.currentPrincipal(tx, authenticated);
       const realm = await ctx.tenant(tx, target);
-      const role =
-        principal.session.impersonatorId === undefined
-          ? await via(tx, principal, realm)
-          : undefined;
+      const ownSession =
+        principal.session.kind === 'user' &&
+        actsInOwnRight(principal.session) &&
+        !principal.session.impersonatorId &&
+        principal.session.tenantId === principal.identity.tenantId &&
+        principal.identity.kind === 'user';
+      const role = ownSession ? await via(tx, principal, realm) : undefined;
       if (!role) {
         const decision = await ctx.operations.recordedDecision(tx, principal, {
           tenantId: realm.id,
@@ -983,14 +1013,14 @@ export function createBillingApi(ctx: ServerContext) {
         input.tenantId,
         'iam:billing:read',
         'billing',
-        async ({ tx, tenant: realm }) => {
+        async ({ tx, tenant: realm, principal }) => {
           const chain = await ctx.ancestry(tx, realm);
           const rootId = chain.at(-1)!.id;
           const views: MeterView[] = [];
           for (const meter of [...(await metersFor(tx, chain)).values()].sort((a, b) =>
             a.key < b.key ? -1 : 1,
           ))
-            views.push(await meterView(tx, realm, meter, rootId));
+            views.push(await meterView(tx, realm, meter, rootId, principal));
           return views;
         },
       ),
@@ -1024,6 +1054,9 @@ export function createBillingApi(ctx: ServerContext) {
           const { tenantId: _tenant, key: _key, archived: _archived, ...rest } = object(input);
           const fields = meterSettings(rest);
           const chain = await ctx.ancestry(tx, realm);
+          // Built-in meters (`inference`) are the platform's: other modules bill through them.
+          if (realm.parentId !== null && builtInMeterKey(key))
+            throw new IamError('CONFLICT', `${key} is a built-in platform meter`, 409);
           if (await resolveMeter(tx, chain, key))
             throw new IamError(
               'CONFLICT',
@@ -1058,7 +1091,7 @@ export function createBillingApi(ctx: ServerContext) {
             aggregation: meter.aggregation,
             pricing: meter.pricing,
           });
-          return meterView(tx, realm, meter, chain.at(-1)!.id);
+          return meterView(tx, realm, meter, chain.at(-1)!.id, principal);
         },
       );
     },
@@ -1103,7 +1136,7 @@ export function createBillingApi(ctx: ServerContext) {
             unit: next.unit,
             archived: next.archived,
           });
-          return meterView(tx, realm, next, (await ctx.ancestry(tx, realm)).at(-1)!.id);
+          return meterView(tx, realm, next, (await ctx.ancestry(tx, realm)).at(-1)!.id, principal);
         },
       );
     },
@@ -1246,7 +1279,7 @@ export function createBillingApi(ctx: ServerContext) {
             effectiveFrom,
             model: spec.model,
           });
-          return priceView(entry, target.name);
+          return priceView(entry, true, target.name);
         },
       );
     },
@@ -1262,7 +1295,7 @@ export function createBillingApi(ctx: ServerContext) {
         input.tenantId,
         'iam:billing:read',
         `billing/meters/${key}`,
-        async ({ tx, tenant: realm }) => {
+        async ({ tx, tenant: realm, principal }) => {
           const chain = await ctx.ancestry(tx, realm);
           const meter = await resolveMeter(tx, chain, key);
           if (!meter) throw new IamError('NOT_FOUND', 'Billing meter not found', 404);
@@ -1270,11 +1303,16 @@ export function createBillingApi(ctx: ServerContext) {
             ...chain.map((tenant) => tenant.id),
             ...(await subtree(ctx, tx, realm)).map((tenant) => tenant.id),
           ]);
+          const showSetBy = await seesPriceSetter(tx, principal, meter);
           const entries: PriceView[] = [];
           for (const price of await tx.find<BillingPrice>(pricesCollection, { meterId: meter.id }))
             if (visible.has(price.tenantId))
               entries.push(
-                priceView(price, (await tx.get<Tenant>('tenants', price.tenantId))?.name),
+                priceView(
+                  price,
+                  showSetBy,
+                  (await tx.get<Tenant>('tenants', price.tenantId))?.name,
+                ),
               );
           entries.sort(
             (a, b) =>
@@ -1289,9 +1327,9 @@ export function createBillingApi(ctx: ServerContext) {
               ? await effectivePrice(tx, realm, meter, service.currentPeriod())
               : undefined;
           return {
-            meter: await meterView(tx, realm, meter, chain.at(-1)!.id),
+            meter: await meterView(tx, realm, meter, chain.at(-1)!.id, principal),
             entries,
-            ...(effective ? { effective: priceView(effective) } : {}),
+            ...(effective ? { effective: priceView(effective, showSetBy) } : {}),
           };
         },
       );
@@ -1311,7 +1349,7 @@ export function createBillingApi(ctx: ServerContext) {
         input.tenantId,
         'iam:billing:read',
         `billing/meters/${key}`,
-        async ({ tx, tenant: realm }) => {
+        async ({ tx, tenant: realm, principal }) => {
           if (
             typeof input.quantity !== 'number' ||
             !Number.isFinite(input.quantity) ||
@@ -1333,7 +1371,9 @@ export function createBillingApi(ctx: ServerContext) {
             currency: settings.currency,
             amountMicros: amount,
             amount: unitsOf(amount),
-            ...(price ? { price: priceView(price) } : { unpriced: true as const }),
+            ...(price
+              ? { price: priceView(price, await seesPriceSetter(tx, principal, meter)) }
+              : { unpriced: true as const }),
           };
         },
       );
@@ -2159,7 +2199,7 @@ export function createBillingApi(ctx: ServerContext) {
             minimumCommitmentMicros: terms.minimumCommitmentMicros ?? null,
             taxRatePercent: terms.taxRatePercent ?? null,
           });
-          return termsView(realm.id, terms);
+          return termsView(realm.id, terms, true);
         },
         true,
       ),
@@ -2177,10 +2217,15 @@ export function createBillingApi(ctx: ServerContext) {
         input.tenantId,
         'iam:billing:read',
         'billing/terms',
-        async ({ tx, tenant: realm }) => {
+        async ({ tx, tenant: realm, principal }) => {
           const account = await accountOf(ctx, tx, realm);
           if (account.id !== realm.id) return { accountId: account.id, inherited: true };
-          return termsView(realm.id, await termsOf(tx, realm.id));
+          const rootId = (await ctx.ancestry(tx, realm)).at(-1)!.id;
+          return termsView(
+            realm.id,
+            await termsOf(tx, realm.id),
+            principal.identity.tenantId === rootId,
+          );
         },
       ),
 
@@ -2208,7 +2253,8 @@ export function createBillingApi(ctx: ServerContext) {
 
     /**
      * Creates or updates a billing profile: company name, billing emails (statements go there), tax ID, address,
-     * purchase order, cost center, payment terms (days); `null` clears a field. The profile belongs to the tenant or to
+     * purchase order, cost center, payment terms (days; beyond `billing.paymentTermsDays` only root administrators
+     * extend them); `null` clears a field. The profile belongs to the tenant or to
      * `targetTenantId`, a tenant below it. A profile below an organization makes that tenant its own billing account,
      * which is the parent's decision: it is created from an ancestor (with `targetTenantId`); the tenant's own billing
      * managers may then keep it up to date. Requires iam:billing:manage; audited as `billing:profile`.
@@ -2270,6 +2316,17 @@ export function createBillingApi(ctx: ServerContext) {
               : input.paymentTermsDays === undefined
                 ? existing?.paymentTermsDays
                 : integer(input.paymentTermsDays, 'paymentTermsDays', 0, 365);
+          // Longer payment terms are credit the platform extends: billing managers keep the terms they have or choose
+          // terms up to the deployment's default (`billing.paymentTermsDays`); only root administrators grant more.
+          if (
+            paymentTermsDays !== undefined &&
+            paymentTermsDays !== existing?.paymentTermsDays &&
+            paymentTermsDays > settings.paymentTermsDays &&
+            !(await ctx.rootPrincipal(tx, principal))
+          )
+            throw new OperationDenied(
+              `Payment terms above ${settings.paymentTermsDays} days are set by root administrators`,
+            );
           const fields = {
             companyName: optional(input.companyName, existing?.companyName, 'companyName', 256),
             taxId: optional(input.taxId, existing?.taxId, 'taxId', 64),

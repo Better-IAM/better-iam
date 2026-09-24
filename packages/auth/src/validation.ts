@@ -9,6 +9,15 @@ export function text(value: unknown, field: string, max = 512): string {
     );
   return value;
 }
+/** Control characters (C0, DEL, C1) and Unicode line/paragraph separators. */
+export const controlCharacters = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g;
+/**
+ * A display name: control and line-separator characters become spaces, so a name (from sign-up, an invitation, or
+ * an identity provider) can never break an email header or forge a line in a message.
+ */
+export function displayName(value: unknown, max = 256): string {
+  return text(text(value, 'name', max).replace(controlCharacters, ' ').trim(), 'name', max);
+}
 export function email(value: unknown): string {
   const normalized = text(value, 'email', 254).trim().toLowerCase();
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized))

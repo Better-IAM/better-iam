@@ -1,0 +1,472 @@
+---
+title: Key management
+metaTitle: Key management (KMS)
+description: Tenant keys that never leave the server. Encrypt, sign, compute MACs and mint JWTs through the keys API, with rotation, aliases, grants and audit.
+icon: KeyRound
+status: new
+packages: ['@better-iam/server', '@better-iam/client']
+sources:
+  - docs/key-management.md
+  - packages/server/src/kms.ts
+  - packages/server/src/api/keys.ts
+  - packages/server/src/guarded.ts
+---
+
+Applications that encrypt records or sign tokens need keys, and keys kept in environment variables or configuration
+files get copied into every service, backup and log that touches them. Anyone who reads one copy can decrypt
+everything or sign anything, and nothing records who used the key, or for what.
+
+Better IAM includes a key management service (KMS) in the style of AWS KMS. Each <Term id="tenant">tenant</Term>
+keeps its own cryptographic keys, and applications use them through the `keys` API group to encrypt, decrypt, sign,
+verify and compute MACs. The key material never leaves the server. Every call is authorized by the same
+<Term id="policy">policies</Term> and <Term id="condition">conditions</Term> as the rest of the platform, and
+written to the audit trail. Keys are tenant resources, so a policy can let a payments service decrypt only with keys
+tagged `team: payments`, and only for records whose encryption context says `app: billing`.
+
+```ts
+const key = await iam.api.keys.create(credential, {
+  tenantId,
+  alias: 'alias/customer-records',
+  tags: { team: 'payments' },
+  rotationPeriodDays: 365,
+});
+
+const { ciphertext } = await iam.api.keys.encrypt(credential, {
+  tenantId,
+  keyId: 'alias/customer-records',
+  plaintext: 'card on file: 4242',
+  encryptionContext: { customer: 'cus_123' },
+});
+
+const { plaintext } = await iam.api.keys.decrypt(credential, {
+  tenantId,
+  ciphertext,
+  encryptionContext: { customer: 'cus_123' },
+});
+```
+
+Over HTTP the same calls are `POST {basePath}/keys/{method}`, and `@better-iam/client` exposes them as
+`client.keys.*`.
+
+## Key kinds
+
+A key's `keySpec` decides what it can do:
+
+| `keySpec` | `keyUsage` | What it does |
+| --- | --- | --- |
+| `aes-256-gcm` (default) | `encrypt` | `encrypt` and `decrypt` up to 4 KiB, `generateDataKey`, `reEncrypt` |
+| `hmac-sha256`, `hmac-sha384`, `hmac-sha512` | `mac` | `generateMac` and `verifyMac`, and HS256, HS384 or HS512 tokens with `signJwt` |
+| `ecc-p256`, `ecc-p384` | `sign` | ES256 and ES384 signatures and tokens |
+| `ed25519` | `sign` | EdDSA signatures and tokens |
+| `rsa-2048`, `rsa-3072`, `rsa-4096` | `sign` or `encrypt` | PS256-PS512 and RS256-RS512 signatures and tokens, or RSA-OAEP (SHA-256) for small values |
+
+An RSA key needs an explicit `keyUsage`; every other spec has exactly one usage. A tenant keeps at most 1000 keys,
+and a key at most 1000 versions, 50 aliases and 50 grants.
+
+`create` (`iam:kms:create`) takes:
+
+<TypeTable
+  type={{
+    tenantId: { type: 'string', description: 'The tenant the key belongs to.', required: true },
+    keySpec: { type: 'KeySpec', description: 'One of the specs above.', default: "'aes-256-gcm'" },
+    keyUsage: {
+      type: "'encrypt' | 'sign' | 'mac'",
+      description: 'Required for RSA keys (encrypt or sign). Every other spec has exactly one usage, which is used when this is left out.',
+    },
+    alias: {
+      type: 'string',
+      description: 'Also name the key alias/{name}. Needs iam:kms:update on iam/kms/alias/{name} as well.',
+    },
+    tags: {
+      type: 'Record<string, string>',
+      description: 'Up to 50 tags, which policies see as resource.tags.{key}. Tag keys are 1 to 128 letters, digits or _ . : / = + @ - characters; values are up to 256 characters.',
+    },
+    description: { type: 'string', description: 'Up to 512 characters.' },
+    rotationPeriodDays: { type: 'number', description: 'Rotate automatically every so many days (1 to 3650).' },
+  }}
+/>
+
+## Versions and aliases
+
+Each key has **versions**. Encrypting, signing and computing MACs use the current version. Decrypting and verifying
+use whichever version produced the ciphertext, signature or token, so rotation never breaks existing data:
+
+- `rotate` creates a new version on demand. It works on enabled keys only, and at most ten times a day per key
+  (`RATE_LIMITED`). Asymmetric key pairs are generated off the event loop, so a slow RSA-4096 rotation does not
+  stall other requests.
+- `rotationPeriodDays` rotates an enabled key automatically. The scheduler job `iam.kms.maintain()` performs it and
+  records `kms:key-rotate` (actor `deployment-operator`). Setting `rotationPeriodDays: null` in `update` stops
+  automatic rotation.
+- `listVersions` shows each version's origin (`create`, `rotate` or `automatic`) and, for asymmetric keys, a
+  fingerprint of its public key.
+
+A key has an id (a UUID) and any number of **aliases** of the form `alias/{name}`, where the name uses letters,
+digits, slashes, underscores and hyphens. An alias names one key per tenant, and every call that takes a `keyId`
+accepts an alias too. `updateAlias` points an alias at another key of the same kind and usage, so applications that
+name the alias switch keys without a deploy. Moving an alias needs `iam:kms:update` on both keys. `createAlias` and
+`updateAlias` take the key's id, not another alias, and `deleteAlias` removes the name but keeps the key.
+
+## Encryption
+
+`encrypt` takes `plaintext` (UTF-8 text) or `plaintextBase64` (bytes), up to 4 KiB, and returns a self-describing
+ciphertext of the form `kms1.{keyId}.{version}.{t|b}.{payload}`.
+
+The ciphertext carries the key and version, so `decrypt` needs only the ciphertext and the encryption context. Pass
+`keyId` to `decrypt` as well if you want to insist on a particular key; a ciphertext from another key then fails with
+`INVALID_CIPHERTEXT`. The `t` or `b` marker records whether the plaintext was text or bytes, and `decrypt` returns it
+in the same form (`plaintext` or `plaintextBase64`). The marker is authenticated with the rest of the header.
+
+### Encryption context
+
+An **encryption context** is up to 16 non-secret key/value pairs that are bound to the ciphertext as additional
+authenticated data. Keys follow the same rules as tag keys, and values are non-empty strings of up to 1024
+characters. `decrypt` must present exactly the same pairs; otherwise it fails with `INVALID_CIPHERTEXT`, and a
+tampered ciphertext fails the same way. Contexts do three jobs:
+
+- **Integrity.** A ciphertext copied to another record cannot be decrypted as that record.
+- **Authorization.** Policies read the pairs as `resource.encryptionContext.{key}` and their names, sorted, as
+  `resource.encryptionContextKeys`.
+- **Audit.** Each call's audit event records the context.
+
+<Callout type="warn" title="Contexts are not secret">
+  Encryption contexts are written to the audit trail and shown to policies, so they must never contain secrets. Use
+  identifiers such as a customer ID or a table name.
+</Callout>
+
+### Data keys (envelope encryption)
+
+Direct encryption is limited to 4 KiB. For larger data, use envelope encryption:
+
+<Steps>
+<Step>
+
+**Get a data key.** `generateDataKey` (`iam:kms:generate-data-key`) returns a fresh random key as
+`plaintextBase64` (16, 24, 32 or 64 bytes; 32 by default) and the same key encrypted under the KMS key as
+`ciphertext`.
+
+</Step>
+<Step>
+
+**Encrypt locally.** Encrypt the data with the plaintext key, store the `ciphertext` next to it, and discard the
+plaintext.
+
+</Step>
+<Step>
+
+**Decrypt the data key to read.** `decrypt` (`iam:kms:decrypt`) the stored ciphertext with the same context to get
+the data key back as `plaintextBase64`.
+
+</Step>
+</Steps>
+
+```ts
+const dataKey = await iam.api.keys.generateDataKey(credential, {
+  tenantId,
+  keyId: 'alias/customer-records',
+  encryptionContext: { table: 'documents' },
+});
+// Encrypt with Buffer.from(dataKey.plaintextBase64!, 'base64'), then store dataKey.ciphertext beside the data.
+
+const { plaintextBase64 } = await iam.api.keys.decrypt(credential, {
+  tenantId,
+  ciphertext: stored.wrappedKey,
+  encryptionContext: { table: 'documents' },
+});
+```
+
+`includePlaintext: false` returns only the encrypted data key, for a service that stores it for another service to
+open later.
+
+`reEncrypt` moves a ciphertext to another key (`destinationKeyId`) or context (`sourceEncryptionContext`,
+`destinationEncryptionContext`) without the plaintext leaving the server. It needs `iam:kms:decrypt` on the source
+key and `iam:kms:encrypt` on the destination key, and it is audited as both.
+
+RSA keys with `keyUsage: 'encrypt'` use RSA-OAEP with SHA-256, with the ciphertext header and the context as the OAEP
+label. They accept only small values: 190 bytes with a 2048-bit key, 318 with 3072 bits and 446 with 4096 bits. Use
+data keys for anything larger. Because of the label, a value encrypted offline with the public key is not a KMS
+ciphertext; encrypt through `encrypt`.
+
+## Signatures, MACs and tokens
+
+- `sign` and `verify` work on a `message` (text) or `messageBase64` of up to 64 KiB. `algorithm` defaults to the
+  key's first (ES256, ES384, EdDSA, or PS256 for RSA). ECDSA signatures are DER-encoded by default, and
+  `format: 'jose'` returns the raw `r||s` form that JWS uses. `verify` checks against `keyVersion` (the current
+  version by default) and returns `{ valid }`: a mismatch is not an error.
+- `generateMac` and `verifyMac` compute and check HMACs. The check is constant-time.
+- `publicKey` returns an asymmetric version's key (the current one by default) as SPKI PEM and JWK. `jwks` returns
+  every version as a JWK Set. Anyone holding the public key can verify signatures without calling IAM.
+- `signJwt` signs a JWT with a signing key or a MAC key. The header is `{ alg, kid, typ }`, with `kid` set to
+  `{keyId}.{version}` (the same `kid` the JWKS uses) and `typ` to `JWT` unless `type` says otherwise. `iat` is added
+  when absent, `exp` comes from `expiresInSeconds` (1 second to 1 year), and claims can be up to 48 KiB.
+- `verifyJwt` finds the version from the `kid` (pass `keyId` for a token without a KMS `kid`) and accepts only the
+  key's own algorithms, so `alg: none` and algorithm swaps are refused. Tokens with a `crit` header, or with an `exp`
+  or `nbf` that is not a number, are refused as well. It checks `exp` and `nbf` with `clockToleranceSeconds` (60 by
+  default, at most 600), and `aud` and `iss` when you pass `audience` and `issuer`.
+
+```ts
+const { token } = await iam.api.keys.signJwt(credential, {
+  tenantId,
+  keyId: 'alias/service-tokens',
+  claims: { iss: 'https://billing.example.com', sub: 'job-42', aud: 'ledger' },
+  expiresInSeconds: 300,
+});
+
+const result = await iam.api.keys.verifyJwt(credential, {
+  tenantId,
+  token,
+  audience: 'ledger',
+  issuer: 'https://billing.example.com',
+});
+// { valid: true, claims, header, ... } or { valid: false, reason, ... }
+```
+
+`verifyJwt` does not throw for a bad token. `reason` is `signature`, `expired`, `not-yet-valid`, `audience`,
+`issuer`, `algorithm`, `header` or `claims`.
+
+Policies see what a token names: `resource.jwt` (true), `resource.jwt.typ`, `resource.jwt.sub`, `resource.jwt.iss`,
+and `resource.jwt.aud` (or `resource.jwt.audiences` for a list). A policy can therefore let a service mint tokens for
+one issuer only, or mint tokens but never sign raw bytes.
+
+Base64 inputs (signatures, MACs, ciphertexts, `plaintextBase64`) must be canonical: one byte string has exactly one
+accepted spelling, so a cache keyed by the string cannot be sidestepped.
+
+## Permissions
+
+KMS calls are authorized like every other IAM operation: a policy names the action and the resource.
+
+| Action | Resource | Calls |
+| --- | --- | --- |
+| `iam:kms:create` | `iam/kms` | `create` |
+| `iam:kms:read` | `iam/kms/{id}` | `get`, `list` (per key), `listVersions`, `listGrants`, `publicKey`, `jwks` |
+| `iam:kms:read` | `iam/kms` | `listAliases` without `keyId` |
+| `iam:kms:update` | `iam/kms/{id}` | `update`, `enable`, `disable`, `rotate`, `createAlias`, `updateAlias`, `deleteAlias` |
+| `iam:kms:update` | `iam/kms/alias/{name}` | `create` with an `alias`, `createAlias`, `updateAlias`, `deleteAlias` |
+| `iam:kms:delete` | `iam/kms/{id}` | `scheduleDeletion` (also needs a recent sign-in), `cancelDeletion` |
+| `iam:kms:grant` | `iam/kms/{id}` | `createGrant`, `revokeGrant` |
+| `iam:kms:encrypt` | `iam/kms/{id}` | `encrypt`, and the destination of `reEncrypt` |
+| `iam:kms:decrypt` | `iam/kms/{id}` | `decrypt`, and the source of `reEncrypt` |
+| `iam:kms:generate-data-key` | `iam/kms/{id}` | `generateDataKey` |
+| `iam:kms:sign`, `iam:kms:verify` | `iam/kms/{id}` | `sign`, `verify`, and `signJwt`, `verifyJwt` with signing keys |
+| `iam:kms:generate-mac`, `iam:kms:verify-mac` | `iam/kms/{id}` | `generateMac`, `verifyMac`, and `signJwt`, `verifyJwt` with MAC keys |
+
+Conditions can use these attributes of the key:
+
+| Context key | Value |
+| --- | --- |
+| `resource.keyId` | The key id |
+| `resource.keySpec`, `resource.keyUsage` | For example `aes-256-gcm` and `encrypt` |
+| `resource.keyState` | `enabled`, `disabled` or `pending-deletion` |
+| `resource.aliases` | The key's aliases (use `ArrayContains`) |
+| `resource.tags.{key}` | Each tag |
+| `resource.createdBy` | The identity that created the key |
+| `resource.managedBy` | `pki` or `protection` on a [managed key](#managed-keys) |
+| `resource.encryptionContext.{key}` | Encrypt, decrypt and data key calls |
+| `resource.encryptionContextKeys` | The context's key names, sorted |
+| `resource.algorithm` | Signing, MAC and token calls |
+
+```json title="Payments may use their own keys, for billing records only"
+{
+  "version": 1,
+  "statements": [
+    {
+      "effect": "allow",
+      "actions": ["iam:kms:encrypt", "iam:kms:decrypt", "iam:kms:generate-data-key"],
+      "resources": ["iam/kms/*"],
+      "conditions": {
+        "StringEquals": {
+          "resource.tags.team": "payments",
+          "resource.encryptionContext.app": "billing"
+        }
+      }
+    }
+  ]
+}
+```
+
+For `create`, the attributes describe the key being requested: `resource.keySpec`, `resource.keyUsage` and the
+requested `resource.tags.{key}`. A policy can therefore allow someone to create only keys that carry their team's
+tag. `update` checks `iam:kms:update` a second time with the new tags, so a tag-scoped administrator cannot move a key
+out of their own reach or into another team's.
+
+### Tags and aliases never add rights
+
+Changing what a key looks like to policies never hands the caller rights on it. When tags change, or an alias is
+added to a key, moved between keys or removed, every KMS action the caller may not take on the key as it is must stay
+refused on the key as it would be. Otherwise someone who manages every key but may decrypt only one team's could
+retag a key into that team, or remove the alias a deny names (`ArrayContains` on `resource.aliases`).
+
+Alias names are a namespace of their own. Creating, moving or removing `alias/{name}` also needs `iam:kms:update` on
+`iam/kms/alias/{name}` (the name is `resource.alias`). Someone who manages one key therefore cannot claim
+`alias/prod/payments` and have others encrypt under their key. Grant alias prefixes explicitly, for example
+`iam/kms/alias/sandbox/*`.
+
+### Who is refused
+
+- `list` evaluates `iam:kms:read` by policy for each key and returns only the keys the caller may read, so a
+  tag-scoped reader sees only their team's keys.
+- Sessions that view as someone else (<Term id="impersonation">impersonation</Term>) cannot use KMS at all.
+- Callers from another tenant (other than a root administrator) are refused before any key is looked up, so they
+  cannot tell which keys or aliases exist.
+- An agent acting for a person under a delegation that holds an action back (`confirm`) uses up one confirmation
+  per call, as everywhere else
+  ([confirming actions](/docs/guides/ai-agents#confirming-sensitive-actions-one-at-a-time)).
+
+## Managed keys
+
+Keys another module created for its own use, or took over, carry `managedBy` (`pki` for a certificate authority's
+signing key, `protection` for a data protection profile's key) and `managedId`. The KMS API refuses to encrypt,
+decrypt, sign, generate data keys or MACs with them, or grant them (`KEY_MANAGED`, 409): only the module uses them,
+for the decisions it makes. They stay visible, and can be tagged, rotated, disabled and deleted like any other key,
+which is how their owner stops the module. Policies see `resource.managedBy`. See
+[Private CA](/docs/guides/secrets-and-keys/private-ca) and
+[Data protection](/docs/guides/secrets-and-keys/data-protection) for the modules that manage keys.
+
+## Grants
+
+A **grant** allows one identity (a person, <Term id="service-account">service account</Term> or agent) to perform
+named operations on one key. It lets a key's owner hand a workload access to a single key without writing a policy.
+
+```ts
+await iam.api.keys.createGrant(ownerCredential, {
+  tenantId,
+  keyId: 'alias/customer-records',
+  granteeId: billingWorker.id,
+  operations: ['decrypt'],
+  constraints: { encryptionContextSubset: { app: 'billing' } },
+  expiresAt: Date.now() + 30 * 86_400_000,
+});
+```
+
+<TypeTable
+  type={{
+    keyId: { type: 'string', description: 'The key, by id or alias.', required: true },
+    granteeId: {
+      type: 'string',
+      description: 'An identity of the tenant that is not deleted. Groups cannot be grantees: to give a group key access, bind a role to the group.',
+      required: true,
+    },
+    operations: {
+      type: 'string[]',
+      description: 'The operations the key usage allows: read, encrypt, decrypt and generate-data-key on an encryption key; read, sign and verify on a signing key; read, generate-mac and verify-mac on a MAC key.',
+      required: true,
+    },
+    constraints: {
+      type: '{ encryptionContextEquals?, encryptionContextSubset? }',
+      description: 'Limit the grant to certain contexts: an exact match, or a context that must contain these pairs. Allowed only on encrypt, decrypt and generate-data-key grants.',
+    },
+    expiresAt: { type: 'number', description: 'When the grant lapses, in epoch milliseconds (in the future, within ten years).' },
+    name: { type: 'string', description: 'A label, up to 128 characters.' },
+  }}
+/>
+
+A grant only passes on what its creator holds, for as long as they hold it:
+
+- Each granted operation must be allowed to the creator by policy when the grant is made (grants they hold do not
+  count), and **every use checks again** that the creator could make that very call now, with the same key
+  attributes and encryption context. When the creator's binding expires, their role is removed, their just-in-time
+  activation lapses, they are offboarded, or a deny is added (including one conditioned on the encryption context),
+  their grants stop working at once. The creator is checked as a plain session of their own, without MFA or session
+  tags, so policies that require those fail closed.
+- Grants are made with `iam:kms:grant` from a user session or API key acting in its own right, by an identity of the
+  key's tenant. Assumed roles, session tokens and delegated sessions cannot create grants.
+- A grant applies only when no policy decides the call and every boundary allows it.
+  <Term id="explicit-deny">Explicit denies</Term>, tenant boundaries, permission boundaries, session policies and
+  API-key scopes still apply.
+- Grants serve user sessions and API keys acting in their own right. Assumed roles, session tokens, delegated agent
+  sessions and impersonation never use them.
+- Grants name identities only, so group membership keeps following the group-authority rules that protect every
+  other grant of access.
+- Calls allowed through a grant record `grantId` in their audit event. A caller that reads a key through a `read`
+  grant sees only its own grants in `listGrants`.
+- `revokeGrant` needs `iam:kms:grant`. The grantee can give up its own grant with `retireGrant`, which needs no
+  permission and is audited as `kms:grant-retire`.
+- Grants lapse at `expiresAt`. `iam.kms.maintain()` removes lapsed grants, and grants whose grantee or creator has
+  been deleted.
+
+## Disabling and deleting keys
+
+- `disable` refuses every cryptographic call with the key (`KEY_STATE_INVALID`, 409) until `enable`. Everything
+  encrypted under the key is unreadable in the meantime, which makes disabling a quick way to cut off access to data.
+- `scheduleDeletion` (`waitingDays` 7 to 30, default 30) needs a
+  <Term id="recent-authentication">recent sign-in</Term>. It makes the key unusable and sets a `deletionDate`. Until
+  that date, `cancelDeletion` brings the key back disabled.
+- After the waiting period, `iam.kms.maintain()` destroys the key's material, versions, aliases and grants and
+  records `kms:key-destroy`.
+
+<Callout type="warn" title="Deletion is crypto-shredding">
+  Once a key is destroyed, nothing encrypted under it can be decrypted again. Disable the key for a while first to
+  check that nothing still needs it.
+</Callout>
+
+## Audit
+
+Every call writes an audit event with the action (for example `iam:kms:decrypt`) on resource `kms/{keyId}` (`kms`
+for tenant-wide calls). The event records the key version, the encryption context, the algorithm, and the grant that
+allowed the call, if any. It never records a plaintext, a key, or a signature.
+
+- Denials are recorded like any other denial. A call refused after it was authorized is recorded as a `deny` too,
+  with `metadata.reason`: `invalid-ciphertext` (a wrong context or a modified ciphertext, so repeated attempts show
+  up in the trail), `key-state` (a disabled key or one pending deletion), `key-managed` or `refused`.
+- The two events of one `reEncrypt` share a `reEncryptId`.
+- `list` records one `iam:kms:read` event with the number of keys listed.
+- <Term id="plugin">Plugin</Term> `afterOperation` hooks see which key and version served a call, but never
+  plaintexts, data keys or signed tokens.
+
+## How key material is protected
+
+Key material is generated on the server with Node's `crypto`: random bytes for AES and HMAC keys, and PKCS#8 private
+keys for ECDSA, Ed25519 and RSA. Each version is sealed with AES-256-GCM under the deployment `secret`, with the key
+id and version as associated data, and stored in the `kmsKeyVersions` collection. Only asymmetric public keys are
+stored in the clear.
+
+When you rotate the deployment secret (`previousSecrets` and `iam.rotateSecrets()`, see
+[Rotating the deployment secret](/docs/operations/deployment/secrets#rotating-the-deployment-secret)), KMS material
+is re-sealed with everything else. Keys, ciphertexts and signatures do not change, and nobody has to re-encrypt
+anything.
+
+<Callout type="warn" title="Protect the secret like a master key">
+  Because the material is sealed under the deployment secret, anyone who has both the database and the secret can
+  recover the keys. If the secret that sealed a key is no longer configured, calls with the key fail with
+  `KEY_MATERIAL_UNAVAILABLE`.
+</Callout>
+
+## Scheduling
+
+Run `iam.kms.maintain()` hourly next to the other [scheduler jobs](/docs/operations/jobs). It rotates keys whose
+automatic rotation is due, destroys keys whose deletion date has passed, removes lapsed and orphaned grants, and
+returns `{ rotated, destroyed, grantsRemoved }`. Pass `{ tenantId }` to limit it to one tenant.
+
+```ts
+setInterval(() => void iam.kms.maintain(), 60 * 60 * 1000);
+```
+
+## Errors
+
+| Code | Status | When |
+| --- | --- | --- |
+| [`KEY_STATE_INVALID`](/docs/reference/errors#key_state_invalid) | 409 | The key is disabled or pending deletion, or the state change does not apply |
+| [`KEY_MANAGED`](/docs/reference/errors#key_managed) | 409 | The key belongs to a certificate authority or a data protection profile |
+| [`INVALID_CIPHERTEXT`](/docs/reference/errors#invalid_ciphertext) | 400 | Malformed or tampered ciphertext, wrong encryption context, or a different key |
+| [`KEY_MATERIAL_UNAVAILABLE`](/docs/reference/errors#key_material_unavailable) | 500 | The deployment secret that sealed the key is no longer configured |
+| [`NOT_FOUND`](/docs/reference/errors#not_found) | 404 | Unknown key, alias, version or grant in this tenant |
+| [`CONFLICT`](/docs/reference/errors#conflict) | 409 | The alias is already in use |
+| [`LIMIT_EXCEEDED`](/docs/reference/errors#limit_exceeded) | 409 | Too many keys, versions, aliases or grants |
+| [`RATE_LIMITED`](/docs/reference/errors#rate_limited) | 429 | More than ten on-demand rotations of one key in a day |
+| [`ACCESS_DENIED`](/docs/reference/errors#access_denied) | 403 | No policy or grant allows the call, or a grant would exceed its creator's rights |
+
+## Next steps
+
+<Cards>
+  <Card title="keys API reference" href="/docs/reference/api/keys">
+    Every method with its permission, audit metadata and errors.
+  </Card>
+  <Card title="Data protection" href="/docs/guides/secrets-and-keys/data-protection">
+    Tokenize card numbers and personal data under a tenant key.
+  </Card>
+  <Card title="Secrets vault" href="/docs/guides/secrets-and-keys/secrets-vault">
+    Store and rotate secrets, optionally encrypted under your own KMS key.
+  </Card>
+  <Card title="Policy conditions" href="/docs/guides/authorization/conditions">
+    Operators such as StringEquals and ArrayContains for resource attributes.
+  </Card>
+</Cards>

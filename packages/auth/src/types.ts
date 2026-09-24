@@ -117,8 +117,13 @@ export interface SessionResult {
 export interface MfaRequired {
   mfaRequired: true;
   challenge: string;
-  /** No authenticator is enrolled: enroll one (`beginMfa` / `confirmMfa`) or, when offered, use an emailed code. */
+  /**
+   * No second factor is set up: enroll an authenticator (`beginMfa` / `confirmMfa`) or, when offered, use an emailed
+   * code. False when an authenticator is enrolled or a registered passkey can satisfy the challenge.
+   */
   enrollmentRequired: boolean;
+  /** Whether an authenticator app is enabled, so an authenticator or recovery code can satisfy the challenge. */
+  authenticatorEnrolled?: boolean;
   /** `requestMfaCode` may email a one-time code for this challenge instead of enrolling an authenticator. */
   emailCodeAvailable?: boolean;
   /** A registered passkey may satisfy this challenge (`beginPasskeyMfa` / `finishPasskeyMfa`). */

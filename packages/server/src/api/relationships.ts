@@ -1,6 +1,7 @@
 import { IamError, type CredentialInput } from '@better-iam/core';
-import { managedResource } from '../catalog.js';
+import { managedResource, resolvedManaged } from '../catalog.js';
 import type { ServerContext } from '../context.js';
+import { impersonatingActor } from '../decisions.js';
 import type { Relationship } from '../models.js';
 import { byNewest, id } from '../utils.js';
 import { text } from '../validation.js';
@@ -99,7 +100,36 @@ export function createRelationshipsApi(ctx: ServerContext) {
           : input.type !== undefined
             ? `${text(input.type, 'resource type', 64)}/*`
             : '*',
-        async ({ tx }) => {
+        async ({ tx, principal, tenant }) => {
+          // Listing is reading each resource's tuples: one a policy keeps from the caller (a Deny on
+          // iam/document/payroll, an owner condition) is left out. A "view as" session sees what both may.
+          const readers = [principal, await impersonatingActor(tx, principal)].filter(
+            (who) => who !== undefined,
+          );
+          const prepared = await Promise.all(
+            readers.map((who) =>
+              ctx.decisions.prepareDecision(tx, who, tenant, 'iam:relationships:read'),
+            ),
+          );
+          const verdicts = new Map<string, boolean>();
+          const readable = async (tuple: Relationship) => {
+            const key = `${tuple.type}/${tuple.resourceId}`;
+            let verdict = verdicts.get(key);
+            if (verdict === undefined) {
+              const record = await managedResource(tx, tenant.id, tuple.type, tuple.resourceId);
+              const resource = {
+                tenantId: tenant.id,
+                type: 'iam',
+                id: key,
+                ...(record ? { attributes: resolvedManaged(record).attributes } : {}),
+              };
+              verdict = prepared.every(
+                (ready) => ('fixed' in ready ? ready.fixed : ready.evaluate(resource)).allowed,
+              );
+              verdicts.set(key, verdict);
+            }
+            return verdict;
+          };
           const filter: Record<string, unknown> = { tenantId: input.tenantId };
           if (input.type !== undefined) filter.type = input.type;
           if (input.id !== undefined) filter.resourceId = text(input.id, 'resource id', 128);
@@ -110,9 +140,11 @@ export function createRelationshipsApi(ctx: ServerContext) {
             filter.subjectType = input.subjectType;
           }
           if (input.subjectId !== undefined) filter.subjectId = text(input.subjectId, 'subjectId');
-          return (await tx.find<Relationship>('relationships', filter))
-            .filter((tuple) => input.includeExpired === true || live(tuple))
-            .sort(byNewest);
+          const tuples: Relationship[] = [];
+          for (const tuple of await tx.find<Relationship>('relationships', filter))
+            if ((input.includeExpired === true || live(tuple)) && (await readable(tuple)))
+              tuples.push(tuple);
+          return tuples.sort(byNewest);
         },
       ),
     /** Removes one tuple. Requires iam:relationships:delete on the tuple's resource. */

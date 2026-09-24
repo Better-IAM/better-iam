@@ -4,12 +4,12 @@ import {
   type CredentialInput,
   type Decision,
   type IamStore,
-  type Identity,
-  type Session,
   type Tenant,
 } from '@better-iam/core';
 import { resolvedManaged } from './catalog.js';
 import type { ServerContext } from './context.js';
+import { impersonatingActor, shadowsApplicationType } from './decisions.js';
+import { useConfirmation } from './delegations.js';
 import type { ResourceRecord } from './models.js';
 import { sodSnapshot, sodVerify } from './sod.js';
 import { invariantSnapshot, invariantVerify } from './invariants.js';
@@ -87,39 +87,46 @@ const byResourceKey = (a: ResourceRecord, b: ResourceRecord) =>
 
 export function createOperations(ctx: ServerContext): OperationService {
   const { store, plugins, catalog } = ctx;
-  /**
-   * The administrator behind an impersonation ("view as") session, acting through their own source session; undefined
-   * for every other principal. currentPrincipal has already checked that the source session and identity are live.
-   */
-  async function impersonator(
-    tx: IamStore,
-    principal: AuthenticatedPrincipal,
-  ): Promise<AuthenticatedPrincipal | undefined> {
-    const actorId = principal.session.impersonatorId;
-    if (!actorId) return undefined;
-    const sourceId = principal.session.impersonatorSessionId;
-    const session = sourceId ? await tx.get<Session>('sessions', sourceId) : undefined;
-    const identity = await tx.get<Identity>('identities', actorId);
-    if (!session || !identity || session.identityId !== identity.id || identity.status !== 'active')
-      throw new IamError('UNAUTHENTICATED', 'Impersonation has ended', 401);
-    return { identity, session };
-  }
+  const impersonator = impersonatingActor;
   /**
    * One authorization decision. "View as" never exceeds the administrator's own rights: an impersonation session is
-   * allowed only what both the member and the impersonating administrator may do, so support staff cannot use a more
-   * privileged member's session to act, or to grant themselves lasting access, beyond their own role.
+   * allowed only what both the member and the impersonating administrator may do (decisions.decide intersects the
+   * two), so support staff cannot use a more privileged member's session to act, or to grant themselves lasting
+   * access, beyond their own role.
    */
-  async function decide(
+  function decide(
     tx: IamStore,
     principal: AuthenticatedPrincipal,
     request: AuthorizationRequest,
     internalResource = false,
   ): Promise<Decision> {
-    const decision = await ctx.decisions.decide(tx, principal, request, internalResource);
-    const actor = decision.allowed ? await impersonator(tx, principal) : undefined;
-    if (!actor) return decision;
-    const own = await ctx.decisions.decide(tx, actor, request, internalResource);
-    return own.allowed ? decision : { allowed: false, reason: 'IMPERSONATOR_DENIED', matched: [] };
+    return ctx.decisions.decide(tx, principal, request, internalResource);
+  }
+  /**
+   * Records a refused decision. A principal of another tenant is refused before anything of the target is read, and
+   * so is its record: it goes to the caller's own tenant, naming the target, so an outsider can neither write into
+   * another tenant's audit chain nor set off its webhooks with names of their choosing.
+   */
+  function auditRefusal(
+    tx: IamStore,
+    principal: AuthenticatedPrincipal,
+    action: string,
+    tenantId: string,
+    resourceId: string,
+    decision: Decision,
+  ): Promise<void> {
+    return decision.reason === 'TENANT_MISMATCH'
+      ? ctx.events.audit(
+          tx,
+          principal,
+          action,
+          principal.session.tenantId,
+          resourceId,
+          'deny',
+          false,
+          { targetTenantId: tenantId },
+        )
+      : ctx.events.audit(tx, principal, action, tenantId, resourceId, 'deny');
   }
   /**
    * Runs an operation's transaction. A mutation that refuses with `OperationDenied` is rolled back like any failure;
@@ -160,9 +167,11 @@ export function createOperations(ctx: ServerContext): OperationService {
             true,
           );
           if (!decision.allowed || (rootOnly && !(await ctx.rootPrincipal(tx, principal)))) {
-            await ctx.events.audit(tx, principal, action, tenantId, resourceId, 'deny');
+            await auditRefusal(tx, principal, action, tenantId, resourceId, decision);
             return { denied: true as const };
           }
+          // An operation a delegation holds back uses up the person's confirmation (rolled back if it fails).
+          await useConfirmation(tx, principal, action, 'iam', resourceId, ctx.now());
           const hook = { store: tx, principal, tenantId, action, resourceId };
           for (const plugin of plugins) await plugin.hooks?.beforeOperation?.(hook);
           const separation = await sodSnapshot(ctx, tx, tenantId, action);
@@ -203,15 +212,24 @@ export function createOperations(ctx: ServerContext): OperationService {
         !current.session.impersonatorId
       )
         ctx.usage.record(request.tenantId, current.identity.id, request.action);
-      if (decision.reason === 'ROOT_OVERRIDE' || !decision.allowed)
+      if (!decision.allowed)
+        await auditRefusal(
+          tx,
+          current,
+          request.action,
+          request.tenantId,
+          request.resource.id,
+          decision,
+        );
+      else if (decision.reason === 'ROOT_OVERRIDE')
         await ctx.events.audit(
           tx,
           current,
           request.action,
           request.tenantId,
           request.resource.id,
-          decision.allowed ? 'allow' : 'deny',
-          decision.reason === 'ROOT_OVERRIDE',
+          'allow',
+          true,
         );
       return {
         allowed: decision.allowed,
@@ -226,13 +244,22 @@ export function createOperations(ctx: ServerContext): OperationService {
         typeof request.tenantId === 'string' ? request.tenantId : undefined,
         async () => {
           const principal = await ctx.principals.authenticate(request);
-          return store.transaction(async (tx) =>
-            service.recordedDecision(
-              tx,
-              await ctx.principals.currentPrincipal(tx, principal),
-              request,
-            ),
-          );
+          return store.transaction(async (tx) => {
+            const current = await ctx.principals.currentPrincipal(tx, principal);
+            const decision = await service.recordedDecision(tx, current, request);
+            // A person's confirmation of an agent's held-back action opens one call (delegations.ts): this check is
+            // that call and uses it up. Batch and listing checks (authorizeMany, listAccessible) never do.
+            if (decision.allowed)
+              await useConfirmation(
+                tx,
+                current,
+                request.action,
+                request.resource.type,
+                request.resource.id,
+                ctx.now(),
+              );
+            return decision;
+          });
         },
         (decision) => ({ outcome: decision.allowed ? 'ok' : 'denied', code: decision.reason }),
       );
@@ -296,6 +323,11 @@ export function createOperations(ctx: ServerContext): OperationService {
         if (!(await catalog.knownAction(tx, target.id, action)))
           throw new IamError('INVALID_ACTION', `Unknown action ${action}`);
         const definition = await catalog.managedDefinition(tx, target.id, type);
+        if (shadowsApplicationType(definition, type, action, !!ctx.options.resolveResource))
+          throw new IamError(
+            'INVALID_RESOURCE_TYPE',
+            'This resource type is resolved by the application, not registered with IAM',
+          );
         const prepared = await ctx.decisions.prepareDecision(tx, current, target, action);
         // An impersonation session lists only what the administrator behind it could reach too.
         const actor = await impersonator(tx, current);
@@ -339,11 +371,15 @@ export function createOperations(ctx: ServerContext): OperationService {
       const validated = object(endpoint.validate({ ...raw, tenantId }));
       if (Object.hasOwn(validated, 'tenantId') && validated.tenantId !== tenantId)
         throw new IamError('INVALID_INPUT', 'Plugin validation changed tenant scope');
+      // Per-record endpoints are authorized on the record they name, tenant-wide ones on the tenant.
+      const resourceId = endpoint.resource
+        ? text(endpoint.resource(validated), 'plugin resource', 512)
+        : tenantId;
       return service.operation(
         credential,
         tenantId,
         endpoint.action,
-        tenantId,
+        resourceId,
         ({ tx, principal }) =>
           endpoint.handler(
             {

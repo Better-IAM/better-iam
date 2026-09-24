@@ -10,6 +10,7 @@ import {
 import {
   accountOf,
   accountSpend,
+  accountTermsOf,
   amountDue,
   amountMicros,
   amountPaid,
@@ -37,7 +38,6 @@ import {
   subscriptionStatus,
   subtree,
   teamShare,
-  termsOf,
   unitsOf,
   usageExpiry,
   usageTags,
@@ -54,6 +54,7 @@ import {
   type BillingSettings,
   type BillingStatement,
   type BillingSubscription,
+  type BillingTerms,
   type BillingUsageRecord,
   type BudgetPeriodKind,
   type BudgetSubjectType,
@@ -95,6 +96,7 @@ const {
   plans: plansCollection,
   subscriptions: subscriptionsCollection,
   discounts: discountsCollection,
+  terms: termsCollection,
 } = billingCollections;
 
 /** How spend reports group their rows. `tag:{name}` groups by a usage tag. */
@@ -249,6 +251,8 @@ export interface SeatRecordResult {
   duplicates: number;
   /** Tenants the meter does not reach (or where it is archived). */
   skippedTenants: number;
+  /** Tenants whose seats could not be recorded (the others still are). */
+  failedTenants: { tenantId: string; code: string; message: string }[];
 }
 
 /** Usage another module has already priced (AI inference): recorded on a `reported` meter. */
@@ -349,6 +353,11 @@ const builtInMeters: Record<string, Pick<BillingMeter, 'name' | 'unit' | 'descri
     description: 'Model calls through inference access control, at each model’s token prices.',
   },
 };
+
+/** Whether a key names a built-in meter: only the platform (the root tenant) defines those. */
+export function builtInMeterKey(key: string): boolean {
+  return Object.hasOwn(builtInMeters, key);
+}
 
 const statusCacheMs = 30_000;
 const unattributed = {
@@ -506,10 +515,18 @@ export function createBillingService(ctx: ServerContext) {
         `${period} has already been invoiced for this billing account`,
         409,
       );
+    // Attribution stays inside the organization: only trusted server code and platform (root tenant) identities
+    // attribute usage to the platform's own people and teams, whose budgets and reports it would count toward.
+    const recorder =
+      recordedBy === 'deployment' ? undefined : await tx.get<Identity>('identities', recordedBy);
+    const attributable =
+      recordedBy === 'deployment' || recorder?.tenantId === chain.at(-1)!.id
+        ? chain
+        : chain.slice(0, -1);
     const attribution = await attributionFor(
       ctx,
       tx,
-      chain,
+      attributable,
       {
         ...(input.identityId !== undefined ? { identityId: input.identityId } : {}),
         ...(extra.agentId !== undefined ? { agentId: extra.agentId } : {}),
@@ -587,8 +604,8 @@ export function createBillingService(ctx: ServerContext) {
 
   /** Defines a built-in reported meter on the root tenant the first time a module pushes to it. */
   async function builtInMeter(tx: IamStore, chain: Tenant[], key: string) {
-    const known = builtInMeters[key];
-    if (!known) return undefined;
+    if (!builtInMeterKey(key)) return undefined;
+    const known = builtInMeters[key]!;
     const root = chain.at(-1)!;
     const now = ctx.now();
     return tx.insert<BillingMeter>(metersCollection, {
@@ -614,7 +631,10 @@ export function createBillingService(ctx: ServerContext) {
         if (!tenant || tenant.status === 'deleted') return;
         const chain = await ctx.ancestry(tx, tenant);
         const key = meterKey(input.meter);
-        const meter = (await resolveMeter(tx, chain, key)) ?? (await builtInMeter(tx, chain, key));
+        // A built-in meter is always the platform's, even where a tenant defined a meter with its key.
+        const meter = builtInMeterKey(key)
+          ? ((await resolveMeter(tx, chain.slice(-1), key)) ?? (await builtInMeter(tx, chain, key)))
+          : await resolveMeter(tx, chain, key);
         if (!meter || meter.archived) return;
         const identity =
           input.identityId !== undefined
@@ -1003,13 +1023,23 @@ export function createBillingService(ctx: ServerContext) {
     let spent = 0;
     for (const period of periods) {
       if (period > current) break;
-      const { rows } = await scopeSpend(ctx, tx, scope, period, cache);
+      const { rows, accounts } = await scopeSpend(ctx, tx, scope, period, cache);
+      // Chargeback meters an account defines and prices for itself count toward its own budgets, never toward budgets
+      // set above it (the platform's), which an organization could otherwise spend with made-up prices.
+      const foreign = new Set<ChargedRow>();
+      for (const spend of accounts)
+        if (
+          spend.accountId !== owner.id &&
+          (await ctx.ancestorIds(tx, spend.accountId)).includes(owner.id)
+        )
+          for (const row of spend.rows) if (row.internal) foreign.add(row);
       const dir =
         budget.subjectType === 'team' || budget.subjectType === 'department'
           ? await directory(tx, rows, [owner.id])
           : undefined;
       for (const row of rows) {
         if (budget.meters && !budget.meters.includes(row.meter)) continue;
+        if (foreign.has(row)) continue;
         const weight =
           budget.subjectType === 'tenant'
             ? 1
@@ -1457,7 +1487,7 @@ export function createBillingService(ctx: ServerContext) {
     const creditsApplied: StatementDraft['creditsApplied'] = [];
     const { carryForwardMicros, ...amounts } = invoiceAmounts({
       subtotalMicros,
-      terms: await termsOf(tx, account.id),
+      terms: await accountTermsOf(ctx, tx, account),
       commitment: !first,
       discounts,
       credit: (dueMicros) => {
@@ -1723,6 +1753,10 @@ export function createBillingService(ctx: ServerContext) {
     return { statement, recipients: recipients.length };
   }
 
+  /** Whether a monthly invoice has something to bill: lines, or a minimum commitment the month fell short of. */
+  const billable = (draft: StatementDraft) =>
+    draft.lines.length > 0 || (draft.commitment?.trueUpMicros ?? 0) > 0;
+
   /** Finalizes a draft invoice, recomputed first so late usage and new invoice items are on it. */
   async function finalizeDraft(
     tx: IamStore,
@@ -1733,7 +1767,7 @@ export function createBillingService(ctx: ServerContext) {
       throw new IamError('INVALID_TRANSITION', `The invoice is ${statement.status}`, 409);
     const account = await ctx.tenant(tx, statement.tenantId);
     const draft = await draftStatement(tx, account, statement.period);
-    if (!draft.lines.length)
+    if (!billable(draft))
       throw new IamError('INVALID_TRANSITION', 'The invoice has nothing left to bill', 409);
     return issue(tx, account, draft, {
       uniqueKey: `period:${statement.period}`,
@@ -1768,7 +1802,8 @@ export function createBillingService(ctx: ServerContext) {
 
   /**
    * Invoices a past period (default the previous one): one invoice per billing account with something to bill (usage
-   * of meters defined above it, subscription fees and seats, pending invoice items). Accounts already invoiced for the
+   * of meters defined above it, subscription fees and seats, pending invoice items, a minimum commitment the month fell
+   * short of). Accounts already invoiced for the
    * period are skipped, so the job can run daily. With `draft` (default: `!billing.autoFinalize`) invoices are kept as
    * drafts, refreshed on every run, until finalized (`finalizeInvoice`, or a run with `draft: false`). Usage for a
    * finalized period is refused afterwards (BILLING_PERIOD_CLOSED); void the invoice to reopen it. Also deletes raw
@@ -1812,6 +1847,13 @@ export function createBillingService(ctx: ServerContext) {
           status: 'pending',
         }))
           if (item.period === undefined || item.period <= period) tenantIds.add(item.tenantId);
+        // A minimum commitment is owed even for a month without usage (terms apply to invoices issued after them).
+        for (const terms of await tx.find<BillingTerms>(termsCollection))
+          if (
+            terms.minimumCommitmentMicros &&
+            (await tx.get<Tenant>('tenants', terms.tenantId))?.status !== 'deleted'
+          )
+            tenantIds.add(terms.tenantId);
         for (const tenantId of tenantIds) await add(tenantId);
       }
       return [...found.values()].sort((a, b) => (a.id < b.id ? -1 : 1));
@@ -1834,7 +1876,7 @@ export function createBillingService(ctx: ServerContext) {
           return;
         }
         const draft = await draftStatement(tx, account, period);
-        if (!draft.lines.length) {
+        if (!billable(draft)) {
           if (existing) await tx.delete(statementsCollection, existing.id);
           result.skipped.empty++;
           return;
@@ -1868,7 +1910,8 @@ export function createBillingService(ctx: ServerContext) {
   /**
    * Voids a finalized invoice: its credit is restored (and credit it created revoked), its invoice items are pending
    * again, its advance months are unbilled, its coupons count one invoice less, and a monthly invoice's period reopens
-   * for the account. Invoices with payments or credit notes cannot be voided; issue a credit note instead.
+   * for the account. Invoices with payments or credit notes cannot be voided; issue a credit note instead. Nor can one
+   * whose credit balance (`carryForward`) a later invoice has used, until that invoice is voided.
    */
   async function voidStatement(
     tx: IamStore,
@@ -1888,6 +1931,17 @@ export function createBillingService(ctx: ServerContext) {
       throw new IamError(
         'INVALID_TRANSITION',
         'The invoice has payments or credit notes; issue a credit note instead',
+        409,
+      );
+    // Voiding puts the invoice's credit items back up for the next invoice, so the credit balance they created must
+    // still be whole: once a later invoice used it (or it was revoked), voiding would hand the credit out twice.
+    const carried = statement.carryForward
+      ? await tx.get<BillingCredit>(creditsCollection, statement.carryForward.creditId)
+      : undefined;
+    if (carried && carried.remainingMicros < carried.amountMicros)
+      throw new IamError(
+        'INVALID_TRANSITION',
+        'The credit balance this invoice created has been used or revoked; void the invoices that used it first',
         409,
       );
     for (const applied of statement.creditsApplied) {
@@ -2237,8 +2291,9 @@ export function createBillingService(ctx: ServerContext) {
 
   /**
    * Subscribes a billing account to a plan with `seats` (default 1) and the plan's trial (or `trialDays`; 0 for none).
-   * Outside a trial the first month's advance fees and seats are invoiced at once, prorated from today (a finalized
-   * invoice with `billingReason: 'subscription'`); after that each monthly invoice bills the month ahead.
+   * The plan's own trial is granted once per account: an account that subscribed to the plan before starts without
+   * one. Outside a trial the first month's advance fees and seats are invoiced at once, prorated from today (a
+   * finalized invoice with `billingReason: 'subscription'`); after that each monthly invoice bills the month ahead.
    */
   async function subscribe(
     tx: IamStore,
@@ -2251,7 +2306,10 @@ export function createBillingService(ctx: ServerContext) {
     if (await liveSubscription(tx, account.id, plan.id))
       throw new IamError('CONFLICT', 'The account already subscribes to this plan', 409);
     const now = ctx.now();
-    const trialDays = input.trialDays ?? plan.trialDays ?? 0;
+    const subscribedBefore = (
+      await tx.find<BillingSubscription>(subscriptionsCollection, { tenantId: account.id })
+    ).some((subscription) => subscription.planId === plan.id);
+    const trialDays = input.trialDays ?? (subscribedBefore ? 0 : (plan.trialDays ?? 0));
     const created = await tx.insert<BillingSubscription>(subscriptionsCollection, {
       id: id(),
       tenantId: account.id,
@@ -2461,7 +2519,8 @@ export function createBillingService(ctx: ServerContext) {
   /**
    * Records one seat of `meter` (default `seats`) for every active person (or `kinds`) of every tenant the meter
    * reaches, once per day (idempotent): a `sum` meter then counts seat-days, a `unique` meter active seats per month.
-   * Seats are attributed to the person, their teams and department. A scheduler job, run daily.
+   * Seats are attributed to the person, their teams and department. A tenant that fails is reported in
+   * `failedTenants` and the others are still recorded. A scheduler job, run daily.
    */
   async function recordSeats(
     input: { meter?: string; tenantId?: string; kinds?: Identity['kind'][] } = {},
@@ -2488,37 +2547,58 @@ export function createBillingService(ctx: ServerContext) {
       recorded: 0,
       duplicates: 0,
       skippedTenants: 0,
+      failedTenants: [],
     };
     for (const realm of tenants.sort((a, b) => (a.id < b.id ? -1 : 1))) {
       if (realm.parentId === null) continue;
-      await store.transaction(async (tx) => {
-        const meter = await resolveMeter(tx, await ctx.ancestry(tx, realm), key);
-        if (!meter || meter.archived) {
-          result.skippedTenants++;
-          return;
+      try {
+        const counts = await store.transaction(async (tx) => {
+          const meter = await resolveMeter(tx, await ctx.ancestry(tx, realm), key);
+          if (!meter || meter.archived) return undefined;
+          const people = (
+            await tx.find<Identity>('identities', { tenantId: realm.id, status: 'active' })
+          )
+            .filter((identity) => kinds.includes(identity.kind) && !ctx.identityExpired(identity))
+            .sort((a, b) => (a.id < b.id ? -1 : 1));
+          let recorded = 0;
+          let duplicates = 0;
+          for (const identity of people) {
+            // Seats recorded under the caller-visible `idem:` key of earlier releases (by this job only) still count.
+            const legacy = (
+              await tx.find<BillingUsageRecord>(usageCollection, {
+                tenantId: realm.id,
+                uniqueKey: `idem:seat:${key}:${identity.id}:${day}`,
+              })
+            )[0];
+            if (legacy?.recordedBy === 'deployment' && legacy.meterId === meter.id) {
+              duplicates++;
+              continue;
+            }
+            // A source key (`src:`), which callers of `record` cannot claim ahead of the job.
+            const seat = await record(
+              tx,
+              { tenantId: realm.id, meter: key, quantity: 1, identityId: identity.id },
+              'deployment',
+              { meter, sourceId: `seat:${identity.id}:${day}` },
+            );
+            if (seat.duplicate) duplicates++;
+            else recorded++;
+          }
+          return { recorded, duplicates };
+        });
+        if (!counts) result.skippedTenants++;
+        else {
+          result.recorded += counts.recorded;
+          result.duplicates += counts.duplicates;
         }
-        const people = (
-          await tx.find<Identity>('identities', { tenantId: realm.id, status: 'active' })
-        )
-          .filter((identity) => kinds.includes(identity.kind) && !ctx.identityExpired(identity))
-          .sort((a, b) => (a.id < b.id ? -1 : 1));
-        for (const identity of people) {
-          const seat = await record(
-            tx,
-            {
-              tenantId: realm.id,
-              meter: key,
-              quantity: 1,
-              identityId: identity.id,
-              idempotencyKey: `seat:${key}:${identity.id}:${day}`,
-            },
-            'deployment',
-            { meter },
-          );
-          if (seat.duplicate) result.duplicates++;
-          else result.recorded++;
-        }
-      });
+      } catch (error) {
+        // One tenant's failure never stops the platform-wide job.
+        result.failedTenants.push({
+          tenantId: realm.id,
+          code: error instanceof IamError ? error.code : 'INTERNAL_ERROR',
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
     }
     return result;
   }
@@ -2961,10 +3041,13 @@ export function mentionsSpend(documents: Iterable<PolicyDocument>): boolean {
   return false;
 }
 
-/** RFC 4180 CSV; cells that spreadsheet programs would read as formulas are prefixed with a quote. */
+/**
+ * RFC 4180 CSV; cells that spreadsheet programs would read as formulas are prefixed with a quote. Only plain numbers
+ * (`-12.5`) keep a leading minus: `-1+cmd|...` is a formula.
+ */
 function csv(rows: string[][]): string {
   const cell = (value: string) => {
-    const safe = /^[=+\-@\t\r]/.test(value) && !/^-?\d/.test(value) ? `'${value}` : value;
+    const safe = /^[=+\-@\t\r]/.test(value) && !/^-?\d+(\.\d+)?$/.test(value) ? `'${value}` : value;
     return /[",\r\n]/.test(safe) ? `"${safe.replace(/"/g, '""')}"` : safe;
   };
   return `${rows.map((row) => row.map(cell).join(',')).join('\r\n')}\r\n`;

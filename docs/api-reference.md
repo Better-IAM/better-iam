@@ -82,6 +82,23 @@ Deployment operations without HTTP routes: `initialize`, `bootstrap`, `recoverRo
 | `suppress` | `POST /analysis/suppress` | required |
 | `unsuppress` | `POST /analysis/unsuppress` | required |
 
+## applications
+
+| Method | HTTP | Credential |
+| --- | --- | --- |
+| `assign` | `POST /applications/assign` | required |
+| `check` | `POST /applications/check` | required |
+| `create` | `POST /applications/create` | required |
+| `delete` | `POST /applications/delete` | required |
+| `launch` | `POST /applications/launch` | required |
+| `list` | `POST /applications/list` | required |
+| `listAssignments` | `POST /applications/listAssignments` | required |
+| `mine` | `POST /applications/mine` | required |
+| `removeUnused` | `POST /applications/removeUnused` | required |
+| `unassign` | `POST /applications/unassign` | required |
+| `update` | `POST /applications/update` | required |
+| `usage` | `POST /applications/usage` | required |
+
 ## assertions
 
 | Method | HTTP | Credential |
@@ -246,6 +263,28 @@ Deployment operations without HTTP routes: `initialize`, `bootstrap`, `recoverRo
 | `remind` | `POST /certifications/remind` | required |
 | `review` | `POST /certifications/review` | required |
 
+## compliance
+
+| Method | HTTP | Credential |
+| --- | --- | --- |
+| `adoptFramework` | `POST /compliance/adoptFramework` | required |
+| `approveException` | `POST /compliance/approveException` | required |
+| `catalog` | `POST /compliance/catalog` | required |
+| `createControl` | `POST /compliance/createControl` | required |
+| `createException` | `POST /compliance/createException` | required |
+| `deleteControl` | `POST /compliance/deleteControl` | required |
+| `evaluate` | `POST /compliance/evaluate` | required |
+| `evidenceKeys` | `POST /compliance/evidenceKeys` | required |
+| `exportEvidence` | `POST /compliance/exportEvidence` | required |
+| `listControls` | `POST /compliance/listControls` | required |
+| `listExceptions` | `POST /compliance/listExceptions` | required |
+| `listResults` | `POST /compliance/listResults` | required |
+| `listRuns` | `POST /compliance/listRuns` | required |
+| `revokeException` | `POST /compliance/revokeException` | required |
+| `status` | `POST /compliance/status` | required |
+| `updateControl` | `POST /compliance/updateControl` | required |
+| `verifyEvidence` | `POST /compliance/verifyEvidence` | required |
+
 ## config
 
 | Method | HTTP | Credential |
@@ -305,6 +344,31 @@ Deployment operations without HTTP routes: `initialize`, `bootstrap`, `recoverRo
 | `unassign` | `POST /departments/unassign` | required |
 | `update` | `POST /departments/update` | required |
 
+## devices
+
+| Method | HTTP | Credential |
+| --- | --- | --- |
+| `check` | `POST /devices/check` | required |
+| `configure` | `POST /devices/configure` | required |
+| `createEnrollment` | `POST /devices/createEnrollment` | required |
+| `createIntegration` | `POST /devices/createIntegration` | required |
+| `delete` | `POST /devices/delete` | required |
+| `deleteIntegration` | `POST /devices/deleteIntegration` | required |
+| `enroll` | `POST /devices/enroll` | required |
+| `get` | `POST /devices/get` | required |
+| `getSettings` | `POST /devices/getSettings` | required |
+| `list` | `POST /devices/list` | required |
+| `listEnrollments` | `POST /devices/listEnrollments` | required |
+| `listIntegrations` | `POST /devices/listIntegrations` | required |
+| `mine` | `POST /devices/mine` | required |
+| `removeKey` | `POST /devices/removeKey` | required |
+| `report` | `POST /devices/report` | required |
+| `retire` | `POST /devices/retire` | required |
+| `retireMine` | `POST /devices/retireMine` | required |
+| `revokeEnrollment` | `POST /devices/revokeEnrollment` | required |
+| `update` | `POST /devices/update` | required |
+| `updateIntegration` | `POST /devices/updateIntegration` | required |
+
 ## domains
 
 | Method | HTTP | Credential |
@@ -327,6 +391,13 @@ Deployment operations without HTTP routes: `initialize`, `bootstrap`, `recoverRo
 | `setOverride` | `POST /features/setOverride` | required |
 | `setTarget` | `POST /features/setTarget` | required |
 | `update` | `POST /features/update` | required |
+
+## filters
+
+| Method | HTTP | Credential |
+| --- | --- | --- |
+| `plan` | `POST /filters/plan` | required |
+| `planFor` | `POST /filters/planFor` | required |
 
 ## groups
 
@@ -419,6 +490,49 @@ Deployment operations without HTTP routes: `initialize`, `bootstrap`, `recoverRo
 | `run` | `POST /invariants/run` | required |
 | `update` | `POST /invariants/update` | required |
 
+## keys
+
+| Method | HTTP | Credential |
+| --- | --- | --- |
+| `cancelDeletion` | `POST /keys/cancelDeletion` | required |
+| `create` | `POST /keys/create` | required |
+| `createAlias` | `POST /keys/createAlias` | required |
+| `createGrant` | `POST /keys/createGrant` | required |
+| `decrypt` | `POST /keys/decrypt` | required |
+| `deleteAlias` | `POST /keys/deleteAlias` | required |
+| `disable` | `POST /keys/disable` | required |
+| `enable` | `POST /keys/enable` | required |
+| `encrypt` | `POST /keys/encrypt` | required |
+| `generateDataKey` | `POST /keys/generateDataKey` | required |
+| `generateMac` | `POST /keys/generateMac` | required |
+| `get` | `POST /keys/get` | required |
+| `jwks` | `POST /keys/jwks` | required |
+| `list` | `POST /keys/list` | required |
+| `listAliases` | `POST /keys/listAliases` | required |
+| `listGrants` | `POST /keys/listGrants` | required |
+| `listVersions` | `POST /keys/listVersions` | required |
+| `publicKey` | `POST /keys/publicKey` | required |
+| `reEncrypt` | `POST /keys/reEncrypt` | required |
+| `retireGrant` | `POST /keys/retireGrant` | required |
+| `revokeGrant` | `POST /keys/revokeGrant` | required |
+| `rotate` | `POST /keys/rotate` | required |
+| `scheduleDeletion` | `POST /keys/scheduleDeletion` | required |
+| `sign` | `POST /keys/sign` | required |
+| `signJwt` | `POST /keys/signJwt` | required |
+| `update` | `POST /keys/update` | required |
+| `updateAlias` | `POST /keys/updateAlias` | required |
+| `verify` | `POST /keys/verify` | required |
+| `verifyJwt` | `POST /keys/verifyJwt` | required |
+| `verifyMac` | `POST /keys/verifyMac` | required |
+
+## ldap
+
+| Method | HTTP | Credential |
+| --- | --- | --- |
+| `directory` | `POST /ldap/directory` | required |
+| `getSettings` | `POST /ldap/getSettings` | required |
+| `updateSettings` | `POST /ldap/updateSettings` | required |
+
 ## links
 
 | Method | HTTP | Credential |
@@ -482,6 +596,22 @@ Deployment operations without HTTP routes: `initialize`, `bootstrap`, `recoverRo
 | `revoke` | `POST /packages/revoke` | required |
 | `update` | `POST /packages/update` | required |
 
+## pki
+
+| Method | HTTP | Credential |
+| --- | --- | --- |
+| `bundle` | `POST /pki/bundle` | required |
+| `createAuthority` | `POST /pki/createAuthority` | required |
+| `crl` | `POST /pki/crl` | required |
+| `getAuthority` | `POST /pki/getAuthority` | required |
+| `getCertificate` | `POST /pki/getCertificate` | required |
+| `issueCertificate` | `POST /pki/issueCertificate` | required |
+| `listAuthorities` | `POST /pki/listAuthorities` | required |
+| `listCertificates` | `POST /pki/listCertificates` | required |
+| `requestCertificate` | `POST /pki/requestCertificate` | required |
+| `revokeCertificate` | `POST /pki/revokeCertificate` | required |
+| `updateAuthority` | `POST /pki/updateAuthority` | required |
+
 ## policies
 
 | Method | HTTP | Credential |
@@ -497,6 +627,81 @@ Deployment operations without HTTP routes: `initialize`, `bootstrap`, `recoverRo
 | `test` | `POST /policies/test` | required |
 | `update` | `POST /policies/update` | required |
 | `whoCan` | `POST /policies/whoCan` | required |
+
+## privacy
+
+| Method | HTTP | Credential |
+| --- | --- | --- |
+| `addNote` | `POST /privacy/addNote` | required |
+| `assignRequest` | `POST /privacy/assignRequest` | required |
+| `audience` | `POST /privacy/audience` | required |
+| `cancelMyRequest` | `POST /privacy/cancelMyRequest` | required |
+| `check` | `POST /privacy/check` | required |
+| `confirmPublic` | `POST /privacy/confirmPublic` | none |
+| `createPurpose` | `POST /privacy/createPurpose` | required |
+| `createRequest` | `POST /privacy/createRequest` | required |
+| `decide` | `POST /privacy/decide` | required |
+| `deletePurpose` | `POST /privacy/deletePurpose` | required |
+| `downloadExport` | `POST /privacy/downloadExport` | required |
+| `extendRequest` | `POST /privacy/extendRequest` | required |
+| `filterSubjects` | `POST /privacy/filterSubjects` | required |
+| `fulfilRequest` | `POST /privacy/fulfilRequest` | required |
+| `getRequest` | `POST /privacy/getRequest` | required |
+| `getSettings` | `POST /privacy/getSettings` | required |
+| `history` | `POST /privacy/history` | required |
+| `importDecisions` | `POST /privacy/importDecisions` | required |
+| `liftRestriction` | `POST /privacy/liftRestriction` | required |
+| `linkRequest` | `POST /privacy/linkRequest` | required |
+| `listConsents` | `POST /privacy/listConsents` | required |
+| `listHolds` | `POST /privacy/listHolds` | required |
+| `listPurposes` | `POST /privacy/listPurposes` | required |
+| `listRequests` | `POST /privacy/listRequests` | required |
+| `listRestrictions` | `POST /privacy/listRestrictions` | required |
+| `mine` | `POST /privacy/mine` | required |
+| `myHistory` | `POST /privacy/myHistory` | required |
+| `myReceipt` | `POST /privacy/myReceipt` | required |
+| `placeHold` | `POST /privacy/placeHold` | required |
+| `record` | `POST /privacy/record` | required |
+| `rejectRequest` | `POST /privacy/rejectRequest` | required |
+| `releaseHold` | `POST /privacy/releaseHold` | required |
+| `submitPublic` | `POST /privacy/submitPublic` | none |
+| `submitRequest` | `POST /privacy/submitRequest` | required |
+| `summary` | `POST /privacy/summary` | required |
+| `updatePurpose` | `POST /privacy/updatePurpose` | required |
+| `updateSettings` | `POST /privacy/updateSettings` | required |
+| `verifyReceipt` | `POST /privacy/verifyReceipt` | required |
+| `verifyRequest` | `POST /privacy/verifyRequest` | required |
+
+## protection
+
+| Method | HTTP | Credential |
+| --- | --- | --- |
+| `createProfile` | `POST /protection/createProfile` | required |
+| `deleteProfile` | `POST /protection/deleteProfile` | required |
+| `deleteTokens` | `POST /protection/deleteTokens` | required |
+| `detokenize` | `POST /protection/detokenize` | required |
+| `getProfile` | `POST /protection/getProfile` | required |
+| `listProfiles` | `POST /protection/listProfiles` | required |
+| `mask` | `POST /protection/mask` | required |
+| `tokenize` | `POST /protection/tokenize` | required |
+| `updateProfile` | `POST /protection/updateProfile` | required |
+
+## quotas
+
+| Method | HTTP | Credential |
+| --- | --- | --- |
+| `assign` | `POST /quotas/assign` | required |
+| `consume` | `POST /quotas/consume` | required |
+| `createPlan` | `POST /quotas/createPlan` | required |
+| `deletePlan` | `POST /quotas/deletePlan` | required |
+| `getPlan` | `POST /quotas/getPlan` | required |
+| `listAssignments` | `POST /quotas/listAssignments` | required |
+| `listPlans` | `POST /quotas/listPlans` | required |
+| `reset` | `POST /quotas/reset` | required |
+| `status` | `POST /quotas/status` | required |
+| `unassign` | `POST /quotas/unassign` | required |
+| `updatePlan` | `POST /quotas/updatePlan` | required |
+| `usage` | `POST /quotas/usage` | required |
 
 ## relationships
 
@@ -584,6 +789,21 @@ Deployment operations without HTTP routes: `initialize`, `bootstrap`, `recoverRo
 | `setStatus` | `POST /serviceAccounts/setStatus` | required |
 | `update` | `POST /serviceAccounts/update` | required |
 
+## signals
+
+| Method | HTTP | Credential |
+| --- | --- | --- |
+| `createSource` | `POST /signals/createSource` | required |
+| `deleteSource` | `POST /signals/deleteSource` | required |
+| `getEvent` | `POST /signals/getEvent` | required |
+| `getSource` | `POST /signals/getSource` | required |
+| `listEvents` | `POST /signals/listEvents` | required |
+| `listSources` | `POST /signals/listSources` | required |
+| `poll` | `POST /signals/poll` | required |
+| `reprocess` | `POST /signals/reprocess` | required |
+| `rotatePushToken` | `POST /signals/rotatePushToken` | required |
+| `updateSource` | `POST /signals/updateSource` | required |
+
 ## sod
 
 | Method | HTTP | Credential |
@@ -593,6 +813,41 @@ Deployment operations without HTTP routes: `initialize`, `bootstrap`, `recoverRo
 | `list` | `POST /sod/list` | required |
 | `update` | `POST /sod/update` | required |
 | `violations` | `POST /sod/violations` | required |
+
+## ssh
+
+| Method | HTTP | Credential |
+| --- | --- | --- |
+| `activateAuthority` | `POST /ssh/activateAuthority` | required |
+| `clientTrust` | `POST /ssh/clientTrust` | required |
+| `createHost` | `POST /ssh/createHost` | required |
+| `deleteHost` | `POST /ssh/deleteHost` | required |
+| `disableHost` | `POST /ssh/disableHost` | required |
+| `enrollHost` | `POST /ssh/enrollHost` | none |
+| `getCertificate` | `POST /ssh/getCertificate` | required |
+| `getHost` | `POST /ssh/getHost` | required |
+| `getSettings` | `POST /ssh/getSettings` | required |
+| `issueCertificate` | `POST /ssh/issueCertificate` | required |
+| `listAuthorities` | `POST /ssh/listAuthorities` | required |
+| `listCertificates` | `POST /ssh/listCertificates` | required |
+| `listHosts` | `POST /ssh/listHosts` | required |
+| `myAccess` | `POST /ssh/myAccess` | required |
+| `myCertificates` | `POST /ssh/myCertificates` | required |
+| `resetJoinToken` | `POST /ssh/resetJoinToken` | required |
+| `retireAuthority` | `POST /ssh/retireAuthority` | required |
+| `revocationList` | `POST /ssh/revocationList` | none |
+| `revokeAllCertificates` | `POST /ssh/revokeAllCertificates` | required |
+| `revokeCertificate` | `POST /ssh/revokeCertificate` | required |
+| `revokeIdentity` | `POST /ssh/revokeIdentity` | required |
+| `rotateAuthority` | `POST /ssh/rotateAuthority` | required |
+| `setup` | `POST /ssh/setup` | required |
+| `status` | `POST /ssh/status` | required |
+| `sweep` | `POST /ssh/sweep` | required |
+| `syncHost` | `POST /ssh/syncHost` | none |
+| `trust` | `POST /ssh/trust` | none |
+| `updateHost` | `POST /ssh/updateHost` | required |
+| `updateSettings` | `POST /ssh/updateSettings` | required |
+| `whoCanLogin` | `POST /ssh/whoCanLogin` | required |
 
 ## sts
 
@@ -658,6 +913,35 @@ Deployment operations without HTTP routes: `initialize`, `bootstrap`, `recoverRo
 | `update` | `POST /tenants/update` | required |
 | `usage` | `POST /tenants/usage` | required |
 
+## threats
+
+| Method | HTTP | Credential |
+| --- | --- | --- |
+| `addNote` | `POST /threats/addNote` | required |
+| `configure` | `POST /threats/configure` | required |
+| `createPlaybook` | `POST /threats/createPlaybook` | required |
+| `deletePlaybook` | `POST /threats/deletePlaybook` | required |
+| `detect` | `POST /threats/detect` | required |
+| `dismissDetection` | `POST /threats/dismissDetection` | required |
+| `getDetection` | `POST /threats/getDetection` | required |
+| `getIncident` | `POST /threats/getIncident` | required |
+| `getRisk` | `POST /threats/getRisk` | required |
+| `getSettings` | `POST /threats/getSettings` | required |
+| `listDetections` | `POST /threats/listDetections` | required |
+| `listIncidents` | `POST /threats/listIncidents` | required |
+| `listPlaybooks` | `POST /threats/listPlaybooks` | required |
+| `listRisk` | `POST /threats/listRisk` | required |
+| `release` | `POST /threats/release` | required |
+| `reportSuspicious` | `POST /threats/reportSuspicious` | required |
+| `resolveIncident` | `POST /threats/resolveIncident` | required |
+| `respond` | `POST /threats/respond` | required |
+| `rules` | `POST /threats/rules` | required |
+| `setRisk` | `POST /threats/setRisk` | required |
+| `summary` | `POST /threats/summary` | required |
+| `timeline` | `POST /threats/timeline` | required |
+| `updateIncident` | `POST /threats/updateIncident` | required |
+| `updatePlaybook` | `POST /threats/updatePlaybook` | required |
+
 ## trust
 
 | Method | HTTP | Credential |
@@ -668,6 +952,59 @@ Deployment operations without HTTP routes: `initialize`, `bootstrap`, `recoverRo
 | `revoke` | `POST /trust/revoke` | required |
 | `revokeSessions` | `POST /trust/revokeSessions` | required |
 | `update` | `POST /trust/update` | required |
+
+## vault
+
+| Method | HTTP | Credential |
+| --- | --- | --- |
+| `accessLog` | `POST /vault/accessLog` | required |
+| `checkin` | `POST /vault/checkin` | required |
+| `checkout` | `POST /vault/checkout` | required |
+| `create` | `POST /vault/create` | required |
+| `delete` | `POST /vault/delete` | required |
+| `destroyVersion` | `POST /vault/destroyVersion` | required |
+| `generate` | `POST /vault/generate` | required |
+| `get` | `POST /vault/get` | required |
+| `lease` | `POST /vault/lease` | required |
+| `list` | `POST /vault/list` | required |
+| `listLeases` | `POST /vault/listLeases` | required |
+| `listMine` | `POST /vault/listMine` | required |
+| `listVersions` | `POST /vault/listVersions` | required |
+| `promote` | `POST /vault/promote` | required |
+| `put` | `POST /vault/put` | required |
+| `renewLease` | `POST /vault/renewLease` | required |
+| `restore` | `POST /vault/restore` | required |
+| `reveal` | `POST /vault/reveal` | required |
+| `revokeLease` | `POST /vault/revokeLease` | required |
+| `rotate` | `POST /vault/rotate` | required |
+| `setStage` | `POST /vault/setStage` | required |
+| `setVersionState` | `POST /vault/setVersionState` | required |
+| `update` | `POST /vault/update` | required |
+
+## verifiableCredentials
+
+| Method | HTTP | Credential |
+| --- | --- | --- |
+| `available` | `POST /verifiableCredentials/available` | required |
+| `createOffer` | `POST /verifiableCredentials/createOffer` | required |
+| `createType` | `POST /verifiableCredentials/createType` | required |
+| `deleteType` | `POST /verifiableCredentials/deleteType` | required |
+| `getType` | `POST /verifiableCredentials/getType` | required |
+| `issuerMetadata` | `POST /verifiableCredentials/issuerMetadata` | none |
+| `listIssued` | `POST /verifiableCredentials/listIssued` | required |
+| `listKeys` | `POST /verifiableCredentials/listKeys` | required |
+| `listTypes` | `POST /verifiableCredentials/listTypes` | required |
+| `mine` | `POST /verifiableCredentials/mine` | required |
+| `nonce` | `POST /verifiableCredentials/nonce` | none |
+| `reinstate` | `POST /verifiableCredentials/reinstate` | required |
+| `request` | `POST /verifiableCredentials/request` | required |
+| `retireKey` | `POST /verifiableCredentials/retireKey` | required |
+| `revoke` | `POST /verifiableCredentials/revoke` | required |
+| `rotateKey` | `POST /verifiableCredentials/rotateKey` | required |
+| `status` | `POST /verifiableCredentials/status` | required |
+| `suspend` | `POST /verifiableCredentials/suspend` | required |
+| `updateType` | `POST /verifiableCredentials/updateType` | required |
+| `verify` | `POST /verifiableCredentials/verify` | none |
 
 ## webhooks
 
@@ -683,4 +1020,21 @@ Deployment operations without HTTP routes: `initialize`, `bootstrap`, `recoverRo
 | `rotateSecret` | `POST /webhooks/rotateSecret` | required |
 | `update` | `POST /webhooks/update` | required |
 
-45 groups, 442 methods.
+## workflows
+
+| Method | HTTP | Credential |
+| --- | --- | --- |
+| `cancelRun` | `POST /workflows/cancelRun` | required |
+| `create` | `POST /workflows/create` | required |
+| `delete` | `POST /workflows/delete` | required |
+| `evaluate` | `POST /workflows/evaluate` | required |
+| `get` | `POST /workflows/get` | required |
+| `getRun` | `POST /workflows/getRun` | required |
+| `list` | `POST /workflows/list` | required |
+| `listRuns` | `POST /workflows/listRuns` | required |
+| `preview` | `POST /workflows/preview` | required |
+| `retryRun` | `POST /workflows/retryRun` | required |
+| `run` | `POST /workflows/run` | required |
+| `update` | `POST /workflows/update` | required |
+
+61 groups, 716 methods.

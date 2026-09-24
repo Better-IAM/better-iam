@@ -278,6 +278,26 @@ async function invocableModels(
  * configuration sync (sync.ts, ai-sync.ts). Every function runs inside the caller's transaction.
  */
 export function inferenceMutations(ctx: ServerContext) {
+  const platformOnly = (what: string) =>
+    new IamError('ACCESS_DENIED', `Only a platform administrator can ${what}`, 403);
+  /**
+   * A model on a parent organization's provider runs on that organization's upstream key, at the prices and limits
+   * the model sets: only a platform administrator may publish or change one, so an organization cannot price calls on
+   * the platform's account at nothing or lift the platform's caps. Turning such a model off stays open to it.
+   */
+  async function assertProviderControl(
+    tx: IamStore,
+    principal: AuthenticatedPrincipal,
+    tenantId: string,
+    providerIds: (string | undefined)[],
+  ): Promise<void> {
+    for (const providerId of providerIds) {
+      if (providerId === undefined) continue;
+      const provider = await tx.get<InferenceProvider>('inferenceProviders', providerId);
+      if (provider && provider.tenantId !== tenantId && !(await ctx.rootPrincipal(tx, principal)))
+        throw platformOnly('publish or change a model on a parent organization’s provider');
+    }
+  }
   async function ownModel(tx: IamStore, tenantId: string, name: string): Promise<InferenceModel> {
     const model = (
       await tx.find<InferenceModel>('inferenceModels', { tenantId, uniqueKey: modelName(name) })
@@ -447,6 +467,7 @@ export function inferenceMutations(ctx: ServerContext) {
 
   async function createModel(
     tx: IamStore,
+    principal: AuthenticatedPrincipal,
     tenantId: string,
     input: ModelInput & { name: string; providerId: string; upstreamModel: string },
   ): Promise<PublicModel> {
@@ -455,6 +476,7 @@ export function inferenceMutations(ctx: ServerContext) {
       throw new IamError('CONFLICT', 'A model with this name exists in this tenant', 409);
     const provider = await visibleProvider(ctx, tx, tenantId, text(input.providerId, 'providerId'));
     if (!provider) throw new IamError('NOT_FOUND', 'Provider not found', 404);
+    await assertProviderControl(tx, principal, tenantId, [provider.id]);
     const now = ctx.now();
     const model: InferenceModel = {
       id: id(),
@@ -474,6 +496,7 @@ export function inferenceMutations(ctx: ServerContext) {
 
   async function updateModel(
     tx: IamStore,
+    principal: AuthenticatedPrincipal,
     tenantId: string,
     input: ModelInput & { name: string },
   ): Promise<PublicModel> {
@@ -490,6 +513,13 @@ export function inferenceMutations(ctx: ServerContext) {
       next.providerId = provider.id;
     }
     applyModelFields(next, input);
+    // Turning a model off never needs more than managing the tenant's models.
+    const onlyDisables =
+      next.enabled === false &&
+      JSON.stringify({ ...next, enabled: model.enabled, updatedAt: 0 }) ===
+        JSON.stringify({ ...model, updatedAt: 0 });
+    if (!onlyDisables)
+      await assertProviderControl(tx, principal, tenantId, [model.providerId, next.providerId]);
     const saved = await tx.put<InferenceModel>('inferenceModels', next);
     return publicModel(saved, await visibleProvider(ctx, tx, tenantId, saved.providerId), tenantId);
   }
@@ -502,10 +532,14 @@ export function inferenceMutations(ctx: ServerContext) {
   /** Creates a budget, or replaces `previous`; names are unique regardless of case. */
   async function saveBudget(
     tx: IamStore,
+    principal: AuthenticatedPrincipal,
     tenantId: string,
     input: InferenceBudgetInput,
     previous?: InferenceBudget,
   ): Promise<InferenceBudget> {
+    // A cap the platform put on an organization binds the organization's own administrators.
+    const platform = await ctx.rootPrincipal(tx, principal);
+    if (previous?.platform && !platform) throw platformOnly('change a budget the platform set');
     const fields = await budgetFields(tx, tenantId, input, previous);
     const clash = (
       await tx.find<InferenceBudget>('inferenceBudgets', { tenantId, uniqueKey: fields.uniqueKey })
@@ -515,12 +549,20 @@ export function inferenceMutations(ctx: ServerContext) {
     const budget: InferenceBudget = previous
       ? { ...fields, id: previous.id, tenantId, createdAt: previous.createdAt, updatedAt: now }
       : { ...fields, id: id(), tenantId, createdAt: now, updatedAt: now };
+    if (platform) budget.platform = true;
+    else delete budget.platform;
     await (previous ? tx.put('inferenceBudgets', budget) : tx.insert('inferenceBudgets', budget));
     return budget;
   }
 
   /** Deletes a budget and its counters. */
-  async function deleteBudget(tx: IamStore, budget: InferenceBudget): Promise<void> {
+  async function deleteBudget(
+    tx: IamStore,
+    principal: AuthenticatedPrincipal,
+    budget: InferenceBudget,
+  ): Promise<void> {
+    if (budget.platform && !(await ctx.rootPrincipal(tx, principal)))
+      throw platformOnly('remove a budget the platform set');
     await tx.delete('inferenceBudgets', budget.id);
     for (const counter of await tx.find('inferenceCounters', { budgetId: budget.id }))
       await tx.delete('inferenceCounters', counter.id);
@@ -716,6 +758,13 @@ export function createInferenceApi(ctx: ServerContext) {
             }
             if (input.baseUrl !== undefined)
               next.baseUrl = await allowedBaseUrl(tx, principal, provider.kind, input.baseUrl);
+            // The sealed key is write-only: pointing the provider somewhere else must not send it along, so a new base
+            // URL needs the key again.
+            if (next.baseUrl !== provider.baseUrl && input.apiKey === undefined)
+              throw new IamError(
+                'INVALID_INPUT',
+                'Changing the base URL needs the provider key (apiKey) again',
+              );
             if (input.apiKey !== undefined) {
               const apiKey = providerKey(input.apiKey);
               next.keySealed = sealProviderKey(ctx.options.secret, provider.id, apiKey);
@@ -794,7 +843,8 @@ export function createInferenceApi(ctx: ServerContext) {
           input.tenantId,
           'iam:inference:manage',
           input.tenantId,
-          async ({ tx, tenant }) => mutations.createModel(tx, tenant.id, input),
+          async ({ tx, principal, tenant }) =>
+            mutations.createModel(tx, principal, tenant.id, input),
         ),
       ),
 
@@ -809,7 +859,8 @@ export function createInferenceApi(ctx: ServerContext) {
           input.tenantId,
           'iam:inference:manage',
           input.tenantId,
-          async ({ tx, tenant }) => mutations.updateModel(tx, tenant.id, input),
+          async ({ tx, principal, tenant }) =>
+            mutations.updateModel(tx, principal, tenant.id, input),
         ),
       ),
 
@@ -880,7 +931,7 @@ export function createInferenceApi(ctx: ServerContext) {
           input.tenantId,
           'iam:inference:manage',
           input.tenantId,
-          async ({ tx, tenant }) => {
+          async ({ tx, principal, tenant }) => {
             const previous =
               input.budgetId !== undefined
                 ? await ctx.scoped<InferenceBudget>(
@@ -890,7 +941,10 @@ export function createInferenceApi(ctx: ServerContext) {
                     tenant.id,
                   )
                 : undefined;
-            return budgetView(tx, await mutations.saveBudget(tx, tenant.id, input, previous));
+            return budgetView(
+              tx,
+              await mutations.saveBudget(tx, principal, tenant.id, input, previous),
+            );
           },
         ),
       ),
@@ -902,14 +956,14 @@ export function createInferenceApi(ctx: ServerContext) {
           input.tenantId,
           'iam:inference:manage',
           text(input.budgetId, 'budgetId'),
-          async ({ tx, tenant }) => {
+          async ({ tx, principal, tenant }) => {
             const budget = await ctx.scoped<InferenceBudget>(
               tx,
               'inferenceBudgets',
               input.budgetId,
               tenant.id,
             );
-            await mutations.deleteBudget(tx, budget);
+            await mutations.deleteBudget(tx, principal, budget);
             return { deleted: true };
           },
         ),
@@ -1234,7 +1288,7 @@ export function createInferenceRuntime(ctx: ServerContext) {
           tenantId,
           check,
           upstreamModel: found.model.upstreamModel,
-          provider: providerCredential(ctx, found.provider),
+          provider: await providerCredential(ctx, tx, found.provider),
         };
       });
     },

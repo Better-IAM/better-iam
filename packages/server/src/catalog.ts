@@ -166,6 +166,91 @@ export const builtInActions = [
   'billing:read',
   'billing:manage',
   'billing:record',
+  // Key management (kms.ts): key administration and grants; encryption, signatures and MACs with a key.
+  'kms:create',
+  'kms:read',
+  'kms:update',
+  'kms:delete',
+  'kms:grant',
+  'kms:encrypt',
+  'kms:decrypt',
+  'kms:generate-data-key',
+  'kms:sign',
+  'kms:verify',
+  'kms:generate-mac',
+  'kms:verify-mac',
+  // Private certificate authority (pki.ts): authorities, issuing, workload certificates, revocation.
+  'pki:create',
+  'pki:read',
+  'pki:update',
+  'pki:issue',
+  'pki:request',
+  'pki:revoke',
+  // Data protection (tokenization.ts): profiles; tokenizing, detokenizing for a purpose, masking, erasure.
+  'protection:read',
+  'protection:manage',
+  'protection:tokenize',
+  'protection:detokenize',
+  'protection:mask',
+  'protection:delete',
+  // Secrets vault (vault.ts): metadata, values, new versions, rotation, check-outs and leases, administration.
+  'vault:read',
+  'vault:reveal',
+  'vault:write',
+  'vault:rotate',
+  'vault:lease',
+  'vault:manage',
+  // API usage plans and quotas (quotas.ts): reading plans, assignments and usage; defining and assigning plans.
+  'quotas:read',
+  'quotas:manage',
+  // Privacy and consent (privacy.ts): purposes and settings, consent records and reports, application-recorded
+  // decisions, consent checks, and handling data-subject requests.
+  'privacy:read',
+  'privacy:manage',
+  'privacy:record',
+  'privacy:check',
+  'privacy:handle',
+  // SSH certificate authority (ssh.ts, api/ssh.ts): authorities, hosts, settings and revocation; reviews and listings.
+  // Getting a certificate is `ssh:login` on `ssh-login/{host}/{login}`, decided like any application action.
+  'ssh:read',
+  'ssh:manage',
+  // Identity threat detection and response (threats.ts, api/threats.ts): reading detections, incidents and risk;
+  // tuning rules, triage and playbooks; responding to identities and networks (contain, release, block, set risk).
+  'threats:read',
+  'threats:manage',
+  'threats:respond',
+  // Lifecycle workflows (workflows.ts, api/workflows.ts): reading workflows and runs; saving them; running them.
+  'workflows:read',
+  'workflows:manage',
+  'workflows:run',
+  // Compliance center (compliance.ts, api/compliance.ts): reading controls, results and evidence; running
+  // evaluations; managing controls and exceptions.
+  'compliance:read',
+  'compliance:evaluate',
+  'compliance:manage',
+  // Application catalog (applications.ts, api/applications.ts): reading apps and usage; registering apps; assigning
+  // them to people and groups. Launching one's own apps needs no permission.
+  'applications:read',
+  'applications:manage',
+  'applications:assign',
+  // Verifiable credentials (vc.ts, api/verifiable-credentials.ts): types and keys; issued credentials; wallet offers
+  // for others; revocation and suspension. People get their own with `vc:request` on `credential-type/{name}`.
+  'vc:read',
+  'vc:manage',
+  'vc:issue',
+  'vc:revoke',
+  // The LDAP directory gateway (ldap.ts, api/ldap.ts, @better-iam/ldap): reading the published directory; settings.
+  'ldap:read',
+  'ldap:manage',
+  // Device posture (devices.ts, api/devices.ts): devices, keys, integrations and settings; managing them; integrations
+  // reporting devices and posture on `iam/devices/integrations/{id}`.
+  'devices:read',
+  'devices:manage',
+  'devices:report',
+  // Shared Signals receiver (signal-receiver.ts, api/signals.ts): reading sources and received events; registering
+  // and changing sources, reprocessing events and polling on demand.
+  'signals:read',
+  'signals:manage',
 ].map((action) => `iam:${action}`);
 
 /** Resource types the platform resolves itself; products and tenants cannot redefine them. */
@@ -302,6 +387,9 @@ export const reservedPrincipalKeys = new Set([
   'departmentId',
   'spendExceeded',
   'budgetsExceeded',
+  'consents',
+  'riskLevel',
+  'riskScore',
   ...reservedSessionPrincipalNames,
 ]);
 

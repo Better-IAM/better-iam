@@ -1,0 +1,269 @@
+---
+title: LDAP gateway
+metaTitle: LDAP directory gateway
+description: Serve each organization's people and groups over read-only LDAPv3, with password and API key binds that go through Better IAM sign-in.
+icon: ListTree
+status: new
+packages: ['@better-iam/ldap', '@better-iam/server']
+sources:
+  - docs/ldap.md
+  - packages/ldap/README.md
+  - packages/ldap/src/server.ts
+  - packages/ldap/src/directory.ts
+  - packages/ldap/src/filter.ts
+  - packages/ldap/src/protocol.ts
+  - packages/server/src/ldap.ts
+  - packages/server/src/api/ldap.ts
+---
+
+Plenty of software only speaks LDAP: VPN concentrators, NAS devices, CI servers, wikis, printers, older
+line-of-business applications. They expect a directory they can search for people and groups and bind against to
+check a password. Without one, an organization runs a second directory next to its identity system and keeps the two
+in sync, and every gap between them is a password that did not change or a leaver who can still sign in to the VPN.
+
+The LDAP gateway removes the second directory. `@better-iam/ldap` is a read-only LDAPv3 server that you run next to
+your deployment. Each organization publishes its directory under a base DN of its own; a bind is a Better IAM
+sign-in, and a search is authorized as the account that bound. People, groups and memberships come straight from
+Better IAM, so a disabled account or a removed membership disappears from LDAP at once.
+
+**Who configures it.** Your team runs the gateway process and gives it a TLS certificate. An organization's
+administrator turns it on for the organization and chooses what it publishes. The operator of each LDAP application
+points it at the gateway with a base DN and, usually, a service account's credentials.
+
+## Run the gateway
+
+```ts title="ldap.ts"
+import { readFileSync } from 'node:fs';
+import { createLdapServer } from '@better-iam/ldap';
+import { iam } from './iam';
+
+const ldap = createLdapServer({
+  iam,
+  tls: { key: readFileSync('ldap.key'), cert: readFileSync('ldap.crt') }, // LDAPS; leave out for plain LDAP
+});
+await ldap.listen(636, '0.0.0.0');
+```
+
+<TypeTable
+  type={{
+    iam: { type: 'betterIam() instance', description: 'The deployment the gateway answers for.', required: true },
+    tls: {
+      type: 'TlsOptions',
+      description: 'Serve LDAPS (TLS from the first byte) with these Node.js TLS options. Without them, plain LDAP. StartTLS is not offered.',
+    },
+    maxResults: { type: 'number', description: 'The most entries one search returns, and the largest page.', default: '1000' },
+    idleTimeoutMs: { type: 'number', description: 'Idle connections are closed.', default: '5 minutes' },
+    maxRequestBytes: { type: 'number', description: 'The largest request accepted. A larger one closes the connection.', default: '64 KiB' },
+    cacheMs: { type: 'number', description: 'How long a connection reuses its directory snapshot between searches.', default: '5 seconds' },
+    maxConnections: { type: 'number', description: 'The most simultaneous connections. Further ones are told the server is busy.', default: '1000' },
+    onError: { type: '(error: unknown) => void', description: 'Called with errors the gateway could not answer, for logging.' },
+  }}
+/>
+
+`listen(port, host)` defaults to port 636 with `tls` and 389 without, on `127.0.0.1`; pass `'0.0.0.0'` to accept
+connections from other machines. It resolves with the bound address. `ldap.close()` tells connected clients the
+server is shutting down and signs out the sessions the gateway created, and `ldap.connections` counts live
+connections for metrics. Each connection handles its requests one at a time, in order.
+
+The gateway needs no settings of its own in `betterIam()`: it reads each organization's settings through `iam.ldap`
+and the `ldap` API group. The package also exports its BER codec, DN and filter helpers, and client-side message
+encoders, for tools and tests.
+
+## Publish an organization's directory
+
+Administrators with `iam:ldap:manage` turn the gateway on for their organization with `ldap.updateSettings`. Fields
+left out keep their values:
+
+```ts
+await iam.api.ldap.updateSettings(admin, {
+  tenantId,
+  enabled: true,
+  baseDn: 'dc=acme,dc=com',
+  uid: 'localPart',
+  attributes: ['title', 'costCenter'], // declared identity attributes to publish; none by default
+  groups: 'selected',
+  groupIds: [vpnUsers.id, engineering.id],
+});
+```
+
+<TypeTable
+  type={{
+    enabled: {
+      type: 'boolean',
+      description: 'Publishes the directory. While it is off, nobody can bind under the base DN and the directory API answers FEATURE_DISABLED.',
+      default: 'false',
+    },
+    baseDn: {
+      type: 'string',
+      description: 'Where the tree starts: up to 10 attr=value components of letters, digits, spaces, ".", "_" or "-", compared without regard to case. One organization per base DN (LDAP_BASE_TAKEN); it cannot itself be ou=people, ou=groups or ou=services.',
+      default: 'o={slug}',
+    },
+    uid: {
+      type: "'email' | 'localPart' | 'id'",
+      description: 'What uid (and the name of each person entry) holds, lowercased: the email, its local part (the full email where local parts collide), or the identity ID.',
+      default: "'email'",
+    },
+    peopleBind: { type: 'boolean', description: 'People may bind with their password.', default: 'true' },
+    serviceBind: { type: 'boolean', description: 'Service accounts and agents may bind with one of their API keys.', default: 'true' },
+    requireTls: {
+      type: 'boolean',
+      description: 'Binds over a connection without TLS are refused (confidentialityRequired), except from loopback.',
+      default: 'true',
+    },
+    mfaSuffix: {
+      type: "'auto' | 'never'",
+      description: 'With auto, people who must use MFA append their current authenticator code to the password. With never, their binds are refused.',
+      default: "'auto'",
+    },
+    includeServiceAccounts: {
+      type: 'boolean',
+      description: 'List service accounts and agents under ou=services. They can bind either way.',
+      default: 'false',
+    },
+    attributes: {
+      type: 'string[]',
+      description: "Up to 64 declared identity attributes published on people's entries. None by default, since attributes may be sensitive.",
+      default: '[]',
+    },
+    groups: { type: "'all' | 'selected'", description: 'Publish every group, or only groupIds.', default: "'all'" },
+    groupIds: { type: 'string[]', description: 'The groups to publish with groups: selected, up to 500 of this organization.' },
+  }}
+/>
+
+`ldap.getSettings` (`iam:ldap:read`) reads the settings. Published attributes must be declared in
+[`permissions.identityAttributes`](/docs/guides/concepts/resources-and-catalog#identity-attributes), with names that
+start with a letter and use letters, digits and `-` (`INVALID_INPUT` otherwise). A group of another organization is
+`NOT_FOUND`.
+
+## The directory tree
+
+```text
+dc=acme,dc=com                          (organization)
+├─ ou=people
+│  └─ uid=alice@acme.com                (inetOrgPerson)
+├─ ou=groups
+│  └─ cn=Engineering                    (groupOfNames)
+└─ ou=services
+   └─ cn=vpn                            (account)
+```
+
+| Entry                              | Object classes                                    | Attributes                                                                                                                                                             |
+| ---------------------------------- | ------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| The base DN                        | `dcObject` and `organization` for a `dc=` base, `organizationalUnit` for `ou=`, otherwise `organization` | Its naming attribute, and `o` with the organization's name (unless the base is `o=`)                                                    |
+| `uid={uid},ou=people,{baseDn}`     | `person`, `organizationalPerson`, `inetOrgPerson` | `uid`, `cn` (the name, else the email), `sn` (the last word of the name), `givenName` (the first word of a name of two or more), `displayName`, `mail`, `memberOf`, and the published attributes |
+| `cn={name},ou=groups,{baseDn}`     | `groupOfNames`                                    | `cn`, `description`, and `member` (the DNs of people and listed service accounts)                                                                                      |
+| `cn={name},ou=services,{baseDn}`   | `account`, `applicationProcess`                   | `cn`, `uid` (the entry's name), `description` (`Service account` or `AI agent`), `memberOf`                                                                             |
+
+Every entry also carries the operational attribute `entryDN`, and people, groups and services carry their Better IAM
+ID as `entryUUID`. Operational attributes are returned for `+` or by name. A published attribute with several values
+becomes a multi-valued LDAP attribute; one whose name clashes with a standard attribute above is left out.
+
+- **Only what is live.** Only active, unexpired accounts and live group memberships appear, so offboarding someone
+  or ending a temporary membership takes them out of LDAP at once.
+- **Unique names.** Two service accounts or groups with the same name are told apart by ID: the later one is named
+  `cn={id}`.
+- **Services.** `ou=services` lists service accounts and agents only with `includeServiceAccounts`.
+
+## Binding
+
+Applications bind in one of two ways, always with a simple bind:
+
+- **As a person:** `uid={uid},ou=people,{baseDn}` with their password. The bind is a Better IAM sign-in, so rate
+  limits, lockouts, allowed sign-in methods, IP rules and sign-in alerts apply, and the client's address is
+  recorded (with the user agent `better-iam-ldap`). The gateway makes exactly one sign-in attempt per bind, and signs
+  the session out when the connection ends or binds again.
+- **As a service account or agent:** `cn={name},ou=services,{baseDn}` with one of its API keys as the password. The
+  key must belong to that account and organization, and it is checked like any API key. The name is matched without
+  regard to case; when two accounts share a name, bind with `cn={id}`.
+
+<Callout title="People who use MFA">
+  LDAP has one password field, so people who must use MFA append the current six-digit
+  authenticator code to their password (`hunter2` followed by `123456` is `hunter2123456`). People whose MFA is
+  required but who have no authenticator app enrolled cannot bind, since LDAP has no way to ask for a passkey. With
+  `mfaSuffix: 'never'`, people who must use MFA cannot bind at all; applications then bind as a service account. See
+  [MFA](/docs/guides/authentication/mfa).
+</Callout>
+
+A bind with an empty name and password is anonymous and reads only the root DSE, which advertises LDAPv3, the WhoAmI
+extension and the paged results control (and, once bound, the base DN as `namingContexts`). A name with an empty
+password is refused (`unwillingToPerform`) rather than treated as an anonymous bind, a common source of LDAP login
+bypasses. SASL binds and LDAP versions other than 3 are not supported.
+
+## What a bound account sees
+
+Searches are authorized as the bound account. With `iam:ldap:read` on `iam/ldap/directory`, it reads the whole
+published directory, audited as `ldap:directory:read` with the number of people and groups. This is the permission
+for the VPN's or wiki's service account:
+
+```json title="Let a service account read the directory"
+{ "effect": "allow", "actions": ["iam:ldap:read"], "resources": ["iam/ldap/directory"] }
+```
+
+Without it, an account sees only its own entry and its own groups, each with only itself as a member. That is enough
+for applications that bind as the person and then read their groups. The platform <Term id="root">root</Term> override
+does not read an organization's directory, and <Term id="impersonation">"view as"</Term> sessions and credentials of
+another organization are refused.
+
+A connection sees only the tree of the organization it bound to: any other base is `noSuchObject`. Each connection
+fetches a snapshot of what it may read and reuses it for `cacheMs`.
+
+## Supported operations
+
+- **Search** with base, one-level and subtree scopes; every RFC 4511 filter type (`and`, `or`, `not`, equality,
+  substrings, `>=`, `<=`, approximate, presence, extensible); attribute selection with `*`, `+`, names and `1.1`;
+  types only; size limits; and the paged results control of RFC 2696. Values compare without regard to case.
+  Extensible matches support only the default equality rule on a named attribute; others match nothing. Filters
+  deeper than 32 levels or with more than 256 terms close the connection with a protocol error.
+- **Compare**, on any entry of the bound organization.
+- **WhoAmI** (RFC 4532), which answers `dn:` followed by the bound DN.
+- **Unbind**, which closes the connection and signs out a person's session.
+
+Add, modify, delete and rename are refused (`unwillingToPerform`): the directory is managed in Better IAM. Other
+extended operations, StartTLS among them, answer `protocolError`.
+
+| Result code                | When                                                                                                    |
+| -------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `invalidCredentials`       | A wrong password, key or code; an unknown or inactive account; binds of that kind turned off; MFA that LDAP cannot satisfy |
+| `confidentialityRequired`  | A bind without TLS while `requireTls` is on, from anywhere but loopback                                 |
+| `unwillingToPerform`       | A name with an empty password, too many attempts (rate limited), or a write                            |
+| `authMethodNotSupported`   | A SASL bind                                                                                             |
+| `insufficientAccessRights` | A search or compare before binding, or a search whose directory read is refused (the gateway was turned off, the session ended) |
+| `noSuchObject`             | A base or entry outside the bound organization's tree, or one that does not exist                      |
+| `sizeLimitExceeded`        | More matches than the size limit (or `maxResults`), without paging                                      |
+
+## Test a setup
+
+With OpenLDAP's command-line tools, bind as the service account and look for the members of a group:
+
+```bash
+ldapsearch -H ldaps://ldap.example.com \
+  -D "cn=vpn,ou=services,dc=acme,dc=com" -w "$VPN_API_KEY" \
+  -b "ou=people,dc=acme,dc=com" "(memberOf=cn=VPN users,ou=groups,dc=acme,dc=com)" mail
+```
+
+## API
+
+| Method                                                          | Access                                                                                      |
+| --------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| [`getSettings`](/docs/reference/api/ldap#getsettings)           | `iam:ldap:read` on `iam/ldap/settings`                                                      |
+| [`updateSettings`](/docs/reference/api/ldap#updatesettings)     | `iam:ldap:manage` on `iam/ldap/settings`                                                    |
+| [`directory`](/docs/reference/api/ldap#directory)               | A credential of the organization; `iam:ldap:read` on `iam/ldap/directory` for everyone, otherwise only yourself |
+
+`directory` is what the gateway serves searches from, called as the account that bound. It answers
+`FEATURE_DISABLED` while the gateway is off. `iam.ldap.tenantForBase` and `iam.ldap.resolveBindName` are what the
+gateway uses before anyone is bound: they map a base DN to its organization and a bind name to an account, and
+return no secrets. Settings changes are audited as `iam:ldap:manage`.
+
+## Next steps
+
+<Cards>
+  <Card title="ldap API reference" href="/docs/reference/api/ldap">
+    The settings and directory methods with their permissions and errors.
+  </Card>
+  <Card title="API keys" href="/docs/guides/authorization/temporary-access#api-keys">
+    Issue the keys LDAP applications bind with as service accounts.
+  </Card>
+  <Card title="SCIM inbound" href="/docs/federation/scim">
+    Let a company's directory provision the people and groups the gateway publishes.
+  </Card>
+</Cards>

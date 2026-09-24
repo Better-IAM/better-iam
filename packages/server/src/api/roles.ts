@@ -10,6 +10,7 @@ import {
   type Tenant,
 } from '@better-iam/core';
 import type { ServerContext } from '../context.js';
+import { roleDenyStatements } from '../decisions.js';
 import type { AccessPackage, Binding, Group, OidcProvider, Role, Trust } from '../models.js';
 import { nextWatermark, revokedByWatermark } from '../session-kinds.js';
 import {
@@ -44,6 +45,59 @@ export interface RoleUpdate {
   document?: PolicyDocument | null;
   /** Replaces the inherited roles; an empty list clears inheritance. */
   inherits?: string[];
+}
+
+/**
+ * Whether an authority other than `authorityId` relies on these roles: it issued one of them or a role inheriting one
+ * of them, or bound one of those roles to someone. Their denies then restrict what that authority granted.
+ */
+export async function reliedOnByOthers(
+  tx: IamStore,
+  tenantId: string,
+  authorityId: unknown,
+  roleIds: Iterable<string>,
+): Promise<boolean> {
+  const roles = await tx.find<Role>('roles', { tenantId });
+  const covered = new Set(roleIds);
+  for (let grew = true; grew; ) {
+    grew = false;
+    for (const role of roles)
+      if (!covered.has(role.id) && role.inherits?.some((inherited) => covered.has(inherited))) {
+        covered.add(role.id);
+        grew = true;
+      }
+  }
+  if (roles.some((role) => covered.has(role.id) && role.authorityId !== authorityId)) return true;
+  for (const roleId of covered)
+    if (
+      (await tx.find<Binding>('bindings', { tenantId, roleId })).some(
+        (binding) => binding.authorityId !== authorityId,
+      )
+    )
+      return true;
+  return false;
+}
+
+/**
+ * An editor may add denies to a role or policy, but once another authority relies on it (see reliedOnByOthers), may
+ * not remove or change one: that would widen what the other authority's grants allow, beyond the editor's own ceiling.
+ * Root may.
+ */
+export async function assertDeniesKept(
+  ctx: ServerContext,
+  tx: IamStore,
+  principal: AuthenticatedPrincipal,
+  before: Set<string>,
+  after: Set<string>,
+  relied: () => Promise<boolean>,
+): Promise<void> {
+  if ([...before].every((statement) => after.has(statement))) return;
+  if ((await ctx.rootPrincipal(tx, principal)) || !(await relied())) return;
+  throw new IamError(
+    'PROTECTED_RESOURCE',
+    'Other administrators rely on its deny statements (they bound it, or attached or inherit it); they must detach it before a deny is removed or changed',
+    403,
+  );
 }
 
 /** Validates a role hierarchy edge set: existing, unprotected, distinct roles of the tenant that do not lead back to `roleId`. */
@@ -171,6 +225,14 @@ export async function updateRole(
     if (inherits.length) next.inherits = inherits;
     else delete next.inherits;
   }
+  await assertDeniesKept(
+    ctx,
+    tx,
+    principal,
+    await roleDenyStatements(tx, role),
+    await roleDenyStatements(tx, next),
+    () => reliedOnByOthers(tx, role.tenantId, role.authorityId, [role.id]),
+  );
   return tx.put('roles', next);
 }
 
@@ -206,6 +268,10 @@ export async function deleteRole(
       `Access packages still include it: ${packaged.map((pkg) => pkg.name).join(', ')}`,
       409,
     );
+  // Deleting a role deletes its bindings; one another administrator bound carries its denies for them.
+  await assertDeniesKept(ctx, tx, principal, await roleDenyStatements(tx, role), new Set(), () =>
+    reliedOnByOthers(tx, role.tenantId, role.authorityId, [role.id]),
+  );
   for (const binding of await tx.find<Binding>('bindings', {
     tenantId: role.tenantId,
     roleId: role.id,

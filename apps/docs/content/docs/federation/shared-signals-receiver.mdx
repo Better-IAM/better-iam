@@ -1,0 +1,617 @@
+---
+title: Shared Signals receiver
+metaTitle: Shared Signals receiver (CAEP and RISC from identity providers)
+description: Receive signed CAEP and RISC security events from an organization's identity providers by push or poll, match them to people, and end sessions.
+icon: Radar
+status: new
+packages: ['@better-iam/server', '@better-iam/core']
+sources:
+  - docs/shared-signals-receiver.md
+  - packages/core/src/shared-signals.ts
+  - packages/server/src/signal-receiver.ts
+  - packages/server/src/api/signals.ts
+---
+
+An organization's identity provider often knows things about its people that Better IAM does not: a password turned
+up in a breach, the security team ended all of someone's sessions, a sign-in looks high risk, an account was
+disabled. Without a signal, Better IAM finds out at the next sign-in through that provider, or never, and the
+person's sessions here stay valid in the meantime.
+
+The OpenID <Term id="shared-signals">Shared Signals Framework</Term> (SSF 1.0) lets the provider send these facts as
+signed Security Event Tokens (SETs, RFC 8417) with the CAEP and RISC event types. Better IAM receives them:
+
+1. Each organization registers its providers as **signal sources**: issuer, keys, accepted audiences, delivery.
+2. Events arrive by **push** (RFC 8935, to a URL the source is given) or by **poll** (RFC 8936, fetched by the
+   scheduler job `iam.signals.poll()`).
+3. Each SET is **verified** against the source's settings and **deduplicated** on its issuer and `jti`.
+4. Its subject is **matched** to a person of the source's organization: through federation links, SCIM-provisioned
+   users, or email addresses at verified domains.
+5. The event is **recorded** for 90 days and **audited** as `signal:received`, which
+   [threat detection](/docs/guides/threat-detection) reads.
+6. Where the source asks for it, the person's **sessions end** at once. Nothing more drastic happens on its own:
+   disabling or containing an account is left to threat-detection playbooks.
+
+To send Better IAM's own events to other systems instead, see the
+[Shared Signals transmitter](/docs/federation/shared-signals).
+
+**Who configures it.** Organization administrators register their providers, usually from your admin UI. Reading
+sources and events needs `iam:signals:read`; registering and changing sources, reprocessing events, and polling on
+demand need `iam:signals:manage`. Both are checked on `iam/signals/sources` and `iam/signals/events` (with `/{id}` for
+one record), and every change also needs a <Term id="recent-authentication">recent sign-in</Term>. Your team only
+schedules the poll job, and only when poll sources exist.
+
+## Supported events
+
+| Event type | Profile | What the provider reports |
+| --- | --- | --- |
+| `session-revoked` | CAEP | A session of the person was ended |
+| `credential-change` | CAEP | A credential was created, changed, revoked or deleted (`credential_type`, `change_type`) |
+| `token-claims-change` | CAEP | Claims the provider asserts about the person changed |
+| `assurance-level-change` | CAEP | The person's authentication assurance level changed |
+| `device-compliance-change` | CAEP | A device of the person became compliant or non-compliant |
+| `risk-level-change` | CAEP | The provider's risk level for the person changed (`current_level`) |
+| `account-disabled` | RISC | The account was disabled, for example because it was hijacked |
+| `account-enabled` | RISC | The account was enabled again |
+| `account-purged` | RISC | The account was deleted |
+| `account-credential-change-required` | RISC | The person must change a credential |
+| `credential-compromise` | RISC | A credential of the person was compromised |
+| `identifier-changed` | RISC | An identifier of the account (email, phone number) changed |
+| `identifier-recycled` | RISC | An identifier now belongs to a different account |
+| `sessions-revoked` | RISC | All sessions of the person were ended (deprecated by RISC in favour of CAEP) |
+| `verification` | SSF | The provider is testing the stream. Noted as `lastVerifiedAt` on the source. |
+| `stream-updated` | SSF | The provider changed the stream's status. A pause or disable is noted as `lastError`. |
+
+Any type but the two control events can be set to end the person's sessions. Types are recognized by their exact URI
+(`https://schemas.openid.net/secevent/caep/event-type/session-revoked` and so on). The control events are also
+accepted under the RISC namespace, where Google still sends them, and that of the interim SSE drafts; they never
+touch a person. Any other type, such as RISC's OAuth `tokens-revoked`, is recorded as `ignored` (`unsupported-event`).
+
+## Register a source
+
+```ts
+const { source, pushUrl, pushToken } = await iam.api.signals.createSource(admin, {
+  tenantId,
+  name: 'Acme Okta',
+  issuer: 'https://acme.okta.com',
+  issuerAliases: ['https://acme.okta.com/oauth2/default'],
+  audiences: ['https://iam.example.com'],
+  delivery: 'push',
+  subjects: {
+    connectionIds: ['acme-okta'], // the organization's Okta sign-in connection
+    scimConnectionIds: ['acme-okta-scim'], // the SCIM connection Okta provisions through
+    matchEmail: true,
+  },
+  actions: { 'session-revoked': 'revoke-sessions', 'credential-compromise': 'revoke-sessions' },
+});
+// Configure the provider to POST to pushUrl with `Authorization: Bearer ${pushToken}`.
+// The token is returned only here; rotatePushToken issues a new one.
+```
+
+<TypeTable
+  type={{
+    name: { type: 'string', description: 'A label for administrators, at most 128 characters.', required: true },
+    issuer: {
+      type: 'string',
+      description: "The iss of the provider's SETs: an https URL of at most 512 characters, without credentials, query or fragment. A trailing slash is dropped, and SETs are accepted with or without it. An organization has one source per issuer (CONFLICT).",
+      required: true,
+    },
+    issuerAliases: {
+      type: 'string[]',
+      description: 'Up to 5 other spellings of the issuer. SETs may use them as iss, iss_sub subjects may name them, and they are tried as the issuer of federation links, such as an Okta custom authorization server the sign-in connection uses.',
+    },
+    audiences: {
+      type: 'string[]',
+      description: 'Accepted aud values: 1 to 10, of at most 256 characters each. A SET must name at least one of them.',
+      required: true,
+    },
+    jwks: {
+      type: '{ keys: JWK[] }',
+      description: 'Static public keys, 1 to 20: RSA of at least 2048 bits, EC on P-256, P-384 or P-521, or Ed25519. Only signature keys; private key members are refused.',
+    },
+    jwksUri: {
+      type: 'string',
+      description: 'Where the provider publishes its keys: https, on a public address. Give jwks or jwksUri, not both. With neither, the keys are found by discovery.',
+    },
+    algorithms: {
+      type: 'string[]',
+      description: 'Accepted signature algorithms, a subset of RS256, RS384, RS512, PS256, PS384, PS512, ES256, ES384 and EdDSA. HMAC algorithms and none are never accepted.',
+      default: 'RS256, ES256, PS256, EdDSA',
+    },
+    delivery: {
+      type: "'push' | 'poll'",
+      description: 'How events arrive. It cannot change after creation.',
+      required: true,
+    },
+    pushToken: {
+      type: 'boolean',
+      description: 'Push sources: generate a bearer token the provider must send with every push. Pass false for providers that cannot send one.',
+      default: 'true',
+    },
+    poll: {
+      type: '{ endpoint, token, maxEvents? }',
+      description: "Required for poll sources: the provider's https poll URL, its bearer token (1 to 4096 printable characters without spaces, stored sealed), and events per request (1 to 100, 25 by default).",
+    },
+    subjects: {
+      type: '{ connectionIds?, scimConnectionIds?, matchEmail? }',
+      description: 'How subjects map to people, with at most 10 ids per list. Nothing is mapped by default, so every event is unmatched.',
+    },
+    actions: {
+      type: "Record<eventType, 'record' | 'revoke-sessions'>",
+      description: 'The action per event type. Types not listed are recorded only. Any event type except the two control events may end sessions.',
+    },
+    requireTyp: {
+      type: 'boolean',
+      description: 'Require the secevent+jwt token type. Set it to false only for legacy RISC providers that send no typ.',
+      default: 'true',
+    },
+    tenantClaim: {
+      type: 'string',
+      description: 'Accept only SETs whose tenant_id claim equals this, at most 256 characters. Set it to the upstream organization ID when the provider is another Better IAM deployment.',
+    },
+  }}
+/>
+
+An organization may register at most 20 sources (`LIMIT_EXCEEDED`). Nothing is fetched at registration: URLs are
+only checked against the [address rules](#deployment). Ask the provider for a verification event after setup:
+`lastVerifiedAt` on the source shows it arrived, and `lastError` explains a refusal. Some transmitters, Better IAM's
+own included, address SETs to the push URL unless told otherwise. That URL contains the source's ID, so add it to
+`audiences` with `updateSource` after creation, or configure an explicit audience at the transmitter.
+
+### Manage sources
+
+- `listSources` and `getSource` never return secrets (`hasPushToken` stands in for the push token) and report health:
+  `lastEventAt`, `lastVerifiedAt`, `lastError`, and for poll sources `poll.lastPolledAt` and `poll.pendingAcks`. The
+  poll endpoint is visible to anyone with `iam:signals:read`, so keep secrets in the poll token, never in the URL.
+- `updateSource` changes any field except `issuer` and `delivery`. `jwks: null` or `jwksUri: null` switches the source
+  to discovery. A new poll endpoint needs its token again and starts with an empty acknowledgement queue, so a stored
+  token never goes to an endpoint it was not given for. `status: 'disabled'` makes pushes answer 404 and stops
+  polling. `actions` replaces the whole map, `subjects` only the members given, and `tenantClaim: null` drops the
+  claim check. Any change drops the source's cached keys.
+- `rotatePushToken` returns a new bearer token, shown once; the old one stops working at once. It also gives a token
+  to a push source created without one.
+- `deleteSource` removes the source: its pushes answer 404, and the events it sent stay until they expire.
+
+## Push delivery
+
+The provider sends each SET in its own request:
+
+```http
+POST /api/iam/signals/push/{sourceId} HTTP/1.1
+Host: iam.example.com
+Content-Type: application/secevent+jwt
+Authorization: Bearer {pushToken}
+
+eyJhbGciOiJSUzI1NiIsInR5cCI6InNlY2V2ZW50K2p3dCIsImtpZCI6Ii4uLiJ9.eyJpc3MiOiJodHRwczovL...
+```
+
+The push URL (`pushUrl` on the source) is the `baseURL` origin followed by `{signals.pushPath}/{sourceId}`, where
+`pushPath` defaults to `{basePath}/signals/push`. The body is at most 64 KiB and the SET at most 16 KiB. The bearer
+token is required only when the source has one, and is compared in constant time against its stored SHA-256 hash.
+
+| Status | `err` | Meaning |
+| --- | --- | --- |
+| 202 | (empty body) | The event is committed. A SET whose issuer and `jti` arrived before also gets 202, and nothing is done again. |
+| 400 | `invalid_request`, `invalid_key`, `invalid_issuer`, `invalid_audience` | The SET was refused (see [Verification](#verification)); `description` says why. The same SET gets the same answer again. |
+| 401 | `authentication_failed` | The bearer token is missing or wrong (with `WWW-Authenticate: Bearer`). |
+| 403 | `access_denied` | The sender's address is in one of the organization's network blocks. |
+| 404 | `invalid_request` | No active push source has that ID: it is unknown, deleted, disabled, a poll source, or its organization is suspended. |
+| 405 | `invalid_request` | The method was not POST (with `Allow: POST`). |
+| 413 | `invalid_request` | The body is larger than 64 KiB. |
+| 415 | `invalid_request` | The content type is not `application/secevent+jwt`. |
+| 429 | `invalid_request` | The source sent more than 3000 events in the rate-limit window. `Retry-After` says when to try again. |
+| 503 | `invalid_key`, `invalid_request` | The source's keys could not be obtained (`Retry-After: 30`) or storage was busy (`Retry-After: 1`). The provider should send it again. |
+| 500 | `invalid_request` | Processing failed unexpectedly. |
+
+Error bodies are RFC 8935 JSON, `{ "err": "...", "description": "..." }`, and every response carries
+`Cache-Control: no-store`. A 202 comes after the event is stored and its action has run, with no queue in between.
+The rate-limit window is `authentication.rateLimits.windowMs`
+([15 minutes by default](/docs/operations/deployment/configuration#rate-limits)). Refusals are also noted as the
+source's `lastError`, at most once a minute for the same message, so administrators see why events are not arriving.
+
+The push endpoint is a protocol mount served by `iam.handler` and `iam.nodeHandler` before the API routes, so it
+needs neither the `X-Better-IAM` header nor an `Origin`. With the default `pushPath`, the route that serves the IAM
+API serves pushes too. If you move `pushPath` outside `basePath`, route that path to the IAM handler as well.
+
+## Poll delivery
+
+A poll source pulls its events from the provider's RFC 8936 endpoint. Each run of `iam.signals.poll()`, for every
+active poll source:
+
+1. **Requests** with `POST { "maxEvents": 25, "returnImmediately": true, "ack": [...], "setErrs": {...} }` and
+   `Authorization: Bearer {token}` (`setErrs` only when there are errors to report): a 10-second timeout, no
+   redirects, a response of at most 1 MiB.
+2. **Records** each SET of `{ "sets": { "{jti}": "{SET}" }, "moreAvailable": true | false }` exactly as a push would
+   be. Each `jti` must equal its key in `sets`.
+3. **Acknowledges** committed events, duplicates included, with the next request (possibly the first of the next
+   run), never before they are stored. Refused events go into `setErrs` with the same codes as a push refusal. Events
+   that could not be processed yet (keys unavailable, storage busy) are neither acknowledged nor reported, so the
+   provider delivers them again.
+4. **Repeats** while the provider answers `moreAvailable: true`, up to five requests per source and run.
+
+A run returns `{ sources, received, acknowledged, errors }`: new events, acknowledgements the provider accepted, and
+failed requests plus events left for redelivery. A failed request is noted as the source's `lastError` (such as "The
+poll endpoint answered 500"), and pending acknowledgements wait for the next attempt. There is no long polling, so the
+job's interval is the delay. `signals.poll({ tenantId, sourceId })` polls one source now, for a "Check now" button.
+
+The poll token is sealed with the deployment secret, bound to its source, and re-sealed by `iam.rotateSecrets()`
+(see [Secrets](/docs/operations/deployment/secrets)). A token sealed under a secret that is no longer configured
+cannot be opened: the source shows that as `lastError` until an administrator gives the token again.
+
+## Verification
+
+A SET is accepted only if all of the following hold:
+
+- **Shape.** It is a compact JWS of at most 16 KiB. Encrypted SETs (JWE) and unsigned tokens are refused.
+- **Keys come from the source, never from the token.** Headers carrying key material or key locations (`jwk`, `jku`,
+  `x5u`, `x5c`) are refused, and so is any `crit` header.
+- **Algorithm.** The header's `alg` is one of the source's `algorithms`.
+- **Type.** `typ` is `secevent+jwt`, compared without regard to case and with or without the `application/` prefix.
+  This keeps other tokens signed with the same keys, such as ID tokens and access tokens, from passing as events. A
+  source with `requireTyp: false` also accepts no `typ` at all, or `JWT`.
+- **Signature.** A key of the source verifies the signature. When several keys could match (a token without a `kid`,
+  or keys without one), each candidate is tried, up to 20.
+- **Issuer and audience.** `iss` is the source's issuer or one of its aliases, with or without a trailing slash, and
+  `aud` (a string or a list of at most 20) names one of the source's audiences.
+- **Organization.** When the source has a `tenantClaim`, the SET's `tenant_id` equals it (else `invalid_audience`).
+- **Time.** `iat` is at most five minutes in the future and at most seven days old. There is no shorter age limit,
+  because a polled event may wait in the provider's queue. `exp` and `nbf` are honoured when present, with five
+  minutes of tolerance.
+- **Claims.** `iss`, `aud`, `iat`, `jti` and `events` are present, and `events` holds exactly one event whose value
+  is an object, nested at most ten levels deep. A `nonce` claim is refused, since only ID tokens carry one. `iss`,
+  `jti`, `txn` and each audience are strings of at most 512 characters.
+- **Subject.** The subject, when there is one, is a valid subject identifier (below). If both a top-level `sub_id`
+  and a legacy `events[type].subject` are present, they name the same subject, and a top-level `sub` does not
+  contradict an `iss_sub` subject of the same issuer.
+
+Refusals answer `invalid_key` for key, algorithm and signature problems, `invalid_issuer` for the issuer,
+`invalid_audience` for the audience and the organization, and `invalid_request` for everything else.
+
+**Subject identifiers.** The subject is read from the top-level `sub_id` (RFC 9493) or the legacy
+`events[type].subject`. The accepted formats are `iss_sub`, `email`, `opaque`, `account`, `phone_number`, `did` and
+`uri`; `aliases` with at most 10 identifiers and no alias list inside another; SSF `complex` with the members `user`,
+`session`, `device`, `tenant`, `group`, `application` and `org_unit`; and legacy RISC subjects whose `subject_type` is
+`iss-sub`, `email`, `phone` or `id_token_claims`. Every string is 1 to 512 characters without control characters, and
+nesting goes at most three levels deep. Any other format is refused. The subject is stored as parsed, up to 8 KiB. The
+event's own claims are stored up to 4 KiB; beyond that, the members that fit are kept and `_truncated: true` is added.
+
+**Duplicates.** Within an organization, a SET is identified by its source's issuer and its `jti`. A repeated one is
+answered as accepted (and acknowledged, when polled), and nothing is done again, even when the same event arrives
+twice at the same moment.
+
+## Keys
+
+- **Static keys** (`jwks`) are used as given. To roll them, update the source with both the old and the new keys,
+  then remove the old ones once the provider has switched.
+- **A key URL** (`jwksUri`) is fetched through the guarded transport: https on a public address, no redirects, at
+  most 256 KiB, a five-second timeout. The key set is cached for ten minutes. A token whose `kid` the cached set lacks
+  causes a refetch, at most every 30 seconds.
+- **Discovery**, used when a source has neither, reads `{issuer origin}/.well-known/ssf-configuration{issuer path}`,
+  then the legacy `/.well-known/risc-configuration{issuer path}`. The document's `issuer` must name the source (its
+  issuer or an alias), and its `jwks_uri` is then used under the same rules. A discovered key location is refreshed
+  daily. A failed discovery is retried after 30 seconds at the earliest, and a failed refresh keeps the keys found
+  before.
+
+Keys that cannot be obtained prove nothing wrong with the event: a key set that cannot be fetched, an answer other
+than 200, a body that is not a public key set, a failed discovery, or a token signed by a new remote key that is not
+published yet. These refusals are temporary: a push answers 503 and a polled event stays unacknowledged, so the
+provider delivers it again. With static keys, an unknown `kid` is a permanent `invalid_key`.
+
+## Match subjects to people
+
+| Subject | Matches | Needs |
+| --- | --- | --- |
+| `iss_sub` whose `iss` is the source's issuer or an alias | First, the person linked to that subject by a sign-in through one of `connectionIds`. Then, the person provisioned through one of `scimConnectionIds` whose SCIM `externalId` is the `sub`. | `connectionIds` or `scimConnectionIds` |
+| `opaque` | The person provisioned through one of `scimConnectionIds` whose `externalId` is the `id` | `scimConnectionIds` |
+| `email`, `account` (`acct:user@host`) | The person with that email address, when its domain is a verified domain of the organization | `matchEmail: true` |
+| `complex` | Its `user` member, matched as above. Session, device, organization, group and application members name no person. | |
+| `aliases` | Each identifier in turn, until one matches | |
+| `phone_number`, `did`, `uri`, `iss_sub` of other issuers | Nobody | |
+
+- **Federation links** are created when a person signs in through an OAuth, OIDC or SAML connection of the
+  organization, keyed by the connection, the issuer its tokens name, and the subject. The receiver tries the SET's
+  issuer with and without a trailing slash, and every alias of the source, so add the sign-in connection's issuer as
+  an alias when it differs (an Okta custom authorization server). SAML links store the identity provider's entity ID
+  and the NameID, so they match only when the provider's `iss_sub` subjects use those same values. Usually they do
+  not, and SCIM or email is the better choice.
+- **SCIM `externalId`** is the provider's own user ID in most directories, and often the same value its `iss_sub`
+  and `opaque` subjects carry. See [SCIM inbound](/docs/federation/scim).
+- **Email** matches only at domains the organization has verified with the
+  [`domains` API](/docs/reference/api/domains). Anyone can hold an address at a domain the organization does not
+  control, so an unverified domain never matches. Addresses are trimmed and lowercased before the lookup.
+- **Never matched:** <Term id="service-account">service accounts</Term>, AI agents, deleted identities, and anyone in
+  another organization, child organizations included.
+- **Sessions.** Better IAM does not know a provider's own session IDs, so a `session-revoked` event about one session
+  of a person ends all of that person's sessions when the action is `revoke-sessions`.
+
+An event that matches nobody is kept as `unmatched`, with reason `no-match`, or `no-subject` when the SET named none.
+After fixing the mapping or the directory, `signals.reprocess({ tenantId, eventId })` maps it again.
+
+## What happens to an event
+
+Each event is handled in one transaction: verified, deduplicated, applied, stored, audited, and noted as the
+source's `lastEventAt`. Its status is one of:
+
+| Status | Meaning |
+| --- | --- |
+| `applied` | The source's action for the event type (`revoke-sessions`) ran. |
+| `recorded` | Kept: it matched a person and the action is `record`, or it was a control event. |
+| `unmatched` | No person of the organization matched its subject (`no-match`, `no-subject`). |
+| `ignored` | An unsupported event type (`unsupported-event`), or an action refused for a protected person (`protected`). |
+| `failed` | Applying it failed; the reason is the error code. It is stored in a transaction of its own and acknowledged, so the provider does not send it again, and an administrator can reprocess it. |
+
+**Actions.** `record`, the default, keeps the event and does nothing else. `revoke-sessions` ends every
+<Term id="session">session</Term> of the person except API keys: sign-in sessions, role sessions and session tokens
+(with <Term id="impersonation">impersonation</Term> sessions opened through them), role sessions the person assumed in
+other organizations, and pending sign-in challenges. Remembered devices and API keys stay, so the next sign-in works
+as usual. It is audited as `signal:revoke-sessions` with the number of sessions ended. If you run the
+[OAuth provider](/docs/federation/oauth-provider), its `logoutEndedSessions()` sweep then signs the person out of the
+connected applications too.
+
+<Callout type="warn" title="Root administrators are protected">
+  A source of any organization except the root organization never ends a root administrator's sessions. The event
+  is `ignored` with reason `protected`.
+</Callout>
+
+**Reprocessing.** `signals.reprocess` handles an `unmatched` or `failed` event of an active source again, with the
+source's current mapping and action, as if it had just arrived. An event that now matches someone is audited as
+`signal:received` again, so threat detection sees it; the call itself is audited as `signal:reprocess`. Link the
+person first (a sign-in through the connection, SCIM provisioning, or a verified domain), then reprocess.
+
+## Threat detection and containment
+
+The receiver never disables or contains an account by itself: what an upstream "disabled" or "compromised" should
+mean differs between organizations. Instead, every received event is audited as `signal:received`, by the actor
+`signal:{sourceId}`, on the matched identity (or `signals/sources/{sourceId}` when nobody matched), with the metadata
+`{ sourceId, eventType, jti, status, identityId?, reasonAdmin?, currentLevel?, credentialType? }`. `reasonAdmin` is
+CAEP `reason_admin` (English, else the first language given, at most 256 characters), `currentLevel` the upper-cased
+`current_level` of a `risk-level-change`, and `credentialType` the event's `credential_type`.
+
+Threat detection's `upstream-signal` rule turns matched events into detections about the person:
+
+| Event | Detection |
+| --- | --- |
+| `credential-compromise` | high |
+| `risk-level-change` to `HIGH` | high |
+| `risk-level-change` to `MEDIUM` | medium |
+| `account-disabled`, `account-purged`, `account-credential-change-required` | medium |
+| `credential-change` | low |
+| `session-revoked`, `risk-level-change` to `LOW`, and the rest | none |
+
+A detection raises the person's risk, which policies read as `principal.riskLevel`. It also opens an incident and
+runs the organization's playbooks, and that is where containment belongs:
+
+```ts
+await iam.api.threats.createPlaybook(admin, {
+  tenantId,
+  name: 'Contain people our identity provider reports compromised',
+  trigger: { ruleIds: ['upstream-signal'], minSeverity: 'high' },
+  actions: [{ kind: 'contain' }, { kind: 'notify' }],
+});
+```
+
+The playbook protections apply: owners and root administrators are never contained automatically, and the brake
+limits how many people one run contains. To forward received events to a SIEM, subscribe a
+[webhook](/docs/guides/events/webhooks) to `signal:*`.
+
+## Avoid echo loops
+
+A provider can be both a transmitter and a receiver (Okta, or another Better IAM deployment). If the receiver's
+actions were audited under names the transmitter publishes, a revocation received from a provider would be sent
+straight back to it. The receiver therefore records everything under its own `signal:*` names, which the
+[transmitter](/docs/federation/shared-signals#event-mapping) never maps: `signal:revoke-sessions` is not
+`identity:revoke-sessions`. The trade-off is that receivers of your own streams are not told about sessions that
+ended because of an upstream signal.
+
+Threat-detection responses are different: the transmitter sends `threat:revoke-sessions` as CAEP `session-revoked`
+and `threat:contain` as RISC `account-disabled`. A playbook that contains someone because of a provider's signal
+therefore tells every stream of the organization, including the provider's own. If that provider should not hear
+back about containments it caused, leave those event types out of its stream's `events`.
+
+## Set up providers
+
+For every provider, find out its SET issuer (and whether its sign-in tokens use another one, to add as an alias),
+whether discovery finds its keys, the `aud` it sends, how it delivers (push URL and bearer token, or its poll
+endpoint and token), its subject format and which mapping reaches your people, and which event types it sends and
+which should end sessions. Then have it send a verification event and check `lastVerifiedAt` and `lastError`.
+
+<Callout type="info" title="Confirm vendor details">
+  The vendor notes below are starting points. Offerings change, so confirm each against the vendor's current
+  documentation before relying on it.
+</Callout>
+
+<Tabs items={['Better IAM', 'Okta', 'Microsoft Entra ID', 'Google', 'Others']}>
+<Tab value="Better IAM">
+
+Another Better IAM deployment's [transmitter](/docs/federation/shared-signals) needs no guesswork:
+
+```ts
+// Downstream deployment: register the upstream transmitter.
+const { source, pushUrl, pushToken } = await downstream.api.signals.createSource(admin, {
+  tenantId,
+  name: 'Acme identity',
+  issuer: 'https://id.acme.example/oidc', // the transmitter's issuer
+  jwksUri: 'https://id.acme.example/oidc/jwks', // or leave it out when upstream serves signals.handler
+  audiences: ['https://iam.example.com/signals/acme'],
+  tenantClaim: upstreamTenantId, // only events about this upstream organization
+  delivery: 'push',
+  subjects: { connectionIds: ['acme-oidc'] },
+  actions: { 'session-revoked': 'revoke-sessions' },
+});
+
+// Upstream deployment (`signals` is its createSharedSignalsTransmitter instance): stream the organization's events.
+const stream = await signals.createStream(upstreamAdmin, {
+  tenantId: upstreamTenantId,
+  name: 'Example IAM',
+  endpointUrl: pushUrl!,
+  audience: 'https://iam.example.com/signals/acme',
+  authorization: `Bearer ${pushToken}`,
+});
+await signals.verifyStream(upstreamAdmin, { tenantId: upstreamTenantId, streamId: stream.id });
+```
+
+A Better IAM transmitter signs every organization's events with the same issuer and key, and names the organization
+in a `tenant_id` claim. Set `tenantClaim` to the upstream organization's ID, so the source accepts only that
+organization's events.
+
+The transmitter sends `iss_sub` subjects whose `sub` is the upstream identity ID. These match federation links when
+the organization signs in through an OIDC connection to the upstream deployment's OAuth provider, whose issuer the
+transmitter usually shares. Otherwise, create the stream with `subjectFormat: 'email'` and turn on `matchEmail`.
+
+</Tab>
+<Tab value="Okta">
+
+To confirm with Okta: which plans transmit which SSF events, how streams are created, and the `aud` and subject
+format it sends.
+
+- **Issuer and keys:** the Okta org URL (`https://acme.okta.com`), with discovery. Add a custom authorization server
+  the sign-in connection uses (`https://acme.okta.com/oauth2/default`) as an alias.
+- **Delivery:** push, with the bearer token as the stream's authorization header.
+- **Subjects:** the Okta user ID (`00u…`) is the `sub` of `iss_sub` subjects and Okta ID tokens and the SCIM
+  `externalId` Okta provisions, so list both connections; turn on `matchEmail` for email subjects. `session-revoked`
+  to `revoke-sessions` is the usual action.
+
+</Tab>
+<Tab value="Microsoft Entra ID">
+
+To confirm with Microsoft: whether and how Entra ID transmits Shared Signals to third-party receivers, and the issuer,
+keys and subject format of its SETs.
+
+- **Issuer:** Entra issuers are specific to the Entra tenant (`https://login.microsoftonline.com/{tenant-id}/v2.0` for
+  its tokens). Use exactly the `iss` its SETs carry.
+- **Subjects:** Entra ID tokens carry a `sub` that differs per application, so federation links rarely match. If the
+  signals name the user's object ID, map `objectId` to `externalId` in the Entra provisioning attribute mappings and
+  list the SCIM connection in `scimConnectionIds`, or map by email with `matchEmail`.
+
+</Tab>
+<Tab value="Google">
+
+Google's RISC API (Cross-Account Protection). To confirm with Google: how the receiver is registered, the event types
+it sends, and its headers.
+
+- **Issuer and keys:** `https://accounts.google.com/` (both spellings are accepted), with discovery through its
+  `risc-configuration`. The audiences are the OAuth client IDs of the Google Cloud project people sign in with.
+- **Type and subject:** Google's SETs carry no `typ` and put the subject inside the event (`subject_type: iss-sub`),
+  so set `requireTyp: false`. The `sub` is the Google account ID, as in Google ID tokens: list the Google sign-in
+  connection in `connectionIds`.
+- **Delivery and events:** push, with `pushToken: false` if Google sends no bearer token (the signature authenticates
+  each event). `sessions-revoked` to `revoke-sessions` ends sessions after Google detects a hijacking; RISC's OAuth
+  token events are `ignored`.
+
+Google registers one receiver per Google Cloud project while a source belongs to one organization, so a project whose
+OAuth clients serve many organizations can route its events to only one of them.
+
+</Tab>
+<Tab value="Others">
+
+For a provider with only webhooks or an API, a small service you run can turn its notifications into SETs signed
+with its own key. Register the service as a source with static `jwks`, and have it push to the source's URL or hand
+the SETs in with `iam.signals.receive` (see [Deployment](#deployment)).
+
+</Tab>
+</Tabs>
+
+## Deployment
+
+```ts title="iam.ts"
+const iam = betterIam({
+  // ...
+  signals: {
+    pushPath: '/api/iam/signals/push', // the default: `${basePath}/signals/push`
+    allowPrivateNetworks: false,
+    allowInsecureLocalhost: false,
+  },
+});
+```
+
+<TypeTable
+  type={{
+    pushPath: {
+      type: 'string',
+      description: 'Where providers push: {pushPath}/{sourceId}. An absolute path of letters, digits, _, - and / (at most 256 characters, no trailing slash).',
+      default: '{basePath}/signals/push',
+    },
+    allowPrivateNetworks: {
+      type: 'boolean',
+      description: 'Lets key, discovery and poll requests reach private and reserved addresses. Organization administrators choose these URLs, so this lets them make the server call into your network. Enable it only for providers on your own network, or in tests.',
+      default: 'false',
+    },
+    allowInsecureLocalhost: {
+      type: 'boolean',
+      description: 'Accepts http:// issuers, key URLs and poll endpoints on loopback hosts. For development and tests only.',
+      default: 'false',
+    },
+  }}
+/>
+
+Every outbound request (keys, discovery documents, polls) goes through the guarded transport. It checks the address
+at connect time, which defeats DNS rebinding, refuses redirects, and bounds the response size and time.
+
+<Callout title="Schedule the poll job">
+  Run `iam.signals.poll()` every minute or so beside your other [jobs](/docs/operations/jobs) (`{ sourceId }` polls
+  one source). It needs no credential, and what it records is audited by the actor `signal:{sourceId}`. Overlapping runs are harmless: an
+  event delivered twice is recognized as a duplicate and acknowledged again. Deployments without poll sources can
+  skip the job, since pushes need nothing scheduled.
+</Callout>
+
+```ts
+setInterval(() => void iam.signals.poll().catch(reportError), 60_000).unref();
+```
+
+- **Custom transports.** `iam.signals.receive(sourceId, set)` verifies and records one SET for an active source
+  exactly as a push does, for example from a queue consumer, and returns `{ eventId, status, duplicate, identityId? }`.
+  It throws `SignalRejectedError` ([`SIGNAL_REJECTED`](/docs/reference/errors#signal_rejected), with the RFC 8935
+  `err`, and `temporary: true` when a later attempt may pass), or `NOT_FOUND` for an unknown or disabled source.
+- **Storage and retention.** Sources (`signalSources`) and received events (`signalEvents`) belong to the organization
+  and are deleted with it. The [retention sweep](/docs/operations/jobs#retention-sweep) (`iam.sweepExpired()`)
+  removes events 90 days after receipt; the audit trail keeps their `signal:received` events. Push tokens are stored
+  as SHA-256 hashes, and poll tokens sealed.
+- **Transport and regions.** The push endpoint caps its body at 64 KiB on every transport. In a multi-region
+  deployment, give providers the push URL of the organization's <Term id="home-region">home region</Term>:
+  transmitters, Better IAM's included, do not follow redirects.
+
+## Audit events
+
+Besides the `signals` group's operation events (`iam:signals:read`, `iam:signals:manage`), the receiver records
+`signal:received`, `signal:revoke-sessions`, `signal:source-create`, `signal:source-update`, `signal:source-delete`,
+`signal:source-rotate` and `signal:reprocess`, subscribable as `signal:*`. Events about received SETs are recorded by
+the actor `signal:{sourceId}`, and changes to sources by the administrator who made them.
+
+## Limits
+
+| Limit | Value |
+| --- | --- |
+| Sources per organization | 20 |
+| Issuer aliases, audiences, static keys | 5, 10, 20 |
+| Connection IDs per mapping list | 10 |
+| Push request body / SET | 64 KiB / 16 KiB |
+| Pushes per source | 3000 per rate-limit window |
+| Poll requests per source and run | 5, each with `maxEvents` (1 to 100, 25 by default) |
+| Poll response | 1 MiB, 10 seconds |
+| Key set / discovery document | 256 KiB / 64 KiB, 5 seconds each |
+| SET age | At most 7 days old, at most 5 minutes in the future |
+| Stored event claims / subject | 4 KiB / 8 KiB |
+| Received event retention | 90 days |
+
+## Not offered
+
+- **Stream management as a receiver.** The receiver does not use a provider's SSF stream configuration, status,
+  verification or subject endpoints. Streams are set up at the provider by an administrator, and verification events
+  are requested there.
+- **Encrypted SETs** (JWE).
+- **Long polling.** Polls always ask the provider to return immediately.
+- **Matching upstream sessions.** Session-level events end all of the person's sessions.
+- **Deployment-wide sources.** Each source belongs to one organization and matches only that organization's people.
+
+## Next steps
+
+<Cards>
+  <Card title="signals API reference" href="/docs/reference/api/signals">
+    Every method with its permission, audit events, and errors.
+  </Card>
+  <Card title="Shared Signals transmitter" href="/docs/federation/shared-signals">
+    Send Better IAM's own session and account events to SIEMs and partner identity providers.
+  </Card>
+  <Card title="Threat detection" href="/docs/guides/threat-detection">
+    Detections, risk levels, incidents, and the playbooks that contain accounts.
+  </Card>
+</Cards>

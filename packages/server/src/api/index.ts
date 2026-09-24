@@ -38,6 +38,22 @@ import { createInferenceApi } from './inference.js';
 import { createTeamsApi } from './teams.js';
 import { createDepartmentsApi } from './departments.js';
 import { createBillingApi } from './billing.js';
+import { createKeysApi } from './keys.js';
+import { createPkiApi } from './pki.js';
+import { createProtectionApi } from './protection.js';
+import { createVaultApi } from './vault.js';
+import { createPrivacyApi } from './privacy.js';
+import { createWorkflowsApi } from './workflows.js';
+import { createComplianceApi } from './compliance.js';
+import { createApplicationsApi } from './applications.js';
+import { createSshApi } from './ssh.js';
+import { createVerifiableCredentialsApi } from './verifiable-credentials.js';
+import { createLdapApi } from './ldap.js';
+import { createThreatsApi } from './threats.js';
+import { createDevicesApi } from './devices.js';
+import { createFiltersApi } from './filters.js';
+import { createQuotasApi } from './quotas.js';
+import { createSignalsApi } from './signals.js';
 
 /**
  * The provisioning API. Every group is an object of `(credential, input)` operations that run through the
@@ -90,6 +106,22 @@ export function createApi(ctx: ServerContext, auth: AuthApi) {
     teams: createTeamsApi(ctx),
     departments: createDepartmentsApi(ctx),
     billing: createBillingApi(ctx),
+    keys: createKeysApi(ctx),
+    pki: createPkiApi(ctx),
+    protection: createProtectionApi(ctx),
+    vault: createVaultApi(ctx),
+    privacy: createPrivacyApi(ctx),
+    workflows: createWorkflowsApi(ctx),
+    compliance: createComplianceApi(ctx),
+    applications: createApplicationsApi(ctx),
+    ssh: createSshApi(ctx),
+    verifiableCredentials: createVerifiableCredentialsApi(ctx),
+    ldap: createLdapApi(ctx),
+    threats: createThreatsApi(ctx),
+    devices: createDevicesApi(ctx),
+    filters: createFiltersApi(ctx),
+    quotas: createQuotasApi(ctx),
+    signals: createSignalsApi(ctx),
   };
 }
 export type Api = ReturnType<typeof createApi>;

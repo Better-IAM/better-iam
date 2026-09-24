@@ -4,6 +4,7 @@ import {
   isIpRange,
   type CredentialInput,
   type IamStore,
+  type Tenant,
 } from '@better-iam/core';
 import type { NetworkBlock } from '@better-iam/auth';
 import type { ServerContext } from '../context.js';
@@ -51,12 +52,29 @@ export function createSecurityApi(ctx: ServerContext) {
         403,
       );
   }
+  /**
+   * The root tenant's own blocks decide whether root administrators can sign in, so they are root's alone as well:
+   * a platform staff member could otherwise block every root administrator's address.
+   */
+  async function rootTenantScope(
+    tx: IamStore,
+    realm: Tenant,
+    principal: Parameters<typeof ctx.rootPrincipal>[1],
+  ) {
+    if (realm.parentId === null && !(await ctx.rootPrincipal(tx, principal)))
+      throw new IamError(
+        'ACCESS_DENIED',
+        'Blocks on the root tenant are set by root administrators',
+        403,
+      );
+  }
   return {
     /**
      * Blocks a network (IPv4/IPv6 address or CIDR block) for the tenant, or for the whole platform with
      * `platform` (root administrators, on the root tenant). `durationMs` (one minute to a year) makes it lapse by
      * itself; without it the block stays until lifted. A network covering the caller's own address (the one their
-     * session was issued from, or the one the request comes from) is refused so nobody locks themselves out.
+     * session was issued from, or the one the request comes from) is refused so nobody locks themselves out. Blocks on
+     * the root tenant, platform-wide or not, are root administrators' alone (as is lifting them).
      * Requires iam:security:manage and recent authentication; audited as `security:network-block`.
      */
     blockNetwork: (
@@ -74,8 +92,9 @@ export function createSecurityApi(ctx: ServerContext) {
         input.tenantId,
         'iam:security:manage',
         'security/networks',
-        async ({ tx, principal }) => {
+        async ({ tx, principal, tenant }) => {
           auth.requireRecent(principal);
+          await rootTenantScope(tx, tenant, principal);
           const network = text(input.network, 'network', 64).trim();
           if (!isIpRange(network))
             throw new IamError(
@@ -139,8 +158,9 @@ export function createSecurityApi(ctx: ServerContext) {
         input.tenantId,
         'iam:security:manage',
         'security/networks',
-        async ({ tx, principal }) => {
+        async ({ tx, principal, tenant }) => {
           auth.requireRecent(principal);
+          await rootTenantScope(tx, tenant, principal);
           const block = await ctx.scoped<NetworkBlock>(
             tx,
             'authBlocks',

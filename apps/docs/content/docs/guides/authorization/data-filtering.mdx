@@ -1,0 +1,380 @@
+---
+title: Data filtering
+description: Turn what a caller may do into a filter for your own database query with planResources, then compile it to SQL, Prisma, or MongoDB.
+metaTitle: Data filtering with query plans
+icon: Funnel
+status: new
+packages: ['@better-iam/core', '@better-iam/server', '@better-iam/middleware']
+sources:
+  - docs/data-filtering.md
+  - packages/core/src/plan.ts
+  - packages/core/src/filter-compilers.ts
+  - packages/server/src/api/filters.ts
+  - packages/middleware/src/index.ts
+---
+
+`iam.authorize` answers "may Alice read document 42?". A list page needs a different answer: "which documents may
+Alice read?", and it needs it inside the database query, so the application neither fetches every row nor calls
+`authorize` once per row. [`listAccessible`](/docs/guides/authorization/queries#list-accessible-resources) answers
+that <Term id="reverse-query">reverse query</Term> for the managed <Term id="resource">resources</Term> IAM stores, but
+most application data lives in your own tables.
+
+Data filtering covers those tables. `iam.planResources` evaluates everything the policy engine already knows about the
+request (the action, the caller's roles, groups, attributes, session, and tenant) and hands back what is left as a
+**query plan**: a filter over the resource's `id` and attributes. You compile the filter into your own query:
+
+```ts title="Server: the documents a person may read (PostgreSQL)"
+import { filterToSql } from 'better-iam/core';
+
+const plan = await iam.planResources({
+  headers: request.headers, // or { token }
+  tenantId,
+  action: 'documents:read',
+  type: 'document',
+});
+if (plan.kind === 'never') return [];
+
+const columns: Record<string, string> = {
+  id: 'd.id',
+  ownerId: 'd.owner_id',
+  classification: 'd.classification',
+};
+const where = filterToSql(plan.filter, {
+  dialect: 'postgres',
+  column: (field) => columns[field],
+  offset: 1, // $1 is the tenant below, so the filter's placeholders start at $2
+});
+const rows = await db.query(`SELECT * FROM documents d WHERE d.tenant_id = $1 AND ${where.sql}`, [
+  tenantId,
+  ...where.params,
+]);
+```
+
+This is partial evaluation, the idea behind Cerbos `PlanResources` and OPA's partial evaluation. The filter has the
+engine's semantics: a row passes it exactly when `authorize` would allow that resource. The one exception is a decision
+refused for exceeding the evaluation work budget, which a database has no equivalent of.
+
+| | `listAccessible` | `planResources` |
+| --- | --- | --- |
+| Resource types | Managed types registered with IAM | Any application or managed type |
+| Returns | The resources, one page at a time, with a `total` | A filter for your own query |
+| Paging and sorting | IAM's, by type and ID | Your database's |
+
+## Plans
+
+A plan is `{ kind, filter }`, together with the `tenantId`, `action`, and `type` it was made for:
+
+| `kind` | Which resources | Typical cause |
+| --- | --- | --- |
+| `always` | Every resource of the type | An owner, a root administrator, a grant without conditions |
+| `never` | None | No grant applies, the tenant is inactive, the action is not in the catalog, the session belongs to another tenant |
+| `conditional` | Those that pass `filter` | Grants or denies with conditions or resource patterns |
+
+`filter` is always present: `true` for `always` and `false` for `never`, so it compiles without branching. Returning
+early on `never` saves a query.
+
+### From policy to filter
+
+Take a role with an owner rule, a public prefix, and a deny on secret documents:
+
+```json title="A role"
+{
+  "version": 1,
+  "statements": [
+    {
+      "effect": "allow",
+      "actions": ["documents:read"],
+      "resources": ["document/*"],
+      "conditions": { "StringEquals": { "resource.ownerId": "${principal.id}" } }
+    },
+    { "effect": "allow", "actions": ["documents:*"], "resources": ["document/public-*"] },
+    {
+      "effect": "deny",
+      "actions": ["documents:*"],
+      "resources": ["document/*"],
+      "conditions": { "StringEquals": { "resource.classification": "secret" } }
+    }
+  ]
+}
+```
+
+For Alice, the plan for `documents:read` on `document` is `conditional`, and `describeFilter` prints its filter as:
+
+```ts
+describeFilter(plan.filter);
+// not (classification = "secret") and (ownerId = "usr_alice" or id like "public-*")
+```
+
+The planner got there like this:
+
+- Statements for other actions and types drop out, and <Term id="policy-variable">policy variables</Term> about the
+  caller are substituted: `${principal.id}` becomes `usr_alice`.
+- <Term id="condition">Conditions</Term> on the caller and the request (`principal.mfa`, `principal.groups`,
+  `request.time`, ...) are decided now, so they become `true` or `false` and disappear from the filter.
+- [Resource patterns](/docs/guides/authorization/policies#actions-and-resource-patterns) become conditions on `id`:
+  `document/public-*` is `id like "public-*"`, and `document/*` matches every ID.
+- Conditions on `resource.{name}` become conditions on the field `name`: `resource.classification` is the field
+  `classification`, and `resource.tag.team` is the field `tag.team`.
+- [Relationship](/docs/guides/authorization/relationships) conditions become ID lists. `ArrayContains` on
+  `resource.relations` turns into the IDs of the resources the caller holds the relation on (directly or through a
+  group), and on `resource.parentRelations` into `parentType` and `parentId` pairs.
+
+### What a plan takes into account
+
+Everything a decision uses applies to the plan too:
+
+- deny statements across every role, and the tenant's <Term id="boundary">boundaries</Term>;
+- the session's scope-down policy and an API key's scopes;
+- [access windows and just-in-time activations](/docs/guides/authorization/temporary-access);
+- an agent's <Term id="ceiling">ceiling</Term> and its delegation's scope.
+
+Two kinds of session get special treatment. A "view as" session (<Term id="impersonation">impersonation</Term>) gets
+only what the administrator behind it could reach as well: its plan is the intersection of both. A delegated session
+whose delegation holds the action back for the person's
+[confirmation](/docs/guides/ai-agents#confirming-sensitive-actions-one-at-a-time) plans `never`; the resources the person
+confirmed a moment ago are left to `authorize`.
+
+<Callout type="info" title="Filter lists, check single resources">
+  A plan decides which rows a list shows. Before changing or returning one specific resource, call `iam.require` (or
+  `authorize`) as usual: it is the audited check, and access can change between rendering a list and acting on it.
+</Callout>
+
+## Filters
+
+The filter is a small tree, `ResourceFilter` in `better-iam/core`:
+
+| Kind | Passes when |
+| --- | --- |
+| `true`, `false` | Always, never |
+| `and`, `or`, `not` | The usual combinations |
+| `exists` | The field is present |
+| `type` | The field holds a string, a number, a boolean, or an IP address |
+| `equals` | The field equals one of `values`, compared with the value's type (`ignoreCase` for strings) |
+| `compare` | A number field is `lt`, `le`, `gt`, or `ge` a value |
+| `like` | A string field matches a glob (`*`, `?`, and `\` to escape), optionally ignoring case |
+| `date` | An ISO 8601 timestamp field is `before` or `after` a moment |
+| `ip` | An IP address field is inside a network (an address or CIDR block) |
+| `contains` | An array field contains a value |
+
+A missing field (or SQL `NULL`) satisfies nothing but `not exists`, just as a missing attribute satisfies no condition
+in the engine, and every compiler keeps that rule under negation. The deny above compiles to
+`not (classification = "secret")`, so a row whose classification is empty passes it, exactly as `authorize` would let
+that document through. Negated operators such as `StringNotEquals` require the field to be present with the right type,
+also as in the engine. [Missing keys](/docs/guides/authorization/conditions#missing-keys) explains how to guard denies
+on optional attributes.
+
+## Compile the filter
+
+`better-iam/core` (also `@better-iam/core`) compiles a filter for several targets:
+
+| Function | Output | Supports |
+| --- | --- | --- |
+| `filterMatches(filter, row)` | `boolean` | Every filter, exactly |
+| `filterToSql(filter, options)` | `{ sql, params }`, with `$n` placeholders for PostgreSQL and `?` for SQLite | All but `ip` and `contains` |
+| `filterToPrisma(filter, options?)` | A Prisma `where` | Globs that are exact, `prefix*`, `*suffix`, or `*part*`; no `date` or `ip` |
+| `filterToMongo(filter, options?)` | A MongoDB query | All but `date` and `ip` |
+| `describeFilter(filter)` | A readable string, for logs and tests | Every filter |
+
+What a target cannot express refuses with [`UNSUPPORTED_FILTER`](/docs/reference/errors#unsupported_filter) rather
+than returning a query that includes or leaves out the wrong rows. Fall back to `filterMatches` over candidate rows from
+a coarser query, or to `authorize` for each row.
+
+### SQL
+
+`filterToSql` produces a boolean expression for a `WHERE` clause:
+
+<TypeTable
+  type={{
+    dialect: {
+      type: "'postgres' | 'sqlite'",
+      description: 'The placeholder style and SQL functions to use.',
+      required: true,
+    },
+    column: {
+      type: '(field: string) => string | undefined',
+      description:
+        "The trusted SQL expression for a field of the plan: a column, or a JSON path such as data->>'owner'. Return undefined for a field your table does not have: compiling then refuses with INVALID_INPUT instead of guessing.",
+      required: true,
+    },
+    offset: {
+      type: 'number',
+      description:
+        'PostgreSQL placeholders start after this many parameters, for a filter inside a query that has parameters of its own.',
+      default: '0',
+    },
+  }}
+/>
+
+- Values are always bound parameters. Only the expressions `column` returns are written into the SQL, so they must
+  come from your code, never from the request.
+- Every comparison is written as `(column IS NOT NULL AND ...)`, which keeps SQL's three-valued logic from changing
+  what a negation means.
+- PostgreSQL matches globs with `LIKE ... ESCAPE '\'` and compares dates as `timestamptz`. SQLite matches with `GLOB`,
+  which is case-sensitive like the engine, and compares dates with `julianday()`.
+- Case-insensitive comparisons use `LOWER()`, which SQLite applies to ASCII letters only.
+- Columns should hold the types conditions compare: text for string conditions, numbers, booleans (`0` and `1` in
+  SQLite), and ISO 8601 text for dates. A `type` test compiles to `IS NOT NULL`, so the column's own type stands in
+  for it.
+
+### Prisma, MongoDB, and in memory
+
+<Tabs items={['Prisma', 'MongoDB', 'In memory']}>
+<Tab value="Prisma">
+
+```ts
+import { filterToPrisma } from 'better-iam/core';
+
+const documents = await prisma.document.findMany({
+  where: {
+    AND: [{ tenantId }, filterToPrisma(plan.filter, { field: (name) => (name === 'classification' ? 'level' : name) })],
+  },
+});
+```
+
+`field` maps a plan field to a model field (the same name by default). Case-insensitive comparisons use
+`mode: 'insensitive'`, which Prisma offers on PostgreSQL and MongoDB, and `contains` becomes `has` on a scalar list.
+
+</Tab>
+<Tab value="MongoDB">
+
+```ts
+import { filterToMongo } from 'better-iam/core';
+
+const cursor = mongo.collection('documents').find({
+  $and: [{ tenantId }, filterToMongo(plan.filter, { field: (name) => (name === 'id' ? '_id' : name) })],
+});
+```
+
+`field` maps a plan field to a document field (the same name by default); map `id` to `_id` if that is where IDs live.
+Globs become anchored regular expressions.
+
+</Tab>
+<Tab value="In memory">
+
+```ts
+import { filterMatches } from 'better-iam/core';
+
+const visible = candidates.filter((row) => filterMatches(plan.filter, { id: row.id, ...row.attributes }));
+```
+
+`filterMatches` reads `id` and every other field by its name as a flat key: `record['tag.team']` for
+`resource.tag.team`. It supports every filter with the engine's exact semantics, which makes it the fallback when a
+query target refuses.
+
+</Tab>
+</Tabs>
+
+## Map fields to columns
+
+The filter's fields are `id` and the attribute names the engine sees when it decides one resource. For
+[application-owned resources](/docs/guides/concepts/resources-and-catalog#application-owned-and-managed-resources)
+those are the `attributes` your `resolveResource` returns; for managed resources, the registry record's attributes.
+Relationship conditions on `resource.parentRelations` add `parentType` and `parentId`.
+
+Keep the plan's field names and your columns in step. A plan that names a field your `column` mapper does not know
+refuses to compile, which is the signal that a policy started using an attribute your table does not store.
+
+## Policies a plan cannot express
+
+Planning itself refuses with [`UNSUPPORTED_FILTER`](/docs/reference/errors#unsupported_filter) when a statement that
+could apply to the action and type:
+
+- **compares with the resource's own attributes** through a variable, such as `${resource.ownerId}` in a condition
+  value or a resource pattern. The value differs from row to row, which a filter of constants cannot express.
+  `${resource.tenantId}` is known for the whole plan and works.
+- **has a condition on `resource.id`**. The engine reads that key as an attribute named `id`, which a filter cannot
+  tell apart from the resource's ID. Match IDs with the statement's `resources` patterns instead.
+- **is too complex to plan**: policies full of wildcards that would take more than `planWorkLimit` (200,000 units of
+  work) to plan, so planning stays fast and filters stay small.
+
+When planning refuses, check the rows with `authorize`, or `authorizeMany` for up to fifty at a time.
+
+## Where to call it
+
+Plans cover application actions on application and managed <Term id="resource-type">resource types</Term>. `iam:*`
+administration actions and IAM's internal types (`iam`, `role`, `saml`, ...) refuse with `INVALID_INPUT`.
+
+### In process
+
+`iam.planResources({ token | headers, tenantId, action, type })` returns the caller's plan, taking the credential in the
+request as [`authorize`](/docs/reference/api#authorize) does. It needs no permission and is not audited
+([reference](/docs/reference/api#planresources)).
+
+### In framework routes
+
+The per-request helpers of the [Node framework integrations](/docs/frameworks/node) have
+`plan({ action, type, tenantId? })`: the request's own plan, in the session's tenant unless you name another, and
+`never` when signed out.
+
+| Framework | Call |
+| --- | --- |
+| Express | `req.iam.plan(...)` |
+| Hono | `c.get('iam').plan(...)` |
+| Fastify | `request.iam.plan(...)` |
+| [SvelteKit](/docs/frameworks/sveltekit) | `event.locals.iam.plan(...)` |
+| [React Router](/docs/frameworks/react-router) | `iamRouter.helpers(args).plan(...)` |
+
+```ts title="Express: a document list"
+import { filterToSql } from 'better-iam/core';
+
+app.get('/documents', async (req, res) => {
+  const plan = await req.iam.plan({ action: 'documents:read', type: 'document' });
+  if (plan.kind === 'never') return res.json([]);
+  const where = filterToSql(plan.filter, { dialect: 'postgres', column: (field) => columns[field], offset: 1 });
+  const sql = `SELECT * FROM documents d WHERE d.tenant_id = $1 AND ${where.sql}`;
+  res.json(await db.query(sql, [plan.tenantId, ...where.params]));
+});
+```
+
+In other frameworks, call `iam.planResources` with the request's headers.
+
+### Over HTTP
+
+[`filters.plan({ tenantId, action, type })`](/docs/reference/api/filters#plan) (`POST {basePath}/filters/plan`) is the
+same plan over HTTP and the typed client. It needs only a session of the tenant and is not audited: your queries decide
+which rows come back, and `authorize` stays the check for one resource.
+
+### Another identity's plan
+
+[`filters.planFor({ tenantId, identityId, action, type, assumeMfa? })`](/docs/reference/api/filters#planfor) previews
+another identity's plan without a session of theirs, as `policies.simulate` does for one decision. `assumeMfa` plans as
+if the identity had signed in with MFA. It requires `iam:policies:simulate` on the identity and is audited as that
+action.
+
+### Plan your own policies
+
+The planner is a pure function over policy documents, `planResources` in `better-iam/core`, for planning policies of
+your own without a server:
+
+```ts
+import { describeFilter, planResources } from 'better-iam/core';
+
+const plan = planResources({
+  action: 'documents:read',
+  resourceType: 'document',
+  tenantId,
+  context: { 'principal.id': 'usr_alice' }, // principal, request and tenant keys; no resource keys
+  denies: [], // deny statements that apply across every grant path
+  boundaries: [], // ceilings over every path
+  paths: [{ grants: [role], boundaries: [] }], // a resource is allowed through any one path
+});
+describeFilter(plan.filter);
+// not (classification = "secret") and (ownerId = "usr_alice" or id like "public-*")
+```
+
+## Next steps
+
+<Cards>
+  <Card title="filters API reference" href="/docs/reference/api/filters">
+    `plan` and `planFor` with their permissions, audit events, and errors.
+  </Card>
+  <Card title="Batches and reverse queries" href="/docs/guides/authorization/queries">
+    `authorizeMany` for a page of checks and `listAccessible` for managed resources.
+  </Card>
+  <Card title="Policy conditions" href="/docs/guides/authorization/conditions">
+    The operators a plan translates, and how missing keys behave.
+  </Card>
+  <Card title="Relationships" href="/docs/guides/authorization/relationships">
+    Relations on resources, which plans turn into ID lists.
+  </Card>
+</Cards>

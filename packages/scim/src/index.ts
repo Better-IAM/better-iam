@@ -737,9 +737,12 @@ export function createScimService(config: ScimConfig) {
         if (['POST', 'PUT', 'PATCH'].includes(request.method)) {
           if (!request.headers.get('content-type')?.match(/application\/(scim\+)?json/i))
             throw new IamError('invalidSyntax', 'A JSON content type is required.', 415);
-          const raw = await request.text();
-          if (raw.length > MAX_PAYLOAD_SIZE)
-            throw new IamError('tooLarge', 'Request body is too large.', 413);
+          // Read with a cap: the body arrives before the connection's token is checked.
+          const raw = await limitedText(request, MAX_PAYLOAD_SIZE).catch((error: unknown) => {
+            throw error instanceof IamError && error.status === 413
+              ? new IamError('tooLarge', 'Request body is too large.', 413)
+              : error;
+          });
           body = object(JSON.parse(raw));
         }
         const base = `${url.origin}${basePath}/${encodeURIComponent(connectionId)}`;

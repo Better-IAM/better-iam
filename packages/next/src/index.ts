@@ -468,6 +468,8 @@ const forwardedHeaders = [
   'x-forwarded-host',
   'x-forwarded-proto',
   'x-real-ip',
+  // A registered device's signed proof (verified by the server against the enrolled key and the session).
+  'x-better-iam-device',
 ];
 
 export interface AuthorizeSpec<Input> {
@@ -696,6 +698,9 @@ export function createIamNext<T extends IamLike>(
     if (!hasSessionCookie(headers) || headers.get('sec-fetch-site') === 'same-origin') return;
     const origin = headers.get('origin');
     if (!origin) throw new IamError('CSRF_REJECTED', 'Cookie requests require Origin', 403);
+    // An opaque `null` origin (sandboxed frames, redirects, no-referrer posts) equals the `.origin` of non-http
+    // trusted entries such as `capacitor://localhost`, so it is refused before any comparison.
+    if (origin === 'null') throw new IamError('UNTRUSTED_ORIGIN', 'Origin is not trusted', 403);
     const host = urlPart(origin, 'host');
     const ownHosts = [
       headers.get('x-forwarded-host')?.split(',')[0]?.trim(),

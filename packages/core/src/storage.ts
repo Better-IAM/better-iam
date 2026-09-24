@@ -116,6 +116,8 @@ export const LOOKUP_INDEX_STEPS: Readonly<Record<string, readonly string[]>> = O
   ]),
   // Session cascades: role and temporary sessions by their source session, and by trust.
   '0005_lookup_indexes': Object.freeze(['sourceSessionId', 'trustId']),
+  // Data protection: deterministic token lookups and erasure by value (keyed value fingerprints).
+  '0006_protection_indexes': Object.freeze(['fingerprint']),
 });
 
 /**

@@ -160,7 +160,12 @@ describe('Shared Signals Framework transmitter', () => {
       subjectFormat: 'email',
     });
     transmitter.subscribe(iam.events);
-    await fixture.member('bob');
+    const created = await fixture.member('bob');
+    // Email subjects name verified addresses only.
+    await iam.store.transaction(async (tx) => {
+      const record = (await tx.get('identities', created.id))!;
+      await tx.put('identities', { ...record, emailVerified: true });
+    });
     const bob = await fixture.signIn('bob');
     endpoint.refuse(500);
     await iam.api.auth.changePassword(
@@ -195,6 +200,7 @@ describe('Shared Signals Framework transmitter', () => {
     const set = await decode(endpoint.received.at(-1)!.set);
     expect(set.payload.aud).toBe('https://receiver.example.test');
     expect(set.payload.sub_id).toEqual({ format: 'email', email: 'bob@acme.test' });
+    expect(set.payload.tenant_id).toBe(tenantId);
 
     // Paused streams keep events and deliver them after resuming.
     await transmitter.updateStream(ownerCredential, {

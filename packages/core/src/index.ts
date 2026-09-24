@@ -7,6 +7,9 @@ export * from './instrument.js';
 export * from './snapshot.js';
 export * from './jcs.js';
 export * from './delegation-tokens.js';
+export * from './shared-signals.js';
+export * from './plan.js';
+export * from './filter-compilers.js';
 
 export class IamError extends Error {
   constructor(
@@ -273,6 +276,12 @@ export interface Identity extends StoredRecord {
   passwordHash?: string;
   /** When the current password was set; drives `passwordMaxAgeDays` (identities without it use `createdAt`). */
   passwordChangedAt?: number;
+  /**
+   * Set by self sign-up: the password was chosen before anyone proved control of the email address. The first emailed
+   * sign-in removes such a password (and ends the account's sessions); verifying the address or resetting the
+   * password clears the flag.
+   */
+  unprovenPassword?: boolean;
   phone?: string;
   phoneVerified?: boolean;
   /**
@@ -396,6 +405,11 @@ export interface AuditSessionContext {
 export interface AuthenticatedPrincipal {
   identity: Identity;
   session: Session;
+  /**
+   * The unverified device proof the request carried (`x-better-iam-device`, a compact JWS of at most 2048 characters).
+   * Decisions verify it against the registered device keys and the session before it counts; never trust it as is.
+   */
+  deviceProof?: string;
 }
 export interface AuditEvent extends StoredRecord {
   actorId: string;
@@ -495,6 +509,12 @@ export interface PluginEndpoint {
   action: string;
   /** Validation must reject unknown/invalid fields before calling handler. */
   validate(input: unknown): Record<string, unknown>;
+  /**
+   * The record the endpoint acts on, from the validated input (for example `project/${input.projectId}`): the action
+   * is then authorized on `iam/{resource}`, so policies about one record (a Deny on one project) apply. Without it the
+   * endpoint is authorized on the tenant itself (`iam/{tenantId}`), which suits tenant-wide operations only.
+   */
+  resource?(input: Record<string, unknown>): string;
   handler(context: PluginEndpointContext, input: Record<string, unknown>): Promise<unknown>;
 }
 export interface OperationHookInput {

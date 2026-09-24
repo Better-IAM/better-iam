@@ -42,9 +42,17 @@ export function selectPath(value: unknown, path: string): unknown {
   return walk(value, segments(path));
 }
 
+/**
+ * Server data printed as text (names, descriptions) may carry terminal control sequences (escape codes that rewrite
+ * the screen or set the clipboard): they are shown as U+FFFD. Line breaks and tabs survive only where `keepLines`.
+ */
+function printable(text: string, keepLines = false): string {
+  return text.replace(keepLines ? /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g : /[\u0000-\u001f\u007f-\u009f]/g, '\uFFFD');
+}
+
 function cell(value: unknown): string {
   if (value === undefined || value === null) return '';
-  if (typeof value === 'string') return value;
+  if (typeof value === 'string') return printable(value);
   if (typeof value === 'number' || typeof value === 'boolean') return String(value);
   const text = JSON.stringify(value);
   return text.length > 60 ? `${text.slice(0, 57)}...` : text;
@@ -65,7 +73,9 @@ export function renderTable(value: unknown): string {
     if (value && typeof value === 'object') {
       const entries = Object.entries(value);
       const width = Math.max(0, ...entries.map(([key]) => key.length));
-      return entries.map(([key, item]) => `${key.padEnd(width)}  ${cell(item)}`).join('\n');
+      return entries
+        .map(([key, item]) => `${printable(key).padEnd(width)}  ${cell(item)}`)
+        .join('\n');
     }
     return cell(value);
   }
@@ -78,7 +88,7 @@ export function renderTable(value: unknown): string {
       for (const key of Object.keys(row)) if (!columns.includes(key)) columns.push(key);
   const shown = columns.slice(0, 8);
   const grid = [
-    shown.map((column) => column.toUpperCase()),
+    shown.map((column) => printable(column).toUpperCase()),
     ...rows.map((row) =>
       shown.map((column) =>
         cell(row && typeof row === 'object' ? (row as Record<string, unknown>)[column] : undefined),
@@ -104,7 +114,7 @@ export function formatResult(
   query?: string,
 ): string {
   const selected = query === undefined ? value : selectPath(value, query);
-  if (typeof selected === 'string') return selected;
+  if (typeof selected === 'string') return printable(selected, true);
   if (format === 'table') return renderTable(selected);
   const text = JSON.stringify(selected, null, format === 'compact' ? undefined : 2);
   return text === undefined ? 'null' : text;

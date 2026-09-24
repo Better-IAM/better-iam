@@ -15,12 +15,19 @@ export type AuditChainFailure =
   | 'sequence-gap'
   | 'previous-hash-mismatch'
   | 'hash-mismatch'
-  | 'head-mismatch';
+  | 'head-mismatch'
+  /** The whole chain starts after sequence 1 with no `audit:prune` checkpoint in it for the missing events. */
+  | 'missing-prefix'
+  /** The whole chain holds an event without chain fields: every writer chains, so it was inserted around them. */
+  | 'unchained';
 export interface AuditChainVerification {
   valid: boolean;
   /** Chained events that were checked. */
   checked: number;
-  /** Events without chain fields (recorded before the chain existed and not yet backfilled); never counted as failures. */
+  /**
+   * Events without chain fields. A run of events (no `head`) only counts them; verifying a whole chain against its
+   * head fails on them.
+   */
   unchained: number;
   first?: number;
   last?: number;
@@ -90,6 +97,10 @@ export async function appendAuditEvent(tx: IamStore, event: AuditEvent): Promise
  * Verifies a run of events from one tenant: contiguous sequences, each `previousHash` equal to the previous event's
  * hash (or `previousHash` of the first event when the run starts mid-chain), and every hash recomputable.
  * Events are sorted by sequence first, so exports and database reads can be passed as they come.
+ *
+ * With `head`, the events are the tenant's whole stored chain, so deleting events at either end or around the chain
+ * shows too: it must end at the head (even when no event is left), start at sequence 1 or right after an
+ * `audit:prune` checkpoint recorded inside it, and hold no unchained events.
  */
 export async function verifyAuditChain(
   events: AuditEvent[],
@@ -126,13 +137,27 @@ export async function verifyAuditChain(
     expectedPrevious = event.hash;
     expectedSequence = sequence + 1;
   }
-  if (
-    options.head &&
-    chained.length &&
-    (options.head.sequence !== result.last || options.head.hash !== result.lastHash)
-  ) {
+  const { head } = options;
+  if (!head) return result;
+  const fail = (sequence: number, id: string, reason: AuditChainFailure) => {
     result.valid = false;
-    result.failure = { sequence: result.last!, id: chained.at(-1)!.id, reason: 'head-mismatch' };
-  }
+    result.failure = { sequence, id, reason };
+    return result;
+  };
+  if (head.sequence !== result.last || head.hash !== result.lastHash)
+    return fail(result.last ?? head.sequence, chained.at(-1)?.id ?? '', 'head-mismatch');
+  const start = chained[0]!;
+  if (
+    start.sequence! > 1 &&
+    !chained.some(
+      (event) =>
+        event.action === 'audit:prune' &&
+        event.metadata?.prunedThroughSequence === start.sequence! - 1 &&
+        event.metadata?.prunedThroughHash === start.previousHash,
+    )
+  )
+    return fail(start.sequence!, start.id, 'missing-prefix');
+  const loose = events.find((event) => typeof event.sequence !== 'number');
+  if (loose) return fail(0, loose.id, 'unchained');
   return result;
 }

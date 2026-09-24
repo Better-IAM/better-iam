@@ -1,0 +1,93 @@
+---
+title: Secrets and keys
+metaTitle: Secrets, keys, tokenization and certificates
+description: Tenant keys, a secrets vault, tokenization of sensitive data, and a private certificate authority, all decided by the same policies and audit trail.
+icon: KeyRound
+status: new
+packages: ['@better-iam/server']
+sources:
+  - docs/key-management.md
+  - docs/secrets-vault.md
+  - docs/data-protection.md
+  - docs/private-ca.md
+---
+
+import { BadgeCheck, FileBraces, KeyRound, LockKeyhole, SquareTerminal, IdCard } from '@/lib/icons';
+
+Applications need more than "may this person do this?". They need encryption keys, database passwords, API keys for
+upstream services, somewhere safe to put card numbers, and certificates for the services that talk to each other.
+These usually live in separate products, each with its own access model and its own log, so the question "who could
+read the payments database password last March?" has no single answer.
+
+Better IAM keeps them next to the identities and <Term id="policy">policies</Term> that decide who may use them. Every
+key, secret, token profile and certificate authority is a <Term id="resource">resource</Term> of a
+<Term id="tenant">tenant</Term>: policies grant its actions with conditions on its tags and attributes, and every call
+is recorded in the tenant's <Term id="audit-chain">audit chain</Term>, without plaintexts.
+
+## Four services
+
+<Cards>
+  <Card icon={<KeyRound />} title="Key management" href="/docs/guides/secrets-and-keys/key-management">
+    Keys whose material never leaves the server: encrypt and decrypt, data keys for envelope encryption, signatures,
+    MACs and JWTs, with aliases, rotation, grants and a deletion waiting period.
+  </Card>
+  <Card icon={<LockKeyhole />} title="Secrets vault" href="/docs/guides/secrets-and-keys/secrets-vault">
+    Versioned secrets under path-like names, rotation with generated values, check-outs of shared privileged
+    credentials, and dynamic secrets with leases.
+  </Card>
+  <Card icon={<FileBraces />} title="Data protection" href="/docs/guides/secrets-and-keys/data-protection">
+    Tokenization of card numbers, national identifiers, emails, phone numbers and free text, with format-preserving
+    tokens, masks, and detokenization for a stated purpose.
+  </Card>
+  <Card icon={<BadgeCheck />} title="Private CA" href="/docs/guides/secrets-and-keys/private-ca">
+    X.509 roots and intermediates for mutual TLS and internal HTTPS, with policies on every name, SPIFFE workload
+    identities, revocation and CRLs.
+  </Card>
+</Cards>
+
+## Which one do I need?
+
+| You want to                                                                 | Use                                  | API group    |
+| --------------------------------------------------------------------------- | ------------------------------------ | ------------ |
+| Encrypt a field or a file, sign a message or token, or check a MAC          | Key management                       | `keys`       |
+| Store a password or API key your service reads at runtime                   | Secrets vault                        | `vault`      |
+| Rotate a credential on a schedule, or hand one out to one person at a time  | Secrets vault (rotation, check-outs) | `vault`      |
+| Give each caller its own short-lived database credential                    | Secrets vault (dynamic secrets)      | `vault`      |
+| Keep card numbers or national identifiers out of your databases and logs    | Data protection                      | `protection` |
+| Issue certificates for mutual TLS or internal HTTPS, or workload identities | Private CA                           | `pki`        |
+
+## How they fit together
+
+The services build on each other. Key management is the base: data protection encrypts values with one data key per
+call wrapped under a tenant KMS key, a certificate authority signs with a KMS key pinned to one version, and a vault
+secret can be sealed under a customer-managed KMS key (`kmsKey`), so disabling that key shreds its values. A key that
+a certificate authority or a data protection profile uses is **managed** by it (`managedBy`): direct KMS calls on it
+are refused with `KEY_MANAGED`, so nobody can use the authority's signing key around the authority's own policies.
+
+Key material, vault values and authority keys are sealed under the deployment secret and re-sealed by
+`iam.rotateSecrets()`, like every other stored secret (see
+[secret rotation](/docs/operations/deployment/secrets)).
+
+## Scheduled jobs
+
+Each service has maintenance work that no request triggers. Run these from your scheduler next to the
+[other jobs](/docs/operations/jobs):
+
+| Job                          | How often         | What it does                                                                             |
+| ---------------------------- | ----------------- | ---------------------------------------------------------------------------------------- |
+| `iam.kms.maintain()`         | hourly            | Rotates keys that are due, destroys keys past their deletion date, removes lapsed grants |
+| `iam.vault.rotateDue()`      | hourly            | Rotates due secrets and retries failed rotations                                         |
+| `iam.vault.expireLeases()`   | every few minutes | Ends expired check-outs and leases and retries failed revocations                        |
+| `iam.vault.purgeDeleted()`   | daily             | Deletes secrets past their recovery window                                               |
+| `iam.protection.sweep()`     | daily             | Deletes tokens older than their profile's retention                                      |
+
+## Related
+
+<Cards>
+  <Card icon={<SquareTerminal />} title="SSH access" href="/docs/guides/ssh-access">
+    Short-lived OpenSSH certificates for exactly the hosts and logins policies allow.
+  </Card>
+  <Card icon={<IdCard />} title="Verifiable credentials" href="/docs/federation/verifiable-credentials">
+    Signed credentials about your people that they keep in a digital wallet.
+  </Card>
+</Cards>

@@ -430,9 +430,46 @@ export function ruleMatch(
 const operatorsOf = (clause: PackageRuleConditions) =>
   Object.entries(clause) as Array<[ConditionOperator, Record<string, unknown>]>;
 
-/** Advice, not errors: rules that also match service accounts, and email tests that accept unverified addresses. */
-export function ruleWarnings(rule: AutoAssignRule | AutoAssignInput): string[] {
+/** Keys fixed when an identity is created (or moved only by an ownership transfer); other `principal.` keys are attributes. */
+const fixedPrincipalKeys = new Set(['principal.id', 'principal.kind', 'principal.owner']);
+
+/**
+ * Advice, not errors: rules that also match service accounts, email tests that accept unverified addresses, and
+ * clauses on facts that callers with fewer rights than the rule's owner control. A rule grants under its owner's
+ * authority to whoever matches, so whoever sets those facts picks the recipients: declared attributes and
+ * identity.managerId (iam:identities:update), and memberships of groups without role bindings (iam:groups:update
+ * alone; adding to a group with bindings needs their authorities). `boundGroups` holds the tenant's groups that have
+ * role bindings; without it, groups are not checked.
+ */
+export function ruleWarnings(
+  rule: AutoAssignRule | AutoAssignInput,
+  env: { boundGroups?: ReadonlySet<string> } = {},
+): string[] {
   const warnings: string[] = [];
+  const controlled = (clause: PackageRuleConditions, path: string, consequence: string) => {
+    const keys = [
+      ...new Set(
+        operatorsOf(clause).flatMap(([, entries]) =>
+          Object.keys(entries).filter(
+            (key) =>
+              key === 'identity.managerId' ||
+              (key.startsWith('principal.') && !fixedPrincipalKeys.has(key)),
+          ),
+        ),
+      ),
+    ].sort();
+    if (keys.length)
+      warnings.push(
+        `${path} tests ${keys.join(', ')}, which anyone holding iam:identities:update can set, so ${consequence}`,
+      );
+    const unbound = env.boundGroups
+      ? ruleGroupIds({ include: [clause] }).filter((groupId) => !env.boundGroups!.has(groupId))
+      : [];
+    if (unbound.length)
+      warnings.push(
+        `${path} tests identity.groups for ${unbound.join(', ')}, ${unbound.length === 1 ? 'a group' : 'groups'} without role bindings whose members anyone holding iam:groups:update can change, so ${consequence}`,
+      );
+  };
   rule.include.forEach((clause, index) => {
     const tests = operatorsOf(clause);
     if (
@@ -448,7 +485,15 @@ export function ruleWarnings(rule: AutoAssignRule | AutoAssignInput): string[] {
       warnings.push(
         `include[${index}] tests an email address without requiring Bool identity.emailVerified: true, so unverified addresses match (SCIM-provisioned and administrator-set addresses are unverified)`,
       );
+    controlled(
+      clause,
+      `include[${index}]`,
+      'they choose who receives this package under its owner’s authority',
+    );
   });
+  (rule.exclude ?? []).forEach((clause, index) =>
+    controlled(clause, `exclude[${index}]`, 'they can lift the exclusion'),
+  );
   return warnings;
 }
 

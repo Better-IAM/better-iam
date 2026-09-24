@@ -216,12 +216,31 @@
     "deprecated": false
    },
    {
+    "name": "checkFetchUrl",
+    "kind": "function",
+    "params": [
+     "value",
+     "options"
+    ],
+    "doc": "Checks the URL rules: https on port 443 (any port with `anyPort`) without credentials or a fragment (loopback hosts\nmay use http and any port with `allowInsecureLocalhost`), and, for an IP-literal host, a public address. Throws\n`SafeFetchError` ('url' or 'address') and returns the parsed URL.",
+    "deprecated": false
+   },
+   {
     "name": "createAuth",
     "kind": "function",
     "params": [
      "options"
     ],
     "doc": "",
+    "deprecated": false
+   },
+   {
+    "name": "createGuardedFetch",
+    "kind": "function",
+    "params": [
+     "options?"
+    ],
+    "doc": "A `fetch` under the SSRF rules: the URL rules of `checkFetchUrl`, and a connect-time DNS check that refuses hosts\nresolving to non-public addresses. Redirects are never followed: with `redirect: 'error'` a 3xx rejects as `fetch`\nwould, otherwise it is returned as is. Failures reject like `fetch` (a `TypeError` whose `cause` is the\n`SafeFetchError` or network error, or the signal's reason once `signal` aborts). The response body streams, bounded by\n`maxBytes` when set.",
     "deprecated": false
    },
    {
@@ -268,6 +287,15 @@
     "deprecated": false
    },
    {
+    "name": "describeUserAgent",
+    "kind": "function",
+    "params": [
+     "userAgent"
+    ],
+    "doc": "A short description of a User-Agent for security notices (\"Chrome on Windows\"). The header is chosen by whoever\nsent the request, so it never reaches a message verbatim: otherwise anyone could put their own text and links into\na genuine sign-in notice by failing a sign-in with a crafted header.",
+    "deprecated": false
+   },
+   {
     "name": "encryptSecret",
     "kind": "function",
     "params": [
@@ -276,6 +304,16 @@
      "context?"
     ],
     "doc": "Authenticated encryption; the application secret must be a high-entropy, stable secret.",
+    "deprecated": false
+   },
+   {
+    "name": "fetchJsonSafely",
+    "kind": "function",
+    "params": [
+     "value",
+     "options"
+    ],
+    "doc": "GETs a JSON document under the SSRF rules above. Any status other than 200 fails ('redirect' for 3xx, else\n'status'), as do a content type without \"json\", a body over `maxBytes`, the deadline, and unparseable JSON.",
     "deprecated": false
    },
    {
@@ -294,6 +332,15 @@
      "password"
     ],
     "doc": "The built-in weak-password screen: common passwords, keyboard walks and sequences, and low variety.",
+    "deprecated": false
+   },
+   {
+    "name": "isPublicAddress",
+    "kind": "function",
+    "params": [
+     "address"
+    ],
+    "doc": "True for a globally routable unicast address; false for private, reserved and malformed values.",
     "deprecated": false
    },
    {
@@ -357,7 +404,14 @@
      "message",
      "options?"
     ],
-    "doc": "Renders the messages Better IAM queues (`verify-email`, `password-reset`, `email-change`, `magic-link`, `code`,\n`mfa-code`, `new-sign-in`, `sign-in-failures`, `certification-review`, `certification-reminder`, `delegation-request`,\n`delegation-confirmation`, `team-join-request`, `team-join-decided`, `team-review-requested`, `spend-alert`,\n`spend-anomaly`, `billing-statement`, `payment-reminder`,\n`owner-invitation`, `member-invitation`)\ninto a subject, plain text, and HTML, so a\ndelivery callback can hand them to any provider. Returns undefined for templates it does not know (plugins,\nnewer features), which the callback should render itself.",
+    "doc": "Renders the messages Better IAM queues (`verify-email`, `password-reset`, `email-change`, `magic-link`, `code`,\n`mfa-code`, `new-sign-in`, `sign-in-failures`, `certification-review`, `certification-reminder`, `delegation-request`,\n`delegation-confirmation`, `team-join-request`, `team-join-decided`, `team-review-requested`, `spend-alert`,\n`spend-anomaly`, `billing-statement`, `payment-reminder`,\n`privacy-request-verify`, `privacy-request-received`, `privacy-request-update`, `privacy-request-due`,\n`workflow-message`,\n`threat-alert`,\n`owner-invitation`, `member-invitation`)\ninto a subject, plain text, and HTML, so a\ndelivery callback can hand them to any provider. Returns undefined for templates it does not know (plugins,\nnewer features), which the callback should render itself.",
+    "deprecated": false
+   },
+   {
+    "name": "SafeFetchError",
+    "kind": "class",
+    "params": null,
+    "doc": "A refused or failed guarded fetch; `reason` says which rule stopped it.",
     "deprecated": false
    }
   ]
@@ -367,13 +421,22 @@
   "package": "@better-iam/auth",
   "exports": [
    {
+    "name": "describeUserAgent",
+    "kind": "function",
+    "params": [
+     "userAgent"
+    ],
+    "doc": "A short description of a User-Agent for security notices (\"Chrome on Windows\"). The header is chosen by whoever\nsent the request, so it never reaches a message verbatim: otherwise anyone could put their own text and links into\na genuine sign-in notice by failing a sign-in with a crafted header.",
+    "deprecated": false
+   },
+   {
     "name": "renderDeliveryMessage",
     "kind": "function",
     "params": [
      "message",
      "options?"
     ],
-    "doc": "Renders the messages Better IAM queues (`verify-email`, `password-reset`, `email-change`, `magic-link`, `code`,\n`mfa-code`, `new-sign-in`, `sign-in-failures`, `certification-review`, `certification-reminder`, `delegation-request`,\n`delegation-confirmation`, `team-join-request`, `team-join-decided`, `team-review-requested`, `spend-alert`,\n`spend-anomaly`, `billing-statement`, `payment-reminder`,\n`owner-invitation`, `member-invitation`)\ninto a subject, plain text, and HTML, so a\ndelivery callback can hand them to any provider. Returns undefined for templates it does not know (plugins,\nnewer features), which the callback should render itself.",
+    "doc": "Renders the messages Better IAM queues (`verify-email`, `password-reset`, `email-change`, `magic-link`, `code`,\n`mfa-code`, `new-sign-in`, `sign-in-failures`, `certification-review`, `certification-reminder`, `delegation-request`,\n`delegation-confirmation`, `team-join-request`, `team-join-decided`, `team-review-requested`, `spend-alert`,\n`spend-anomaly`, `billing-statement`, `payment-reminder`,\n`privacy-request-verify`, `privacy-request-received`, `privacy-request-update`, `privacy-request-due`,\n`workflow-message`,\n`threat-alert`,\n`owner-invitation`, `member-invitation`)\ninto a subject, plain text, and HTML, so a\ndelivery callback can hand them to any provider. Returns undefined for templates it does not know (plugins,\nnewer features), which the callback should render itself.",
     "deprecated": false
    }
   ]
@@ -416,7 +479,7 @@
     "name": "configFileNames",
     "kind": "const",
     "params": null,
-    "doc": "Configuration file names the CLI looks for, in this order, in the working directory and then each parent.",
+    "doc": "Configuration file names the CLI looks for, in this order, in the working directory and then each parent up to the\nrepository root or home directory.",
     "deprecated": false
    },
    {
@@ -470,7 +533,7 @@
     "params": [
      "cwd"
     ],
-    "doc": "The nearest configuration file in `cwd` or one of its parents, like Prettier and ESLint find theirs.",
+    "doc": "The nearest configuration file in `cwd` or one of its parents, like Prettier and ESLint find theirs, without leaving\nthe repository: the search stops at the repository root (a directory holding `.git`) or the home directory, and skips\nfiles another user could have planted (see `trustworthy`).",
     "deprecated": false
    },
    {
@@ -632,6 +695,44 @@
   ]
  },
  {
+  "specifier": "@better-iam/client/device",
+  "package": "@better-iam/client",
+  "exports": [
+   {
+    "name": "createDeviceProver",
+    "kind": "function",
+    "params": [
+     "options?"
+    ],
+    "doc": "Proves which registered device a request comes from. The device keeps an ECDSA P-256 key pair it creates on first\nuse (the private half never leaves WebCrypto), enrols the public half once with `devices.enroll`, and then signs a\nshort-lived proof bound to the session it presents. Proofs are compact JWS (`ES256`, `typ: device-proof+jwt`,\n`kid` = the key's RFC 7638 thumbprint) over `{ iat, sid, tid? }`, reused for up to four minutes per session id and\ntenant id. The server reads them from `x-better-iam-device`; a missing or invalid proof only means \"no device\".\nThe server keeps each key for one account only, so a browser used with several accounts needs a prover (and key)\nper account: pass each its own `scope`, such as the identity id. `devices.enroll` needs the request to carry a proof\nmade with the key being enrolled, which `headers()` adds once the session id is known.\n\nconst device = createDeviceProver();\nlet sessionId: string | undefined;\nconst client = createIamClient<typeof iam>({ headers: () => device.headers(sessionId) });\nsessionId = (await client.auth.getSession()).session.id;\nconst publicKey = await device.publicJwk();\nawait client.devices.enroll({ tenantId, name: 'Work laptop', platform: 'macos', publicKey });",
+    "deprecated": false
+   },
+   {
+    "name": "deviceProofHeader",
+    "kind": "const",
+    "params": null,
+    "doc": "The request header that carries a device proof.",
+    "deprecated": false
+   },
+   {
+    "name": "indexedDbKeyStore",
+    "kind": "function",
+    "params": [
+     "name?"
+    ],
+    "doc": "Keeps the key pair in the browser's IndexedDB (database `name`, one record). CryptoKey objects are stored as they\nare, so the private key stays non-extractable: script on the page can sign with it but never read it. Saving an\nextractable private key is refused. Every call rejects with `UNSUPPORTED_ENVIRONMENT` where IndexedDB is missing.",
+    "deprecated": false
+   },
+   {
+    "name": "memoryKeyStore",
+    "kind": "function",
+    "params": [],
+    "doc": "Keeps the key pair in memory only: for tests, scripts, and servers that re-enrol after a restart.",
+    "deprecated": false
+   }
+  ]
+ },
+ {
   "specifier": "@better-iam/client/passkeys",
   "package": "@better-iam/client",
   "exports": [
@@ -712,6 +813,15 @@
   "specifier": "@better-iam/core",
   "package": "@better-iam/core",
   "exports": [
+   {
+    "name": "andFilter",
+    "kind": "function",
+    "params": [
+     "filters"
+    ],
+    "doc": "Conjunction, simplified: nested ands flattened, `true` dropped, `false` absorbing, duplicates removed.",
+    "deprecated": false
+   },
    {
     "name": "appendAuditEvent",
     "kind": "function",
@@ -861,6 +971,15 @@
     "deprecated": false
    },
    {
+    "name": "describeFilter",
+    "kind": "function",
+    "params": [
+     "filter"
+    ],
+    "doc": "A readable rendering of a filter, for logs, UIs and tests.",
+    "deprecated": false
+   },
+   {
     "name": "describeRecords",
     "kind": "function",
     "params": [
@@ -918,6 +1037,53 @@
     "deprecated": false
    },
    {
+    "name": "falseFilter",
+    "kind": "const",
+    "params": null,
+    "doc": "The filter no resource passes.",
+    "deprecated": false
+   },
+   {
+    "name": "filterMatches",
+    "kind": "function",
+    "params": [
+     "filter",
+     "record"
+    ],
+    "doc": "Whether a resource passes a filter: `record.id` is the id and every other field is read by name (`record['tag.team']`\nfor `resource.tag.team`). This is exact, with the policy engine's semantics, and supports every filter.",
+    "deprecated": false
+   },
+   {
+    "name": "filterToMongo",
+    "kind": "function",
+    "params": [
+     "filter",
+     "options?"
+    ],
+    "doc": "The filter as a MongoDB query document. Dates and IP addresses refuse with UNSUPPORTED_FILTER.",
+    "deprecated": false
+   },
+   {
+    "name": "filterToPrisma",
+    "kind": "function",
+    "params": [
+     "filter",
+     "options?"
+    ],
+    "doc": "The filter as a Prisma `where` object. Globs must be exact, a prefix (`abc*`), a suffix (`*abc`) or a substring\n(`*abc*`); dates, IP addresses, and other globs refuse with UNSUPPORTED_FILTER. Case-insensitive comparisons use\n`mode: 'insensitive'` (PostgreSQL and MongoDB).",
+    "deprecated": false
+   },
+   {
+    "name": "filterToSql",
+    "kind": "function",
+    "params": [
+     "filter",
+     "options"
+    ],
+    "doc": "The filter as a parameterized SQL expression. Columns are expected to hold values of the types the policy compares\n(text for string conditions, numbers, booleans, ISO 8601 text for dates), with `NULL` for absent attributes.\nPostgreSQL uses `$n` placeholders and SQLite `?`. IP and array conditions refuse with UNSUPPORTED_FILTER.",
+    "deprecated": false
+   },
+   {
     "name": "findOrdered",
     "kind": "function",
     "params": [
@@ -927,6 +1093,25 @@
      "order"
     ],
     "doc": "Records matching `filter` whose numeric `order.field` lies in `[from, to]`, ordered by that field\n(ties by id, ascending) and paged. Uses the store's `findOrdered` when it has one and otherwise\norders a plain `find` in memory. `where` adds an in-memory predicate (for example a glob); the\nstore is then read in ordered chunks until the page is full, so it never loads everything.",
+    "deprecated": false
+   },
+   {
+    "name": "fixedPlan",
+    "kind": "function",
+    "params": [
+     "allowed"
+    ],
+    "doc": "A plan that allows everything or nothing (root override, a fixed refusal).",
+    "deprecated": false
+   },
+   {
+    "name": "globMatches",
+    "kind": "function",
+    "params": [
+     "tokens",
+     "value"
+    ],
+    "doc": "Glob matching over code points, greedy with backtracking to the last star (as the engine does).",
     "deprecated": false
    },
    {
@@ -962,6 +1147,16 @@
      "now?"
     ],
     "doc": "Wraps a store so every data call is reported to `onCall` (reads, writes, `collections`, and\n`describe`; `transaction`, `migrate`, and `close` pass straight through), for slow-query logging, capacity planning,\nand tests that bound how much work an operation does. The wrapper adds no behavior: results,\nerrors, and transactions are the underlying store's. `onCall` runs synchronously after each\ncall; exceptions it throws are ignored.",
+    "deprecated": false
+   },
+   {
+    "name": "intersectPlans",
+    "kind": "function",
+    "params": [
+     "left",
+     "right"
+    ],
+    "doc": "Both plans at once: what each allows (an impersonation session and the administrator behind it).",
     "deprecated": false
    },
    {
@@ -1009,6 +1204,15 @@
     "deprecated": false
    },
    {
+    "name": "legacyRiscSubject",
+    "kind": "function",
+    "params": [
+     "value"
+    ],
+    "doc": "Reads the subject of a legacy RISC event (Google's RISC, and SSF drafts before RFC 9493): `events[type].subject`\nwith a hyphenated `subject_type` instead of `format`. `iss-sub` (also spelled `iss_sub`), `email` and `phone` map to\ntheir RFC 9493 formats; `id_token_claims` maps to whichever of `iss`+`sub`, `email` and `phone` it carries, as an\nalias list when there are several. Returns `undefined` for other types and malformed values.",
+    "deprecated": false
+   },
+   {
     "name": "LOOKUP_INDEX_STEPS",
     "kind": "const",
     "params": null,
@@ -1044,10 +1248,46 @@
     "deprecated": false
    },
    {
+    "name": "notFilter",
+    "kind": "function",
+    "params": [
+     "filter"
+    ],
+    "doc": "Negation, simplified: constants flip and a double negation cancels.",
+    "deprecated": false
+   },
+   {
     "name": "ORDERED_FIELDS",
     "kind": "const",
     "params": null,
     "doc": "Numeric fields SQL adapters index for `findOrdered` within a tenant (audit time and sequence).",
+    "deprecated": false
+   },
+   {
+    "name": "orFilter",
+    "kind": "function",
+    "params": [
+     "filters"
+    ],
+    "doc": "Disjunction, simplified: nested ors flattened, `false` dropped, `true` absorbing, duplicates removed, and `equals` on\nthe same field (and case rule) merged into one value list.",
+    "deprecated": false
+   },
+   {
+    "name": "parseGlob",
+    "kind": "function",
+    "params": [
+     "pattern"
+    ],
+    "doc": "A filter glob back into tokens (the inverse of `globString`).",
+    "deprecated": false
+   },
+   {
+    "name": "parseSubjectIdentifier",
+    "kind": "function",
+    "params": [
+     "value"
+    ],
+    "doc": "Reads an RFC 9493 subject identifier (or an SSF `complex` one) strictly: known formats only, every string 1 to 512\ncharacters without control characters, email, `acct:`, DID and URI values well formed, at most 10 aliases and no\nalias list inside another, no complex subject inside another, and at most three levels of nesting. Members a format\ndoes not define are left out of the result. Returns `undefined` for anything else.",
     "deprecated": false
    },
    {
@@ -1059,6 +1299,22 @@
      "capabilities?"
     ],
     "doc": "Splits a validated filter into driver conditions and keys left to the in-memory filter.",
+    "deprecated": false
+   },
+   {
+    "name": "planResources",
+    "kind": "function",
+    "params": [
+     "input"
+    ],
+    "doc": "Plans the resources of `resourceType` the principal may perform `action` on. The result mirrors the decision the\nserver makes for each resource: no deny statement applies (across every grant path and ceiling), every ceiling\nlets the resource through, and some grant path allows it within its own ceilings.",
+    "deprecated": false
+   },
+   {
+    "name": "planWorkLimit",
+    "kind": "const",
+    "params": null,
+    "doc": "The most work one plan may take (pattern states visited and filter atoms built), so that policies full of wildcards\ncannot make planning slow or its filter huge. A plan that needs more refuses with UNSUPPORTED_FILTER.",
     "deprecated": false
    },
    {
@@ -1088,6 +1344,15 @@
     "deprecated": false
    },
    {
+    "name": "readSecurityEvent",
+    "kind": "function",
+    "params": [
+     "payload"
+    ],
+    "doc": "Reads the claims of a Security Event Token after its signature, issuer, audience and `typ` were verified (and before\nit is acted on). The SET must carry `iss`, `aud` (a string or a list), `iat` and `jti`; `events` must hold exactly\none event, an object; a `nonce` claim (which only ID tokens carry) is refused so an ID token can never pass for a\nSET. The subject is the top-level `sub_id` or the legacy `events[type].subject` (RFC 9493 or RISC `subject_type`\nform); when both are present they must name the same subject, and a top-level `sub` must not contradict an\n`iss_sub` subject of the same issuer. `event_timestamp` (or `toe`) seconds become milliseconds. Throws\n`SignalFormatError` otherwise.",
+    "deprecated": false
+   },
+   {
     "name": "RecordStore",
     "kind": "class",
     "params": null,
@@ -1111,6 +1376,29 @@
      "dialect"
     ],
     "doc": "Ordered, append-only schema steps. Never edit a released step; add a new one.\n\nSecondary indexes end in `id` so one index both finds rows and yields them in `ORDER BY id`\norder. Without that, SQLite (which has no statistics until ANALYZE) prefers walking the\nprimary key in id order over an index lookup followed by a sort.",
+    "deprecated": false
+   },
+   {
+    "name": "signalEventType",
+    "kind": "function",
+    "params": [
+     "uri"
+    ],
+    "doc": "The event type an event-type URI names (exact match), or `unknown`.",
+    "deprecated": false
+   },
+   {
+    "name": "signalEventUris",
+    "kind": "const",
+    "params": null,
+    "doc": "The event-type URI of each known security event, as SSF 1.0, CAEP 1.0 and RISC 1.0 name them.",
+    "deprecated": false
+   },
+   {
+    "name": "SignalFormatError",
+    "kind": "class",
+    "params": null,
+    "doc": "Why a SET's claims were refused: the receiver answers the transmitter with `invalid_request` for each.",
     "deprecated": false
    },
    {
@@ -1174,6 +1462,22 @@
     "deprecated": false
    },
    {
+    "name": "trueFilter",
+    "kind": "const",
+    "params": null,
+    "doc": "The filter every resource passes.",
+    "deprecated": false
+   },
+   {
+    "name": "userSubjects",
+    "kind": "function",
+    "params": [
+     "subject"
+    ],
+    "doc": "The identifiers in a subject that may name a person, without repeats: the subject itself when it is an `iss_sub`,\n`email`, `opaque`, `account` or `phone_number` identifier, the `user` member of a complex subject, and each entry of\nan alias list (expanded the same way). Session, device, organization, group and application parts, DIDs and plain\nURIs name no person and are left out.",
+    "deprecated": false
+   },
+   {
     "name": "validatePolicy",
     "kind": "function",
     "params": [
@@ -1198,7 +1502,7 @@
      "events",
      "options?"
     ],
-    "doc": "Verifies a run of events from one tenant: contiguous sequences, each `previousHash` equal to the previous event's\nhash (or `previousHash` of the first event when the run starts mid-chain), and every hash recomputable.\nEvents are sorted by sequence first, so exports and database reads can be passed as they come.",
+    "doc": "Verifies a run of events from one tenant: contiguous sequences, each `previousHash` equal to the previous event's\nhash (or `previousHash` of the first event when the run starts mid-chain), and every hash recomputable.\nEvents are sorted by sequence first, so exports and database reads can be passed as they come.\n\nWith `head`, the events are the tenant's whole stored chain, so deleting events at either end or around the chain\nshows too: it must end at the head (even when no event is left), start at sequence 1 or right after an\n`audit:prune` checkpoint recorded inside it, and hold no unchained events.",
     "deprecated": false
    }
   ]
@@ -1228,6 +1532,265 @@
      "createStore"
     ],
     "doc": "Runs every case against fresh stores and collects failures instead of stopping at the first.",
+    "deprecated": false
+   }
+  ]
+ },
+ {
+  "specifier": "@better-iam/ldap",
+  "package": "@better-iam/ldap",
+  "exports": [
+   {
+    "name": "BerError",
+    "kind": "class",
+    "params": null,
+    "doc": "The subset of ASN.1 BER (X.690) that LDAPv3 (RFC 4511) uses: definite lengths, INTEGER/ENUMERATED, BOOLEAN,\nOCTET STRING, NULL, SEQUENCE/SET and context/application tags. Decoding is strict (no indefinite lengths, lengths at\nmost four bytes) and bounds-checked; anything malformed throws `BerError`.",
+    "deprecated": false
+   },
+   {
+    "name": "buildEntries",
+    "kind": "function",
+    "params": [
+     "data"
+    ],
+    "doc": "The tree under the tenant's base DN: the base entry, `ou=people` (inetOrgPerson entries named `uid={uid}`),\n`ou=groups` (groupOfNames named `cn={name}`, with `member` DNs) and `ou=services` (service accounts and agents,\nnamed `cn={name}`). People and services carry `memberOf`; `entryUUID` is the Better IAM identity or group ID.",
+    "deprecated": false
+   },
+   {
+    "name": "createLdapServer",
+    "kind": "function",
+    "params": [
+     "options"
+    ],
+    "doc": "A read-only LDAPv3 gateway over Better IAM. Applications bind as a person (`uid={uid},ou=people,{base}` with the\npassword, plus the current one-time code appended when the organization requires MFA) or as a service account\n(`cn={name},ou=services,{base}` with an API key as the password), then search people, groups and service accounts\nof the organization whose base DN they use. Binds go through Better IAM sign-in, so rate limits, lockouts, allowed\nmethods, IP rules and sign-in alerts apply; searches are authorized as the bound account (`iam:ldap:read` for the\nwhole directory, otherwise only its own entry). Writes are refused.",
+    "deprecated": false
+   },
+   {
+    "name": "decodeFilter",
+    "kind": "function",
+    "params": [
+     "item",
+     "depth?",
+     "budget?"
+    ],
+    "doc": "Decodes a BER filter. Deep or huge filters are refused (a search is evaluated against every entry).",
+    "deprecated": false
+   },
+   {
+    "name": "decodeMessage",
+    "kind": "function",
+    "params": [
+     "message"
+    ],
+    "doc": "Decodes one LDAPMessage element.",
+    "deprecated": false
+   },
+   {
+    "name": "decodeResponse",
+    "kind": "function",
+    "params": [
+     "message"
+    ],
+    "doc": "",
+    "deprecated": false
+   },
+   {
+    "name": "depthBelow",
+    "kind": "function",
+    "params": [
+     "dn",
+     "base"
+    ],
+    "doc": "How many RDNs `dn` has below `base` (-1 when it is not under it).",
+    "deprecated": false
+   },
+   {
+    "name": "DnError",
+    "kind": "class",
+    "params": null,
+    "doc": "Distinguished names (RFC 4514): parsing with escapes (`\\,`, `\\2C`), quoting of values, and a normalized form for\ncomparisons (attribute types and values lowercased, insignificant spaces trimmed). Multi-valued RDNs (`+`) are\nkept in order.",
+    "deprecated": false
+   },
+   {
+    "name": "encodeBind",
+    "kind": "const",
+    "params": [
+     "id",
+     "name",
+     "password"
+    ],
+    "doc": "",
+    "deprecated": false
+   },
+   {
+    "name": "encodeCompare",
+    "kind": "const",
+    "params": [
+     "id",
+     "entry",
+     "attribute",
+     "value"
+    ],
+    "doc": "",
+    "deprecated": false
+   },
+   {
+    "name": "encodeExtended",
+    "kind": "const",
+    "params": [
+     "id",
+     "name",
+     "value?"
+    ],
+    "doc": "",
+    "deprecated": false
+   },
+   {
+    "name": "encodeFilter",
+    "kind": "function",
+    "params": [
+     "filter"
+    ],
+    "doc": "",
+    "deprecated": false
+   },
+   {
+    "name": "encodeSearch",
+    "kind": "function",
+    "params": [
+     "id",
+     "search",
+     "controls?"
+    ],
+    "doc": "",
+    "deprecated": false
+   },
+   {
+    "name": "encodeUnbind",
+    "kind": "const",
+    "params": [
+     "id"
+    ],
+    "doc": "",
+    "deprecated": false
+   },
+   {
+    "name": "escapeDnValue",
+    "kind": "function",
+    "params": [
+     "value"
+    ],
+    "doc": "Escapes an attribute value for use in a DN.",
+    "deprecated": false
+   },
+   {
+    "name": "formatDn",
+    "kind": "function",
+    "params": [
+     "rdns"
+    ],
+    "doc": "Formats RDNs as a DN string.",
+    "deprecated": false
+   },
+   {
+    "name": "isUnder",
+    "kind": "function",
+    "params": [
+     "dn",
+     "base"
+    ],
+    "doc": "Whether `dn` equals `base` or lies below it. Compared RDN by RDN, never as strings: `cn=a\\,ou=people,dc=x` is not\nunder `ou=people,dc=x`.",
+    "deprecated": false
+   },
+   {
+    "name": "matchFilter",
+    "kind": "function",
+    "params": [
+     "filter",
+     "attributes"
+    ],
+    "doc": "Evaluates a filter (RFC 4511 three-valued logic collapsed: Undefined counts as false).",
+    "deprecated": false
+   },
+   {
+    "name": "normalizeDn",
+    "kind": "function",
+    "params": [
+     "dn"
+    ],
+    "doc": "The comparison form of a DN: lowercased, re-escaped, spaces normalized. Throws on malformed DNs.",
+    "deprecated": false
+   },
+   {
+    "name": "OID",
+    "kind": "const",
+    "params": null,
+    "doc": "",
+    "deprecated": false
+   },
+   {
+    "name": "pagedResultsRequest",
+    "kind": "const",
+    "params": [
+     "size",
+     "cookie?"
+    ],
+    "doc": "",
+    "deprecated": false
+   },
+   {
+    "name": "parentDn",
+    "kind": "function",
+    "params": [
+     "dn"
+    ],
+    "doc": "The normalized parent of a normalized DN ('' for a single RDN).",
+    "deprecated": false
+   },
+   {
+    "name": "parseDn",
+    "kind": "function",
+    "params": [
+     "dn"
+    ],
+    "doc": "Parses a DN into RDNs (each a list of type/value pairs; most have one). The empty DN is the root.",
+    "deprecated": false
+   },
+   {
+    "name": "parseFilter",
+    "kind": "function",
+    "params": [
+     "text"
+    ],
+    "doc": "Parses the RFC 4515 string form, e.g. `(&(objectClass=person)(|(uid=alice)(mail=*@acme.test)))`.",
+    "deprecated": false
+   },
+   {
+    "name": "readElement",
+    "kind": "function",
+    "params": [
+     "buffer",
+     "offset?",
+     "maxSize?"
+    ],
+    "doc": "Reads one element at `offset`, or undefined when `buffer` does not yet hold all of it (stream framing).\n`maxSize` bounds the content length a peer may announce.",
+    "deprecated": false
+   },
+   {
+    "name": "ResultCode",
+    "kind": "const",
+    "params": null,
+    "doc": "LDAPv3 messages (RFC 4511) as the gateway reads and writes them.",
+    "deprecated": false
+   },
+   {
+    "name": "selectAttributes",
+    "kind": "function",
+    "params": [
+     "target",
+     "requested"
+    ],
+    "doc": "The attributes a search returns for an entry: all user attributes for none or `*`, operational ones for `+` or by\nname, only the named ones otherwise, nothing for `1.1`.",
     "deprecated": false
    }
   ]
@@ -2262,7 +2825,7 @@
     "params": [
      "event"
     ],
-    "doc": "A Web request for an h3 v1 or v2 event; the Node fallback buffers the body, so call it before anything reads it.",
+    "doc": "A Web request for an h3 v1 or v2 event; the Node fallback buffers the body (at most 2 MiB, else it throws), so call\nit before anything reads it.",
     "deprecated": false
    },
    {
@@ -2534,12 +3097,30 @@
     "deprecated": false
    },
    {
+    "name": "useMyApps",
+    "kind": "function",
+    "params": [
+     "options"
+    ],
+    "doc": "The signed-in person's app launcher (`applications.mine`): `apps` they can open now, most recently used first, and\n`requestable` apps they may ask for through an access package. `launch` records the launch and returns the app's\nsign-in URL; open it yourself (a new tab keeps the launcher).",
+    "deprecated": false
+   },
+   {
     "name": "useMySpend",
     "kind": "function",
     "params": [
      "options"
     ],
     "doc": "The signed-in person's own spend (`billing.mySpend`): what their usage and their agents' cost this month (or\n`period`), grouped by `meter` (default), `day`, `agent`, `tenant` or `tag:{name}`, with a projection and their budgets.",
+    "deprecated": false
+   },
+   {
+    "name": "usePrivacy",
+    "kind": "function",
+    "params": [
+     "options"
+    ],
+    "doc": "The signed-in person's privacy choices (`privacy.mine`): every purpose with their decision and its effect, their\ndata-subject requests, and the privacy contact. `decide` records a choice for the purpose's current version (so a\nconsent banner never agrees to text it did not show), `request` files a data-subject request, and `pending` lists\nthe opt-in purposes still waiting for an answer, for a banner.",
     "deprecated": false
    },
    {
@@ -2776,6 +3357,16 @@
     "deprecated": false
    },
    {
+    "name": "assuranceOf",
+    "kind": "function",
+    "params": [
+     "result",
+     "registered"
+    ],
+    "doc": "The assurance a request gets from a device: `none` unless `registered` (a verified, active device).",
+    "deprecated": false
+   },
+   {
     "name": "auditEventHash",
     "kind": "function",
     "params": [
@@ -2822,6 +3413,15 @@
     "deprecated": false
    },
    {
+    "name": "buildSshKrl",
+    "kind": "function",
+    "params": [
+     "input"
+    ],
+    "doc": "A binary OpenSSH key revocation list (PROTOCOL.krl) for sshd `RevokedKeys` and ssh `RevokedHostKeys`: certificate\nserials and key IDs per authority, plus plain keys revoked outright (such as a disabled host's key).",
+    "deprecated": false
+   },
+   {
     "name": "canonicalJson",
     "kind": "function",
     "params": [
@@ -2832,6 +3432,20 @@
     "from": "@better-iam/core"
    },
    {
+    "name": "complianceChecks",
+    "kind": "const",
+    "params": null,
+    "doc": "The built-in checks.",
+    "deprecated": false
+   },
+   {
+    "name": "complianceFrameworks",
+    "kind": "const",
+    "params": null,
+    "doc": "Built-in mappings. They are evidence for these requirements, not the whole of them.",
+    "deprecated": false
+   },
+   {
     "name": "configOptions",
     "kind": "function",
     "params": [
@@ -2839,6 +3453,37 @@
      "context?"
     ],
     "doc": "The options a `defineConfig` value stands for: a factory is called with `context` (default: this process's\nenvironment and working directory), plain options are returned as they are.",
+    "deprecated": false
+   },
+   {
+    "name": "consentState",
+    "kind": "function",
+    "params": [
+     "purpose",
+     "consent",
+     "restricted",
+     "now"
+    ],
+    "doc": "The processing decision for one purpose and subject. Restriction holds back everything except legal obligations\nand vital interests; bases other than consent and legitimate interests are allowed without a record. Opt-out\npurposes and legitimate interests are allowed until the person withdraws or objects; opt-in consent needs a live\ngrant for the current version (unless the purpose keeps older grants valid).",
+    "deprecated": false
+   },
+   {
+    "name": "createCertificateRequest",
+    "kind": "function",
+    "params": [
+     "input"
+    ],
+    "doc": "Builds a PEM PKCS#10 certification request for `privateKey` with a subject and subject alternative names, signed\nwith the key (proof of possession). Clients call it to request certificates without OpenSSL.",
+    "deprecated": false
+   },
+   {
+    "name": "createDisclosure",
+    "kind": "function",
+    "params": [
+     "name",
+     "value"
+    ],
+    "doc": "",
     "deprecated": false
    },
    {
@@ -2879,6 +3524,13 @@
     "deprecated": false
    },
    {
+    "name": "credentialTypeResource",
+    "kind": "const",
+    "params": null,
+    "doc": "",
+    "deprecated": false
+   },
+   {
     "name": "dayOf",
     "kind": "function",
     "params": [
@@ -2886,6 +3538,13 @@
      "timeZone"
     ],
     "doc": "The local day `YYYY-MM-DD` an instant falls on.",
+    "deprecated": false
+   },
+   {
+    "name": "DEFAULT_SIGNAL_ALGORITHMS",
+    "kind": "const",
+    "params": null,
+    "doc": "Used when a source does not name its algorithms.",
     "deprecated": false
    },
    {
@@ -2957,6 +3616,59 @@
     "deprecated": false
    },
    {
+    "name": "deviceProofHeader",
+    "kind": "const",
+    "params": null,
+    "doc": "The request header that carries a device proof (a compact JWS).",
+    "deprecated": false
+   },
+   {
+    "name": "effectiveRisk",
+    "kind": "function",
+    "params": [
+     "record",
+     "now",
+     "halfLifeHours"
+    ],
+    "doc": "The score and level in force at `now`: decayed contributions, raised to an unexpired override's level.",
+    "deprecated": false
+   },
+   {
+    "name": "evaluateCompliance",
+    "kind": "function",
+    "params": [
+     "device",
+     "integration",
+     "settings",
+     "now"
+    ],
+    "doc": "Judges a device against the tenant's requirements. Only an active device an active integration manages can be\ncompliant: its last check-in must be recent, the vendor's verdict (when trusted) must not be `false`, every required\nposture field must be reported `true` (unknown fails), a jailbroken device fails while `blockJailbroken` is on, and a\nminimum OS version for the platform needs a reported version at least that high.",
+    "deprecated": false
+   },
+   {
+    "name": "generateSecretValue",
+    "kind": "function",
+    "params": [
+     "generator"
+    ],
+    "doc": "A random value from the generator: uniform draws, with one character of each kept class placed at random.",
+    "deprecated": false
+   },
+   {
+    "name": "generateSshAuthorityKey",
+    "kind": "function",
+    "params": [],
+    "doc": "A new Ed25519 authority key, with the private key as base64 PKCS#8 DER (the caller seals it).",
+    "deprecated": false
+   },
+   {
+    "name": "HOLDER_PROOF_TYPE",
+    "kind": "const",
+    "params": null,
+    "doc": "",
+    "deprecated": false
+   },
+   {
     "name": "IamError",
     "kind": "class",
     "params": null,
@@ -2993,6 +3705,15 @@
     "deprecated": false
    },
    {
+    "name": "issueSdJwt",
+    "kind": "function",
+    "params": [
+     "input"
+    ],
+    "doc": "Issues an SD-JWT: `plain` claims are visible to anyone holding the credential; each `disclosable` claim becomes a\ndisclosure the holder decides to reveal or keep. Random decoy digests hide how many claims exist. Returns the issued\nform `<jwt>~<disclosure>~...~` and its parts.",
+    "deprecated": false
+   },
+   {
     "name": "isTeamMaintainer",
     "kind": "function",
     "params": [
@@ -3003,6 +3724,13 @@
      "options?"
     ],
     "doc": "Whether a person maintains a team: a live maintainer membership of the team itself or, with `includeAncestors`, of\nany team above it (a parent team's maintainers manage its child teams too).",
+    "deprecated": false
+   },
+   {
+    "name": "KB_JWT_TYPE",
+    "kind": "const",
+    "params": null,
+    "doc": "",
     "deprecated": false
    },
    {
@@ -3034,6 +3762,13 @@
     "deprecated": false
    },
    {
+    "name": "maxSignalSourcesPerTenant",
+    "kind": "const",
+    "params": null,
+    "doc": "Signal sources one tenant may register.",
+    "deprecated": false
+   },
+   {
     "name": "nextWatermark",
     "kind": "function",
     "params": [
@@ -3042,6 +3777,34 @@
      "now"
     ],
     "doc": "The next `sessionsRevokedBefore` for a record: `max(current ?? 0, before ?? now + 1)`, so a watermark only ever\nmoves forward and never lies in the future (it can neither resurrect a session nor block new issuance). The default\nrevokes every session issued so far. Throws INVALID_INPUT when `before` is not a safe integer >= 0 or is > now + 1.",
+    "deprecated": false
+   },
+   {
+    "name": "normalizeBaseDn",
+    "kind": "function",
+    "params": [
+     "value"
+    ],
+    "doc": "Validates a base DN and returns its comparison form: `attr=value` components of letters, digits, spaces, `.`, `_`\nand `-` (no escapes), lowercased with spaces collapsed, exactly as `@better-iam/ldap` normalizes DNs.",
+    "deprecated": false
+   },
+   {
+    "name": "parseSshCertificate",
+    "kind": "function",
+    "params": [
+     "line"
+    ],
+    "doc": "Decodes a certificate line (`*-cert-v01@openssh.com base64 [comment]`). Only Ed25519 authorities verify.",
+    "deprecated": false
+   },
+   {
+    "name": "parseSshPublicKey",
+    "kind": "function",
+    "params": [
+     "line",
+     "options?"
+    ],
+    "doc": "Parses and validates one public key line (`type base64 [comment]`). Certificates, DSA keys, RSA keys under 2048\nbits, malformed points and trailing data are refused.",
     "deprecated": false
    },
    {
@@ -3062,6 +3825,16 @@
      "timeZone"
     ],
     "doc": "The billing period an instant falls in.",
+    "deprecated": false
+   },
+   {
+    "name": "presentSdJwt",
+    "kind": "function",
+    "params": [
+     "credential",
+     "options"
+    ],
+    "doc": "The holder's presentation: the credential with only the named claims disclosed, and a key-binding JWT signed with\nthe holder key over `aud`, `nonce`, `iat` and the hash of everything before it.",
     "deprecated": false
    },
    {
@@ -3148,6 +3921,24 @@
     "deprecated": false
    },
    {
+    "name": "QuotaExceededError",
+    "kind": "class",
+    "params": null,
+    "doc": "The error `enforce` throws: 429 with the time to retry (`Retry-After` over HTTP).",
+    "deprecated": false
+   },
+   {
+    "name": "quotaWindow",
+    "kind": "function",
+    "params": [
+     "period",
+     "at",
+     "zone"
+    ],
+    "doc": "The window of a period that contains `at`: minutes and hours in UTC, days, ISO weeks and months in `zone`.",
+    "deprecated": false
+   },
+   {
     "name": "readDelegationTokenClaims",
     "kind": "function",
     "params": [
@@ -3157,6 +3948,33 @@
     "doc": "Checks the claims of a (signature-verified) delegation token against what the verifier expects: well formed, from an\naccepted issuer, for exactly this audience (and tenant), current within the clock tolerance, and issued for at most\n`delegationTokenLimits.maxSeconds`.",
     "deprecated": false,
     "from": "@better-iam/core"
+   },
+   {
+    "name": "readDisclosure",
+    "kind": "function",
+    "params": [
+     "encoded"
+    ],
+    "doc": "Decodes a disclosure without trusting it (for wallets choosing what to reveal).",
+    "deprecated": false
+   },
+   {
+    "name": "readStatusList",
+    "kind": "function",
+    "params": [
+     "token",
+     "key",
+     "options"
+    ],
+    "doc": "Verifies a Status List Token for `uri` and returns its raw list.",
+    "deprecated": false
+   },
+   {
+    "name": "regulationDeadlines",
+    "kind": "const",
+    "params": null,
+    "doc": "",
+    "deprecated": false
    },
    {
     "name": "renderInvoiceHtml",
@@ -3169,6 +3987,24 @@
     "deprecated": false
    },
    {
+    "name": "resolveDeviceSettings",
+    "kind": "function",
+    "params": [
+     "stored"
+    ],
+    "doc": "The requirements for a tenant: the stored settings over the defaults (stored values were validated on write).",
+    "deprecated": false
+   },
+   {
+    "name": "resolveThreatSettings",
+    "kind": "function",
+    "params": [
+     "stored?"
+    ],
+    "doc": "Applies rule defaults and deployment defaults to a tenant's stored settings (absent when never configured).",
+    "deprecated": false
+   },
+   {
     "name": "revokedByWatermark",
     "kind": "function",
     "params": [
@@ -3176,6 +4012,15 @@
      "...watermarks"
     ],
     "doc": "Whether a session issued at `createdAt` falls under any revocation watermark (`sessionsRevokedBefore` of its role,\ntrust or provider): true when it was created strictly before a numeric watermark. Missing watermarks are ignored.",
+    "deprecated": false
+   },
+   {
+    "name": "riskLevelFor",
+    "kind": "function",
+    "params": [
+     "score"
+    ],
+    "doc": "",
     "deprecated": false
    },
    {
@@ -3193,6 +4038,20 @@
     "kind": "const",
     "params": null,
     "doc": "",
+    "deprecated": false
+   },
+   {
+    "name": "SD_JWT_VC_TYPE",
+    "kind": "const",
+    "params": null,
+    "doc": "The `typ` of an SD-JWT VC (`vc+sd-jwt`, the earlier name, is accepted when verifying).",
+    "deprecated": false
+   },
+   {
+    "name": "SdJwtError",
+    "kind": "class",
+    "params": null,
+    "doc": "A presentation or credential that did not verify, with the reason.",
     "deprecated": false
    },
    {
@@ -3217,6 +4076,18 @@
     "deprecated": false
    },
    {
+    "name": "setStatusAt",
+    "kind": "function",
+    "params": [
+     "bytes",
+     "index",
+     "bits",
+     "value"
+    ],
+    "doc": "Writes the status of `index` into a raw list.",
+    "deprecated": false
+   },
+   {
     "name": "shiftPeriod",
     "kind": "function",
     "params": [
@@ -3224,6 +4095,191 @@
      "months"
     ],
     "doc": "A period `months` after (or before, when negative) another.",
+    "deprecated": false
+   },
+   {
+    "name": "signalCollections",
+    "kind": "const",
+    "params": null,
+    "doc": "Where the receiver keeps its records; both are tenant-scoped and purged with the tenant (lifecycle.ts).",
+    "deprecated": false
+   },
+   {
+    "name": "SignalRejectedError",
+    "kind": "class",
+    "params": null,
+    "doc": "A refused security event token. `err` is the RFC 8935 error code, the message its description. `temporary` marks a\nrefusal that may pass later (the source's keys could not be fetched): pushes answer 503 and polls leave the event\nunacknowledged, so the transmitter delivers it again.",
+    "deprecated": false
+   },
+   {
+    "name": "signSshCertificate",
+    "kind": "function",
+    "params": [
+     "authority",
+     "spec",
+     "comment?"
+    ],
+    "doc": "Issues an OpenSSH certificate; returns the certificate blob and its `*-cert.pub` line.",
+    "deprecated": false
+   },
+   {
+    "name": "signStatusList",
+    "kind": "function",
+    "params": [
+     "input"
+    ],
+    "doc": "A Status List Token (JWT, `typ: statuslist+jwt`) for a raw list.",
+    "deprecated": false
+   },
+   {
+    "name": "splitSdJwt",
+    "kind": "function",
+    "params": [
+     "value"
+    ],
+    "doc": "Splits `<jwt>~<d1>~...~<dn>~[<kb-jwt>]`.",
+    "deprecated": false
+   },
+   {
+    "name": "SSH_CERT_HOST",
+    "kind": "const",
+    "params": null,
+    "doc": "",
+    "deprecated": false
+   },
+   {
+    "name": "SSH_CERT_USER",
+    "kind": "const",
+    "params": null,
+    "doc": "Certificate kinds (PROTOCOL.certkeys `type`).",
+    "deprecated": false
+   },
+   {
+    "name": "sshFingerprint",
+    "kind": "function",
+    "params": [
+     "blob"
+    ],
+    "doc": "`SHA256:` plus the unpadded base64 SHA-256 of a key blob.",
+    "deprecated": false
+   },
+   {
+    "name": "sshForwardingActions",
+    "kind": "const",
+    "params": null,
+    "doc": "Forwarding a certificate allows only when every host it names allows it (certificate extensions are global).",
+    "deprecated": false
+   },
+   {
+    "name": "sshHostAddress",
+    "kind": "function",
+    "params": [
+     "value"
+    ],
+    "doc": "A host certificate principal: a DNS name (a leading `*.` is refused), or an IPv4/IPv6 address.",
+    "deprecated": false
+   },
+   {
+    "name": "sshHostResourceType",
+    "kind": "const",
+    "params": null,
+    "doc": "",
+    "deprecated": false
+   },
+   {
+    "name": "sshKeyLine",
+    "kind": "function",
+    "params": [
+     "blob",
+     "comment?"
+    ],
+    "doc": "An `authorized_keys`-style line for a key blob.",
+    "deprecated": false
+   },
+   {
+    "name": "sshKeyTypes",
+    "kind": "const",
+    "params": null,
+    "doc": "Public key algorithms accepted in certificates, with their certificate type names.",
+    "deprecated": false
+   },
+   {
+    "name": "sshLogin",
+    "kind": "function",
+    "params": [
+     "value"
+    ],
+    "doc": "A Unix login name, as certificate principals carry them: portable user names only.",
+    "deprecated": false
+   },
+   {
+    "name": "sshLoginAction",
+    "kind": "const",
+    "params": null,
+    "doc": "",
+    "deprecated": false
+   },
+   {
+    "name": "sshLoginResourceType",
+    "kind": "const",
+    "params": null,
+    "doc": "",
+    "deprecated": false
+   },
+   {
+    "name": "sshSerial",
+    "kind": "function",
+    "params": [],
+    "doc": "A random non-zero 63-bit serial (KRLs cannot revoke serial 0).",
+    "deprecated": false
+   },
+   {
+    "name": "sshSigningKey",
+    "kind": "function",
+    "params": [
+     "publicBlob",
+     "privatePkcs8"
+    ],
+    "doc": "Opens a stored authority key.",
+    "deprecated": false
+   },
+   {
+    "name": "STATUS_INVALID",
+    "kind": "const",
+    "params": null,
+    "doc": "",
+    "deprecated": false
+   },
+   {
+    "name": "STATUS_LIST_JWT_TYPE",
+    "kind": "const",
+    "params": null,
+    "doc": "",
+    "deprecated": false
+   },
+   {
+    "name": "STATUS_SUSPENDED",
+    "kind": "const",
+    "params": null,
+    "doc": "",
+    "deprecated": false
+   },
+   {
+    "name": "STATUS_VALID",
+    "kind": "const",
+    "params": null,
+    "doc": "Status values of the Token Status List.",
+    "deprecated": false
+   },
+   {
+    "name": "statusAt",
+    "kind": "function",
+    "params": [
+     "bytes",
+     "index",
+     "bits"
+    ],
+    "doc": "Reads the status of `index` from a raw list of `bits`-bit entries (index 0 is the low bits of byte 0).",
     "deprecated": false
    },
    {
@@ -3258,6 +4314,13 @@
     "deprecated": false
    },
    {
+    "name": "threatRules",
+    "kind": "const",
+    "params": null,
+    "doc": "The rule catalog, in display order.",
+    "deprecated": false
+   },
+   {
     "name": "usageCost",
     "kind": "function",
     "params": [
@@ -3287,6 +4350,13 @@
     "deprecated": false
    },
    {
+    "name": "vcRequestAction",
+    "kind": "const",
+    "params": null,
+    "doc": "",
+    "deprecated": false
+   },
+   {
     "name": "verifyAssertion",
     "kind": "function",
     "params": [
@@ -3303,9 +4373,39 @@
      "events",
      "options?"
     ],
-    "doc": "Verifies a run of events from one tenant: contiguous sequences, each `previousHash` equal to the previous event's\nhash (or `previousHash` of the first event when the run starts mid-chain), and every hash recomputable.\nEvents are sorted by sequence first, so exports and database reads can be passed as they come.",
+    "doc": "Verifies a run of events from one tenant: contiguous sequences, each `previousHash` equal to the previous event's\nhash (or `previousHash` of the first event when the run starts mid-chain), and every hash recomputable.\nEvents are sorted by sequence first, so exports and database reads can be passed as they come.\n\nWith `head`, the events are the tenant's whole stored chain, so deleting events at either end or around the chain\nshows too: it must end at the head (even when no event is left), start at sequence 1 or right after an\n`audit:prune` checkpoint recorded inside it, and hold no unchained events.",
     "deprecated": false,
     "from": "@better-iam/core"
+   },
+   {
+    "name": "verifyEvidencePack",
+    "kind": "function",
+    "params": [
+     "pack",
+     "keys"
+    ],
+    "doc": "Verifies an evidence pack offline, with the deployment's published evidence keys (`compliance.evidenceKeys`): the\ndigest must match the pack's content and the signature must verify with the key it names. Needs no server.",
+    "deprecated": false
+   },
+   {
+    "name": "verifyHolderProof",
+    "kind": "function",
+    "params": [
+     "proof",
+     "options"
+    ],
+    "doc": "Verifies an OpenID4VCI holder proof (`typ: openid4vci-proof+jwt`, the holder's public key in the `jwk` header):\nsignature, `aud` (the credential issuer), freshness, and the nonce the issuer handed out. Returns the holder key and\nits RFC 7638 thumbprint.",
+    "deprecated": false
+   },
+   {
+    "name": "verifySdJwt",
+    "kind": "function",
+    "params": [
+     "value",
+     "options"
+    ],
+    "doc": "Verifies an SD-JWT VC or presentation: the issuer's signature (`issuerKey` resolves `kid`/`iss`), validity times,\nevery disclosure against the signed digests, and, for presentations, the key-binding JWT (`audience`, `nonce`,\nfreshness, `sd_hash`) with the holder key in `cnf.jwk`. Throws `SdJwtError` with the reason.",
+    "deprecated": false
    },
    {
     "name": "verifyWebhookSignature",

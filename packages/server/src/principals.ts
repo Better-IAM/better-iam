@@ -12,6 +12,7 @@ import { assertAgentUsable, machineIdentity } from './agents.js';
 import { clientFromHeaders } from './client-info.js';
 import type { ServerContext } from './context.js';
 import { checkDelegatedSession } from './delegations.js';
+import { deviceProofOf, withRequestDevice } from './devices.js';
 import { trustRequiresMfa } from './flows.js';
 import type { OidcProvider, Role, Trust } from './models.js';
 import { revokedByWatermark } from './session-kinds.js';
@@ -96,6 +97,7 @@ export function createPrincipals(ctx: ServerContext): PrincipalService {
     sessionId: string,
     tokenHash: string,
     bound: (session: Session) => boolean = () => true,
+    deviceProof?: string,
   ): Promise<AuthenticatedPrincipal> {
     return store.transaction(async (tx) => {
       const session = await tx.get<Session>('sessions', sessionId);
@@ -117,7 +119,12 @@ export function createPrincipals(ctx: ServerContext): PrincipalService {
         session.kind === 'api-key' && now - session.lastSeenAt >= 60_000
           ? await tx.put<Session>('sessions', { ...session, lastSeenAt: now })
           : session;
-      return service.currentPrincipal(tx, { identity, session: current });
+      // The request's device proof goes along: a role session's source decides its assumption again here.
+      return service.currentPrincipal(tx, {
+        identity,
+        session: current,
+        ...(deviceProof !== undefined ? { deviceProof } : {}),
+      });
     });
   }
 
@@ -126,7 +133,7 @@ export function createPrincipals(ctx: ServerContext): PrincipalService {
    * then the stored row the `sid` names must be a JWT row bound to the same kind, identity and tenant, holding the
    * hash of exactly this token. Revocation inside IAM is therefore immediate, whatever the token's `exp`.
    */
-  async function resolveJwt(value: string): Promise<AuthenticatedPrincipal> {
+  async function resolveJwt(value: string, deviceProof?: string): Promise<AuthenticatedPrincipal> {
     const signer = ctx.sessionTokens;
     if (!signer) throw invalidCredentials();
     let claims: SessionTokenClaims;
@@ -139,14 +146,20 @@ export function createPrincipals(ctx: ServerContext): PrincipalService {
     const candidate = await store.get<Session>('sessions', claims.sid);
     if (!candidate || !boundToJwt(candidate, claims) || !sameHash(candidate.tokenHash, tokenHash))
       throw expiredOrRevoked();
-    return resolveStored(candidate.id, tokenHash, (session) => boundToJwt(session, claims));
+    return resolveStored(
+      candidate.id,
+      tokenHash,
+      (session) => boundToJwt(session, claims),
+      deviceProof,
+    );
   }
 
   async function resolveCredential(input: CredentialInput): Promise<AuthenticatedPrincipal> {
     const provided = credentialValue(input);
     if (!provided) return auth.authenticate(input);
+    const deviceProof = deviceProofOf(input?.headers);
     // (`looksLikeJwt` is a type guard over unknown; the cast keeps `provided` a string on the other branch.)
-    if (looksLikeJwt(provided as unknown)) return resolveJwt(provided);
+    if (looksLikeJwt(provided as unknown)) return resolveJwt(provided, deviceProof);
     // Prefixed tokens route by type; the stored kind stays authoritative and a mismatch never falls back to auth.
     let expected: Session['kind'] | undefined;
     if (provided.startsWith('biam_')) {
@@ -161,7 +174,7 @@ export function createPrincipals(ctx: ServerContext): PrincipalService {
     if (expected !== undefined) {
       if (!candidate || candidate.kind !== expected) throw invalidCredentials();
     } else if (!candidate || candidate.kind === 'user') return auth.authenticate(input);
-    return resolveStored(candidate.id, tokenHash);
+    return resolveStored(candidate.id, tokenHash, undefined, deviceProof);
   }
 
   /**
@@ -194,7 +207,12 @@ export function createPrincipals(ctx: ServerContext): PrincipalService {
    * source credential re-validated recursively and a live re-decision of `iam:roles:assume`) or the web-identity
    * checks (an enabled provider, the anchoring service account, and the trust and provider authority chains).
    */
-  async function checkRoleSession(tx: IamStore, identity: Identity, session: Session) {
+  async function checkRoleSession(
+    tx: IamStore,
+    identity: Identity,
+    session: Session,
+    request: AuthenticatedPrincipal,
+  ) {
     const trust =
       typeof session.trustId === 'string'
         ? await tx.get<Trust>('trusts', session.trustId)
@@ -213,7 +231,7 @@ export function createPrincipals(ctx: ServerContext): PrincipalService {
     )
       throw roleRevoked();
     if (session.webIdentity) await checkWebIdentitySession(tx, identity, session, trust, role);
-    else await checkClassicRoleSession(tx, identity, session, trust, role);
+    else await checkClassicRoleSession(tx, identity, session, trust, role, request);
   }
 
   async function checkClassicRoleSession(
@@ -222,6 +240,7 @@ export function createPrincipals(ctx: ServerContext): PrincipalService {
     session: Session,
     trust: Trust,
     role: Role,
+    request: AuthenticatedPrincipal,
   ) {
     const source =
       typeof session.sourceSessionId === 'string'
@@ -239,7 +258,12 @@ export function createPrincipals(ctx: ServerContext): PrincipalService {
       // Read fail-closed: any stored value but `false` requires a source session that carries MFA.
       !(trustRequiresMfa(trust) && source.mfa !== true);
     if (!consistent) throw roleRevoked();
-    const verifiedSource = await service.currentPrincipal(tx, { identity, session: source });
+    // The re-decision sees the device this request proves (bound to the role session), as the assumption saw the
+    // device of the request that made it; device conditions on iam:roles:assume would otherwise always fail here.
+    const verifiedSource = withRequestDevice(
+      await service.currentPrincipal(tx, { identity, session: source }),
+      request,
+    );
     for (const authorityId of session.sourceAuthorityIds ?? [])
       if (!(await ctx.authorityChain(tx, authorityId)))
         throw new IamError('UNAUTHENTICATED', 'Source authority revoked', 401);
@@ -355,7 +379,9 @@ export function createPrincipals(ctx: ServerContext): PrincipalService {
           : await resolveRecorded(input);
       // On an organization's own address (`hosts`), only that organization's credentials are accepted.
       auth.assertRequestHost(principal.session.tenantId);
-      return principal;
+      // A device proof travels with the principal unverified; decisions verify it (devices.ts).
+      const deviceProof = deviceProofOf(input?.headers);
+      return deviceProof === undefined ? principal : { ...principal, deviceProof };
     },
     async currentPrincipal(tx, principal) {
       const identity = await tx.get<Identity>('identities', principal.identity.id);
@@ -381,10 +407,12 @@ export function createPrincipals(ctx: ServerContext): PrincipalService {
       )
         throw new IamError('TENANT_INACTIVE', 'Tenant inactive', 403);
       if (session.kind === 'user') {
+        const limits = auth.sessionLimits(realm);
         if (
           identity.kind !== 'user' ||
           identity.tenantId !== session.tenantId ||
-          now - session.lastSeenAt >= auth.sessionLimits(realm).idleTimeoutMs
+          now - session.lastSeenAt >= limits.idleTimeoutMs ||
+          now - session.createdAt >= limits.lifetimeMs
         )
           throw new IamError('UNAUTHENTICATED', 'User session expired', 401);
         if (!session.mfa && (await auth.mfaRequired(tx, identity)))
@@ -394,6 +422,18 @@ export function createPrincipals(ctx: ServerContext): PrincipalService {
         // as soon as this session's network is blocked or no longer allowed.
         auth.assertIpAllowed(realm, session.client?.ip);
         await auth.assertNetworkNotBlocked(tx, session.tenantId, session.client?.ip);
+        // The address presenting the credential now (this session, or a role session sourced from it) is judged too:
+        // a stolen cookie or role token is useless from a blocked network, and with `bindSessionsToIp` from any
+        // network but the one this session was signed in from.
+        const presented = auth.currentClient()?.ip;
+        await auth.assertNetworkNotBlocked(tx, session.tenantId, presented);
+        if (
+          realm?.authPolicy?.bindSessionsToIp &&
+          session.client?.ip &&
+          presented &&
+          presented !== session.client.ip
+        )
+          throw new SessionTokenNetworkMismatch(session);
       } else if (session.kind === 'api-key') {
         if (
           !machineIdentity(identity) ||
@@ -405,7 +445,7 @@ export function createPrincipals(ctx: ServerContext): PrincipalService {
         // An agent's key works only while the agent and its sponsor are in good standing (agents.ts).
         if (identity.kind === 'agent') await assertAgentUsable(ctx, tx, identity);
       } else if (session.kind === 'session-token') await checkSessionToken(tx, identity, session);
-      else if (session.kind === 'role') await checkRoleSession(tx, identity, session);
+      else if (session.kind === 'role') await checkRoleSession(tx, identity, session, principal);
       else if (session.kind === 'delegated')
         await checkDelegatedSession(ctx, tx, identity, session, (source) =>
           service.currentPrincipal(tx, source),
@@ -434,7 +474,10 @@ export function createPrincipals(ctx: ServerContext): PrincipalService {
           await auth.assertNetworkNotBlocked(tx, session.tenantId, ip);
         }
       }
-      return { identity, session };
+      // The request's device proof (still unverified) stays with the principal for decisions (devices.ts).
+      return principal.deviceProof === undefined
+        ? { identity, session }
+        : { identity, session, deviceProof: principal.deviceProof };
     },
   };
   return service;

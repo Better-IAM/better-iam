@@ -19,7 +19,9 @@ Commands that touch the deployment load a configuration module. The CLI looks fo
 1. `--config PATH`
 2. `BETTER_IAM_CONFIG`
 3. the nearest `better-iam.config.mjs`, `.js`, `.ts`, `.mts`, or `.cjs` in the working directory or any parent (like
-   Prettier and ESLint), so commands work from any subdirectory of a project
+   Prettier and ESLint), so commands work from any subdirectory of a project. The search stops at the repository root
+   (a directory with `.git`) or your home directory, and on Linux and macOS skips files owned by another user or kept
+   in a directory anyone may write to (such as `/tmp`): a configuration is code, and importing it runs it
 4. no file at all: `BETTER_IAM_DATABASE_URL` + `BETTER_IAM_SECRET` (see [environment-only](#environment-only-deployments))
 
 `better-iam init` writes a starter (`--typescript` for `better-iam.config.ts`, `--database sqlite|postgres|libsql`).
@@ -60,7 +62,9 @@ done).
 
 A flag's value comes from, in order: the command line (`--flag value` or `--flag=value`), its environment variable (for
 example `BETTER_IAM_TENANT` for `--tenant`), `cli.defaults`, the saved profile (for `--tenant` on token commands), and
-finally the command's built-in default. `better-iam help <command>` lists each flag's variable and default.
+finally the command's built-in default. `better-iam help <command>` lists each flag's variable and default. A `'*'`
+default never fills a flag whose meaning differs between commands where it deletes data (`--retention-days` of
+`audit-prune` and `purge`): set those under the command's own name.
 
 ### Environment-only deployments
 
@@ -242,8 +246,9 @@ A `token` command gets `api()` (a transport whose `call('roles/list', { tenantId
 `run(argv, io)`, `help()`, and `manifest()`; `runBinary()` runs it with the binary's exit-status handling.
 
 `better-iam help --json` prints every command as JSON (usage, flags, variables, defaults, examples) for tools and
-documentation. `better-iam completion bash|zsh|fish|powershell` prints a completion script that includes project
-commands:
+documentation. `better-iam completion bash|zsh|fish|powershell` prints a completion script. Shells run it at startup,
+possibly in a directory someone else controls, so completion and `help` list project commands only for a
+configuration named with `--config` or `BETTER_IAM_CONFIG`, never one they merely found:
 
 ```sh
 eval "$(better-iam completion bash)"                                  # ~/.bashrc
@@ -266,6 +271,7 @@ Every command is a thin layer over a public function. The CLI adds argument pars
 | `reconcile`                     | `iam.reconcilePackages({ tenantId, packageId, limit, confirm })`                                    |
 | `close-certifications`          | `iam.closeOverdueCertifications({ tenantId })`                                                      |
 | `monitor-invariants`            | `iam.checkInvariants({ tenantId })`                                                                 |
+| `detect-threats`                | `iam.detectThreats({ tenantId, maxEvents })`                                                        |
 | `rotate-secrets`                | `iam.rotateSecrets({ dryRun })`                                                                     |
 | `audit-archive` / `audit-prune` | `iam.archiveAudit(...)` / `iam.pruneAudit({ tenantId, retentionMs })`                               |
 | `audit-verify`                  | `verifyAuditChain(events, { head })` from `better-iam/core` (or `iam.api.audit.verify`)             |

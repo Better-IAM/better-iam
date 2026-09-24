@@ -40,8 +40,12 @@ export default defineConfig({
       ),
       '@better-iam/mcp': fileURLToPath(new URL('./packages/mcp/src/index.ts', import.meta.url)),
       '@better-iam/a2a': fileURLToPath(new URL('./packages/a2a/src/index.ts', import.meta.url)),
+      '@better-iam/ldap': fileURLToPath(new URL('./packages/ldap/src/index.ts', import.meta.url)),
       '@better-iam/client/session': fileURLToPath(
         new URL('./packages/client/src/session.ts', import.meta.url),
+      ),
+      '@better-iam/client/device': fileURLToPath(
+        new URL('./packages/client/src/device.ts', import.meta.url),
       ),
       '@better-iam/nestjs/testing': fileURLToPath(
         new URL('./packages/nestjs/src/testing.ts', import.meta.url),

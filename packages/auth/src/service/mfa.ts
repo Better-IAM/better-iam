@@ -22,6 +22,18 @@ import { PasswordlessAuth } from './passwordless.js';
 
 /** TOTP enrollment, verification, recovery codes, and disabling where the tenant allows it. */
 export class MfaAuth extends PasswordlessAuth {
+  /**
+   * The stored form of an emailed MFA code: keyed with the deployment secret and bound to its login challenge, since a
+   * plain hash of six digits is reversed by trying all million values.
+   */
+  protected mfaCodeDigest(
+    challenge: Challenge,
+    code: string,
+    secret = this.options.secret,
+  ): string {
+    return this.digestChallenge(challenge.tenantId, `mfa-code:${challenge.id}:${code}`, secret);
+  }
+
   /** Enrollment may start from a restricted login challenge (first factor passed) or from a recently authenticated session. */
   protected async mfaActor(
     tx: IamStore,
@@ -39,7 +51,12 @@ export class MfaAuth extends PasswordlessAuth {
         'mfa-login',
       );
       const identity = await this.user(tx, loginChallenge.identityId, credential.tenantId);
-      if ((await tx.get<MfaRecord>('authMfa', identity.id))?.enabled)
+      // A password alone must not add a factor over an existing one: an enabled authenticator or a usable passkey
+      // has to be presented first (then enroll from the recently authenticated session).
+      if (
+        (await tx.get<MfaRecord>('authMfa', identity.id))?.enabled ||
+        (await this.passkeyFactor(tx, identity))
+      )
         throw new IamError(
           'MFA_REQUIRED',
           'Use an existing MFA factor before changing enrollment',
@@ -58,7 +75,8 @@ export class MfaAuth extends PasswordlessAuth {
       const existing = await tx.get<MfaRecord>('authMfa', actor.identity.id);
       if (existing?.enabled)
         throw new IamError('MFA_ALREADY_ENABLED', 'MFA is already enabled', 409);
-      const secret = authenticator.generateSecret();
+      // 160 bits, as RFC 4226 recommends (otplib's default is 80, below the RFC's 128-bit minimum).
+      const secret = authenticator.generateSecret(20);
       const record: MfaRecord = {
         id: actor.identity.id,
         tenantId: actor.identity.tenantId,
@@ -187,13 +205,15 @@ export class MfaAuth extends PasswordlessAuth {
           // No authenticator: only a code emailed for this very challenge (see requestMfaCode) can satisfy it.
           const expected = challenge.payload.codeHash;
           const validUntil = Number(challenge.payload.codeExpiresAt);
-          const provided = hashToken(input.code);
-          if (
-            !expected ||
-            !(validUntil > this.now()) ||
-            expected.length !== provided.length ||
-            !timingSafeEqual(Buffer.from(expected), Buffer.from(provided))
-          )
+          const matches = this.secrets.some((secret) => {
+            const provided = this.mfaCodeDigest(challenge, input.code, secret);
+            return (
+              !!expected &&
+              expected.length === provided.length &&
+              timingSafeEqual(Buffer.from(expected), Buffer.from(provided))
+            );
+          });
+          if (!expected || !(validUntil > this.now()) || !matches)
             throw new IamError(
               expected ? 'INVALID_MFA' : 'MFA_NOT_ENROLLED',
               expected ? 'Invalid or expired code' : 'MFA is not enrolled',
@@ -248,7 +268,7 @@ export class MfaAuth extends PasswordlessAuth {
         ...challenge,
         payload: {
           ...challenge.payload,
-          codeHash: hashToken(code),
+          codeHash: this.mfaCodeDigest(challenge, code),
           codeExpiresAt: String(expiresAt),
         },
       });

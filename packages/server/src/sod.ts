@@ -36,7 +36,29 @@ const grantingActions = new Set([
   // Team membership fills the team's backing group, and a team created under a parent joins its members to it.
   'iam:teams:create',
   'iam:teams:update',
+  // A role that gains `inherits` hands the inherited role to everyone who already holds it.
+  'iam:roles:update',
 ]);
+
+/** Each role with every role it inherits, transitively (a role inheriting Approver holds Approver). */
+function inheritedRoles(roles: Role[]): (roleId: string) => string[] {
+  const byId = new Map(roles.map((role) => [role.id, role]));
+  const cache = new Map<string, string[]>();
+  return (roleId) => {
+    const cached = cache.get(roleId);
+    if (cached) return cached;
+    const seen = new Set<string>();
+    for (const pending = [roleId]; pending.length; ) {
+      const next = pending.pop()!;
+      if (seen.has(next)) continue;
+      seen.add(next);
+      pending.push(...(byId.get(next)?.inherits ?? []));
+    }
+    const all = [...seen];
+    cache.set(roleId, all);
+    return all;
+  };
+}
 
 /** Every identity (optionally only `identityIds`) that holds two or more roles of a rule. */
 export async function sodViolations(
@@ -64,6 +86,7 @@ export async function sodViolations(
     (await tx.find<Identity>('identities', { tenantId }))
       .filter((identity) => identity.status !== 'deleted')
       .map((identity) => identity.id);
+  const expand = inheritedRoles(await tx.find<Role>('roles', { tenantId }));
   const violations: SodViolation[] = [];
   for (const identityId of subjects) {
     const memberOf = groupsOf.get(identityId) ?? new Set<string>();
@@ -74,7 +97,7 @@ export async function sodViolations(
             ? binding.subjectId === identityId
             : memberOf.has(binding.subjectId),
         )
-        .map((binding) => binding.roleId),
+        .flatMap((binding) => expand(binding.roleId)),
     );
     for (const rule of active) {
       const conflicting = rule.roleIds.filter((roleId) => held.has(roleId));

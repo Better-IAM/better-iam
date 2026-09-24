@@ -54,6 +54,11 @@ export interface FlagSpec {
   profile?: 'tenantId';
   /** Left out of help and completion (still accepted). */
   hidden?: boolean;
+  /**
+   * `false`: a `cli.defaults['*']` entry never fills this flag, only one for this very command. For flags whose meaning
+   * differs between commands where a shared default could destroy data (how much audit history `audit-prune` keeps).
+   */
+  wildcardDefault?: boolean;
 }
 export type FlagSpecs = Record<string, FlagSpec>;
 
@@ -576,14 +581,24 @@ export interface Cli {
   manifest(): CliManifest;
 }
 
-/** Commands a configuration module exports (`export const commands = [...]`). */
-async function configCommands(argv: string[], io: CliIO, cwd: string): Promise<CommandSpec<any>[]> {
+/**
+ * Commands a configuration module exports (`export const commands = [...]`). A configuration is executable code, so
+ * with `discover: false` (help and shell completion, which shells run on their own at startup, possibly in a directory
+ * someone else controls) only a configuration named with `--config` or `BETTER_IAM_CONFIG` is imported.
+ */
+async function configCommands(
+  argv: string[],
+  io: CliIO,
+  cwd: string,
+  discover = true,
+): Promise<CommandSpec<any>[]> {
   let flag: string | undefined;
   for (let index = 0; index < argv.length; index++) {
     const token = argv[index]!;
     if (token === '--config') flag = argv[index + 1];
     else if (token.startsWith('--config=')) flag = token.slice('--config='.length);
   }
+  if (!discover && !flag && !io.env.BETTER_IAM_CONFIG) return [];
   const located = await resolveConfigPath(flag, io.env, cwd);
   if (!located) return [];
   const module = await importConfigModule(located.path);
@@ -626,11 +641,14 @@ export function createCliProgram(
             (item, index) => !item.startsWith('-') && rest[index - 1] !== '--config',
           );
           let all = commands;
-          // Project commands from the configuration module appear in help when a configuration is found.
+          // Project commands appear in help for a configuration named with --config or BETTER_IAM_CONFIG; help never
+          // runs a configuration it merely found in the directory.
           try {
             all = [
               ...commands,
-              ...(await configCommands(rest, io, cwd)).filter((spec) => !find(commands, spec.name)),
+              ...(await configCommands(rest, io, cwd, false)).filter(
+                (spec) => !find(commands, spec.name),
+              ),
             ];
           } catch {
             /* Help never fails because a configuration does not load. */
@@ -665,11 +683,13 @@ export function createCliProgram(
         let extra: CommandSpec<any>[] | undefined;
         // An unknown name may be a project command: a configuration that fails to load reports its own error
         // then, instead of "unknown command"; completion scripts skip a broken configuration.
-        const projectCommands = async (strict: boolean) =>
-          (extra ??= await configCommands(argv.slice(1), io, cwd).catch((error: unknown) => {
-            if (strict) throw error;
-            return [];
-          }));
+        const projectCommands = async (strict: boolean, discover = true) =>
+          (extra ??= await configCommands(argv.slice(1), io, cwd, discover).catch(
+            (error: unknown) => {
+              if (strict) throw error;
+              return [];
+            },
+          ));
         let rest = argv.slice(1);
         if (!spec && !name.startsWith('-')) {
           spec = find(await projectCommands(true), name);
@@ -694,12 +714,16 @@ export function createCliProgram(
             )}`,
             'Run better-iam help for the list of commands.',
           );
-        // Completion scripts cover project commands too; other commands never import the module just for this.
+        // Completion scripts cover the project commands of a configuration named with --config or BETTER_IAM_CONFIG
+        // (shells run completion at startup, so it never imports one it found); other commands never import the
+        // module just for this.
         const all =
           spec.name === 'completion'
             ? [
                 ...commands,
-                ...(await projectCommands(false)).filter((item) => !find(commands, item.name)),
+                ...(await projectCommands(false, false)).filter(
+                  (item) => !find(commands, item.name),
+                ),
               ]
             : [...commands, ...(extra ?? []).filter((item) => !find(commands, item.name))];
         await execute(spec, rest, io, cwd, { commands: all, version: cliVersion });
@@ -821,7 +845,12 @@ async function execute(
       const defaults = (await configModule()).cli?.defaults ?? {};
       for (const scope of [spec.name, '*'])
         for (const [name, raw] of Object.entries(defaults[scope] ?? {}))
-          if (Object.hasOwn(flags, name) && !has(name) && !targetFlags.has(name))
+          if (
+            Object.hasOwn(flags, name) &&
+            !has(name) &&
+            !targetFlags.has(name) &&
+            !(scope === '*' && flags[name]!.wildcardDefault === false)
+          )
             values[name] = convert(name, flags[name]!, raw, `cli.defaults['${scope}']`);
     }
   }

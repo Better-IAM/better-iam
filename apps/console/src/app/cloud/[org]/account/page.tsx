@@ -2,9 +2,12 @@ import Link from 'next/link';
 import { ApiButton, ApiForm } from '@/components/api-form';
 import { AccountLinking, MfaControls } from '@/components/account-forms';
 import { PasskeyControls } from '@/components/passkeys';
+import { AssuranceBadge, ComplianceBadge } from '@/components/device-posture';
 import { Alert, Badge, Card, KeyValues, PageHeader, Table, Time } from '@/components/ui';
 import { clientLine, describeClient } from '@/lib/device';
+import { platformLabels } from '@/lib/device-posture';
 import { orgPage } from '@/lib/org';
+import { tryRead } from '@/lib/session';
 
 export default async function Account({ params }: { params: Promise<{ org: string }> }) {
   const { org } = await params;
@@ -16,6 +19,8 @@ export default async function Account({ params }: { params: Promise<{ org: strin
     iam.api.auth.listSecurityEvents(auth, { limit: 25 }),
     iam.api.auth.mfaStatus(auth),
   ]);
+  // Registered devices (device posture), separate from the browsers remembered for MFA above.
+  const registered = await tryRead(() => iam.api.devices.mine(auth, { tenantId }));
   const describe: Record<string, string> = {
     'auth:session:create': 'Signed in',
     'auth:session:revoke': 'Signed out / session ended',
@@ -330,6 +335,55 @@ export default async function Account({ params }: { params: Promise<{ org: strin
             ])}
             empty="No remembered devices."
           />
+        </Card>
+        <Card
+          title="Registered devices"
+          description="Devices that prove requests come from them with a signed key: ones you enrolled from applications that use device proofs, and ones your organization's device management assigns to you. Policies can require a registered, managed, or compliant device."
+          flush
+        >
+          {registered ? (
+            <Table
+              head={['Device', 'Assurance', 'Compliance', 'Registered', 'Last seen', '']}
+              rows={registered.map((device) => [
+                <span key="d" className="stack" style={{ gap: 2 }}>
+                  <span className="row" style={{ gap: 6 }}>
+                    {device.current && <Badge tone="accent">this device</Badge>}
+                    {device.name}
+                    {device.status === 'lost' && <Badge tone="danger">lost</Badge>}
+                  </span>
+                  <span className="small muted">
+                    {[
+                      platformLabels[device.platform],
+                      device.model,
+                      device.source ? 'managed by your organization' : undefined,
+                    ]
+                      .filter(Boolean)
+                      .join(' · ')}
+                  </span>
+                </span>,
+                <AssuranceBadge key="a" assurance={device.assurance} />,
+                <ComplianceBadge key="c" compliance={device.compliance} />,
+                <Time key="r" value={device.createdAt} />,
+                <Time key="l" value={device.lastSeenAt ?? device.lastCheckInAt} />,
+                !device.source && !session.session.impersonatorId ? (
+                  <ApiButton
+                    key="x"
+                    path="devices/retireMine"
+                    body={{ tenantId, deviceId: device.id }}
+                    label="Retire"
+                    tone="danger"
+                    confirm={`Retire ${device.name}? It stops proving anything and its keys are deleted; enrol it again to use it.`}
+                    tenantId={tenantId}
+                  />
+                ) : (
+                  ''
+                ),
+              ])}
+              empty="No registered devices."
+            />
+          ) : (
+            <div className="empty">Your registered devices cannot be listed from this session.</div>
+          )}
         </Card>
         <Card
           title="Recent security activity"

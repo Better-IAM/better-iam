@@ -187,8 +187,10 @@ Administrators list them with `delegations.list` (`iam:delegations:read`). Peopl
 
 A delegation can hold some actions back until the person confirms each call: pass `confirm` (action patterns) when
 granting, requesting, or approving. A delegated session is refused those actions until the person approves that
-action on that exact resource; the approval then opens it for a few minutes. This is a human-in-the-loop check in the
-spirit of OpenID CIBA: the agent asks, the person answers from wherever they are.
+action on that exact resource; the approval then opens one call, made within `validSeconds` (the call uses it up; its
+status becomes `used`). Batch and listing checks (`authorizeMany`, `listAccessible`) see an approval without using it.
+This is a human-in-the-loop check in the spirit of OpenID CIBA: the agent asks, the person answers from wherever they
+are.
 
 ```ts
 await iam.api.delegations.grant(aliceSession, {

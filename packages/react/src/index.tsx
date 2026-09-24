@@ -458,6 +458,28 @@ interface SelfServiceClient {
     mySpend(input: { tenantId: string; period?: string; groupBy?: string }): Promise<MemberSpend>;
     check(input: { tenantId: string; meter?: string }): Promise<MemberSpendCheck>;
   };
+  privacy?: {
+    mine(input: { tenantId: string }): Promise<MemberPrivacy>;
+    decide(input: {
+      tenantId: string;
+      purposeKey: string;
+      version: number;
+      granted: boolean;
+      method?: string;
+      evidence?: string;
+    }): Promise<unknown>;
+    submitRequest(input: {
+      tenantId: string;
+      type: MemberPrivacyRequest['type'];
+      details?: string;
+      purposeKeys?: string[];
+    }): Promise<MemberPrivacyRequest>;
+    cancelMyRequest(input: { tenantId: string; requestId: string }): Promise<unknown>;
+  };
+  applications?: {
+    mine(input: { tenantId: string }): Promise<MemberApp[]>;
+    launch(input: { tenantId: string; appId: string }): Promise<{ url: string }>;
+  };
 }
 /** A delegation as the person (or the agent) sees it (`delegations.listMine`). */
 export interface MemberDelegation {
@@ -1142,6 +1164,201 @@ export function useSpendCheck({
     ...(query.data.blockedBy ? { blockedBy: query.data.blockedBy } : {}),
     budgets: query.data.budgets,
     error: query.error,
+    refresh: query.refresh,
+  };
+}
+
+/** A processing purpose as the signed-in person sees it (`privacy.mine`). */
+export interface MemberPurpose {
+  id: string;
+  key: string;
+  name: string;
+  description: string;
+  legalBasis:
+    | 'consent'
+    | 'contract'
+    | 'legal-obligation'
+    | 'vital-interests'
+    | 'public-task'
+    | 'legitimate-interests';
+  mode: 'opt-in' | 'opt-out';
+  version: number;
+  dataCategories: string[];
+  retentionDays?: number;
+  /** Whether the person decides (consent and legitimate-interest purposes). */
+  decidable: boolean;
+  /** Whether the purpose may be processed for the person now, and why (`CONSENT_GIVEN`, `NO_CONSENT`, ...). */
+  state: { allowed: boolean; reason: string };
+  consent?: {
+    granted: boolean;
+    purposeVersion: number;
+    recordedAt: number;
+    expiresAt?: number;
+    receiptId: string;
+  };
+}
+/** One of the person's data-subject requests. */
+export interface MemberPrivacyRequest {
+  id: string;
+  number: string;
+  type:
+    | 'access'
+    | 'portability'
+    | 'erasure'
+    | 'rectification'
+    | 'restriction'
+    | 'objection'
+    | 'opt-out';
+  status: 'pending-verification' | 'open' | 'completed' | 'rejected' | 'cancelled';
+  submittedAt: number;
+  dueAt?: number;
+  exportId?: string;
+}
+/** The person's privacy page (`privacy.mine`). */
+export interface MemberPrivacy {
+  purposes: MemberPurpose[];
+  restricted: boolean;
+  requests: MemberPrivacyRequest[];
+  contact?: { email: string; name?: string };
+}
+
+/**
+ * The signed-in person's privacy choices (`privacy.mine`): every purpose with their decision and its effect, their
+ * data-subject requests, and the privacy contact. `decide` records a choice for the purpose's current version (so a
+ * consent banner never agrees to text it did not show), `request` files a data-subject request, and `pending` lists
+ * the opt-in purposes still waiting for an answer, for a banner.
+ */
+export function usePrivacy({
+  tenantId,
+  enabled = true,
+}: {
+  tenantId: string;
+  enabled?: boolean;
+}): {
+  status: QueryStatus;
+  privacy: MemberPrivacy | null;
+  /** Opt-in consent purposes the person has not answered (or must answer again for a new version). */
+  pending: MemberPurpose[];
+  error: Error | null;
+  decide(purpose: Pick<MemberPurpose, 'key' | 'version'>, granted: boolean): Promise<void>;
+  request(
+    type: MemberPrivacyRequest['type'],
+    input?: { details?: string; purposeKeys?: string[] },
+  ): Promise<MemberPrivacyRequest>;
+  cancel(requestId: string): Promise<void>;
+  refresh(): Promise<void>;
+} {
+  const { client } = useIamContext();
+  const api = (client as SelfServiceClient).privacy;
+  const query = useSessionQuery<MemberPrivacy | null>(
+    JSON.stringify([tenantId]),
+    null,
+    async () => {
+      if (!api) throw new Error('The client does not provide privacy');
+      return api.mine({ tenantId });
+    },
+    enabled,
+  );
+  const decide = useCallback(
+    async (purpose: Pick<MemberPurpose, 'key' | 'version'>, granted: boolean) => {
+      if (!api) throw new Error('The client does not provide privacy');
+      await api.decide({ tenantId, purposeKey: purpose.key, version: purpose.version, granted });
+      await query.refresh();
+    },
+    [api, tenantId, query],
+  );
+  const request = useCallback(
+    async (
+      type: MemberPrivacyRequest['type'],
+      input: { details?: string; purposeKeys?: string[] } = {},
+    ) => {
+      if (!api) throw new Error('The client does not provide privacy');
+      const created = await api.submitRequest({ tenantId, type, ...input });
+      await query.refresh();
+      return created;
+    },
+    [api, tenantId, query],
+  );
+  const cancel = useCallback(
+    async (requestId: string) => {
+      if (!api) throw new Error('The client does not provide privacy');
+      await api.cancelMyRequest({ tenantId, requestId });
+      await query.refresh();
+    },
+    [api, tenantId, query],
+  );
+  return {
+    status: query.status,
+    privacy: query.data,
+    pending: (query.data?.purposes ?? []).filter(
+      (purpose) =>
+        purpose.legalBasis === 'consent' &&
+        purpose.mode === 'opt-in' &&
+        !purpose.state.allowed &&
+        (purpose.state.reason === 'NO_CONSENT' || purpose.state.reason === 'CONSENT_OUTDATED'),
+    ),
+    error: query.error,
+    decide,
+    request,
+    cancel,
+    refresh: query.refresh,
+  };
+}
+
+/** An app on the person's launcher (`applications.mine`). */
+export interface MemberApp {
+  id: string;
+  key: string;
+  name: string;
+  description?: string;
+  category?: string;
+  logoUrl?: string;
+  /** Why the person has it; absent for an app they may only request. */
+  via?: 'everyone' | 'direct' | 'group';
+  lastLaunchedAt?: number;
+  /** The access package to request for an app the person does not have yet. */
+  requestPackageId?: string;
+}
+
+/**
+ * The signed-in person's app launcher (`applications.mine`): `apps` they can open now, most recently used first, and
+ * `requestable` apps they may ask for through an access package. `launch` records the launch and returns the app's
+ * sign-in URL; open it yourself (a new tab keeps the launcher).
+ */
+export function useMyApps({ tenantId, enabled = true }: { tenantId: string; enabled?: boolean }): {
+  status: QueryStatus;
+  apps: MemberApp[];
+  requestable: MemberApp[];
+  error: Error | null;
+  launch(appId: string): Promise<string>;
+  refresh(): Promise<void>;
+} {
+  const { client } = useIamContext();
+  const api = (client as SelfServiceClient).applications;
+  const query = useSessionQuery<MemberApp[]>(
+    JSON.stringify([tenantId]),
+    [],
+    async () => {
+      if (!api) throw new Error('The client does not provide applications');
+      return api.mine({ tenantId });
+    },
+    enabled,
+  );
+  const launch = useCallback(
+    async (appId: string) => {
+      if (!api) throw new Error('The client does not provide applications');
+      const { url } = await api.launch({ tenantId, appId });
+      await query.refresh();
+      return url;
+    },
+    [api, tenantId, query],
+  );
+  return {
+    status: query.status,
+    apps: query.data.filter((app) => app.via),
+    requestable: query.data.filter((app) => !app.via),
+    error: query.error,
+    launch,
     refresh: query.refresh,
   };
 }

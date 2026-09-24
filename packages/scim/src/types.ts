@@ -1,4 +1,10 @@
-import type { CredentialInput, IamStore, ResourceRef, StoredRecord } from '@better-iam/core';
+import type {
+  AuditEvent,
+  CredentialInput,
+  IamStore,
+  ResourceRef,
+  StoredRecord,
+} from '@better-iam/core';
 
 export const USER_SCHEMA = 'urn:ietf:params:scim:schemas:core:2.0:User';
 export const ENTERPRISE_SCHEMA = 'urn:ietf:params:scim:schemas:extension:enterprise:2.0:User';
@@ -117,6 +123,12 @@ export interface ScimConfig {
   mapAttributes?(user: ProvisionedUser): Record<string, unknown> | undefined;
   /** Validates mapped attributes against the declared identity attributes; the server's protocol host supplies it. */
   validateIdentityAttributes?(attributes: Record<string, unknown>): Record<string, unknown>;
+  /**
+   * Records an audit event and fans it out to webhooks, plugins and `iam.events` subscribers (so an outbound
+   * provisioner reacts to an IdP's deactivation at once); the server's protocol host supplies it. Without it events are
+   * only appended to the audit chain.
+   */
+  recordAudit?(tx: IamStore, event: AuditEvent): Promise<void>;
   /** Trusted server callback. Called transactionally only for administrator-configured role mappings. */
   syncRoleMappings?(
     tx: IamStore,

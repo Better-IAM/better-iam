@@ -441,6 +441,68 @@ describe('delegation tokens', () => {
     });
   });
 
+  it('keeps honouring a deny whose author’s authority was revoked', async () => {
+    const { f, alice, researcher, actFor } = await setup();
+    const api = f.iam.api;
+    const security = await f.member('security');
+    const writer = await api.roles.create(f.ownerCredential, {
+      tenantId: f.tenantId,
+      name: 'Security policy writer',
+      permissions: ['iam:policies:create', 'iam:policies:read'],
+    });
+    await api.bindings.create(f.ownerCredential, {
+      tenantId: f.tenantId,
+      roleId: writer.id,
+      subjectType: 'identity',
+      subjectId: security.id,
+    });
+    const authority = await api.authorities.create(await f.ownerSignIn(), {
+      tenantId: f.tenantId,
+      identityId: security.id,
+      ceiling: {
+        version: 1,
+        statements: [{ effect: 'allow', actions: ['documents:*'], resources: ['*'] }],
+      },
+    });
+    const guard = await api.policies.create({ token: (await f.signIn('security')).token }, {
+      tenantId: f.tenantId,
+      name: 'No agent writes',
+      document: {
+        version: 1,
+        statements: [{ effect: 'deny', actions: ['documents:write'], resources: ['document/*'] }],
+      },
+    });
+    const staff = await api.roles.create(f.ownerCredential, {
+      tenantId: f.tenantId,
+      name: 'Staff',
+      permissions: ['documents:read'],
+    });
+    await api.roles.update(f.ownerCredential, {
+      tenantId: f.tenantId,
+      roleId: staff.id,
+      policyIds: [guard.id],
+    });
+    await api.bindings.create(f.ownerCredential, {
+      tenantId: f.tenantId,
+      roleId: staff.id,
+      subjectType: 'identity',
+      subjectId: alice.id,
+    });
+    // The security engineer leaves: their authority is revoked, but the deny they wrote still applies, so a token
+    // for alice must not carry documents:write either.
+    await api.authorities.revoke(await f.ownerSignIn(), {
+      tenantId: f.tenantId,
+      authorityId: authority.id,
+    });
+    const acting = await actFor(researcher);
+    await expect(
+      api.delegations.issueToken(acting.session, { tenantId: f.tenantId, audience: files }),
+    ).rejects.toMatchObject({
+      code: 'DELEGATION_NOT_ALLOWED',
+      message: expect.stringContaining('deny'),
+    });
+  });
+
   it('matches audiences by URL structure, quickly, and re-checks everything live', async () => {
     const { f, agent, assistant, actFor } = await setup();
     const wide = await agent('Wide', [

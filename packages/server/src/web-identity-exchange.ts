@@ -1,5 +1,6 @@
 import {
   IamError,
+  ipCounterKey,
   type Identity,
   type IamStore,
   type Json,
@@ -447,17 +448,13 @@ export function createWebIdentityStsApi(ctx: ServerContext) {
       const replayId = webIdentityReplayId(provider.id, verified.jti, request.token);
       if (await tx.get<WebIdentityReplay>('webIdentityReplays', replayId))
         throw new Rejection('replay');
-      const tolerance =
-        Number.isSafeInteger(provider.clockToleranceSeconds) &&
-        provider.clockToleranceSeconds >= 0 &&
-        provider.clockToleranceSeconds <= maxClockToleranceSeconds
-          ? provider.clockToleranceSeconds
-          : maxClockToleranceSeconds;
+      // Kept for the largest tolerance any provider may be given, not this provider's current one: raising its
+      // clockToleranceSeconds later must not reopen a window in which an already redeemed token is accepted again.
       await tx.insert<WebIdentityReplay>('webIdentityReplays', {
         id: replayId,
         tenantId: provider.tenantId,
         providerId: provider.id,
-        expiresAt: verified.expiresAt * 1000 + tolerance * 1000,
+        expiresAt: verified.expiresAt * 1000 + maxClockToleranceSeconds * 1000,
       });
     }
     const webIdentity = {
@@ -558,10 +555,24 @@ export function createWebIdentityStsApi(ctx: ServerContext) {
       if (input.audience !== undefined && !Array.isArray(input.audience))
         invalid('audience must be a list');
 
-      // (2) Counted before any lookup and outside any transaction, so a refusal cannot roll it back.
-      await auth.limitAttempt(tenantId, `web-identity:${trustId}`, {
-        limit: settings.maxExchangesPerWindow,
-      });
+      // (2) Counted before any lookup and outside any transaction, so a refusal cannot roll it back. Trust ids are
+      // public (they sit in CI workflow files), so when the client's address is known the budget is per address,
+      // and one source posting junk tokens cannot use up the trust's exchanges for everyone; the trust as a whole
+      // still has a ceiling (ten budgets) that bounds the work any number of sources can cause.
+      const ip = auth.currentClient()?.ip;
+      if (ip) {
+        // An IPv6 /64 counts as one source, so rotating through it earns no fresh budget.
+        await auth.limitAttempt(tenantId, `web-identity:${trustId}:${ipCounterKey(ip) ?? ip}`, {
+          limit: settings.maxExchangesPerWindow,
+        });
+        await auth.limitAttempt(tenantId, `web-identity:${trustId}`, {
+          limit: settings.maxExchangesPerWindow * 10,
+          countClient: false,
+        });
+      } else
+        await auth.limitAttempt(tenantId, `web-identity:${trustId}`, {
+          limit: settings.maxExchangesPerWindow,
+        });
 
       // (3) The trust and its provider; an unknown trust is refused like every other failure, without an audit.
       const trust = await ctx.store.get<Trust>('trusts', trustId);

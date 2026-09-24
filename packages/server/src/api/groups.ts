@@ -6,12 +6,38 @@ import {
   type Identity,
   type Tenant,
 } from '@better-iam/core';
+import { releaseGroupApps } from '../applications.js';
 import type { ServerContext } from '../context.js';
 import type { AccessPackage, Binding, BindingActivation, Group, GroupMember } from '../models.js';
 import { ruleGroupIds } from '../package-rules.js';
-import { assertNotTeamGroup, syncTeamsFromGroups, teamsSyncingFrom } from '../teams.js';
+import {
+  assertNotTeamGroup,
+  syncTeamsFromGroups,
+  teamChainBindings,
+  teamsSyncingFrom,
+} from '../teams.js';
 import { id, publicIdentity, type PublicIdentity } from '../utils.js';
 import { strings, text } from '../validation.js';
+
+/**
+ * Brings the teams that sync their members from the group in step (teams.ts). A synced person joins or leaves those
+ * teams' backing groups and those of every team above them, so a membership change that moves a team needs the grant
+ * authority behind what those groups hold, exactly as changing the team's members directly does.
+ */
+async function followSyncedTeams(
+  ctx: ServerContext,
+  tx: IamStore,
+  principal: AuthenticatedPrincipal,
+  tenantId: string,
+  groupId: string,
+): Promise<void> {
+  const synced = await syncTeamsFromGroups(ctx, tx, tenantId, {
+    groupId,
+    actorId: principal.identity.id,
+  });
+  for (const binding of await teamChainBindings(tx, tenantId, synced.teams))
+    await ctx.grantingAuthority(tx, principal, tenantId, binding.authorityId);
+}
 
 export interface GroupInput {
   tenantId: string;
@@ -43,8 +69,9 @@ export async function createGroup(
 }
 
 /**
- * Adds an identity to a group; membership confers every group binding, so each binding's authority is required.
- * `expiresAt` makes the membership temporary. Re-adding an expired member renews the membership.
+ * Adds an identity to a group; membership confers every group binding, so each binding's authority is required (and,
+ * for teams that sync from the group, that of their backing groups' bindings). `expiresAt` makes the membership
+ * temporary. Re-adding an expired member renews the membership.
  */
 export async function addGroupMember(
   ctx: ServerContext,
@@ -88,10 +115,7 @@ export async function addGroupMember(
       ...(expiresAt !== undefined ? { expiresAt } : {}),
     });
   // Teams that sync their members from this group follow (teams.ts).
-  await syncTeamsFromGroups(ctx, tx, input.tenantId, {
-    groupId: input.groupId,
-    actorId: principal.identity.id,
-  });
+  await followSyncedTeams(ctx, tx, principal, input.tenantId, input.groupId);
   return member;
 }
 
@@ -124,10 +148,7 @@ export async function updateGroupMember(
     input.expiresAt === null ? rest : { ...rest, expiresAt: ctx.bindingExpiry(input.expiresAt) },
   );
   // Synced team memberships end when their source membership does (teams.ts).
-  await syncTeamsFromGroups(ctx, tx, input.tenantId, {
-    groupId: input.groupId,
-    actorId: principal.identity.id,
-  });
+  await followSyncedTeams(ctx, tx, principal, input.tenantId, input.groupId);
   return updated;
 }
 
@@ -180,11 +201,8 @@ export async function removeGroupMember(
   }))
     if (bindings.some((binding) => binding.id === activation.bindingId))
       await tx.delete('bindingActivations', activation.id);
-  // Teams that sync their members from this group follow (teams.ts).
-  await syncTeamsFromGroups(ctx, tx, input.tenantId, {
-    groupId: input.groupId,
-    actorId: principal.identity.id,
-  });
+  // Teams that sync their members from this group follow (teams.ts); leaving one may lift a deny bound to it.
+  await followSyncedTeams(ctx, tx, principal, input.tenantId, input.groupId);
 }
 
 /** Deletes a group with its memberships, bindings, activations, and relationships. */
@@ -258,6 +276,8 @@ export async function deleteGroup(
     subjectId: group.id,
   }))
     await tx.delete('relationships', tuple.id);
+  // App assignments to the group go with it (applications.ts).
+  await releaseGroupApps(tx, group.tenantId, group.id);
   await tx.delete('groups', group.id);
 }
 

@@ -186,6 +186,13 @@ export function createAccessRequestsApi(ctx: ServerContext) {
               'A request cannot be approved by its requester',
               403,
             );
+          // Two-person control: an administrator viewing as a reviewer must not decide in their name.
+          if (principal.session.impersonatorId)
+            throw new IamError(
+              'IMPERSONATION_RESTRICTED',
+              'Requests cannot be decided while impersonating',
+              403,
+            );
           const requester = await ctx.activeIdentity(tx, request.requesterId, input.tenantId);
           if (requester.status !== 'active')
             throw new IamError('INVALID_IDENTITY', 'Requester is not active');
@@ -282,6 +289,12 @@ export function createAccessRequestsApi(ctx: ServerContext) {
         input.requestId,
         async ({ tx, principal }) => {
           const request = await pending(tx, input.requestId, input.tenantId);
+          if (principal.session.impersonatorId)
+            throw new IamError(
+              'IMPERSONATION_RESTRICTED',
+              'Requests cannot be decided while impersonating',
+              403,
+            );
           const decided: AccessRequest = {
             ...request,
             status: 'denied',

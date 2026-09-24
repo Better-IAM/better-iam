@@ -38,6 +38,20 @@ export interface TemplateLinks {
   team?(input: { tenantId: string; teamId: string; signInUrl?: string }): string;
   /** The billing page (spend, budgets, a statement when `statementId` is set); billing emails fall back to `account`. */
   billing?(input: { tenantId: string; statementId?: string; signInUrl?: string }): string;
+  /**
+   * Privacy links: with `token`, the page that confirms a public data-subject request (it calls
+   * `privacy.confirmPublic`); with `handler`, a request's page for whoever handles it; otherwise the person's own
+   * privacy page. Privacy emails without a builder fall back to `account` (or show the confirmation code).
+   */
+  privacy?(input: {
+    tenantId: string;
+    requestId?: string;
+    token?: string;
+    handler?: boolean;
+    signInUrl?: string;
+  }): string;
+  /** A security incident's page (threat detection and response); threat alerts fall back to `account`. */
+  threats?(input: { tenantId: string; incidentId?: string; signInUrl?: string }): string;
 }
 
 export interface TemplateOptions {
@@ -52,6 +66,42 @@ const escape = (value: string) =>
     (character) =>
       ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]!,
   );
+/** One line of text: control characters and line separators (which could break a mail header) become spaces. */
+const oneLine = (value: string) =>
+  value.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, ' ').trim();
+
+const browsers: [string, string][] = [
+  ['Edg/', 'Edge'],
+  ['OPR/', 'Opera'],
+  ['SamsungBrowser/', 'Samsung Internet'],
+  ['Firefox/', 'Firefox'],
+  ['FxiOS/', 'Firefox'],
+  ['CriOS/', 'Chrome'],
+  ['Chrome/', 'Chrome'],
+  ['Safari/', 'Safari'],
+];
+const systems: [string, string][] = [
+  ['Windows', 'Windows'],
+  ['iPhone', 'iOS'],
+  ['iPad', 'iPadOS'],
+  ['Android', 'Android'],
+  ['CrOS', 'ChromeOS'],
+  ['Macintosh', 'macOS'],
+  ['Mac OS X', 'macOS'],
+  ['Linux', 'Linux'],
+];
+/**
+ * A short description of a User-Agent for security notices ("Chrome on Windows"). The header is chosen by whoever
+ * sent the request, so it never reaches a message verbatim: otherwise anyone could put their own text and links into
+ * a genuine sign-in notice by failing a sign-in with a crafted header.
+ */
+export function describeUserAgent(userAgent: string | undefined): string | undefined {
+  if (!userAgent) return undefined;
+  const browser = browsers.find(([token]) => userAgent.includes(token))?.[1];
+  const system = systems.find(([token]) => userAgent.includes(token))?.[1];
+  if (browser && system) return `${browser} on ${system}`;
+  return browser ?? (system ? `a browser or app on ${system}` : 'an unrecognized browser or app');
+}
 
 function layout(
   appName: string,
@@ -73,6 +123,9 @@ function layout(
  * `mfa-code`, `new-sign-in`, `sign-in-failures`, `certification-review`, `certification-reminder`, `delegation-request`,
  * `delegation-confirmation`, `team-join-request`, `team-join-decided`, `team-review-requested`, `spend-alert`,
  * `spend-anomaly`, `billing-statement`, `payment-reminder`,
+ * `privacy-request-verify`, `privacy-request-received`, `privacy-request-update`, `privacy-request-due`,
+ * `workflow-message`,
+ * `threat-alert`,
  * `owner-invitation`, `member-invitation`)
  * into a subject, plain text, and HTML, so a
  * delivery callback can hand them to any provider. Returns undefined for templates it does not know (plugins,
@@ -118,7 +171,8 @@ export function renderDeliveryMessage(
     }
     textLines.push('', appName);
     return {
-      subject,
+      // Subjects interpolate names and other stored values; a line break there would inject mail headers.
+      subject: oneLine(subject),
       text: textLines.join('\n'),
       html: layout(appName, title, htmlParagraphs, button),
     };
@@ -203,7 +257,13 @@ export function renderDeliveryMessage(
         'It expires in a few minutes. If you did not request it, change your password.',
       ]);
     case 'new-sign-in': {
-      const where = [payload.label, payload.userAgent, payload.ip].filter(Boolean).join(' · ');
+      const where = [
+        payload.label ? oneLine(payload.label).slice(0, 80) : undefined,
+        describeUserAgent(payload.userAgent),
+        payload.ip,
+      ]
+        .filter(Boolean)
+        .join(' · ');
       return compose(
         `New sign-in to ${appName}`,
         'New sign-in to your account',
@@ -216,7 +276,7 @@ export function renderDeliveryMessage(
       );
     }
     case 'sign-in-failures': {
-      const where = [payload.userAgent, payload.ip].filter(Boolean).join(' · ');
+      const where = [describeUserAgent(payload.userAgent), payload.ip].filter(Boolean).join(' · ');
       return compose(
         `Failed sign-in attempts on your ${appName} account`,
         'Failed sign-in attempts',
@@ -460,6 +520,158 @@ export function renderDeliveryMessage(
         ],
         { href, label: 'Review spend' },
       );
+    }
+    case 'privacy-request-verify':
+    case 'privacy-request-received':
+    case 'privacy-request-update':
+    case 'privacy-request-due': {
+      const tenantId = message.tenantId ?? payload.tenantId;
+      const organization = payload.tenantName ?? 'the organization';
+      const number = payload.number ?? 'your request';
+      const kinds: Record<string, string> = {
+        access: 'a copy of personal data',
+        portability: 'personal data in a portable format',
+        erasure: 'erasure of personal data',
+        rectification: 'correction of personal data',
+        restriction: 'restriction of processing',
+        objection: 'an objection to processing',
+        'opt-out': 'an opt-out of sale or sharing',
+      };
+      const asked = kinds[payload.type ?? ''] ?? 'a privacy request';
+      const due = payload.dueAt ? new Date(Number(payload.dueAt)) : undefined;
+      const dueText = due && !Number.isNaN(due.getTime()) ? due.toUTCString() : undefined;
+      const link = (extra: { token?: string; handler?: boolean }) =>
+        tenantId
+          ? links.privacy
+            ? links.privacy({
+                tenantId,
+                ...(payload.requestId ? { requestId: payload.requestId } : {}),
+                ...extra,
+                ...site,
+              })
+            : extra.token
+              ? undefined
+              : links.account?.({ tenantId, ...site })
+          : undefined;
+      if (message.template === 'privacy-request-verify')
+        return compose(
+          `Confirm your privacy request to ${organization}`,
+          'Confirm your request',
+          [
+            `We received a request for ${asked} from this address (reference ${number}). Confirm it so ${organization} can start handling it.`,
+            'If you did not make this request, ignore this email: nothing happens until it is confirmed, and it lapses after seven days.',
+            ...(payload.requestId && !links.privacy ? [`Request ID: ${payload.requestId}`] : []),
+          ],
+          {
+            href: link({ token: payload.token ?? '' }),
+            label: 'Confirm request',
+            fallbackToken: payload.token,
+          },
+        );
+      if (message.template === 'privacy-request-received')
+        return compose(
+          `New privacy request ${number}: ${asked}`,
+          'A privacy request needs handling',
+          [
+            `${organization} received a request for ${asked} (${number}${payload.regulation ? `, ${payload.regulation.toUpperCase()}` : ''}${payload.channel ? `, via ${payload.channel}` : ''}).`,
+            ...(dueText ? [`It must be answered by ${dueText}.`] : []),
+          ],
+          { href: link({ handler: true }), label: 'Open the request' },
+        );
+      if (message.template === 'privacy-request-due') {
+        const overdue = payload.overdue === 'true';
+        return compose(
+          overdue ? `Privacy request ${number} is overdue` : `Privacy request ${number} is due soon`,
+          overdue ? 'Privacy request overdue' : 'Privacy request due soon',
+          [
+            overdue
+              ? `The request for ${asked} (${number}) at ${organization} passed its deadline${dueText ? ` on ${dueText}` : ''}. Answer it now, or extend it if the regulation allows and you have not yet.`
+              : `The request for ${asked} (${number}) at ${organization} must be answered by ${dueText ?? 'its deadline'}.`,
+          ],
+          { href: link({ handler: true }), label: 'Open the request' },
+        );
+      }
+      const event = payload.event ?? 'completed';
+      const reasons: Record<string, string> = {
+        unverified: 'we could not confirm who made it',
+        unfounded: 'it is manifestly unfounded',
+        excessive: 'it is excessive or repetitive',
+        exempt: 'a legal exemption applies (for example a legal obligation to keep the data)',
+        duplicate: 'it repeats a request already being handled',
+        'no-data': 'it holds no personal data about you',
+        other: 'of the reason given by the organization',
+      };
+      const lines =
+        event === 'extended'
+          ? [
+              `${organization} needs more time to answer your request for ${asked} (${number}).`,
+              ...(dueText ? [`You will receive an answer by ${dueText}.`] : []),
+            ]
+          : event === 'rejected'
+            ? [
+                `${organization} declined your request for ${asked} (${number}) because ${reasons[payload.reason ?? 'other'] ?? reasons.other}.`,
+                'You may contact the organization’s privacy contact, or lodge a complaint with a data protection authority.',
+              ]
+            : [
+                `${organization} completed your request for ${asked} (${number}).`,
+                ...(payload.exportReady === 'true'
+                  ? [
+                      'Your data is ready to download for a limited time from your privacy page after signing in.',
+                    ]
+                  : []),
+                ...(payload.type === 'erasure'
+                  ? ['Your personal data has been erased; this is the last message about it.']
+                  : []),
+              ];
+      return compose(
+        event === 'extended'
+          ? `More time needed for your privacy request ${number}`
+          : event === 'rejected'
+            ? `Your privacy request ${number} was declined`
+            : `Your privacy request ${number} is complete`,
+        event === 'extended'
+          ? 'Request extended'
+          : event === 'rejected'
+            ? 'Request declined'
+            : 'Request complete',
+        lines,
+        payload.type === 'erasure' && event === 'completed'
+          ? undefined
+          : { href: link({}), label: 'View your privacy settings' },
+      );
+    }
+    case 'threat-alert': {
+      const tenantId = message.tenantId ?? payload.tenantId;
+      const href = tenantId
+        ? links.threats
+          ? links.threats({
+              tenantId,
+              ...(payload.incidentId ? { incidentId: payload.incidentId } : {}),
+              ...site,
+            })
+          : links.account?.({ tenantId, ...site })
+        : undefined;
+      const organization = payload.tenantName ?? 'your organization';
+      const title = payload.title ?? 'Suspicious activity';
+      const severity = payload.severity ?? 'unknown';
+      const count = Number(payload.detections) || 1;
+      return compose(
+        `${severity.charAt(0).toUpperCase()}${severity.slice(1)} security incident at ${organization}: ${title}`,
+        'Security incident',
+        [
+          `${title}${payload.subject ? ` involving ${payload.subject}` : ''} at ${organization}.`,
+          ...(payload.summary ? [payload.summary] : []),
+          `Severity: ${severity}. ${count} ${count === 1 ? 'detection' : 'detections'} so far.`,
+          'If this activity was not expected, open the incident and respond: end the sessions, contain the account, or block the network.',
+        ],
+        { href, label: 'Review the incident' },
+      );
+    }
+    case 'workflow-message': {
+      // Written by an administrator in a lifecycle workflow: plain text, one paragraph per line.
+      const subject = (payload.subject ?? `A message from ${payload.tenantName ?? appName}`).slice(0, 300);
+      const lines = (payload.body ?? '').split(/\r?\n/).slice(0, 200);
+      return compose(subject, subject, lines, message.tenantId ? accountAction : undefined);
     }
     case 'owner-invitation':
     case 'member-invitation': {

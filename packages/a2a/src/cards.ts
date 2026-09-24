@@ -413,7 +413,17 @@ export async function verifyAgentCard(
       : new AgentCardError('untrusted-key', 'The card is not signed with a trusted key');
   const verified = card as AgentCard;
   const attestation = attestationOf(verified);
-  const tolerance = (options.clockToleranceSeconds ?? 60) * 1000;
+  // A NaN or infinite tolerance (or clock) would make both time checks below false and accept any attestation.
+  const toleranceSeconds = options.clockToleranceSeconds ?? 60;
+  if (
+    typeof toleranceSeconds !== 'number' ||
+    !Number.isFinite(toleranceSeconds) ||
+    toleranceSeconds < 0 ||
+    toleranceSeconds > 300 ||
+    !Number.isFinite(now)
+  )
+    throw new TypeError('clockToleranceSeconds must be 0 to 300 seconds and now a finite time');
+  const tolerance = toleranceSeconds * 1000;
   const issuedAt = Date.parse(attestation.issuedAt);
   const expiresAt = Date.parse(attestation.expiresAt);
   if (!Number.isFinite(issuedAt) || !Number.isFinite(expiresAt))

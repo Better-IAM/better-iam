@@ -1,5 +1,5 @@
 import { ConsoleError, isIamError } from '@/lib/errors';
-import { getIam } from '@/lib/iam';
+import { getIam, requestClient } from '@/lib/iam';
 import {
   cookieLifetime,
   cookieNames,
@@ -72,8 +72,10 @@ export async function POST(request: Request): Promise<Response> {
       typeof body.reason !== 'string'
     )
       throw new ConsoleError('INVALID_INPUT', 'tenantId, identityId, and reason are required');
+    // The deployment's client details (the IP behind trusted proxies included): the administrator's session is judged
+    // by them, and the view-as session records them so allowlists, blocks and IP binding keep applying to it.
     const result = await iam.auth.withClient(
-      { userAgent: request.headers.get('user-agent') ?? undefined, label: 'console (view as)' },
+      { ...(await requestClient(request)), label: 'console (view as)' },
       () =>
         iam.api.identities.impersonate(
           { headers: request.headers },

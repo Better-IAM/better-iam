@@ -48,8 +48,15 @@ export interface ImpactPreview {
   identities: ImpactIdentity[];
   gainedTotal: number;
   lostTotal: number;
-  /** Access invariants the change would newly break (with the new violations) or make pass again. */
+  /**
+   * Access invariants the change would newly break (with the new violations) or make pass again. Which invariants,
+   * and who would violate them, is shown only to callers allowed iam:invariants:read on the tenant; for anyone else
+   * `detailed` is false, `broken` and `fixed` are empty, and only the counts are reported.
+   */
   invariants: {
+    detailed: boolean;
+    brokenCount: number;
+    fixedCount: number;
     broken: {
       id: string;
       name: string;
@@ -63,10 +70,14 @@ export interface ImpactPreview {
 const maxHolders = 200;
 const maxResources = 10;
 
-/** Invariants whose violations grew (broken) or disappeared (fixed) between two evaluations. */
+/**
+ * Invariants whose violations grew (broken) or disappeared (fixed) between two evaluations; without `detailed`, only
+ * how many.
+ */
 function compareInvariants(
   before: InvariantResult[],
   after: InvariantResult[],
+  detailed: boolean,
 ): ImpactPreview['invariants'] {
   const previous = new Map(before.map((result) => [result.invariant.id, result]));
   const broken: ImpactPreview['invariants']['broken'] = [];
@@ -80,7 +91,10 @@ function compareInvariants(
     else if (result.passed && earlier && !earlier.passed && !earlier.error)
       fixed.push({ id, name, mode });
   }
-  return { broken, fixed };
+  const counts = { brokenCount: broken.length, fixedCount: fixed.length };
+  return detailed
+    ? { detailed, ...counts, broken, fixed }
+    : { detailed, ...counts, broken: [], fixed: [] };
 }
 
 /** Thrown to roll back the simulation transaction while carrying its result out. */
@@ -210,7 +224,8 @@ export function createImpactApi(ctx: ServerContext) {
      * (`change.policy`), or a role deletion (`change.deleteRole`) against 1-10 `resources`. For every holder of the
      * affected roles (at most 200), reports the actions gained and lost per resource; `actions` (at most 200)
      * narrows the comparison, which otherwise covers every known action. `assumeMfa` evaluates holders as if
-     * MFA-verified. Nothing is saved. Requires iam:policies:simulate, plus the rights the change itself needs.
+     * MFA-verified. Nothing is saved. Requires iam:policies:simulate, plus the rights the change itself needs; which
+     * invariants break or pass is detailed only for callers allowed iam:invariants:read (others see counts).
      */
     preview: async (
       credential: CredentialInput,
@@ -254,12 +269,12 @@ export function createImpactApi(ctx: ServerContext) {
       const assumeMfa = input.assumeMfa === true;
       const tenantId = text(input.tenantId, 'tenantId');
       // Authorize (and audit) the preview itself; the simulation runs in its own transaction below.
-      const principal = await operation(
+      const { principal, invariantDetails } = await operation(
         credential,
         tenantId,
         'iam:policies:simulate',
         tenantId,
-        async ({ principal }) => {
+        async ({ tx, principal }) => {
           // The change rights below are checked for the session holder alone, so "view as" cannot borrow them.
           if (principal.session.impersonatorId)
             throw new IamError(
@@ -267,7 +282,15 @@ export function createImpactApi(ctx: ServerContext) {
               'Change previews are not available while impersonating',
               403,
             );
-          return principal;
+          // Invariant names, modes and violators are for those who may read invariants, decided before the change
+          // is simulated so the change cannot grant the right to see them.
+          const invariants = await ctx.decisions.decide(
+            tx,
+            principal,
+            { tenantId, action: 'iam:invariants:read', resource: { type: 'iam', id: tenantId } },
+            true,
+          );
+          return { principal, invariantDetails: invariants.allowed };
         },
       );
       try {
@@ -339,7 +362,7 @@ export function createImpactApi(ctx: ServerContext) {
             identities,
             gainedTotal,
             lostTotal,
-            invariants: compareInvariants(invariantsBefore, invariantsAfter),
+            invariants: compareInvariants(invariantsBefore, invariantsAfter, invariantDetails),
           });
         });
       } catch (error) {

@@ -25,7 +25,10 @@ interface ConsoleState {
   provisioner: ScimProvisioner;
   /** Inbound SCIM for identity providers at /api/iam/scim/v2; the Directory sync page uses /api/iam/scim-admin. */
   directory: ScimService;
+  /** The deployment's `http.clientInfo` (client IP behind trusted proxies), for console routes that sign people in. */
+  clientInfo?: (request: Request) => SessionClient | undefined;
 }
+type SessionClient = { ip?: string; userAgent?: string; label?: string };
 
 // One IAM instance per process, kept across Next.js dev reloads.
 const shared = globalThis as typeof globalThis & { __betterIamConsole?: Promise<ConsoleState> };
@@ -49,6 +52,11 @@ async function deliver(inbox: Map<string, Delivery>, message: DeliveryMessage) {
     if (!response.ok) throw new Error('Delivery provider rejected the message.');
     return;
   }
+  // The in-memory inbox (shown to root administrators on the Deliveries page) holds sign-in links, reset tokens and
+  // emailed MFA codes: with it, a platform administrator could sign in as any member, owners included. Development
+  // only; in production the message fails (and is retried) until a delivery webhook is configured.
+  if (process.env.NODE_ENV === 'production')
+    throw new Error('No DELIVERY_WEBHOOK_URL is configured; messages cannot be delivered.');
   inbox.set(message.id, { ...message, receivedAt: Date.now() });
   while (inbox.size > 200) inbox.delete(inbox.keys().next().value!);
 }
@@ -109,10 +117,42 @@ async function create(): Promise<ConsoleState> {
           await iam.checkInvariants();
           // Team membership reviews past their due date complete and apply their removals.
           await iam.closeOverdueTeamReviews();
+          // Key management: automatic key rotation, destruction after the deletion waiting period, lapsed grants.
+          await iam.kms.maintain();
+          // Privacy: remind handlers of data-subject request deadlines; lapse unconfirmed public requests.
+          await iam.privacy.sendDeadlineReminders();
         })
         .catch(() => undefined),
     60 * 60_000,
   ).unref();
+  // Lifecycle workflows: react to changes as the audit hooks are dispatched (below), and catch up on dates, waits
+  // and anything missed every five minutes.
+  iam.workflows.subscribe();
+  setInterval(
+    () => void ready.then(() => iam.workflows.runDue()).catch(() => undefined),
+    5 * 60_000,
+  ).unref();
+  // Threat detection every minute: new audit events feed the detection rules, incidents, identity risk and playbooks
+  // (a run that outlasts the minute is not overlapped).
+  let detecting = false;
+  setInterval(() => {
+    if (detecting) return;
+    detecting = true;
+    void ready
+      .then(() => iam.detectThreats())
+      .catch(() => undefined)
+      .finally(() => (detecting = false));
+  }, 60_000).unref();
+  // Shared Signals: fetch security events from poll sources every minute (runs are not overlapped).
+  let polling = false;
+  setInterval(() => {
+    if (polling) return;
+    polling = true;
+    void ready
+      .then(() => iam.signals.poll())
+      .catch(() => undefined)
+      .finally(() => (polling = false));
+  }, 60_000).unref();
   // Billing: spend-budget alerts hourly; daily seat counts (for a `seats` meter, when the platform defines one),
   // statements for months that have ended (accounts already invoiced are skipped), and yesterday's spend spikes.
   setInterval(
@@ -126,6 +166,10 @@ async function create(): Promise<ConsoleState> {
           await iam.billing.recordSeats();
           await iam.billing.closePeriod();
           await iam.billing.detectAnomalies();
+          // Compliance: evaluate every organization's controls once a day.
+          await iam.compliance.evaluateAll();
+          // Data protection: delete tokens past their profile's retention.
+          await iam.protection.sweep();
         })
         .catch(() => undefined),
     24 * 60 * 60_000,
@@ -163,6 +207,7 @@ async function create(): Promise<ConsoleState> {
     }
   }, 1000);
   worker.unref();
+  const clientInfo = (options as BetterIamOptions).http?.clientInfo;
   return {
     iam,
     inbox,
@@ -170,6 +215,7 @@ async function create(): Promise<ConsoleState> {
     webhook: Boolean(process.env.DELIVERY_WEBHOOK_URL),
     provisioner,
     directory,
+    ...(clientInfo ? { clientInfo: (request: Request) => clientInfo(request) ?? undefined } : {}),
   };
 }
 
@@ -195,6 +241,17 @@ export async function getProvisioner(): Promise<ScimProvisioner> {
 }
 export async function getDirectory(): Promise<ScimService> {
   return (await state()).directory;
+}
+/**
+ * The client Better IAM records and judges for a request (IP behind the trusted proxies, User-Agent), as its HTTP
+ * handler derives it. Console routes that call sign-in or session-issuing APIs in process run them inside
+ * `iam.auth.withClient(...)` with this, so network allowlists, blocks, per-address limits and session binding apply.
+ */
+export async function requestClient(request: Request): Promise<SessionClient | undefined> {
+  const { clientInfo } = await state();
+  if (clientInfo) return clientInfo(request);
+  const userAgent = request.headers.get('user-agent');
+  return userAgent ? { userAgent } : undefined;
 }
 /** Type-only export for the browser client; never import this value from client code. */
 export type Iam = BetterIam;

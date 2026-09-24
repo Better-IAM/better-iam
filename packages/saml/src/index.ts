@@ -34,6 +34,12 @@ export {
 
 export interface SamlConnection {
   id: string;
+  /**
+   * The provider key accounts linked through this connection are stored under (default: `id`). Tenant-managed
+   * connections get a random one, so their links can never collide with another sign-in provider's (an OAuth
+   * connection with the same ID) or come back when a connection is deleted and recreated.
+   */
+  providerId?: string;
   tenantId: string;
   entryPoint: string;
   idpIssuer: string;
@@ -119,6 +125,8 @@ interface ConnectionRecord extends StoredRecord {
   requireEncryptedAssertions: boolean;
   attributeMapping: Record<string, string>;
   allowIdpInitiated?: boolean;
+  /** `SamlConnection.providerId`; absent on connections created before it existed (their ID is used). */
+  providerKey?: string;
   createdAt: number;
   updatedAt: number;
 }
@@ -145,6 +153,16 @@ export interface SamlConfigOptions {
     attributes?: Record<string, unknown>;
   }): Promise<unknown>;
   authenticate?(credential: CredentialInput): Promise<AuthenticatedPrincipal>;
+  /**
+   * Called before a tenant-managed connection starts trusting something new (another IdP issuer, an added signing
+   * certificate, unsolicited sign-in, more trusted email domains), since whoever controls that trust can sign in as
+   * every account linked through the connection. `iam.protocolHost` supplies it: it requires a recent sign-in and, when
+   * owners or root administrators sign in through the connection, a caller who could control those accounts anyway.
+   */
+  assertTrustChange?(
+    credential: CredentialInput,
+    input: { tenantId: string; providerId: string },
+  ): Promise<unknown>;
   trustedOrigins?: string[];
   /** Revokes the local IAM session; upstream SAML sessions are not modified. */
   revokeSession?(credential: CredentialInput): Promise<unknown>;
@@ -165,6 +183,25 @@ interface CachedRequest extends StoredRecord {
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
 /** Tenant-managed connection IDs appear in SAML URLs. */
 const connectionName = /^[a-z0-9][a-z0-9-]{1,62}$/;
+
+/**
+ * Whether new settings make a connection trust more than before: another IdP issuer, an added signing certificate,
+ * unsolicited sign-in, or more trusted email domains. Removing trust (a certificate rollover finishing) is not.
+ */
+function trustWidened(
+  current: ConnectionRecord,
+  next: Pick<
+    ConnectionRecord,
+    'idpIssuer' | 'idpCertificates' | 'allowIdpInitiated' | 'trustedEmailDomains'
+  >,
+): boolean {
+  return (
+    next.idpIssuer !== current.idpIssuer ||
+    next.idpCertificates.some((certificate) => !current.idpCertificates.includes(certificate)) ||
+    (next.allowIdpInitiated === true && current.allowIdpInitiated !== true) ||
+    next.trustedEmailDomains.some((domain) => !current.trustedEmailDomains.includes(domain))
+  );
+}
 const PROTOCOL_NS = 'urn:oasis:names:tc:SAML:2.0:protocol';
 const ASSERTION_NS = 'urn:oasis:names:tc:SAML:2.0:assertion';
 
@@ -241,10 +278,21 @@ export function validateSamlEnvelope(
       : root.getAttribute('InResponseTo') !== expectedRequestId)
   )
     throw new IamError('SAML_INVALID', 'SAML response binding is invalid.', 401);
-  if (
-    encryptedRequired &&
-    root.getElementsByTagNameNS(ASSERTION_NS, 'EncryptedAssertion').length !== 1
-  )
+  // Judged where Node-SAML reads assertions: the Response's own children. Counting descendants would let an empty
+  // <EncryptedAssertion> hidden elsewhere (inside the signature's <Object>) satisfy the rule while a plaintext
+  // assertion is what gets validated.
+  const children = (name: string) => {
+    let count = 0;
+    for (let node = root.firstChild; node; node = node.nextSibling)
+      if (
+        node.nodeType === 1 &&
+        (node as Element).namespaceURI === ASSERTION_NS &&
+        (node as Element).localName === name
+      )
+        count++;
+    return count;
+  };
+  if (encryptedRequired && (children('EncryptedAssertion') !== 1 || children('Assertion') !== 0))
     throw new IamError('SAML_INVALID', 'An encrypted assertion is required.', 401);
   for (
     let i = 0;
@@ -330,6 +378,7 @@ export function createSamlService(config: SamlConfigOptions) {
     const mapping = Object.entries(record.attributeMapping);
     return {
       id: record.id,
+      ...(record.providerKey ? { providerId: record.providerKey } : {}),
       tenantId: record.tenantId,
       entryPoint: record.entryPoint,
       idpIssuer: record.idpIssuer,
@@ -655,7 +704,7 @@ export function createSamlService(config: SamlConfigOptions) {
     const attributes = item.mapAttributes?.(profile as unknown as Record<string, unknown>);
     return config.completeAuthentication({
       tenantId: item.tenantId,
-      providerId: item.id,
+      providerId: item.providerId ?? item.id,
       issuer: item.idpIssuer,
       subject: profile.nameID,
       email: typeof email === 'string' ? email : undefined,
@@ -705,6 +754,12 @@ export function createSamlService(config: SamlConfigOptions) {
       const assertionId = document?.documentElement?.getAttribute('ID');
       if (!document || !assertionId)
         throw new IamError('SAML_INVALID', 'The assertion has no identifier.', 401);
+      // Node-SAML applies its age limit only when <Conditions> carries times, so an assertion without them would stay
+      // acceptable forever once its single-use record below lapses. Its own IssueInstant bounds it instead: accepted
+      // only within the maximum age (plus clock skew), which the single-use record outlives.
+      const issued = Date.parse(document.documentElement!.getAttribute('IssueInstant') ?? '');
+      if (!Number.isFinite(issued) || issued > Date.now() + 30_000 || Date.now() - issued > 330_000)
+        throw new IamError('SAML_INVALID', 'The assertion is too old or not yet valid.', 401);
       const subjects = document.getElementsByTagNameNS(ASSERTION_NS, 'SubjectConfirmationData');
       for (let i = 0; i < subjects.length; i++)
         if (
@@ -811,6 +866,12 @@ export function createSamlService(config: SamlConfigOptions) {
         id,
       );
       const values = settings(input);
+      // A fresh provider key links no account yet; the host still requires a recent sign-in to add a trust anchor.
+      const providerKey = `saml:${id}:${randomBytes(12).toString('base64url')}`;
+      await config.assertTrustChange?.(credential, {
+        tenantId: input.tenantId,
+        providerId: providerKey,
+      });
       return config.store.transaction(async (tx) => {
         await activeTenant(tx, input.tenantId);
         if (connections.has(id) || (await tx.get('samlConnections', id)))
@@ -820,6 +881,7 @@ export function createSamlService(config: SamlConfigOptions) {
           id,
           tenantId: input.tenantId,
           ...values,
+          providerKey,
           createdAt: now,
           updatedAt: now,
         };
@@ -861,11 +923,26 @@ export function createSamlService(config: SamlConfigOptions) {
         input.tenantId,
         input.connectionId,
       );
+      // Whoever changes what the connection trusts can sign in as every account linked through it.
+      const before = await managed(config.store, input.tenantId, input.connectionId);
+      const widened = trustWidened(before, settings(input, before));
+      if (widened)
+        await config.assertTrustChange?.(credential, {
+          tenantId: input.tenantId,
+          providerId: before.providerKey ?? before.id,
+        });
       return config.store.transaction(async (tx) => {
         const current = await managed(tx, input.tenantId, input.connectionId);
+        const values = settings(input, current);
+        if (trustWidened(current, values) && (!widened || current.updatedAt !== before.updatedAt))
+          throw new IamError(
+            'CONFLICT',
+            'The connection changed while it was being updated; try again.',
+            409,
+          );
         const record: ConnectionRecord = {
           ...current,
-          ...settings(input, current),
+          ...values,
           updatedAt: Date.now(),
         };
         await tx.put('samlConnections', record);
@@ -873,7 +950,10 @@ export function createSamlService(config: SamlConfigOptions) {
         return summary(record);
       });
     },
-    /** Removes a managed connection and its pending sign-ins. Linked external identities stay with their accounts. */
+    /**
+     * Removes a managed connection, its pending sign-ins and the account links made through it (a connection created
+     * later, even with the same ID, never inherits them).
+     */
     async deleteConnection(
       credential: CredentialInput,
       input: { tenantId: string; connectionId: string },
@@ -889,6 +969,13 @@ export function createSamlService(config: SamlConfigOptions) {
         await tx.delete('samlConnections', current.id);
         for (const relay of await tx.find<Relay>('samlRelays', { connectionId: current.id }))
           await tx.delete('samlRelays', relay.id);
+        // Connections from before provider keys share their ID with the links; only this IdP's own links go.
+        for (const link of await tx.find<StoredRecord & { issuer?: unknown }>(
+          'externalIdentities',
+          { tenantId: current.tenantId, providerId: current.providerKey ?? current.id },
+        ))
+          if (current.providerKey || link.issuer === current.idpIssuer)
+            await tx.delete('externalIdentities', link.id);
         await audit(tx, principal, input.tenantId, 'iam:saml:DeleteConnection', current.id);
       });
     },

@@ -333,9 +333,22 @@ export function webIdentityClaimName(value: unknown): string {
 }
 
 /**
+ * Whether a `StringLike` value on `token.sub` names a workload rather than a whole platform: any wildcard (`*`, `?`)
+ * comes after at least two complete segments (each ended by `:` or `/`). `repo:acme/*` and `repo:acme/api:*` pin an
+ * owner; `*`, `repo:*` (every repository on the platform) and `repo:acme*` (also `acme-evil`) do not.
+ */
+function pinsSubject(value: string): boolean {
+  const first = value.search(/[*?]/);
+  if (first === -1) return true;
+  const complete = value.slice(0, first).split(/[:/]/).slice(0, -1).filter(Boolean);
+  return complete.length >= 2;
+}
+
+/**
  * Validates web-identity trust conditions: the core condition grammar over `token.<claim>` keys, at most 20
  * operator/key entries, no policy variables, and a mandatory subject pin — a `StringEquals` or `StringLike` entry on
- * `token.sub` whose values are non-empty and do not start with a wildcard (else WEAK_TRUST_CONDITIONS).
+ * `token.sub` whose values are non-empty and, for `StringLike`, put any wildcard only after two complete segments
+ * (see `pinsSubject`; else WEAK_TRUST_CONDITIONS).
  */
 export function webIdentityConditions(value: unknown): TrustConditions {
   if (!value || typeof value !== 'object' || Array.isArray(value))
@@ -369,14 +382,13 @@ export function webIdentityConditions(value: unknown): TrustConditions {
       (item) =>
         typeof item === 'string' &&
         item.length > 0 &&
-        !item.startsWith('*') &&
-        !item.startsWith('?'),
+        (operator === 'StringEquals' || pinsSubject(item)),
     );
   });
   if (!pinned)
     throw new IamError(
       'WEAK_TRUST_CONDITIONS',
-      'Web identity trusts must pin token.sub with StringEquals or StringLike (no leading wildcard)',
+      'Web identity trusts must pin token.sub with StringEquals or StringLike (a wildcard only after two complete segments, such as repo:acme/*)',
     );
   return structuredClone(conditions);
 }

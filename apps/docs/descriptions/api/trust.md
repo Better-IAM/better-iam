@@ -61,7 +61,8 @@ authority (or root) may change or revoke it. Each one names:
 - the provider (`providerId`) and an active service account of the tenant (`serviceAccountId`) that sessions act as;
 - `conditions` on the verified token's claims, written in the policy condition grammar over `token.{claim}` keys
   (nested claims are joined with dots, such as `token.kubernetes.io.namespace`). They must pin `token.sub` with
-  `StringEquals` or `StringLike` without a leading wildcard, or creation fails with `WEAK_TRUST_CONDITIONS`;
+  `StringEquals`, or `StringLike` with any wildcard only after two complete segments (`repo:acme/*`, not `repo:*`
+  or `repo:acme*`), or creation fails with `WEAK_TRUST_CONDITIONS`;
 - optionally `tagClaims` (session tag key to claim name, at most 10), `sourceIdentityClaim`, `maxSessionSeconds`,
   `ceiling`, `passSourceAttributes` (default `true`), and `description`.
 

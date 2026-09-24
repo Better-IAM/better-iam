@@ -621,7 +621,12 @@ export async function createPackage(
   return tx.insert<AccessPackage>('accessPackages', record);
 }
 
-/** Changes a package's contents and rules; existing manual assignments keep what they were given. */
+/**
+ * Changes a package's contents and rules; existing manual assignments keep what they were given. Changing the
+ * contents of a package without a rule needs no rights over what is added or removed because it grants nothing:
+ * extending an assignment lengthens only what the package still bundles (and the extender is authorized for), and
+ * handing a shared membership over never lengthens it.
+ */
 export async function updatePackage(
   ctx: ServerContext,
   tx: IamStore,
@@ -810,15 +815,19 @@ async function nextOwner(
 
 /**
  * A group has one membership record per person, so packages that share a group share it: the record belongs to
- * the assignment that needs it longest. Handing it over moves its tag and end to the new owner.
+ * the assignment that needs it longest. Handing it over moves its tag and end to the new owner, but never lengthens
+ * it: the new owner's package may have gained the group after that assignment was made (packages.update grants
+ * nothing), so the owner's end was never authorized for this group. Every assignment that did receive the group
+ * already ends no later than the record (materialize and retimeAssignment keep the longest end on it).
  */
 async function handOver(tx: IamStore, member: GroupMember, ownerId: string): Promise<void> {
   const owner = await tx.get<PackageAssignment>('packageAssignments', ownerId);
   if (!owner) return;
   const { expiresAt: _end, ...rest } = member;
+  const end = Math.min(endOf(member.expiresAt), endOf(owner.expiresAt));
   await tx.put<GroupMember>('groupMembers', {
     ...rest,
-    ...(owner.expiresAt !== undefined ? { expiresAt: owner.expiresAt } : {}),
+    ...(end !== Number.POSITIVE_INFINITY ? { expiresAt: end } : {}),
     packageAssignmentId: owner.id,
   });
   if (!owner.membershipIds.includes(member.id))
@@ -1111,7 +1120,9 @@ export async function revokeAssignment(
 /**
  * Moves the end of an assignment and of exactly its records (undefined: no end). Shortening a shared membership
  * hands it to the package that still needs it longer; lengthening extends a shorter membership of the package's
- * groups (held by hand or through another package) and makes it the assignment's. Authorization is the caller's.
+ * groups (held by hand or through another package) and makes it the assignment's. Authorization is the caller's,
+ * for the package's current contents: lengthening therefore reaches only records of roles and groups the package
+ * still bundles, and those it no longer bundles (removed by packages.update since) keep their end.
  */
 export async function retimeAssignment(
   ctx: ServerContext,
@@ -1128,8 +1139,9 @@ export async function retimeAssignment(
   const lengthening = endOf(expiresAt) > endOf(assignment.expiresAt);
   for (const bindingId of assignment.bindingIds) {
     const binding = await tx.get<Binding>('bindings', bindingId);
-    if (binding?.packageAssignmentId === assignment.id)
-      await tx.put<Binding>('bindings', retime(binding));
+    if (binding?.packageAssignmentId !== assignment.id) continue;
+    if (lengthening && !pkg.roleIds.includes(binding.roleId)) continue;
+    await tx.put<Binding>('bindings', retime(binding));
   }
   let current = assignment;
   // The memberships the assignment holds, plus the person's memberships of the package's current groups.
@@ -1150,7 +1162,9 @@ export async function retimeAssignment(
   for (const member of members.values()) {
     if (!ctx.liveMembership(member)) continue;
     if (member.packageAssignmentId === assignment.id) {
-      if (!lengthening) {
+      if (lengthening) {
+        if (!pkg.groupIds.includes(member.groupId)) continue;
+      } else {
         const owner = await nextOwner(
           ctx,
           tx,
@@ -1815,8 +1829,10 @@ export function createPackagesApi(ctx: ServerContext) {
      * Moves the end of an assignment: the assignment and every binding and membership it created get the new end
      * together (null makes them permanent, unless the package caps durations). Shortening requires
      * iam:packages:assign on the package; lengthening (or null) is granting, so it also needs the rights `assign`
-     * needs and a grant authority, and the package's bindings move to the extender's authority. Automatic
-     * assignments cannot be extended (INVALID_TRANSITION). Audited as `package:extend`.
+     * needs and a grant authority, and the package's bindings move to the extender's authority. Lengthening reaches
+     * only the roles and groups the package bundles now: records of ones taken out of the package since the
+     * assignment keep their end. Automatic assignments cannot be extended (INVALID_TRANSITION). Audited as
+     * `package:extend`.
      */
     extend: (
       credential: CredentialInput,
@@ -1857,7 +1873,9 @@ export function createPackagesApi(ctx: ServerContext) {
           );
           const { tenantId } = input;
           // Lengthening is granting: it needs the rights `assign` needs, and the bindings move to the extender's
-          // authority so the longer grant is bounded by what the extender may give. Shortening needs no more than
+          // authority so the longer grant is bounded by what the extender may give. Those rights are checked for
+          // the package's current contents, so only records of those roles and groups are lengthened (and moved);
+          // the rest keep their end and authority (retimeAssignment). Shortening needs no more than
           // iam:packages:assign, like revoking.
           if (endOf(expiresAt) > endOf(assignment.expiresAt)) {
             const authority = await authorizePackage(ctx, tx, principal, pkg, {
@@ -1868,7 +1886,8 @@ export function createPackagesApi(ctx: ServerContext) {
                 const binding = await tx.get<Binding>('bindings', bindingId);
                 if (
                   binding?.packageAssignmentId !== assignment.id ||
-                  binding.authorityId === authority.id
+                  binding.authorityId === authority.id ||
+                  !pkg.roleIds.includes(binding.roleId)
                 )
                   continue;
                 await tx.put<Binding>('bindings', {

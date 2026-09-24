@@ -71,6 +71,12 @@ export interface EventOptions {
   deliverWebhook?(delivery: WebhookDelivery): Promise<void>;
   /** Timeout for the built-in transport (default 10 seconds). */
   webhookTimeoutMs?: number;
+  /**
+   * Lets webhook endpoints (and the built-in transport) reach private and reserved addresses such as `10.0.0.0/8` or
+   * `169.254.169.254`. Off by default: tenant administrators choose webhook URLs, so without this they could make
+   * the server call into its own network. Loopback over http is allowed only while `baseURL` is http (development).
+   */
+  allowPrivateNetworks?: boolean;
 }
 export interface AccessRequestOptions {
   /** How long a pending request stays open (default 7 days). */
@@ -254,6 +260,24 @@ export interface BetterIamOptions {
    * follow, usage retention, how team spend is attributed, payment terms. Billing is always available; these tune it.
    */
   billing?: import('./billing.js').BillingOptions;
+  /**
+   * SSH certificate authority: short-lived OpenSSH user certificates for the hosts and logins policies allow
+   * (`ssh-login/{host}/{login}`, `ssh:login`), host certificates, and revocation lists (`ssh` API group,
+   * `iam.ssh`). Off by default.
+   */
+  ssh?: boolean | import('./ssh.js').SshOptions;
+  /**
+   * Verifiable credentials: every tenant issues SD-JWT VCs (selective disclosure, holder binding, Token Status List
+   * revocation) to wallets over OpenID4VCI and verifies presentations (`verifiableCredentials` API group, the
+   * `{basePath}/vc/{tenantId}` issuer endpoints, `iam.verifiableCredentials`). Off by default.
+   */
+  verifiableCredentials?: boolean | import('./vc.js').VerifiableCredentialOptions;
+  /**
+   * Secrets vault settings (`vault` API group, `iam.vault`): rotators that apply rotated values to the systems they
+   * unlock, dynamic secret engines, size limits and access-record retention. The vault is always available; these
+   * extend it.
+   */
+  vault?: import('./vault.js').VaultOptions;
   http?: HttpOptions;
   /** Plan limits and authentication policy applied to every tenant created through `tenants.create`. */
   tenantDefaults?: { limits?: TenantLimits; authPolicy?: TenantAuthPolicy };
@@ -275,6 +299,28 @@ export interface BetterIamOptions {
   protocols?: ProtocolMount[];
   /** Temporary credentials: duration ceilings, session JWT signing keys and web-identity federation. */
   sts?: StsOptions;
+  /**
+   * The Shared Signals receiver (`signals` API group, `iam.signals`): how it reaches transmitters' keys, discovery
+   * documents and poll endpoints, and where transmitters push security events.
+   */
+  signals?: SignalsOptions;
+}
+
+/** Shared Signals receiver settings. */
+export interface SignalsOptions {
+  /** Lets key, discovery and poll requests reach private and reserved addresses. Development and tests only. */
+  allowPrivateNetworks?: boolean;
+  /** Accepts `http://` issuers, key URLs and poll endpoints on loopback hosts. Development and tests only. */
+  allowInsecureLocalhost?: boolean;
+  /** Where transmitters push: `{pushPath}/{sourceId}` (default `{basePath}/signals/push`). */
+  pushPath?: string;
+}
+
+/** Validated Shared Signals receiver settings with defaults applied. */
+export interface ResolvedSignalsConfig {
+  allowPrivateNetworks: boolean;
+  allowInsecureLocalhost: boolean;
+  pushPath: string;
 }
 
 /** Validated, defaulted configuration derived once from the options. */
@@ -297,6 +343,8 @@ export interface ServerConfig {
   hosts: ResolvedHostConfig;
   /** Region settings (`regions` option); undefined for single-region deployments. */
   regions?: ResolvedRegionConfig;
+  /** Shared Signals receiver settings (`signals` option). */
+  signals: ResolvedSignalsConfig;
 }
 
 const defaultHierarchy: HierarchyConfig = {
@@ -378,6 +426,37 @@ export function resolveConfig(options: BetterIamOptions): ServerConfig {
       120_000,
     ),
     sts: resolveStsConfig(options.sts, options.sts?.jwt?.issuer ?? `${baseURL.origin}${basePath}`),
+    signals: resolveSignalsConfig(options.signals, basePath),
+  };
+}
+
+/** Validates `options.signals` and applies the defaults. */
+function resolveSignalsConfig(
+  options: SignalsOptions | undefined,
+  basePath: string,
+): ResolvedSignalsConfig {
+  const invalid = (field: string, detail: string): never => {
+    throw new IamError('INVALID_CONFIG', `signals.${field} ${detail}`);
+  };
+  if (options !== undefined && (options === null || typeof options !== 'object'))
+    throw new IamError('INVALID_CONFIG', 'signals must be an object');
+  const flag = (value: unknown, field: string) => {
+    if (value !== undefined && typeof value !== 'boolean') invalid(field, 'must be a boolean');
+    return value === true;
+  };
+  const pushPath: unknown = options?.pushPath ?? `${basePath}/signals/push`;
+  if (
+    typeof pushPath !== 'string' ||
+    pushPath.length > 256 ||
+    !/^\/[\w/-]+$/.test(pushPath) ||
+    pushPath.endsWith('/') ||
+    pushPath.includes('//')
+  )
+    invalid('pushPath', 'must be an absolute path such as /api/iam/signals/push');
+  return {
+    allowPrivateNetworks: flag(options?.allowPrivateNetworks, 'allowPrivateNetworks'),
+    allowInsecureLocalhost: flag(options?.allowInsecureLocalhost, 'allowInsecureLocalhost'),
+    pushPath: pushPath as string,
   };
 }
 

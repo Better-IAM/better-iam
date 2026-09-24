@@ -1,8 +1,9 @@
 import { timingSafeEqual } from 'node:crypto';
-import { IamError, type CredentialInput, type Session } from '@better-iam/core';
+import { IamError, type CredentialInput, type Identity, type Session } from '@better-iam/core';
 import type { SessionResult, SignInResult } from '@better-iam/auth';
 import { clientFromHeaders } from './client-info.js';
 import type { ServerContext } from './context.js';
+import { actsInOwnRight } from './session-kinds.js';
 import type {
   Binding,
   GrantAuthority,
@@ -42,6 +43,10 @@ function externalIdMatches(expectedHash: string | undefined, provided: unknown):
   const actual = Buffer.from(hash(provided), 'utf8');
   return expected.length === actual.length && timingSafeEqual(expected, actual);
 }
+
+/** Whether a session may source a role session: one acting in its own right, or a session token minted from one. */
+const roleSource = (session: Pick<Session, 'kind'>): boolean =>
+  actsInOwnRight(session) || session.kind === 'session-token';
 
 /**
  * The session tag keys a stored trust admits, read fail-closed: a list of strings, where the `*` wildcard counts only
@@ -184,7 +189,9 @@ export function createFlows(ctx: ServerContext): FlowService {
         await ctx.ownerSetup(tx, realm, identity, authority);
         await tx.put('tenants', { ...realm, status: 'active' });
         await tx.put('ownerInvitations', { ...invitation, consumed: true });
-        const issued = await auth.completeAuthentication(tx, identity);
+        // The owner just set a password: the session is a password sign-in, recorded as one and refused like one
+        // where the organization does not accept passwords.
+        const issued = await auth.completeAuthentication(tx, identity, 'password');
         if (linkPrincipal) {
           const current = await ctx.principals.currentPrincipal(tx, linkPrincipal);
           if (
@@ -241,6 +248,47 @@ export function createFlows(ctx: ServerContext): FlowService {
           !(await ctx.authorityChain(tx, invitation.authorityId))
         )
           throw new IamError('INVITATION_INVALID', 'Invitation authority revoked');
+        // An invitation grants no more than the inviter could bind directly, now as when it was sent: the inviter
+        // must still be active and still hold iam:identities:create, iam:bindings:create on each role and
+        // iam:groups:update on each group, and the authorities behind the invitation and each group's bindings must
+        // still be theirs. Demoting or disabling the inviter ends the invitations they sent.
+        const inviter = await tx.get<Identity>('identities', invitation.inviterId);
+        if (!inviter || inviter.status !== 'active' || ctx.identityExpired(inviter))
+          throw new IamError('INVITATION_INVALID', 'The inviter can no longer invite');
+        const asInviter = ctx.decisions.simulatedPrincipal(inviter, true);
+        const inviterMay = async (action: string, resourceId: string) =>
+          (
+            await ctx.decisions.decide(
+              tx,
+              asInviter,
+              { tenantId: realm.id, action, resource: { type: 'iam', id: resourceId } },
+              true,
+            )
+          ).allowed;
+        const inviterHolds = (authorityId: string) =>
+          ctx.grantingAuthority(tx, asInviter, realm.id, authorityId).then(
+            () => true,
+            () => false,
+          );
+        const stillGrantable =
+          (await inviterMay('iam:identities:create', realm.id)) &&
+          (invitation.authorityId === undefined || (await inviterHolds(invitation.authorityId)));
+        if (!stillGrantable)
+          throw new IamError('INVITATION_INVALID', 'The inviter can no longer grant this access');
+        for (const roleId of invitation.roleIds)
+          if (!(await inviterMay('iam:bindings:create', roleId)))
+            throw new IamError('INVITATION_INVALID', 'The inviter can no longer grant this access');
+        for (const groupId of invitation.groupIds) {
+          if (!(await inviterMay('iam:groups:update', groupId)))
+            throw new IamError('INVITATION_INVALID', 'The inviter can no longer grant this access');
+          for (const binding of await tx.find<Binding>('bindings', {
+            tenantId: realm.id,
+            subjectType: 'group',
+            subjectId: groupId,
+          }))
+            if (!(await inviterHolds(binding.authorityId)))
+              throw new IamError('INVITATION_INVALID', 'The inviter can no longer grant this access');
+        }
         const name = input.name !== undefined ? text(input.name, 'name') : invitation.name;
         if (!name) throw new IamError('INVALID_INPUT', 'A name is required');
         const identity = await auth.createIdentity(tx, {
@@ -290,7 +338,8 @@ export function createFlows(ctx: ServerContext): FlowService {
             groupIds: invitation.groupIds,
           },
         });
-        const issued = await auth.completeAuthentication(tx, identity);
+        // A password sign-in, like the owner invitation's: METHOD_NOT_ALLOWED applies and `session.method` is set.
+        const issued = await auth.completeAuthentication(tx, identity, 'password');
         return { identity: publicIdentity(identity), ...issued };
       });
     },
@@ -399,6 +448,14 @@ export function createFlows(ctx: ServerContext): FlowService {
             'Roles cannot be assumed while impersonating a member',
             403,
           );
+        // Only the sources a role session may be validated against (principals.ts roleSourceKinds): a delegated agent
+        // session is bounded by its delegation and must not mint a role credential (a JWT would outlive it offline).
+        if (!roleSource(principalBefore.session))
+          throw new IamError(
+            'CREDENTIAL_CHAINING_DISABLED',
+            'Delegated sessions cannot assume roles',
+            400,
+          );
         // Input shapes are refused before any lookup; trust-dependent rules run inside the operation.
         const sessionName = sessionNameValue(input.sessionName);
         const sourceIdentity = sourceIdentityValue(input.sourceIdentity);
@@ -435,6 +492,7 @@ export function createFlows(ctx: ServerContext): FlowService {
               allowedTagKeys.any || tagKeys.every((key) => allowedTagKeys.keys.includes(key));
             const sourceIdentityMode = trustSourceIdentityMode(trust);
             const permitted =
+              roleSource(principal.session) &&
               !trust.revoked &&
               (trust.kind ?? 'identity') === 'identity' &&
               trust.sourceIdentityId === principal.identity.id &&

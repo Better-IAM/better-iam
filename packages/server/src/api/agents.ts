@@ -24,6 +24,7 @@ import { attributeValues } from '../catalog.js';
 import type { ServerContext } from '../context.js';
 import { deleteDelegatedSessions, revokeDelegationsOf, type Delegation } from '../delegations.js';
 import { actsInOwnRight } from '../session-kinds.js';
+import { endContainment } from '../threats.js';
 import { byNewest, id } from '../utils.js';
 import { integer, text } from '../validation.js';
 import { deleteIdentity } from './identities.js';
@@ -135,6 +136,57 @@ function personalSession(principal: AuthenticatedPrincipal, tenantId: string): b
     !principal.session.impersonatorId
   );
 }
+
+/**
+ * Naming someone other than oneself as an agent's sponsor makes them accountable for it and moves the agent's spend
+ * onto their teams and department, so it needs the right to change that person: iam:identities:update on them (which
+ * owners and root administrators hold). Checked before the sponsor is validated, so it reveals nothing about them.
+ */
+async function authorizeSponsor(
+  ctx: ServerContext,
+  tx: IamStore,
+  principal: AuthenticatedPrincipal,
+  tenantId: string,
+  sponsorId: unknown,
+): Promise<void> {
+  const sponsor = text(sponsorId, 'sponsorId');
+  if (sponsor === principal.identity.id && personalSession(principal, tenantId)) return;
+  const decision = await ctx.decisions.decide(
+    tx,
+    principal,
+    { tenantId, action: 'iam:identities:update', resource: { type: 'iam', id: sponsor } },
+    true,
+  );
+  if (!decision.allowed)
+    throw new IamError(
+      'ACCESS_DENIED',
+      'Naming another person as the sponsor needs iam:identities:update on them',
+      403,
+    );
+}
+
+/** JWT claim names a signed agent card may not carry at its top level (see `signCard`). */
+const tokenClaimNames = new Set([
+  // RFC 7519 registered claims.
+  'iss',
+  'sub',
+  'aud',
+  'exp',
+  'nbf',
+  'iat',
+  'jti',
+  // Token exchange and proof of possession (RFC 8693, RFC 7800) and common authorization claims.
+  'act',
+  'may_act',
+  'scope',
+  'scp',
+  'client_id',
+  'azp',
+  'cnf',
+  // Delegation tokens (delegations.issueToken).
+  'tenant_id',
+  'delegation_id',
+]);
 
 /**
  * Agent changes without a credential, for the `agents` API (which authorizes first) and for configuration sync
@@ -324,6 +376,8 @@ export function createAgentsApi(ctx: ServerContext) {
         suspended: { by: principal.identity.id, at: now, ...(reason ? { reason } : {}) },
       },
     });
+    // The kill switch holds the agent now: a threats containment of it can no longer be released.
+    await endContainment(tx, agent.id, now);
     const sessions = await deleteDelegatedSessions(tx, { agentId: agent.id });
     let tokens = 0;
     for (const session of await tx.find<Session>('sessions', { identityId: agent.id })) {
@@ -368,6 +422,8 @@ export function createAgentsApi(ctx: ServerContext) {
       status: 'active',
       agent: profile,
     });
+    // Resuming a contained agent ends the containment too.
+    await endContainment(tx, agent.id, ctx.now());
     await ctx.events.audit(tx, principal, 'agent:resume', agent.tenantId, agent.id, 'allow');
     return agentSummary(ctx, tx, resumed);
   }
@@ -412,8 +468,9 @@ export function createAgentsApi(ctx: ServerContext) {
   return {
     /**
      * Registers an AI agent. The sponsor (the caller when they are a person of the tenant, else `sponsorId`) must be an
-     * active person of the tenant; the agent stops working whenever its sponsor does. Counts toward the tenant's
-     * `agents` limit. Audited as the operation plus `agent:create`.
+     * active person of the tenant; the agent stops working whenever its sponsor does. Naming someone else as the
+     * sponsor also needs `iam:identities:update` on them. Counts toward the tenant's `agents` limit. Audited as the
+     * operation plus `agent:create`.
      */
     create: (credential: CredentialInput, input: CreateAgentInput): Promise<AgentSummary> =>
       operation(
@@ -430,6 +487,8 @@ export function createAgentsApi(ctx: ServerContext) {
               'INVALID_SPONSOR',
               'Name the person accountable for the agent (sponsorId)',
             );
+          if (input.sponsorId !== undefined)
+            await authorizeSponsor(ctx, tx, principal, tenant.id, input.sponsorId);
           const agent = await mutations.createAgent(tx, principal, tenant, {
             ...input,
             sponsorId,
@@ -544,8 +603,8 @@ export function createAgentsApi(ctx: ServerContext) {
     /**
      * Changes an agent's name, description, attributes, expiry or profile (model, provider, purpose, url, protocols,
      * delegable, maxDelegatedSessionSeconds, boundary, tokenAudiences; null clears). A new `sponsorId` must be an active person of the
-     * tenant (audited `agent:sponsor-change`). Changes to the boundary and to `delegable` apply to live sessions at
-     * once. Needs `iam:agents:update`.
+     * tenant (audited `agent:sponsor-change`), and naming someone other than the caller needs `iam:identities:update`
+     * on them. Changes to the boundary and to `delegable` apply to live sessions at once. Needs `iam:agents:update`.
      */
     update: (credential: CredentialInput, input: UpdateAgentInput): Promise<AgentSummary> =>
       operation(
@@ -555,6 +614,8 @@ export function createAgentsApi(ctx: ServerContext) {
         text(input.agentId, 'agentId'),
         async ({ tx, principal }) => {
           const agent = await agentRecord(tx, input.agentId, input.tenantId);
+          if (input.sponsorId !== undefined && input.sponsorId !== agent.agent?.sponsorId)
+            await authorizeSponsor(ctx, tx, principal, agent.tenantId, input.sponsorId);
           return agentSummary(ctx, tx, await mutations.updateAgent(tx, principal, agent, input));
         },
       ),
@@ -698,9 +759,11 @@ export function createAgentsApi(ctx: ServerContext) {
      * Signs the agent's A2A agent card (needs the `a2a` option). The card's `url` and every `additionalInterfaces[].url`
      * must be on the origin of the agent's registered `url`; IAM sets `provider.organization` to the tenant's name,
      * adds the attestation extension `urn:better-iam:a2a:attestation:v1` (agent, organization, sponsorship, model,
-     * expiry) and signs the canonical card (RFC 8785) as a detached JWS. The agent must be in good standing. The agent
-     * itself may call this with its own unscoped API key (so its A2A server re-signs before the attestation expires), as
-     * may its sponsor in their own session or an administrator with `iam:agents:update`. Audited as `agent:card-sign`.
+     * expiry) and signs the canonical card (RFC 8785) as a detached JWS. A card with JWT or delegation-token claims at
+     * its top level (`iss`, `sub`, `aud`, `exp`, `act`, `scope`, `tenant_id`, ...) is refused, so no signed card reads
+     * as a token. The agent must be in good standing. The agent itself may call this with its own unscoped API key (so
+     * its A2A server re-signs before the attestation expires), as may its sponsor in their own session or an
+     * administrator with `iam:agents:update`. Audited as `agent:card-sign`.
      */
     signCard: async (
       credential: CredentialInput,
@@ -713,6 +776,18 @@ export function createAgentsApi(ctx: ServerContext) {
           throw new IamError('INVALID_IDENTITY', 'The agent is not in good standing', 409);
         const tenant = await tx.get<Tenant>('tenants', agent.tenantId);
         if (!tenant) throw new IamError('NOT_FOUND', 'Tenant not found', 404);
+        // The card is signed with the keys that sign delegation tokens, and its signed payload is agent-controlled
+        // JSON: without token claims at the top level, it can never pass as a delegation token (or any JWT naming a
+        // subject, audience, actor or lifetime) with a verifier that skips the `typ` check.
+        const card: unknown = input.card;
+        if (card && typeof card === 'object' && !Array.isArray(card)) {
+          const claims = Object.keys(card).filter((name) => tokenClaimNames.has(name));
+          if (claims.length)
+            throw new IamError(
+              'INVALID_INPUT',
+              `An agent card may not carry the token claim${claims.length === 1 ? '' : 's'} ${claims.join(', ')}`,
+            );
+        }
         const signed = await signAgentCard(ctx, tenant, agent, input.card);
         // The latest attested card is the agent's entry in the tenant's directory (`directory`).
         const entry: AgentCardRecord = {

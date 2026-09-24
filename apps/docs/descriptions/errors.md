@@ -74,6 +74,16 @@ someone else's request, or acting from a session that is not an ordinary session
 **How to fix:** ask an administrator for a role that grants the action. To see why a decision was made, use
 [`policies.simulate`](/docs/reference/api/policies#simulate) or [`accessPaths.find`](/docs/reference/api/access-paths#find).
 
+## ACCESS_EXPIRING
+
+The access that allows this verifiable credential ends within a minute.
+
+A self-service credential never outlives the grant that allowed `vc:request`: an expiring binding or group membership,
+a just-in-time activation, an access window, or the assumed role or temporary credentials the request came from.
+
+**How to fix:** renew the access (activate the eligible role again, or ask for the binding to be extended), then
+request the credential.
+
 ## ACCOUNT_LINK_CONFLICT
 
 The external account you are linking is already linked to a different account in this tenant.
@@ -151,6 +161,16 @@ command prints the verification result, including where it failed, before it exi
 compare it with your archive or backups, and review who can write to the database
 ([audit chain](/docs/guides/events/audit-chain)).
 
+## AUTHORITY_UNAVAILABLE
+
+A certificate authority cannot sign: it, or an authority above it, is disabled, revoked or expired.
+
+[`pki.issueCertificate`](/docs/reference/api/pki#issuecertificate), `requestCertificate` and `createAuthority` (for a
+parent) refuse. A revoked authority cannot be changed at all.
+
+**How to fix:** re-enable a disabled authority with [`updateAuthority`](/docs/reference/api/pki#updateauthority), or
+issue from another authority. A revoked or expired authority has to be replaced.
+
 ## BILLING_PERIOD_CLOSED
 
 The month has already been invoiced for this billing account, so its usage and prices can no longer change.
@@ -182,6 +202,37 @@ catalog mode only your configuration defines the catalog.
 **How to fix:** declare the types and actions under `permissions` in your configuration, or switch to tenant-defined
 mode if organizations should define their own ([catalog](/docs/guides/authorization/catalog)).
 
+## CHECKOUT_REQUIRED
+
+A vault secret is handed out only through check-outs, so it cannot be revealed directly.
+
+Secrets with a check-out policy that has `required` (shared privileged credentials) refuse
+[`vault.reveal`](/docs/reference/api/vault#reveal), so every use is time-limited, attributed and, when the policy says
+so, explained. The holder of a live check-out may reveal the version they checked out.
+
+**How to fix:** call [`vault.checkout`](/docs/reference/api/vault#checkout) (with a `reason` when the policy asks
+for one) and [`checkin`](/docs/reference/api/vault#checkin) when done.
+
+## CERTIFICATE_INVALID
+
+`iam.pki.verify` refused a presented certificate.
+
+The certificate was not issued by this deployment (or differs from the stored one), is revoked, expired or not yet
+valid, is a CA certificate, does not allow the requested usage, or chains to an authority that is no longer active.
+
+**How to fix:** present a current certificate issued by the tenant's authority, with its usage matching the side of
+the connection, and renew certificates before they expire.
+
+## CLAIM_UNAVAILABLE
+
+A verifiable credential type requires a claim this person has no value for.
+
+Claims marked `required` in the credential type are never left out, so issuing is refused instead (for example, a
+`title` taken from an identity attribute that was never set).
+
+**How to fix:** set the value on the person (such as the identity attribute), or make the claim optional with
+[`verifiableCredentials.updateType`](/docs/reference/api/verifiable-credentials#updatetype).
+
 ## CONFIG_DRIFT
 
 `config-plan --fail-on-drift` found differences between the tenant and the configuration file.
@@ -197,6 +248,18 @@ so a CI job fails when someone changed production outside the reviewed file.
 `better-iam init` found an existing configuration file and left it untouched.
 
 **How to fix:** edit the existing file, or pass `--config` with a new path to generate a fresh one.
+
+## CONFIRMATION_INVALID
+
+The link that confirms a public data-subject request is wrong, already used, or expired.
+
+[`privacy.confirmPublic`](/docs/reference/api/privacy#confirmpublic) accepts the token emailed to the requester once,
+within seven days of the request, and only while the request still waits for confirmation. Unknown request IDs get the
+same answer, so the call reveals nothing about which requests exist. Attempts are rate limited per request.
+
+**How to fix:** open the latest confirmation email and use its link. If the request lapsed or was already confirmed,
+file a new one with [`privacy.submitPublic`](/docs/reference/api/privacy#submitpublic)
+([privacy guide](/docs/guides/governance/privacy)).
 
 ## CONFLICT
 
@@ -369,6 +432,18 @@ issue, and every later use of a session refuse unverified identities.
 **How to fix:** have the person open the verification link from their email (`auth.verifyEmail`), or send a new one
 with `auth.requestEmailVerification` ([email verification](/docs/guides/authentication/recovery#email-verification)).
 
+## ENGINE_FAILED
+
+A dynamic secret's engine failed to issue or renew a credential.
+
+[`vault.lease`](/docs/reference/api/vault#lease) asks the engine configured on the deployment (`vault.engines`) to
+mint a credential for the caller; the engine threw, timed out (`vault.callTimeoutMs`, 30 seconds by default), or
+returned something that does not fit the secret's format. No lease is left behind, and credentials minted for a lease
+that was revoked meanwhile are revoked at once.
+
+**How to fix:** check the system the engine talks to and the engine's logs, then call `lease` again. The lease's
+`vault:lease` audit event (outcome `deny`) carries the error.
+
 ## FEATURE_DISABLED
 
 The feature this call needs is turned off or not configured on this deployment or for this organization.
@@ -426,19 +501,6 @@ issued under. A non-root administrator needs one that is not revoked and whose d
 **How to fix:** ask a root administrator, or someone holding a broader authority, to delegate one with
 [`authorities.create`](/docs/reference/api/authorities#create).
 
-## HOST_MISMATCH
-
-The request arrived on one organization's sign-in address but names or authenticates as another organization.
-
-With organization addresses (`hosts`), a request on `acme.signin.example.com` or Acme's custom hostname is pinned
-to Acme: a sign-in call naming another `tenantId`, a session or API key of another organization, and a page on one
-organization's address calling the API on another's are all refused. Root administrators sign in at the
-deployment's own address, not an organization's.
-
-**How to fix:** send the person to their own organization's address (its `signInUrl` from
-[`tenants.lookup`](/docs/reference/api/tenants#lookup)), or leave `tenantId` out and let the address decide
-([sign-in addresses](/docs/operations/deployment/hosts-and-regions)).
-
 ## HOSTNAME_NOT_ALLOWED
 
 The hostname belongs to the deployment itself, so no organization can claim it.
@@ -459,6 +521,58 @@ another organization verified it first.
 **How to fix:** if the hostname is yours, the other organization must release it with
 [`hostnames.delete`](/docs/reference/api/hostnames#delete) before you can verify it.
 
+## HOST_KEY_CHANGED
+
+The host key sent with an SSH host's renewal token is not the key the host enrolled with.
+
+`ssh.syncHost` never moves a host to another key, so a stolen renewal token cannot produce a host certificate for an
+attacker's key.
+
+**How to fix:** after rebuilding a server, re-enroll it: get a new join token with
+[`ssh.resetJoinToken`](/docs/reference/api/ssh#resetjointoken) and run `better-iam ssh-host-enroll`.
+
+## HOST_KEY_IN_USE
+
+The SSH host key is another enrolled host's key.
+
+Each host's key identifies it to clients, and revoking a host publishes its key as revoked, so two hosts never share
+one (a cloned image, or a key copied from another server).
+
+**How to fix:** generate a fresh host key on the server (`ssh-keygen -A` after removing the copied keys), then enroll.
+
+## HOST_MISMATCH
+
+The request arrived on one organization's sign-in address but names or authenticates as another organization.
+
+With organization addresses (`hosts`), a request on `acme.signin.example.com` or Acme's custom hostname is pinned
+to Acme: a sign-in call naming another `tenantId`, a session or API key of another organization, and a page on one
+organization's address calling the API on another's are all refused. Root administrators sign in at the
+deployment's own address, not an organization's.
+
+**How to fix:** send the person to their own organization's address (its `signInUrl` from
+[`tenants.lookup`](/docs/reference/api/tenants#lookup)), or leave `tenantId` out and let the address decide
+([sign-in addresses](/docs/operations/deployment/hosts-and-regions)).
+
+## HOST_NAME_TAKEN
+
+Another SSH host of the organization already uses this name or address.
+
+A host certificate vouches for every name and address of its host, so each belongs to one host only.
+
+**How to fix:** remove the address from the other host with [`ssh.updateHost`](/docs/reference/api/ssh#updatehost), or use
+another name.
+
+## HOST_OUTSIDE_PATTERNS
+
+An SSH host name or address falls outside the organization's host patterns.
+
+When `hostPatterns` is set in the SSH settings, the host authority only vouches for names matching it, so
+`ssh.createHost` and `ssh.updateHost` refuse other names and addresses, and `ssh.updateSettings` refuses patterns
+that would leave an existing host uncovered.
+
+**How to fix:** use a name inside the patterns, or widen them with
+[`ssh.updateSettings`](/docs/reference/api/ssh#updatesettings).
+
 ## IDENTITY_EXISTS
 
 An identity with this email address already exists in the tenant.
@@ -468,6 +582,15 @@ Emails are unique within a tenant (another tenant may have its own identity with
 
 **How to fix:** use the existing identity or another address; a person who already has an account should sign in or
 reset their password instead of signing up again.
+
+## IDENTITY_INACTIVE
+
+Credentials are issued to active members only.
+
+The person the credential or offer is for is disabled, deleted, past their scheduled account expiry, or not a member of
+this organization.
+
+**How to fix:** reactivate the account first, or offer the credential to someone else.
 
 ## IMPERSONATION_RESTRICTED
 
@@ -545,6 +668,18 @@ code also fails when the email or phone changed after it was sent.
 
 **How to fix:** start the step again to get a new link or code; retrying the same one fails the same way.
 
+## INVALID_CIPHERTEXT
+
+A key management ciphertext could not be decrypted.
+
+[`keys.decrypt`](/docs/reference/api/keys#decrypt) and `reEncrypt` refuse a ciphertext that is malformed, was
+modified, was produced by another key than the `keyId` you insisted on, or is presented with a different encryption
+context than it was encrypted with. The reasons are deliberately indistinguishable. A failure after the call was
+authorized is audited as a denied `iam:kms:decrypt` with `reason: 'invalid-ciphertext'`.
+
+**How to fix:** pass exactly the encryption context the data was encrypted with (the same keys and values), and store
+ciphertexts unchanged.
+
 ## INVALID_COMMAND
 
 The CLI does not know the command you typed.
@@ -582,6 +717,17 @@ attempts count toward rate limits and are recorded.
 
 **How to fix:** show a generic "email or password is incorrect" message on the form and let the person retry or
 reset their password.
+
+## INVALID_CSR
+
+A certificate request could not be used.
+
+[`pki.issueCertificate`](/docs/reference/api/pki#issuecertificate) and `requestCertificate` need a PEM PKCS#10 request
+signed by its own key. The request is refused when it is not valid DER, its signature does not verify, it uses an
+unsupported algorithm (such as RSA-PSS), or its key is not ECDSA P-256/P-384, Ed25519 or RSA of 2048 to 8192 bits.
+
+**How to fix:** build the request with `createCertificateRequest` from `better-iam`, or with OpenSSL
+(`openssl req -new -key key.pem`).
 
 ## INVALID_FILTER
 
@@ -648,6 +794,16 @@ codes expire, and each recovery code works once. Failures count toward the sign-
 **How to fix:** enter a fresh code from the authenticator app or email, or an unused recovery code
 ([MFA](/docs/guides/authentication/mfa)).
 
+## INVALID_NONCE
+
+The holder proof names no valid nonce.
+
+Every proof must carry a fresh nonce from
+[`verifiableCredentials.nonce`](/docs/reference/api/verifiable-credentials#nonce) (or the issuer's nonce endpoint). Nonces
+work once, for five minutes, for one organization.
+
+**How to fix:** fetch a new nonce, sign a new proof with it, and send the request again.
+
 ## INVALID_PASSKEY
 
 The passkey response could not be verified or does not belong to this account.
@@ -667,6 +823,15 @@ says what is wrong, and for package rules it starts with the path of the failing
 
 **How to fix:** correct the document; [`analysis.lintPolicy`](/docs/reference/api/analysis#lintpolicy) checks one
 before you save it ([policies](/docs/guides/authorization/policies)).
+
+## INVALID_PROOF
+
+The holder proof does not verify.
+
+A proof is an `openid4vci-proof+jwt` signed with the holder key (ES256, ES384 or EdDSA) whose public half is in the
+`jwk` header, with the organization's issuer URL as `aud` and an `iat` within the last five minutes.
+
+**How to fix:** sign the proof with the key the credential should be bound to, for the right issuer URL.
 
 ## INVALID_RECORD
 
@@ -776,6 +941,15 @@ allow; pinging or redelivering through a paused webhook; and ending a rule-based
 
 **How to fix:** reload the record, check its current status, and take a step that status allows.
 
+## INVARIANTS_BROKEN
+
+`check-invariants --fail-on-broken` found invariants that are broken or cannot be evaluated.
+
+The command prints the full run first, then fails so a CI job or scheduler notices.
+
+**How to fix:** review the violations and errors in the output, then correct the access or the invariant
+([access invariants](/docs/guides/governance/change-safety#access-invariants)).
+
 ## INVARIANT_VIOLATION
 
 The change would break an enforced access invariant, so it was rolled back.
@@ -787,15 +961,6 @@ message names the invariant and the person affected.
 
 **How to fix:** preview the change with [`impact.preview`](/docs/reference/api/impact#preview), then adjust the
 change or the invariant ([access invariants](/docs/guides/governance/change-safety#access-invariants)).
-
-## INVARIANTS_BROKEN
-
-`check-invariants --fail-on-broken` found invariants that are broken or cannot be evaluated.
-
-The command prints the full run first, then fails so a CI job or scheduler notices.
-
-**How to fix:** review the violations and errors in the output, then correct the access or the invariant
-([access invariants](/docs/guides/governance/change-safety#access-invariants)).
 
 ## INVITATION_INVALID
 
@@ -828,6 +993,42 @@ sessions derived from it; requests without a known client address are not judged
 **How to fix:** connect from an allowed network (for example the company VPN), or ask an administrator to add the
 range ([IP allowlist](/docs/guides/authentication/tenant-policy#ip-allowlist)).
 
+## KEY_MANAGED
+
+A key management key belongs to another module.
+
+Keys a certificate authority signs with (`managedBy: 'pki'`) and keys a data protection profile encrypts with
+(`managedBy: 'protection'`) are used only by that module. The keys API refuses to encrypt, decrypt, sign, generate
+data keys or MACs with them, or grant them, so nobody can sign a certificate body or open a value the module did not
+decide on. Binding such a key to another authority or profile is refused too.
+
+**How to fix:** use a key of your own, or go through the module ([`pki.issueCertificate`](/docs/reference/api/pki#issuecertificate),
+[`protection.detokenize`](/docs/reference/api/protection#detokenize)). The key can still be disabled or scheduled for
+deletion, which stops the module.
+
+## KEY_MATERIAL_UNAVAILABLE
+
+A key management key's material, or a value it protects, could not be opened.
+
+Key material is sealed under the deployment `secret`. This error means none of the configured secrets (`secret` and
+`previousSecrets`) opens it: the secret that sealed it was removed before `iam.rotateSecrets()` re-sealed everything.
+Data protection also reports a stored value that fails authentication (altered in storage) this way.
+
+**How to fix:** put the old secret back in `previousSecrets`, run `iam.rotateSecrets()` until it reports `done`, and
+only then remove it. A stored value that was altered cannot be recovered: restore it from a backup or delete the
+token.
+
+## KEY_STATE_INVALID
+
+A key management key is not in a state that allows the call.
+
+Cryptographic calls ([`keys.encrypt`](/docs/reference/api/keys#encrypt), `decrypt`, `sign`, `verify`, the MAC and
+token calls) need an enabled key; a disabled key or a key pending deletion refuses them. State changes are refused
+when they do not apply, such as enabling a key pending deletion or rotating a disabled one.
+
+**How to fix:** [`enable`](/docs/reference/api/keys#enable) the key, or
+[`cancelDeletion`](/docs/reference/api/keys#canceldeletion) first (the key then comes back disabled).
+
 ## LAST_AUTHENTICATOR
 
 Deleting this passkey would leave the account with no way to sign in.
@@ -856,6 +1057,28 @@ Deleting, disabling, or offboarding the last root administrator, or removing the
 
 **How to fix:** grant root to another person with [`root.setAdministrator`](/docs/reference/api/root#setadministrator)
 first.
+
+## LDAP_BASE_TAKEN
+
+Another organization of this deployment already publishes its LDAP directory under this base DN.
+
+The LDAP gateway finds the organization of a bind or search by its base DN, so each base DN belongs to one
+organization.
+
+**How to fix:** choose a base DN of your own, such as your domain (`dc=acme,dc=com`).
+
+## LEGAL_HOLD
+
+The person or subject is under a legal hold, so they cannot be erased or deleted.
+
+A [legal hold](/docs/reference/api/privacy#placehold) keeps a subject's data while litigation or an investigation
+needs it. While it is live, fulfilling an erasure request is refused, and so is every deletion of the person's
+account, because identity deletion checks for holds itself: both `identities.delete` and an erasure request stop
+here. Offboarding and SCIM deprovisioning only disable an account, so they still work and keep the data.
+
+**How to fix:** release the hold with [`privacy.releaseHold`](/docs/reference/api/privacy#releasehold) once it is no
+longer needed, or wait for its `expiresAt`. To refuse an erasure request because the data must be kept, reject it with
+reason `exempt` ([privacy guide](/docs/guides/governance/privacy#legal-holds)).
 
 ## LIMIT_EXCEEDED
 
@@ -952,15 +1175,6 @@ Commands that act as a member (`config-export`, `config-plan`, `config-apply`, `
 
 **How to fix:** export the variable the message names and run the command again.
 
-## NO_AUDIT_ARCHIVE
-
-Audit archiving was requested, but no archive destination is configured.
-
-[`archiveAudit`](/docs/reference/api#archiveaudit) and the `audit-archive` command need the `auditArchive` option, for
-example `createJsonlAuditArchive({ directory })`.
-
-**How to fix:** configure an archive sink ([continuous audit archiving](/docs/operations/jobs#continuous-audit-archiving)).
-
 ## NOT_FOUND
 
 The record does not exist in this tenant.
@@ -979,6 +1193,25 @@ Root recovery was attempted before the platform was bootstrapped.
 existing root tenant, so one must exist.
 
 **How to fix:** run `bootstrap` first ([recovering root access](/docs/guides/authentication/recovery#recovering-root-access)).
+
+## NAME_NOT_PERMITTED
+
+A certificate would name something its authority may not certify.
+
+Every name on a certificate must fit the name constraints (`permitted`) of the issuing authority and every authority
+above it, and a SPIFFE ID must be in the authority's trust domain. This holds for everyone, owners and root
+administrators included.
+
+**How to fix:** request names within the constraints, or issue from an authority whose constraints cover them.
+
+## NO_AUDIT_ARCHIVE
+
+Audit archiving was requested, but no archive destination is configured.
+
+[`archiveAudit`](/docs/reference/api#archiveaudit) and the `audit-archive` command need the `auditArchive` option, for
+example `createJsonlAuditArchive({ directory })`.
+
+**How to fix:** configure an archive sink ([continuous audit archiving](/docs/operations/jobs#continuous-audit-archiving)).
 
 ## OAUTH_CALLBACK
 
@@ -1038,6 +1271,20 @@ A Microsoft connection with `allowedMicrosoftTenants` accepts ID tokens only fro
 
 **How to fix:** add the directory id to the connection's list if it should be accepted, or sign in with an account
 from an allowed directory.
+
+## OWNER_INACTIVE
+
+The owner of a lifecycle workflow run is no longer active, so the run cannot go on.
+
+A workflow run uses the rights of the workflow's owner when it started (or of whoever last retried it), and every
+step checks first that this owner is still active and unexpired. A step reached after the owner was disabled,
+offboarded, deleted, or passed their `expiresAt` fails its run with this code (recorded on the run and as
+`workflow:run:fail`); no call returns it. New runs fail the same way until someone takes the workflow over.
+
+**How to fix:** an administrator who holds the steps' permissions retries the failed runs with
+[`workflows.retryRun`](/docs/reference/api/workflows#retryrun), which makes them the runs' owner, or cancels them,
+and saves the workflow with [`workflows.update`](/docs/reference/api/workflows#update) so new runs start with an
+active owner ([lifecycle workflows](/docs/guides/governance/workflows#authority)).
 
 ## PASSKEY_EXISTS
 
@@ -1120,10 +1367,27 @@ The target is a protected owner role or policy, or belongs to a higher grant aut
 Owner roles cannot be requested, approved, bound, packaged, inherited, or assumed through trust, and protected roles
 and the owner policy cannot be edited or deleted; ownership moves only through
 [`identities.setOwner`](/docs/reference/api/identities#setowner). Roles and policies created under a superior
-authority can be edited only by that authority.
+authority can be edited only by that authority. Lifecycle workflows fail a run with it when a step that takes access
+away, or sets attributes or an expiry, reaches an owner or a root administrator: workflows never disable, delete, sign
+out, strip, or edit them.
 
 **How to fix:** use owner transfer for ownership, and ask the administrator whose authority created the role or
 policy to make the change.
+
+## QUOTA_EXCEEDED
+
+The caller's usage plan does not allow this much use of the meter right now.
+
+`iam.quotas.enforce` refuses a call that would go over the plan's throttle (its token bucket is empty) or one of its
+period limits (the day's or month's allowance is spent), counting nothing. The error carries `retryAfterMs`, when the
+bucket has refilled enough or the window starts over, and the HTTP response a `Retry-After` header. It has no
+`retryAfterMs` when the call's cost is larger than the plan could ever allow. The plan that applies is the one assigned
+to the API key, the agent, the person or one of their groups, else the organization's default plan for the meter
+([`quotas`](/docs/reference/api/quotas)).
+
+**How to fix:** wait for `Retry-After` and retry; show the caller their allowance with
+[`quotas.status`](/docs/reference/api/quotas#status), or have an administrator assign a larger plan with
+[`quotas.assign`](/docs/reference/api/quotas#assign).
 
 ## RATE_LIMITED
 
@@ -1212,6 +1476,27 @@ The suite throws it to prove that an adapter rolls back uncommitted writes; the 
 **How to fix:** nothing, unless a conformance check around it fails, which means your adapter did not roll the
 transaction back as required ([conformance suite](/docs/operations/extensions#conformance-suite)).
 
+## ROOT_SSH_RESTRICTED
+
+A platform root administrator asked for an SSH certificate into another organization.
+
+The root override never opens an organization's servers: SSH access there needs a role in that organization, like
+anyone else's. Only the root tenant's own hosts are the root administrators'.
+
+**How to fix:** grant the person `ssh:login` through a role in the organization.
+
+## ROTATION_FAILED
+
+A vault secret's rotator failed to apply the new value.
+
+[`vault.rotate`](/docs/reference/api/vault#rotate) (and the scheduled `iam.vault.rotateDue`) stage a new version
+as `pending` and call the secret's rotator to apply it to the system it unlocks; the rotator threw or timed out. The
+current version stays current and the pending one is kept, so the next attempt passes the rotator the same value. The
+error is recorded on the secret (`rotation.lastFailure`, with secret values redacted) and in a `vault:rotate`
+audit event with outcome `deny`; scheduled retries back off from one hour to a day.
+
+**How to fix:** fix what the rotator reported, then rotate again. Rotators must be idempotent.
+
 ## SAME_DATABASE
 
 The source and target of a store copy are the same database.
@@ -1242,6 +1527,36 @@ The SQL adapters record a schema version and refuse to run against a database wh
 **How to fix:** run the Better IAM version that created the database, or restore a backup made for this version
 ([database operations](/docs/operations/deployment/database)).
 
+## SECRET_CHECKED_OUT
+
+Someone already holds an exclusive check-out of this vault secret, or you hold one yourself.
+
+An exclusive check-out policy hands a shared credential to one holder at a time; a caller who already holds a
+check-out of the secret gets this code too rather than a second check-out.
+
+**How to fix:** wait until the holder checks it in or the check-out expires (`vault.get` shows the holder and when),
+renew your own with [`renewLease`](/docs/reference/api/vault#renewlease), or have an administrator end the other
+check-out with [`revokeLease`](/docs/reference/api/vault#revokelease).
+
+## SECRET_PENDING_DELETION
+
+The vault secret is scheduled for deletion, so it cannot be read, changed, or leased.
+
+[`vault.delete`](/docs/reference/api/vault#delete) keeps a secret for a recovery window of 7 to 30 days before
+`iam.vault.purgeDeleted` removes it; meanwhile only `get`, `restore`, and an immediate `delete` work, and the
+name stays taken.
+
+**How to fix:** [`restore`](/docs/reference/api/vault#restore) the secret if it is still needed.
+
+## SECURITY_KEY_REQUIRED
+
+The organization only certifies hardware security keys for SSH.
+
+With `requireSecurityKey` in the SSH settings, `ssh.issueCertificate` accepts only FIDO keys
+(`sk-ssh-ed25519@openssh.com`, `sk-ecdsa-sha2-nistp256@openssh.com`).
+
+**How to fix:** create one with `ssh-keygen -t ed25519-sk` and request the certificate for it.
+
 ## SELF_REVIEW
 
 A reviewer tried to certify their own access in an access review.
@@ -1251,6 +1566,14 @@ one of their groups.
 
 **How to fix:** leave the item to another reviewer of the campaign
 ([certifications](/docs/guides/governance/certifications)).
+
+## SESSION_EXPIRING
+
+The session asking for an SSH certificate ends within a minute.
+
+A certificate never outlives the session that requested it.
+
+**How to fix:** sign in again, then request the certificate.
 
 ## SESSION_NETWORK_MISMATCH
 
@@ -1262,6 +1585,22 @@ client IP are not judged.
 
 **How to fix:** sign in again from the current network; the browser client calls its `onUnauthenticated` hook for
 this code ([binding sessions to their network](/docs/guides/authentication/tenant-policy#binding-sessions-to-their-network)).
+
+## SIGNAL_REJECTED
+
+The Shared Signals receiver refused a security event token.
+
+`iam.signals.receive` throws it as a `SignalRejectedError` whose `err` is the RFC 8935 error code: `invalid_key` (a
+key, algorithm, or signature problem), `invalid_issuer`, `invalid_audience`, or `invalid_request` (the token type, its
+age, its claims, its subject, or its size). The message says which check failed. The push endpoint answers the same
+refusal as `400` with `{ "err", "description" }`, and polling reports it to the provider in `setErrs`, so providers
+never see this code itself. `temporary: true` means the source's keys could not be fetched: the same token may pass
+later, so pushes answer `503` and polled events stay unacknowledged.
+
+**How to fix:** compare the token with the source (`signals.getSource` shows the refusal as `lastError`): its issuer
+and aliases, audiences, keys, algorithms, and `requireTyp`, then fix the source with `signals.updateSource` or the
+provider's configuration ([verification](/docs/reference/api/signals#verification)). A temporary refusal needs no
+change once the provider's key set is reachable again.
 
 ## SLUG_TAKEN
 
@@ -1303,6 +1642,15 @@ back when they create a new conflict. Conflicts that already existed never block
 **How to fix:** remove one of the conflicting roles from the person first, or grant a different role
 ([separation of duties](/docs/guides/authorization/separation-of-duties)).
 
+## SOURCE_ADDRESS_UNKNOWN
+
+The organization binds SSH certificates to the caller's address, and the server could not determine it.
+
+With `bindSourceAddress`, every certificate carries a `source-address` option with the IP it was requested from. The
+IP comes from `http.clientInfo`, which must be configured to read it (behind a proxy you trust).
+
+**How to fix:** configure `http.clientInfo` to return `ip`, or turn `bindSourceAddress` off.
+
 ## SPEND_LIMIT_REACHED
 
 An enforced spend budget that covers this usage is already spent (status 402).
@@ -1313,6 +1661,12 @@ usage by up to 30 seconds.
 
 **How to fix:** raise or disable the budget (`billing.updateBudget`), wait for the next budget window, or ask the
 budget's owners; `billing.check` tells callers in advance ([billing](/docs/reference/api/billing)).
+
+## SSH_NOT_CONFIGURED
+
+The organization has no SSH certificate authority yet.
+
+**How to fix:** create the authorities with [`ssh.setup`](/docs/reference/api/ssh#setup) (before registering hosts).
 
 ## STORAGE_BUSY
 
@@ -1372,7 +1726,7 @@ The group belongs to a team, and its members come from the team.
 Every team owns a backing group (`team:{slug}`) holding the members of the team and of the teams below it. Only the
 [`teams`](/docs/reference/api/teams) API changes who is in it: `groups.addMember`, `groups.updateMember`,
 `groups.removeMember`, and `groups.delete` refuse it, and access packages, invitations, and onboarding flows cannot
-name it.
+name it. Lifecycle workflow group steps cannot name it either.
 
 **How to fix:** add or remove people with `teams.addMember` / `teams.removeMember`, or delete the team with
 `teams.delete`. Binding roles to the backing group with `bindings.create` is how a team gets access, and is allowed.
@@ -1417,6 +1771,15 @@ signed-out request.
 
 **How to fix:** check that the person chose the right organization, and ask the platform operator to reactivate it
 if it was suspended.
+
+## TOO_MANY_HOSTS
+
+An SSH certificate would name more hosts or principals than allowed.
+
+One certificate names at most `ssh.maxHostsPerCertificate` hosts (64 by default) and 256 principals.
+
+**How to fix:** name the hosts you need with `hosts` (and `logins`) in
+[`ssh.issueCertificate`](/docs/reference/api/ssh#issuecertificate).
 
 ## TOO_MANY_REQUESTS
 
@@ -1464,6 +1827,15 @@ commit together.
 **How to fix:** wrap the writes in `store.transaction(async (tx) => { ... })` and write through `tx`
 ([adapter contract](/docs/operations/extensions#rules-every-adapter-must-keep)).
 
+## TYPE_DISABLED
+
+The credential type is disabled.
+
+Disabled types issue no new credentials and are left out of the issuer metadata. Credentials issued earlier are not
+affected.
+
+**How to fix:** enable the type with [`verifiableCredentials.updateType`](/docs/reference/api/verifiable-credentials#updatetype).
+
 ## UNAUTHENTICATED
 
 The request has no valid credential, or its credential has expired or been revoked.
@@ -1495,6 +1867,19 @@ The storage adapter cannot list its collections, which a snapshot or copy needs.
 **How to fix:** implement `collections()` in the adapter, or pass the collections to copy explicitly to `exportStore`
 or `copyStore` ([optional adapter methods](/docs/operations/extensions#optional-methods)).
 
+## UNSUPPORTED_FILTER
+
+A query plan's filter uses a condition the chosen target cannot express.
+
+[`iam.planResources`](/docs/reference/api#planresources) returns a filter with the policy engine's full
+semantics; `filterToSql` has no equivalent for IP address and array conditions, and `filterToPrisma` and
+`filterToMongo` lack some of dates, IP addresses, and wildcard patterns that are not a prefix, suffix or substring.
+Compiling refuses rather than returning a filter that would include or leave out the wrong rows.
+
+**How to fix:** fetch candidate rows with a coarser query and keep those that pass `filterMatches(plan.filter, row)`,
+which supports every filter exactly, or check each row with `authorize`
+([filters](/docs/reference/api/filters)).
+
 ## UNTRUSTED_ORIGIN
 
 The request came from a browser origin that the deployment does not trust.
@@ -1525,6 +1910,24 @@ overwrite each other. `agreements.accept` refuses a version that is no longer cu
 have not seen.
 
 **How to fix:** reload the record, show the current version, and let the person decide or accept again.
+
+## VERSION_DESTROYED
+
+The version's value was destroyed (HTTP 410 Gone).
+
+[`vault.destroyVersion`](/docs/reference/api/vault#destroyversion) erases a version's value for good and keeps its
+record as history, so it can never be revealed or made current again.
+
+**How to fix:** use another version; `vault.listVersions` lists them with their state.
+
+## VERSION_DISABLED
+
+The version is disabled, so it cannot be revealed or made current.
+
+[`vault.setVersionState`](/docs/reference/api/vault#setversionstate) disables a version without erasing it, for
+example while an old credential is being retired.
+
+**How to fix:** enable it again with `setVersionState`, or use another version.
 
 ## WEAK_PASSWORD
 

@@ -26,6 +26,12 @@ export interface AccessTokenVerifierOptions {
   dpopMaxAge?: number;
   /** Signature algorithms accepted for access tokens (default asymmetric JOSE algorithms). */
   algorithms?: string[];
+  /**
+   * The organization this API serves. Resource servers are deployment-wide, so any tenant's client may be given tokens
+   * for this audience: an API that serves one organization (and does not scope its data by `tenantId` itself) sets this
+   * to refuse tokens of every other tenant.
+   */
+  tenantId?: string;
 }
 
 /** The request parts a DPoP-aware API check needs. */
@@ -89,6 +95,8 @@ function targetUri(value: string): string {
  */
 export function createAccessTokenVerifier(options: AccessTokenVerifierOptions) {
   const issuer = options.issuer.replace(/\/$/, '');
+  // The provider writes `iss` exactly as its issuer is configured, trailing slash included; both spellings are accepted.
+  const issuers = [...new Set([options.issuer, issuer])];
   const keys = options.jwks
     ? createLocalJWKSet(options.jwks)
     : createRemoteJWKSet(new URL(options.jwksUri ?? `${issuer}/jwks`));
@@ -97,19 +105,31 @@ export function createAccessTokenVerifier(options: AccessTokenVerifierOptions) {
   const algorithms = options.algorithms ?? asymmetric;
   const seenProofs = new Map<string, number>();
 
-  function rememberProof(jti: string, keyThumbprint: string): void {
+  /**
+   * Refuses a proof seen before, remembering each one until it can no longer be accepted: a proof is valid while
+   * `iat` is at most `clockTolerance` ahead and `dpopMaxAge` (plus tolerance) behind, so one issued slightly in the
+   * future stays usable up to `iat + dpopMaxAge + clockTolerance`. Expired entries are pruned from the oldest end, so
+   * each request does a bounded amount of work however many proofs are remembered.
+   */
+  function rememberProof(jti: string, keyThumbprint: string, issuedAt: number): void {
     const now = Date.now();
-    for (const [key, expires] of seenProofs) if (expires <= now) seenProofs.delete(key);
+    for (const [key, expires] of seenProofs) {
+      if (expires > now) break;
+      seenProofs.delete(key);
+    }
     const key = `${keyThumbprint}:${jti}`;
-    if (seenProofs.has(key)) throw invalid('DPoP proof was already used.');
-    seenProofs.set(key, now + (dpopMaxAge + clockTolerance) * 1000);
+    const seen = seenProofs.get(key);
+    if (seen !== undefined && seen > now) throw invalid('DPoP proof was already used.');
+    const until = Math.max(now, issuedAt * 1000) + (dpopMaxAge + clockTolerance) * 1000;
+    seenProofs.delete(key);
+    seenProofs.set(key, until);
   }
 
   async function verifyToken(token: string): Promise<VerifiedAccessToken> {
     let payload: JWTPayload;
     try {
       ({ payload } = await jwtVerify(token, keys, {
-        issuer,
+        issuer: issuers,
         audience: options.audience,
         typ: 'at+jwt',
         clockTolerance,
@@ -119,6 +139,8 @@ export function createAccessTokenVerifier(options: AccessTokenVerifierOptions) {
     } catch {
       throw invalid('The access token is invalid or expired.');
     }
+    if (options.tenantId !== undefined && payload.tenant_id !== options.tenantId)
+      throw invalid('The access token was issued for another organization.');
     const cnf = payload.cnf as { jkt?: unknown } | undefined;
     return {
       ...(typeof payload.sub === 'string' ? { subject: payload.sub } : {}),
@@ -172,7 +194,7 @@ export function createAccessTokenVerifier(options: AccessTokenVerifierOptions) {
       payload.ath !== base64url(token)
     )
       throw invalid('The DPoP proof does not match this request.');
-    rememberProof(String(payload.jti), boundKey);
+    rememberProof(String(payload.jti), boundKey, Number(payload.iat));
   }
 
   function requireScopes(verified: VerifiedAccessToken, scopes: string[] | undefined): void {
@@ -328,6 +350,8 @@ export interface ResourceGuardOptions extends ProtectedResourceMetadataOptions {
   /** Scopes every request needs; `check(request, { scopes })` adds per-route scopes. */
   requiredScopes?: string[];
   realm?: string;
+  /** Refuses tokens of every other organization (see `AccessTokenVerifierOptions.tenantId`). */
+  tenantId?: string;
 }
 
 /**
@@ -344,6 +368,7 @@ export function createResourceGuard(options: ResourceGuardOptions) {
     ...(options.jwks ? { jwks: options.jwks } : {}),
     ...(options.jwksUri ? { jwksUri: options.jwksUri } : {}),
     ...(options.clockTolerance !== undefined ? { clockTolerance: options.clockTolerance } : {}),
+    ...(options.tenantId !== undefined ? { tenantId: options.tenantId } : {}),
   });
   const quoted = (value: string) => value.replace(/["\\]/g, '');
   return {

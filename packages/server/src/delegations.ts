@@ -161,13 +161,16 @@ export interface DelegationConfirmation extends StoredRecord {
   resourceId: string;
   /** The agent's explanation, shown to the person. */
   reason?: string;
-  status: 'pending' | 'approved' | 'rejected';
+  /** `used` once the approval opened the one call it was for (approvals are single-use). */
+  status: 'pending' | 'approved' | 'rejected' | 'used';
   createdAt: number;
   /** Pending: when the request lapses undecided. Approved: when the approval stops opening the action. */
   expiresAt: number;
-  /** How long an approval lasts, in seconds. */
+  /** How long an approval waits to be used, in seconds. */
   validSeconds: number;
   decidedAt?: number;
+  /** When the approval was used. */
+  usedAt?: number;
 }
 
 /** Bounds of confirmation requests: how long the person has to decide, and how long an approval lasts. */
@@ -202,23 +205,77 @@ export function confirmPatterns(value: unknown): string[] | undefined {
   return patterns.length ? patterns : undefined;
 }
 
-/** The approved, unexpired confirmations of a delegation, as the keys they open. */
+/**
+ * Approvals used inside a transaction still open their call for the rest of it (one operation may check the same
+ * action more than once); keyed by the transaction handle, so they end with it.
+ */
+const usedIn = new WeakMap<IamStore, Set<string>>();
+
+/** The approved, unexpired (and not yet used) confirmations of a delegation, as the keys they open. */
 export async function approvedConfirmations(
   tx: IamStore,
   delegation: Pick<Delegation, 'id' | 'tenantId'>,
   now: number,
 ): Promise<Set<string>> {
   const keys = new Set<string>();
+  const used = usedIn.get(tx);
   for (const confirmation of await tx.find<DelegationConfirmation>('delegationConfirmations', {
     tenantId: delegation.tenantId,
     delegationId: delegation.id,
-    status: 'approved',
   }))
-    if (confirmation.expiresAt > now)
+    if (
+      (confirmation.status === 'approved' && confirmation.expiresAt > now) ||
+      (confirmation.status === 'used' && used?.has(confirmation.id))
+    )
       keys.add(
         confirmationKey(confirmation.action, confirmation.resourceType, confirmation.resourceId),
       );
   return keys;
+}
+
+/**
+ * Uses up the person's approval behind an allowed call of a delegated session, so each approval opens exactly one
+ * call ("confirm one call at a time"): called by a one-shot decision inside its transaction, it marks the matching
+ * approval `used` (rolled back with a refused operation). Actions the delegation does not hold back, and other
+ * sessions, are left alone.
+ */
+export async function useConfirmation(
+  tx: IamStore,
+  principal: AuthenticatedPrincipal,
+  action: string,
+  resourceType: string,
+  resourceId: string,
+  now: number,
+): Promise<void> {
+  const session = principal.session;
+  if (session.kind !== 'delegated' || typeof session.delegationId !== 'string') return;
+  const delegation = await tx.get<Delegation>('delegations', session.delegationId);
+  if (!delegation || !needsConfirmation(delegation, action)) return;
+  const used = usedIn.get(tx) ?? new Set<string>();
+  const matching = (
+    await tx.find<DelegationConfirmation>('delegationConfirmations', {
+      tenantId: delegation.tenantId,
+      delegationId: delegation.id,
+    })
+  ).filter(
+    (item) =>
+      item.action === action &&
+      item.resourceType === resourceType &&
+      item.resourceId === resourceId,
+  );
+  // Already used earlier in this very transaction: the same call checked again.
+  if (matching.some((item) => item.status === 'used' && used.has(item.id))) return;
+  const approval = matching
+    .filter((item) => item.status === 'approved' && item.expiresAt > now)
+    .sort((a, b) => a.expiresAt - b.expiresAt)[0];
+  if (!approval) return;
+  await tx.put<DelegationConfirmation>('delegationConfirmations', {
+    ...approval,
+    status: 'used',
+    usedAt: now,
+  });
+  used.add(approval.id);
+  usedIn.set(tx, used);
 }
 
 /** Bounds of a delegation's lifetime and of a pending request. */

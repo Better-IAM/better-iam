@@ -10,6 +10,7 @@ import {
 import { decryptSecret, encryptSecret, type DeliveryMessage } from '@better-iam/auth';
 import type { ServerContext } from './context.js';
 import type { Webhook } from './models.js';
+import { checkFetchUrl, createGuardedFetch } from './safe-fetch.js';
 import type { WebhookDelivery, WebhookEvent } from './options.js';
 import { auditSessionContext } from './temporary-credentials.js';
 import { id, token } from './utils.js';
@@ -97,6 +98,13 @@ export interface EventService {
 
 export function createEvents(ctx: ServerContext): EventService {
   const { options, store, config, plugins, subscribers } = ctx;
+  /** Where webhook endpoints may point: public addresses on any https port; loopback over http in development. */
+  const webhookAddressRules = {
+    anyPort: true,
+    allowPrivateNetworks: options.events?.allowPrivateNetworks === true,
+    allowInsecureLocalhost: config.baseURL.protocol !== 'https:',
+  };
+  const webhookFetch = createGuardedFetch(webhookAddressRules);
   const service: EventService = {
     async fanOut(tx, event) {
       if (
@@ -205,13 +213,30 @@ export function createEvents(ctx: ServerContext): EventService {
         await options.events.deliverWebhook(delivery);
         return;
       }
-      const response = await fetch(delivery.url, {
-        method: 'POST',
-        headers: delivery.headers,
-        body,
-        redirect: 'error',
-        signal: AbortSignal.timeout(config.webhookTimeoutMs),
-      });
+      let response: Response;
+      try {
+        // Tenant administrators choose the URL: the guarded transport refuses private and reserved addresses at
+        // connect time (so a hostname cannot be re-pointed at the internal network after validation) and never
+        // follows redirects.
+        response = await webhookFetch(delivery.url, {
+          method: 'POST',
+          headers: delivery.headers,
+          body,
+          redirect: 'error',
+          signal: AbortSignal.timeout(config.webhookTimeoutMs),
+        });
+      } catch (error) {
+        // One message for every connection failure, so delivery history cannot map networks or ports.
+        throw new IamError(
+          'WEBHOOK_UNREACHABLE',
+          error instanceof Error && error.name === 'TimeoutError'
+            ? 'Webhook endpoint did not answer in time'
+            : 'Webhook endpoint could not be reached',
+          502,
+        );
+      }
+      // The response body is never read; release the connection.
+      await response.body?.cancel().catch(() => undefined);
       if (!response.ok)
         throw new IamError(
           'WEBHOOK_REJECTED',
@@ -264,6 +289,15 @@ export function createEvents(ctx: ServerContext): EventService {
         !(url.protocol === 'http:' && loopback && config.baseURL.protocol !== 'https:')
       )
         throw new IamError('INVALID_INPUT', 'Webhook URLs must use HTTPS');
+      // IP literals are judged now; hostnames are judged again by the transport each time it connects.
+      try {
+        checkFetchUrl(url, webhookAddressRules);
+      } catch {
+        throw new IamError(
+          'INVALID_INPUT',
+          'Webhook URLs must point at a public address (see events.allowPrivateNetworks)',
+        );
+      }
       return url.toString();
     },
     webhookEvents(value) {
