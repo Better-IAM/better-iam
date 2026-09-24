@@ -1,9 +1,11 @@
 import { createGetUrl } from 'fumadocs-core/source';
+import stats from '@/generated/stats.json';
 
 export const appName = 'Better IAM';
 export const appDescription =
   'Embeddable authentication, identity provisioning, and access management for TypeScript applications.';
-export const version = '0.1.0';
+/** The released version, from the umbrella package (`scripts/generate.mjs packages` writes it to stats.json). */
+export const version: string = stats.version;
 /** Better IAM's creator, credited in page metadata, llms.txt, the site and docs footers, every docs page, and social cards. */
 export const creator = 'Sean Filimon';
 

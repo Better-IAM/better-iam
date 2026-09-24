@@ -20,6 +20,6 @@ and `configFromEnv`. Secrets (root and sign-in passwords) are read from the envi
 arguments. The configuration module is trusted, executable code.
 
 Node.js 22.12+ server runtime (TypeScript configurations need 22.18+); PostgreSQL, SQLite, and libSQL adapters. All
-packages are ESM with TypeScript declarations. Version 0.1.0 packages are synchronized. See `docs/cli.md` in the Better
+packages are ESM with TypeScript declarations. Version 0.2.0 packages are synchronized. See `docs/cli.md` in the Better
 IAM source repository. No AWS wire compatibility is claimed. Publication does not grant rights; see LICENSE.
 Dependencies retain their own licenses.

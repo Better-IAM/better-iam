@@ -494,8 +494,10 @@ async function generatePackages() {
     a.name === 'better-iam' ? -1 : b.name === 'better-iam' ? 1 : a.name.localeCompare(b.name),
   );
   await writeFile(join(out, 'packages.json'), JSON.stringify(list, null, 1));
-  await writeStats({ packages: list.length });
-  return `${list.length} packages`;
+  // The released version the site shows (hero, footers, JSON-LD): the umbrella package's, since versions are synchronized.
+  const version = list.find((entry) => entry.name === 'better-iam')?.version;
+  await writeStats({ packages: list.length, ...(version ? { version } : {}) });
+  return `${list.length} packages (v${version})`;
 }
 
 // ---------------------------------------------------------------------------------------------------------

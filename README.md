@@ -2,7 +2,7 @@
 
 An embeddable TypeScript authentication, identity provisioning, and access-management platform. Better IAM runs in your application with your database. It is independent of Better Auth and uses maintained protocol and cryptographic libraries.
 
-**Version 0.1.0 · Node.js 22.12+ · PostgreSQL, SQLite, and libSQL/Turso · Apache-2.0**
+**Version 0.2.0 · Node.js 22.12+ · PostgreSQL, SQLite, and libSQL/Turso · Apache-2.0**
 
 ```sh
 npm install better-iam

@@ -6,7 +6,7 @@ The betterIam factory, tenant provisioning, authenticated management services, a
 import { betterIam } from '@better-iam/server';
 ```
 
-Node.js 22.12+ server runtime; PostgreSQL and SQLite adapters. All packages are ESM with TypeScript declarations. Version 0.1.0 packages are synchronized. The browser client and core do not import server drivers.
+Node.js 22.12+ server runtime; PostgreSQL and SQLite adapters. All packages are ESM with TypeScript declarations. Version 0.2.0 packages are synchronized. The browser client and core do not import server drivers.
 
 ## Layout
 
