@@ -7,6 +7,7 @@ import {
   type StoredRecord,
 } from '@better-iam/core';
 import type { ServerContext } from './context.js';
+import { reconcileGroupLicenses } from './licenses.js';
 import type { Binding, BindingActivation, Group, GroupMember, Policy, Role } from './models.js';
 import { id } from './utils.js';
 
@@ -443,7 +444,9 @@ export interface TeamGroupSyncResult {
  * person with a live membership of a source group is a member (added as `member` with `source: 'sync'`, expiring when
  * their last source membership does); synced members who left every source group are removed. Manual memberships are
  * never changed. `groupId` limits the run to teams syncing from that group, `teamIds` to those teams. Changes are
- * audited as `team:member:add` / `team:member:remove` with `source: 'sync'` under `actorId`.
+ * audited as `team:member:add` / `team:member:remove` with `source: 'sync'` under `actorId`. The seats of license
+ * products assigned to `groupId`, and to the backing groups the run changed (the synced teams' and those of the teams
+ * above them), are reconciled afterwards (licenses.ts), under the same actor.
  */
 export async function syncTeamsFromGroups(
   ctx: ServerContext,
@@ -452,15 +455,21 @@ export async function syncTeamsFromGroups(
   options: { groupId?: string; teamIds?: readonly string[]; actorId: string },
 ): Promise<TeamGroupSyncResult> {
   const result: TeamGroupSyncResult = { added: 0, removed: 0, updated: 0, teams: [] };
+  // Every writer of a group's membership comes through here: seats of licenses assigned to the group follow as well.
+  const sources = options.groupId !== undefined ? [options.groupId] : [];
+  const teams = await tx.find<Team>(teamCollections.teams, { tenantId });
   // Named teams are included even without sources, so turning sync off removes their synced members.
-  const synced = (await tx.find<Team>(teamCollections.teams, { tenantId })).filter(
+  const synced = teams.filter(
     (team) =>
       (options.teamIds !== undefined
         ? options.teamIds.includes(team.id)
         : Boolean(team.syncGroupIds?.length)) &&
       (options.groupId === undefined || (team.syncGroupIds ?? []).includes(options.groupId)),
   );
-  if (!synced.length) return result;
+  if (!synced.length) {
+    if (sources.length) await reconcileGroupLicenses(ctx, tx, tenantId, sources, options.actorId);
+    return result;
+  }
   const now = ctx.now();
   const people = new Map<string, boolean>();
   const active = async (identityId: string) => {
@@ -568,6 +577,13 @@ export async function syncTeamsFromGroups(
       result.teams.push(team.id);
     }
   }
+  // syncTeamGroups filled or emptied the backing groups of the changed teams and of every team above them.
+  const byId = new Map(teams.map((team) => [team.id, team]));
+  const filled = result.teams.flatMap((teamId) =>
+    teamChain(byId, teamId).map((team) => team.groupId),
+  );
+  if (sources.length || filled.length)
+    await reconcileGroupLicenses(ctx, tx, tenantId, [...sources, ...filled], options.actorId);
   return result;
 }
 

@@ -153,6 +153,37 @@ async function create(): Promise<ConsoleState> {
       .catch(() => undefined)
       .finally(() => (polling = false));
   }, 60_000).unref();
+  // Guests, hourly: record lapsed invitations, ended guests and missing sponsors (emailing the owners once), then
+  // remind sponsors of reviews and access ends within 14 days (runs are not overlapped).
+  let guestJobs = false;
+  setInterval(() => {
+    if (guestJobs) return;
+    guestJobs = true;
+    void ready
+      .then(async () => {
+        await iam.guests.sweep().catch(() => undefined);
+        await iam.guests.sendReviewReminders();
+      })
+      .catch(() => undefined)
+      .finally(() => (guestJobs = false));
+  }, 60 * 60_000).unref();
+  // Licenses: hourly, seats catch up with what no event reports (pools starting or ending, accounts expiring); once a
+  // day, organizations that turned reclaim on get the seats of inactive people back (runs are not overlapped).
+  let licensing = false;
+  let reclaimedAt = 0;
+  setInterval(() => {
+    if (licensing) return;
+    licensing = true;
+    void ready
+      .then(async () => {
+        await iam.licenses.reconcile();
+        if (Date.now() - reclaimedAt < 24 * 60 * 60_000) return;
+        reclaimedAt = Date.now();
+        await iam.licenses.reclaim();
+      })
+      .catch(() => undefined)
+      .finally(() => (licensing = false));
+  }, 60 * 60_000).unref();
   // Billing: spend-budget alerts hourly; daily seat counts (for a `seats` meter, when the platform defines one),
   // statements for months that have ended (accounts already invoiced are skipped), and yesterday's spend spikes.
   setInterval(
@@ -172,6 +203,12 @@ async function create(): Promise<ConsoleState> {
           await iam.protection.sweep();
         })
         .catch(() => undefined),
+    24 * 60 * 60_000,
+  ).unref();
+  // Security clearances, daily: email each scheme's owners about reinvestigations due and clearances ending within 60
+  // days (each date once; level names only, never compartments).
+  setInterval(
+    () => void ready.then(() => iam.clearances.sendReminders()).catch(() => undefined),
     24 * 60 * 60_000,
   ).unref();
   // Inbound SCIM: identity providers push people and groups; the job title and department feed the declared

@@ -7,7 +7,6 @@ import {
   type IamStore,
   type Identity,
   type Json,
-  type StoredRecord,
   type Tenant,
 } from '@better-iam/core';
 import { attributeValues } from '../catalog.js';
@@ -41,7 +40,7 @@ import {
 } from '../workflows.js';
 import type { TenantDomain } from './domains.js';
 import { addGroupMember, removeGroupMember } from './groups.js';
-import { deleteIdentity } from './identities.js';
+import { deleteIdentity, revokeInvitationsBy } from './identities.js';
 import { afterIdentityChange } from './package-automation.js';
 import { allow, assignPackage, authorizePackage, revokeAssignment } from './packages.js';
 
@@ -565,10 +564,9 @@ function engine(ctx: ServerContext) {
         await tx.put<Identity>('identities', { ...target, status: 'disabled' });
         await endContainment(tx, target.id, ctx.now());
         await ctx.revokeAll(tx, target.id);
-        // As setStatus does: invitations the person sent and nobody redeemed yet are revoked.
-        for (const invitation of await tx.find<StoredRecord>('memberInvitations', { inviterId: target.id }))
-          if (!invitation.consumed && !invitation.revoked)
-            await tx.put('memberInvitations', { ...invitation, revoked: true });
+        // As setStatus does: invitations the person sent (or, for guests, sponsors) and nobody redeemed yet are
+        // revoked, so re-enabling them later does not bring the tokens back.
+        await revokeInvitationsBy(tx, target.id);
         await audit('iam:identities:update', target.id, { status: 'disabled' });
         return { outcome: 'done', changed: true };
       }

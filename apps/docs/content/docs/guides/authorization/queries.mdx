@@ -87,6 +87,8 @@ const { resources, total } = await iam.listAccessible({
   outside the catalog with `INVALID_ACTION`.
 - In an impersonation session, only resources both the member and the impersonating administrator can reach are
   returned.
+- With [security clearances](/docs/guides/security-clearances), the type's labels are read once and applied to every
+  registered resource as `authorize` would, so resources labeled above the caller's clearance are left out.
 
 The result is advisory. List pages no longer need to know resource IDs up front, but opening a project still goes
 through `iam.require`.

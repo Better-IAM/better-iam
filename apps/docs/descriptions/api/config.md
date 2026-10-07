@@ -45,7 +45,9 @@ Applies a configuration document to the tenant in one transaction, and returns t
 - **Permission:** `iam:config:apply` on the tenant, plus the permission of the equivalent direct call for every
   change (for example `iam:roles:create` on the tenant, `iam:policies:update` on the policy,
   `iam:bindings:create` on the role, `iam:groups:update` on the group, `iam:tenants:update` for the access
-  policy). New roles, policies, and bindings are created under your grant authority.
+  policy), and `iam:licenses:assign` when it puts people into a team, keeps them there for good, or appoints its
+  maintainers while a license product is assigned to the backing group of the team or of a team above it. New
+  roles, policies, and bindings are created under your grant authority.
 - **Audited as:** `iam:config:apply`, and `config:apply` with metadata `prune`, the change counts, and `changed`
   (one line per change).
 - **Errors:** `INVALID_INPUT` for a malformed document or an unknown reference; `INVALID_POLICY` or

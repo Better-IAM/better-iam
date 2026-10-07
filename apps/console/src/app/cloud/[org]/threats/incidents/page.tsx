@@ -15,6 +15,8 @@ import {
 
 const pageSize = 50;
 const statuses: readonly IncidentStatus[] = ['open', 'investigating', 'resolved'];
+/** `?status=active`: every incident still being worked on. */
+const activeStatuses: IncidentStatus[] = ['open', 'investigating'];
 
 export default async function Incidents({
   params,
@@ -26,7 +28,8 @@ export default async function Incidents({
   const { org } = await params;
   const query = await searchParams;
   const { iam, auth, tenantId, base } = await orgPage(org);
-  const status = statuses.find((candidate) => candidate === query.status);
+  const status =
+    query.status === 'active' ? 'active' : statuses.find((candidate) => candidate === query.status);
   const severity = severities.find((candidate) => candidate === query.severity);
   const identityId = query.identityId?.trim() || undefined;
   const page = Math.max(0, Math.floor(Number(query.page) || 0));
@@ -34,7 +37,7 @@ export default async function Incidents({
     tryRead(() =>
       iam.api.threats.listIncidents(auth, {
         tenantId,
-        ...(status ? { status } : {}),
+        ...(status ? { status: status === 'active' ? activeStatuses : status } : {}),
         ...(severity ? { severity } : {}),
         ...(identityId ? { identityId } : {}),
         limit: pageSize,
@@ -116,6 +119,7 @@ export default async function Incidents({
               style={{ width: 'auto' }}
             >
               <option value="">any</option>
+              <option value="active">open or investigating</option>
               {statuses.map((candidate) => (
                 <option key={candidate} value={candidate}>
                   {candidate}
@@ -145,13 +149,7 @@ export default async function Incidents({
           <Table
             head={['Severity', 'Incident', 'Status', 'Detections', 'Last activity', 'Assignee']}
             rows={result.incidents.map((incident) => {
-              const href = subjectHref(
-                base,
-                incident.subject,
-                incident.subject.type === 'identity'
-                  ? member(incident.subject.id)?.kind
-                  : undefined,
-              );
+              const href = subjectHref(base, incident.subject);
               return [
                 <Badge key="s" tone={severityTone(incident.severity)}>
                   {incident.severity}

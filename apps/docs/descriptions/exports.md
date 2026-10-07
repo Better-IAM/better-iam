@@ -199,6 +199,52 @@ server runs it before storing a document and again before evaluating one.
 The error the storage conformance suite throws when an adapter behaves differently from the reference adapters. Its
 message names the failing check, so a custom adapter's test run shows exactly what to fix.
 
+## @better-iam/ldap OID
+
+The object identifiers of the LDAP extensions the gateway's messages use: the "Who am I?" extended operation (the one
+it supports), StartTLS (which it does not offer; serve LDAPS with `tls` instead), the notice of disconnection it sends
+before closing a connection, and the paged-results control. See [LDAP gateway](/docs/federation/ldap).
+
+## @better-iam/ldap encodeBind
+
+Encodes an LDAPv3 simple bind request (message ID, bind DN, password) as BER. With the other `encode*` helpers it lets
+tests and tools talk to the gateway, or any LDAP server, without an LDAP client library.
+
+## @better-iam/ldap encodeCompare
+
+Encodes a compare request: does the entry with this DN hold this value of this attribute? The server answers with
+result code `compareTrue` or `compareFalse`.
+
+## @better-iam/ldap encodeExtended
+
+Encodes an extended request by its OID with an optional value, for example `encodeExtended(2, OID.whoAmI)` to ask the
+gateway which account the connection is bound as.
+
+## @better-iam/ldap encodeFilter
+
+Encodes a search filter object as the BER a search request carries, the inverse of `decodeFilter`. `parseFilter` turns
+an RFC 4515 string such as `(&(objectClass=person)(mail=*))` into the object.
+
+## @better-iam/ldap encodeSearch
+
+Encodes a search request: base DN, scope (`sub` by default), filter, requested attributes, size limit, and types-only,
+with optional request controls such as those from `pagedResultsRequest`.
+
+## @better-iam/ldap encodeUnbind
+
+Encodes the unbind request that ends an LDAP session.
+
+## @better-iam/ldap pagedResultsRequest
+
+Builds the request controls of a paged search (RFC 2696): the page size and the cookie from the previous page's
+response, empty for the first page. Pass the result to `encodeSearch`.
+
+## @better-iam/ldap decodeResponse
+
+Decodes one server answer read with `readElement`: a search entry (`dn` and `attributes`) or a result (`code`,
+`message`, and an extended response's `responseName` and `responseValue`), with its controls. The client-side
+counterpart of the `encode*` helpers.
+
 ## @better-iam/mcp createMcpGate
 
 Puts Better IAM in front of a Model Context Protocol server that speaks Streamable HTTP and decides, tool by tool, who
@@ -409,6 +455,78 @@ range), as `compliance.catalog` returns them ([compliance guide](/docs/guides/go
 
 The built-in framework mappings (SOC 2, ISO 27001, NIST 800-53 and GDPR): each requirement with the checks that are
 evidence for it, not full coverage of it ([compliance guide](/docs/guides/governance/compliance)).
+
+## @better-iam/server licenseCollections
+
+The storage collections of license management: `licenseProducts`, `licensePools`, `licenseAssignments`,
+`licenseSeats`, and `licenseSettings`, all tenant-scoped and purged with their tenant. Use the names for reports or
+exports that read the store directly; change licenses only through the [licenses group](/docs/reference/api/licenses)
+([licenses guide](/docs/guides/licenses)).
+
+## @better-iam/server riskLevelFor
+
+Maps an identity risk score (0 to 100) to its level: `high` from 70, `medium` from 40, `low` from 10, and `none` below
+(`riskThresholds`). Policies read the level as `principal.riskLevel`
+([identity risk](/docs/guides/threat-detection#identity-risk)).
+
+## @better-iam/server sshLoginResourceType
+
+The resource type of a host and login pair, `ssh-login`, named `ssh-login/{host}/{login}`, on which `ssh:login` is
+decided ([SSH access](/docs/guides/ssh-access#how-access-is-decided)).
+
+## @better-iam/server sshHostResourceType
+
+The resource type of an enrolled SSH host, `ssh-host`, named `ssh-host/{host}`, on which the forwarding actions are
+decided ([SSH access](/docs/guides/ssh-access#how-access-is-decided)).
+
+## @better-iam/server sshLoginAction
+
+The action, `ssh:login`, decided for every host and login pair a user certificate is to name. Use it with
+`iam.authorize` or `policies.simulate` to check SSH access outside certificate issuance.
+
+## @better-iam/server SSH_CERT_HOST
+
+The OpenSSH certificate type of a host certificate (`2`); user certificates have `SSH_CERT_USER` (`1`).
+
+## @better-iam/server credentialTypeResource
+
+The resource type of verifiable credential types, `credential-type`. Policies allow `vc:request` on
+`credential-type/{name}` to let people get a credential of that type for themselves
+([who gets credentials](/docs/federation/verifiable-credentials#who-gets-credentials)).
+
+## @better-iam/server vcRequestAction
+
+The action, `vc:request`, decided when a person requests a credential of a type for themselves, on
+`credential-type/{name}` ([who gets credentials](/docs/federation/verifiable-credentials#who-gets-credentials)).
+
+## @better-iam/server createDisclosure
+
+Creates one SD-JWT disclosure: the salted `[salt, name, value]` array as base64url JSON, with the SHA-256 digest the
+issuer signs in the claim's place. The issuer uses it for every selectively disclosable claim; export it for tests and
+hand-built SD-JWTs.
+
+## @better-iam/server KB_JWT_TYPE
+
+The `typ` of the key-binding JWT (`kb+jwt`) a holder appends to an SD-JWT presentation to prove it holds the
+credential's key, for the verifier's audience and nonce.
+
+## @better-iam/server HOLDER_PROOF_TYPE
+
+The `typ` of the wallet's proof of possession in OpenID4VCI (`openid4vci-proof+jwt`), sent with a credential request so
+the credential is bound to the wallet's key.
+
+## @better-iam/server STATUS_LIST_JWT_TYPE
+
+The `typ` of a signed Token Status List (`statuslist+jwt`), served at `{issuer}/status/{listId}`.
+
+## @better-iam/server STATUS_INVALID
+
+The Token Status List value of a revoked credential (`1`). Compare `statusAt` results with it, `STATUS_VALID` (`0`),
+and `STATUS_SUSPENDED`.
+
+## @better-iam/server STATUS_SUSPENDED
+
+The Token Status List value of a suspended credential (`2`), which `reinstate` sets back to `STATUS_VALID`.
 
 ## @better-iam/server/assertions createAssertionsApi
 

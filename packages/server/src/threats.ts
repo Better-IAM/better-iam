@@ -52,6 +52,7 @@ export type ThreatRuleId =
   | 'directory-mass-change'
   | 'impersonation-burst'
   | 'denial-burst'
+  | 'classified-access-attempts'
   | 'recon-burst'
   | 'guardrail-weakened'
   | 'token-replay'
@@ -270,6 +271,20 @@ export const threatRules: readonly ThreatRuleDefinition[] = [
     tunable: { threshold: [5, 100_000], windowMs: [minute, day] },
     enabledByDefault: true,
     technique: 'T1069',
+  },
+  {
+    id: 'classified-access-attempts',
+    title: 'Repeated classified access attempts',
+    description:
+      'One actor was refused classified resources for want of a clearance several times within an hour (security clearances): reading up, or probing for what is classified.',
+    category: 'activity',
+    severity: 'high',
+    subject: 'identity',
+    threshold: 3,
+    windowMs: hour,
+    tunable: { threshold: [1, 1000], windowMs: [minute, 7 * day] },
+    enabledByDefault: true,
+    technique: 'T1213',
   },
   {
     id: 'recon-burst',
@@ -638,19 +653,23 @@ export interface ThreatCursor extends StoredRecord {
 /**
  * Response actions. `revoke-sessions` ends the identity's sessions (API keys kept unless `keepApiKeys: false`);
  * `forget-devices` removes remembered devices so the next sign-in needs the second factor again; `contain` disables
- * the identity (credentials kept but refused) until `threats.release`; `block-network` blocks the detection's
- * network for `durationMs` (default one day); `notify` emails the tenant's configured recipients.
+ * the identity (credentials kept but refused) until `threats.release`; `suspend-clearance` suspends the identity's
+ * security clearance (the `clearances` option) until an officer reinstates it through `clearances.reinstate`;
+ * `block-network` blocks the detection's network for `durationMs` (default one day); `notify` emails the tenant's
+ * configured recipients.
  */
 export type ResponseActionKind =
   | 'revoke-sessions'
   | 'forget-devices'
   | 'contain'
+  | 'suspend-clearance'
   | 'block-network'
   | 'notify';
 export const responseActionKinds: readonly ResponseActionKind[] = [
   'revoke-sessions',
   'forget-devices',
   'contain',
+  'suspend-clearance',
   'block-network',
   'notify',
 ];
@@ -686,7 +705,7 @@ export interface ThreatResponse extends StoredRecord {
   action: ResponseActionKind | 'release';
   subject: ThreatSubject;
   outcome: 'applied' | 'skipped';
-  /** Why a response was skipped: `protected`, `no-network`, `trusted-network`, `already-applied`, `braked`, `no-recipients`, `not-identity`, ... */
+  /** Why a response was skipped: `protected`, `no-network`, `trusted-network`, `already-applied`, `braked`, `no-recipients`, `not-identity`, `no-clearance`, `feature-disabled`, ... */
   reason?: string;
   incidentId?: string;
   detectionId?: string;

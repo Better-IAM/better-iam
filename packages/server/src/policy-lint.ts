@@ -8,7 +8,9 @@ import {
 } from '@better-iam/core';
 import {
   optionalPrincipalServerKeys,
+  optionalResourceServerKeys,
   principalServerKeys,
+  resourceServerKeys,
   sessionTagName,
   sessionTagPrefix,
   tenantServerKeys,
@@ -31,6 +33,12 @@ export interface PolicyLintContext {
   resourceAttributes?: string[];
   /** Keys the application supplies through resolveContext. */
   contextKeys?: string[];
+  /**
+   * The deployment enables security clearances (`options.clearances`): `resource.classification`,
+   * `resource.classificationRank`, `resource.compartments`, `resource.noforn` and `resource.releasableTo` are then the
+   * server's. Without it they are ordinary resource attributes.
+   */
+  clearances?: boolean;
 }
 export interface PolicyLintResult {
   valid: boolean;
@@ -63,7 +71,10 @@ const serverKeys = new Map<string, KeyType>([
  * Server keys absent from some decisions: API keys and role sessions have no sign-in method, the session attribution
  * keys exist only when set, and request.sourceIp needs a known client address (see `optionalPrincipalServerKeys`).
  */
-const optionalServerKeys = optionalPrincipalServerKeys;
+const optionalServerKeys: ReadonlySet<string> = new Set([
+  ...optionalPrincipalServerKeys,
+  ...optionalResourceServerKeys,
+]);
 /** Links every managed resource may carry besides its declared attributes. */
 const resourceLinks = new Set(['ownerId', 'parentId', 'parentType']);
 /** Keys people commonly expect but the server never sets, with the usual alternative. */
@@ -78,6 +89,10 @@ const missingKeyHints = new Map([
   [
     'principal.risk',
     'or use principal.riskLevel (none, low, medium, high) or principal.riskScore (0-100)',
+  ],
+  [
+    'principal.license',
+    'or use principal.licenses (the keys of the products the person holds a seat for)',
   ],
 ]);
 const typeLabels: Record<KeyType, string> = {
@@ -113,7 +128,9 @@ const variablesOf = (value: Scalar): string[] =>
 const compare = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 
 function keyInfo(key: string, context: PolicyLintContext): KeyInfo {
-  const server = serverKeys.get(key);
+  // A classification label's keys are the server's only with security clearances (`context.clearances`).
+  const server =
+    serverKeys.get(key) ?? (context.clearances ? resourceServerKeys.get(key) : undefined);
   if (server) return { known: true, optional: optionalServerKeys.has(key), type: server };
   // Session tags: a valid tag name is an optional server string; an invalid one can never be set.
   if (key.startsWith(sessionTagPrefix))

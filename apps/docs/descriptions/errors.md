@@ -233,6 +233,26 @@ Claims marked `required` in the credential type are never left out, so issuing i
 **How to fix:** set the value on the person (such as the identity attribute), or make the claim optional with
 [`verifiableCredentials.updateType`](/docs/reference/api/verifiable-credentials#updatetype).
 
+## CLEARANCE_REQUIRED
+
+A decision reason, not a thrown error: the resource carries a classification label that the session's security
+clearance does not dominate.
+
+With the `clearances` option, the first step of every decision on an application action (anything but `iam:*`) checks
+the resource's label against every party of the session: the person, an agent key's sponsor, each agent of a
+delegated session, and the administrator behind "view as". When one of them lacks the level, a compartment, or the
+citizenship the label needs, or the label is missing on a type that requires one or is invalid, the decision is
+`{ allowed: false, reason: 'CLEARANCE_REQUIRED' }` whatever roles and policies say, root administrators included
+unless `clearances.appliesToRoot` is false. `authorize`, `authorizeMany`, and the HTTP routes report it as
+`ACCESS_DENIED` and `require` throws `ACCESS_DENIED`; the reason itself shows only in reviews such as
+[`policies.simulate`](/docs/reference/api/policies#simulate), access invariants, and `effectiveActions`. The denial is
+audited with the metadata `{ mandatory: 'clearance' }` and never says which dimension failed. No access request,
+package, or step-up lifts it, so [`accessPaths.find`](/docs/reference/api/access-paths#find) offers no path.
+
+**How to fix:** a security officer grants or raises the person's clearance and reads them into the compartments the
+label needs, or declassifies the resource. Officers see the failing dimension with
+[`clearances.explain`](/docs/reference/api/clearances#explain).
+
 ## CONFIG_DRIFT
 
 `config-plan --fail-on-drift` found differences between the tenant and the configuration file.
@@ -248,6 +268,16 @@ so a CI job fails when someone changed production outside the reviewed file.
 `better-iam init` found an existing configuration file and left it untouched.
 
 **How to fix:** edit the existing file, or pass `--config` with a new path to generate a fresh one.
+
+## CONFIG_WARNINGS
+
+`config-validate --strict` found names in the configuration file that the file itself does not define.
+
+The command prints its findings first; the message counts the unresolved references. Without `--strict` they are only
+warnings, because the names may already exist in the tenant. Planning or applying the file fails when they do not.
+
+**How to fix:** define the missing roles, groups, or other records in the file, correct the names, or drop `--strict`
+when they are meant to exist in the tenant already ([`config-validate`](/docs/reference/cli#config-validate)).
 
 ## CONFIRMATION_INVALID
 
@@ -452,8 +482,9 @@ Examples: self-registration without `signUpEnabled`, password sign-in or recover
 `sendEmail`, a passwordless channel or passkeys that are not configured, passkey sign-in for an account without a
 passkey, emailed MFA codes the sign-in does not offer, a delivery kind without its callback, impersonation in a tenant
 whose policy does not set `allowImpersonation`, session JWTs without `sts.jwt`, custom hostnames without
-`hosts.customHostnames`, passkeys on a custom hostname outside the passkey domain (the RP ID), and the `inference`
-API group and `iam.inference` without the `inference` option.
+`hosts.customHostnames`, passkeys on a custom hostname outside the passkey domain (the RP ID), the `inference`
+API group and `iam.inference` without the `inference` option, and the `clearances` API group and
+`iam.clearances.sendReminders` without the `clearances` option.
 
 **How to fix:** enable the option in your [configuration](/docs/operations/deployment/configuration) or the tenant's
 [authentication policy](/docs/guides/authentication/tenant-policy), or hide the feature in your UI while it is off.
@@ -500,6 +531,23 @@ issued under. A non-root administrator needs one that is not revoked and whose d
 
 **How to fix:** ask a root administrator, or someone holding a broader authority, to delegate one with
 [`authorities.create`](/docs/reference/api/authorities#create).
+
+## GUEST_NOT_ALLOWED
+
+The organization's cross-tenant access settings, or those of the person's own organization, do not admit this person
+as a guest.
+
+[`guests.invite`](/docs/reference/api/guests#invite), `guests.resendInvitation`, and `guests.redeem` check who may
+join as a guest. The host refuses an address at a blocked domain, outside its allowed domains, from an organization it
+lists as a refused partner, or any guest while `allowGuests` is off. When another organization verified the address's
+domain, that organization's outbound settings must allow its people to join the host too; its refusal only says that
+the person's organization does not allow it. An address at one of the host's own verified domains is refused as well,
+because that person is a member. Either side may change its settings after an invitation is sent, so redemption can
+fail for an invitation that was admitted.
+
+**How to fix:** for the host's own domain, invite the person as a member with `identities.invite`. Otherwise an
+administrator of the host adjusts its inbound settings with [`guests.configure`](/docs/reference/api/guests#configure),
+or the person's organization lists the host as an outbound partner.
 
 ## HOSTNAME_NOT_ALLOWED
 
@@ -887,15 +935,20 @@ consent on anyone's behalf.
 
 ## INVALID_SPONSOR
 
-The AI agent's sponsor is missing or is not an active person of the agent's tenant.
+The sponsor of an AI agent or a guest is missing or is not an active person of the tenant.
 
 Every agent needs a sponsor, an active and unexpired person of the same tenant who answers for it. `agents.create`
 makes the caller the sponsor only when the caller is a person in their own session, so an API key or a temporary
 credential must name one with `sponsorId`. `agents.create` and `agents.update` refuse a sponsor who is a service
 account or another agent, disabled, deleted, expired, or in another tenant.
 
-**How to fix:** pass the `sponsorId` of an active member of the agent's tenant
-([`agents.create`](/docs/reference/api/agents#create)).
+Guests need one too, and a guest cannot sponsor another guest. [`guests.invite`](/docs/reference/api/guests#invite)
+makes the caller the sponsor only when the caller is a person of the organization in their own session or API key, so
+a root administrator or a service account names one with `sponsorId`. `guests.setSponsor` and
+`guests.resendInvitation` refuse a sponsor who can no longer sponsor guests the same way.
+
+**How to fix:** pass the `sponsorId` of an active member of the tenant who is not a guest
+([`agents.create`](/docs/reference/api/agents#create), [`guests.invite`](/docs/reference/api/guests#invite)).
 
 ## INVALID_TENANT_TREE
 
@@ -968,10 +1021,13 @@ The invitation link is invalid, expired, already used, or revoked.
 
 `tenants.acceptInvitation` and `identities.acceptInvitation` refuse a token that matches no open invitation, an
 organization that is no longer pending, and an invitation whose inviter's grant authority was revoked after it was
-sent.
+sent. [`guests.redeem`](/docs/reference/api/guests#redeem) also refuses a guest invitation whose inviter is inactive
+or can no longer grant what it grants, or whose sponsor can no longer sponsor guests, and
+`guests.resendInvitation` refuses to send such an invitation again.
 
-**How to fix:** ask an administrator to send a new invitation with `tenants.resendInvitation` or
-`identities.resendInvitation`.
+**How to fix:** ask an administrator to send a new invitation with `tenants.resendInvitation`,
+`identities.resendInvitation`, or `guests.resendInvitation`. When a guest invitation's inviter lost their rights,
+revoke it and have someone who holds them invite the person again with `guests.invite`.
 
 ## IP_BLOCKED
 
@@ -1101,6 +1157,18 @@ Account linking is turned off on this deployment.
 
 **How to fix:** enable linked onboarding in your [configuration](/docs/operations/deployment/configuration), or
 accept the invitation without linking.
+
+## LOGIN_REQUIRED
+
+The OAuth client asked for a fresh sign-in, and the person's session signed in too long ago.
+
+The OAuth provider's `completeInteraction` honors the client's `prompt=login` (sign in again now) and `max_age` (a
+sign-in at most this many seconds old). With `prompt=login` the session must have signed in after the authorization
+request started; with `max_age` its sign-in must be younger than the limit. Otherwise consent is not recorded and the
+call answers 401.
+
+**How to fix:** send the person through sign-in again on the interaction page, then submit the consent step with the
+new session ([OAuth provider](/docs/federation/oauth-provider#build-the-interaction-pages)).
 
 ## MAX_DEPTH
 
@@ -1431,7 +1499,9 @@ The record is still referenced by other records, so it cannot be deleted or chan
 
 Examples: a role that other roles inherit or packages include, a policy still attached to a role, a group that
 packages grant or that approves requests, a resource type with registered resources, relationships, or child types, a
-resource with child resources, a package that is still assigned, and an action still used by policies and roles.
+resource with child resources, a package that is still assigned, an action still used by policies and roles, and a
+classification scheme change that would remove or re-rank a level a clearance or label uses, remove a compartment in
+use, or make a label invalid ([`clearances.updateScheme`](/docs/reference/api/clearances#updatescheme)).
 
 **How to fix:** remove or repoint the references the message names, then retry.
 
@@ -1874,7 +1944,11 @@ A query plan's filter uses a condition the chosen target cannot express.
 [`iam.planResources`](/docs/reference/api#planresources) returns a filter with the policy engine's full
 semantics; `filterToSql` has no equivalent for IP address and array conditions, and `filterToPrisma` and
 `filterToMongo` lack some of dates, IP addresses, and wildcard patterns that are not a prefix, suffix or substring.
-Compiling refuses rather than returning a filter that would include or leave out the wrong rows.
+Compiling refuses rather than returning a filter that would include or leave out the wrong rows. Planning itself
+refuses with this code when no filter can be exact, for example with [security clearances](/docs/reference/api/clearances):
+for an application type the scheme requires labels on, for any application type while a label in the tenant passes
+down to children, and for a statement that conditions on a classification label's resource keys
+(`resource.classificationRank` and the like).
 
 **How to fix:** fetch candidate rows with a coarser query and keep those that pass `filterMatches(plan.filter, row)`,
 which supports every filter exactly, or check each row with `authorize`
@@ -1961,6 +2035,17 @@ delivery's last error, and the delivery is retried with growing delays until its
 
 **How to fix:** make the endpoint return a 2xx status, read the recorded error with `webhooks.listDeliveries`, and
 use `webhooks.redeliver` once it is fixed ([retries](/docs/guides/events/webhooks#retries)).
+
+## WEBHOOK_UNREACHABLE
+
+A webhook delivery could not connect to the endpoint, or the endpoint did not answer in time.
+
+Like `WEBHOOK_REJECTED`, it is recorded as the delivery's last error in the outbox and retried with growing delays. Every
+connection failure gets the same message (refused, unresolvable, or a private or reserved address the guarded transport
+refuses), so the delivery history cannot be used to map networks or ports; only a timeout says so.
+
+**How to fix:** check that the URL resolves to a public address and the endpoint answers within the webhook timeout,
+then use `webhooks.redeliver` ([retries](/docs/guides/events/webhooks#retries)).
 
 ## WEB_IDENTITY_REJECTED
 

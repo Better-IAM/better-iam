@@ -16,6 +16,7 @@ import {
   policyAllowsScope,
   type Delegation,
 } from './delegations.js';
+import { guestBoundary } from './guests.js';
 import type { PrincipalBoundary } from './models.js';
 
 /**
@@ -72,7 +73,8 @@ export function audienceRefusal(agents: Identity[], audience: string): Identity 
 /**
  * The first scope the chain may not carry, or undefined when it may carry them all. Every scope must be allowed
  * outright by every limit a decision for the acting session applies (the delegations and their ceilings, the agents'
- * boundaries, the session's policies, the key issuers' authority, the tenant's and the person's boundaries). None may
+ * boundaries, the session's policies, the key issuers' authority, the tenant's and the person's boundaries, and the
+ * tenant's guest boundary for a guest). None may
  * be one the person confirms call by call (`confirm`, anywhere in the chain), nor one a deny statement among the
  * person's own grants could touch: a token carries no resource or condition to refine them with.
  */
@@ -103,6 +105,12 @@ export async function scopeRefusal(
     identityId: basis.personId,
   }))
     limits.push(boundary.document);
+  // A guest's decisions, delegated ones included, stay within the tenant's guest ceiling (decisions.ts, guests.ts).
+  const person = await tx.get<Identity>('identities', basis.personId);
+  if (person?.tenantId === basis.tenant.id && person.guest) {
+    const ceiling = await guestBoundary(tx, basis.tenant.id);
+    if (ceiling) limits.push(ceiling);
+  }
   const confirm = chain.flatMap((delegation) => delegation.confirm ?? []);
   // Denies of bindings, roles and policies whose author's authority was revoked still apply at decision time, so they
   // bound a token's scopes too (they arrive as deny-only paths in `lapsed`).

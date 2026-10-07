@@ -38,7 +38,9 @@ A `Decision` is the answer to "may this principal perform this action on this re
 `reason` says why: the policy engine's `allowed`, `explicit-deny`, `no-grant`, or `boundary-deny`, or a platform
 reason decided before any policy is read, such as `TENANT_INACTIVE` (the tenant is suspended), `TENANT_MISMATCH`
 (the credential belongs to another tenant), `ROOT_OVERRIDE` (a platform root administrator), `IMPERSONATOR_DENIED`
-(a "view as" session asked for more than the administrator may do), or `CREDENTIAL_AUTHORITY_REVOKED`. `matched`
+(a "view as" session asked for more than the administrator may do), `CLEARANCE_REQUIRED` (with
+[security clearances](/docs/guides/security-clearances): the resource's classification label is above the session's
+clearance), or `CREDENTIAL_AUTHORITY_REVOKED`. `matched`
 lists the statements that matched. Server calls strip `matched` before
 returning decisions to callers so they do not leak policy contents.
 

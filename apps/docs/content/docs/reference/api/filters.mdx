@@ -24,6 +24,17 @@ for managed ones. Resource patterns become conditions on `id` (`document/public-
 the request and the tenant are decided when the plan is made. A missing attribute satisfies nothing but `not exists`,
 and every compiler keeps that rule under negation.
 
+## Security clearances
+
+With the deployment's `clearances` option and a classification scheme in force, every plan, a root administrator's
+included, is AND-ed with a filter over `id`: `not (id in [...])` for the labeled resources the principal's clearance
+does not dominate, or, for a type the scheme requires labels on, `id in [...]` for the registered resources it does.
+Both compile to every target. Plans answer `UNSUPPORTED_FILTER` when they cannot be exact: for an application type the
+scheme requires labels on, for any application type while a label in the tenant passes down to children, and for a
+statement that conditions on a label's keys (`resource.classification`, `resource.classificationRank`,
+`resource.compartments`, `resource.noforn`, `resource.releasableTo`). Labels a resolver asserts are not visible to
+plans, so check such rows with `authorize`. See [clearances](/docs/reference/api/clearances).
+
 <ApiGroupSummary group="filters" methods={2} routed={true} />
 
 | Method | What it does | Access |
@@ -43,7 +54,8 @@ The caller's plan for `action` on resources of `type`.
 - **Errors:** `INVALID_INPUT` for an `iam:*` action, an internal type (`iam`, `role`, `saml`, ...), or a malformed
   type name.
 
-An unknown action plans `never`. A root administrator's session plans `always`. A "view as" session gets only what the
+An unknown action plans `never`. A root administrator's session plans `always` (with security clearances, limited to
+what its clearance reads). A "view as" session gets only what the
 administrator behind it could reach too. A delegated session whose delegation holds the action for the person's
 confirmation plans `never` (use `authorize` for the resources confirmed just now).
 

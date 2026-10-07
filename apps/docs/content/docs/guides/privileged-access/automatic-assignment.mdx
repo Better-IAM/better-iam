@@ -104,6 +104,8 @@ A rule describes the person, never a session or a request, so it can only test f
 | `identity.groups`        | array    | The person's group memberships that no access package created.                                          |
 | `identity.teams`         | array    | The IDs of the [teams](/docs/guides/teams-and-departments) the person belongs to and of every team above them. |
 | `identity.departments`   | array    | The ID of the person's department and of every department above it.                                    |
+| `identity.guest`         | boolean  | Whether the person is a [guest](/docs/guides/guests#birthright-rules-and-guests). A rule that never tests it does not match guests. |
+| `identity.licenses`      | array    | The keys of the [license](/docs/guides/licenses#birthright-packages) products the person holds an active seat for. |
 
 `identity.groups` leaves out package-created memberships so rules never chain onto another package or keep
 themselves alive, and a rule may not name a group its own package grants. `principal.groups` is refused. For the

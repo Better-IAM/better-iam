@@ -13,6 +13,7 @@ import {
   type Tenant,
 } from '@better-iam/core';
 import type { ServerContext } from './context.js';
+import { decideOn, isRootOverride, moduleResourceLabels } from './decisions.js';
 import { withDeviceKey } from './devices.js';
 import { grantDeadline as sharedGrantDeadline } from './grant-deadline.js';
 import type { ResolvedResource } from './options.js';
@@ -902,6 +903,18 @@ export async function sweepSshCertificates(
       if (!tenant) return;
       const records = await liveCertificates(ctx, tx, { tenantId, kind: 'user' });
       const hosts = new Map((await tx.find<SshHost>('sshHosts', { tenantId })).map((host) => [host.name, host]));
+      // With security clearances, the hosts' resources carry their classification labels, as `resolve` attaches them.
+      const labeled = await moduleResourceLabels(
+        ctx,
+        tx,
+        tenantId,
+        records.length
+          ? [...hosts.values()].flatMap((host) => [
+              hostResource(host),
+              ...host.logins.map((login) => loginResource(host, login)),
+            ])
+          : [],
+      );
       type Prepared = Awaited<ReturnType<typeof ctx.decisions.prepareDecision>>;
       // Per issuing session: its decision, `ended` when it no longer validates, `skip` while its tenant is suspended.
       const decisions = new Map<string, Prepared | 'ended' | 'skip'>();
@@ -924,11 +937,7 @@ export async function sweepSshCertificates(
                 // With no request to carry a proof, device conditions judge the device the issuing request proved.
                 const principal = record.deviceKeyId ? withDeviceKey(current, record.deviceKeyId) : current;
                 state = await ctx.decisions.prepareDecision(tx, principal, tenant, sshLoginAction);
-                if (
-                  'fixed' in state &&
-                  state.fixed.reason === 'ROOT_OVERRIDE' &&
-                  principal.identity.tenantId !== tenantId
-                )
+                if (isRootOverride(state) && principal.identity.tenantId !== tenantId)
                   state = { fixed: { allowed: false, reason: 'ROOT_SSH_RESTRICTED', matched: [] } };
               } catch (error) {
                 // A suspended tenant is refused by the revocation list itself; its certificates return with it.
@@ -941,7 +950,7 @@ export async function sweepSshCertificates(
           if (prepared === 'ended') reason = 'session-ended';
           else {
             const decide = (resource: ResolvedResource, action: string) =>
-              ('fixed' in prepared ? prepared.fixed : prepared.evaluate(resource, action)).allowed;
+              decideOn(prepared, labeled(resource), action).allowed;
             const named = (record.access ?? []).flatMap(({ host: name }) => {
               const host = hosts.get(name);
               return host ? [host] : [];

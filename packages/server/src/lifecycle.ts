@@ -231,6 +231,22 @@ const tenantCollections = [
   // Shared Signals receiver (signal-receiver.ts): the tenant's transmitters and the security events they sent.
   'signalSources',
   'signalEvents',
+  // License management (licenses.ts): the products the tenant defines, the pools it consumes, its assignments and
+  // seats, and its settings.
+  'licenseProducts',
+  'licensePools',
+  'licenseAssignments',
+  'licenseSeats',
+  'licenseSettings',
+  // B2B guest collaboration (guests.ts): guest invitations, guest accounts, and the cross-tenant access settings.
+  'guestInvitations',
+  'guestAccounts',
+  'crossTenantAccess',
+  // Security clearances (clearances.ts): the classification scheme the tenant defines, its people's clearances, and
+  // the classification labels of its resources (which outlive the resources).
+  'classificationSchemes',
+  'clearances',
+  'resourceLabels',
 ];
 
 export interface AccessDigestResult {

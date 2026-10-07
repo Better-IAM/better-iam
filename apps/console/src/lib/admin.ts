@@ -38,6 +38,8 @@ export function joinLink(
     return `${origin}/cloud/join?kind=owner&tenant=${encodeURIComponent(tenantId)}&token=${encodeURIComponent(token)}`;
   if (template === 'member-invitation')
     return `${origin}/cloud/join?kind=member&tenant=${encodeURIComponent(tenantId)}&token=${encodeURIComponent(token)}`;
+  if (template === 'guest-invitation')
+    return `${origin}/cloud/join?kind=guest&tenant=${encodeURIComponent(tenantId)}&token=${encodeURIComponent(token)}`;
   if (template === 'password-reset')
     return `${origin}/cloud/reset?tenant=${encodeURIComponent(tenantId)}&token=${encodeURIComponent(token)}`;
   if (template === 'email-change')

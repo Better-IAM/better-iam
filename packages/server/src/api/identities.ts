@@ -17,6 +17,10 @@ import type { ServerContext } from '../context.js';
 import { revokeDelegationsOf } from '../delegations.js';
 import { releaseDepartments } from '../departments.js';
 import { releaseDevicesOf } from '../devices.js';
+import { assertMemberInvitationGrantable } from '../flows.js';
+import { handOverGuests, releaseGuestRecords, revokeGuestInvitationsBy } from '../guests.js';
+import { releaseClearancesOf, terminateClearancesOf } from '../clearances.js';
+import { batchGroupLicenses, releaseLicensesOf } from '../licenses.js';
 import { assertNoLegalHold, releasePrivacyRecords } from '../privacy.js';
 import { assertNotTeamGroup, removeFromAllTeams } from '../teams.js';
 import { endContainment } from '../threats.js';
@@ -38,9 +42,13 @@ import { OperationDenied } from '../operations.js';
 import { all, hash, id, publicIdentity, token, type PublicIdentity } from '../utils.js';
 import { email, integer, object, strings, text } from '../validation.js';
 import { deleteBinding } from './bindings.js';
-import { removeGroupMember } from './groups.js';
+import { assertMayClaimLicenses, removeGroupMember } from './groups.js';
 import { afterIdentityChange } from './package-automation.js';
 import { revokeAssignment } from './packages.js';
+
+/** The refusal of `createMany` and `invite` when a group they fill carries license seats (groups.ts). */
+const seatsMessage =
+  'A group you add people to carries license seats; adding them needs iam:licenses:assign';
 
 /**
  * Deletes an identity: every credential, factor, binding, membership, boundary, and link is removed or revoked in the same
@@ -110,6 +118,13 @@ export async function deleteIdentity(
   await releasePrivacyRecords(tx, identity);
   // App assignments and launch history go; apps they owned lose them as an owner (applications.ts).
   await releaseAppRecordsOf(tx, identity);
+  // Direct license assignments go and seats are released; waiting people move up (licenses.ts).
+  await releaseLicensesOf(ctx, tx, identity, principal);
+  // A deleted guest's account row goes; guests the person sponsored are flagged for a new sponsor (guests.ts).
+  await releaseGuestRecords(ctx, tx, principal, identity);
+  // A clearance ends as terminated history, its read-ins released (clearances.ts; only with the `clearances` option).
+  if (ctx.options.clearances)
+    await releaseClearancesOf(tx, identity, ctx.now(), principal.identity.id);
   if (await tx.get('authMfa', identity.id)) await tx.delete('authMfa', identity.id);
   for (const authority of await tx.find<GrantAuthority>('grantAuthorities', {
     tenantId: identity.tenantId,
@@ -247,6 +262,8 @@ export async function revokeInvitationsBy(tx: IamStore, identityId: string): Pro
   }))
     if (!invitation.consumed && !invitation.revoked)
       await tx.put('memberInvitations', { ...invitation, revoked: true });
+  // Guest invitations they sent or sponsor, likewise (guests.ts).
+  await revokeGuestInvitationsBy(tx, identityId);
 }
 
 /** A manager is another active identity of the tenant, never the person or one of their own reports (no cycles). */
@@ -324,8 +341,8 @@ export function createIdentitiesApi(ctx: ServerContext) {
     /**
      * Creates up to 100 identities atomically with optional attributes, roles, and groups (bulk onboarding). Roles and
      * groups are authorized once like invitations: `iam:bindings:create` on each role under the caller's grant
-     * authority and `iam:groups:update` on each group; attributes need iam:identities:update on the tenant. One failure
-     * rejects the whole batch.
+     * authority and `iam:groups:update` on each group (plus iam:licenses:assign when a license product is assigned to
+     * one of them); attributes need iam:identities:update on the tenant. One failure rejects the whole batch.
      */
     createMany: (
       credential: CredentialInput,
@@ -424,6 +441,8 @@ export function createIdentitiesApi(ctx: ServerContext) {
             }))
               await ctx.grantingAuthority(tx, principal, realm.id, binding.authorityId);
           }
+          // New members of a licensed group claim its seats: that needs iam:licenses:assign (groups.ts).
+          await assertMayClaimLicenses(ctx, tx, principal, realm.id, [...groupIds], seatsMessage);
           const created: PublicIdentity[] = [];
           for (const item of items) {
             let identity = await auth.createIdentity(tx, {
@@ -963,17 +982,20 @@ export function createIdentitiesApi(ctx: ServerContext) {
               ? { departmentsReassigned: departments.headsReassigned }
               : {}),
           };
-          for (const membership of await tx.find<GroupMember>('groupMembers', {
-            tenantId,
-            identityId: identity.id,
-          })) {
-            await removeGroupMember(ctx, tx, principal, {
+          // Seats of the groups' license products are reconciled once, after every membership is gone.
+          await batchGroupLicenses(ctx, tx, async () => {
+            for (const membership of await tx.find<GroupMember>('groupMembers', {
               tenantId,
-              groupId: membership.groupId,
               identityId: identity.id,
-            });
-            counts.memberships++;
-          }
+            })) {
+              await removeGroupMember(ctx, tx, principal, {
+                tenantId,
+                groupId: membership.groupId,
+                identityId: identity.id,
+              });
+              counts.memberships++;
+            }
+          });
           for (const tuple of await tx.find<Relationship>('relationships', {
             tenantId,
             subjectType: 'identity',
@@ -1068,10 +1090,24 @@ export function createIdentitiesApi(ctx: ServerContext) {
             identity,
             principal.identity.id,
           );
+          // Guests (guests.ts): the guests they sponsor move to the successor or are flagged for a new sponsor, and a
+          // leaver who is a guest has their guest account closed. Reported only when non-zero, like the agents.
+          const guestHandover = await handOverGuests(ctx, tx, principal, identity, successor);
+          // Security clearances (clearances.ts): the leaver's clearance is terminated and every compartment debriefed.
+          const clearancesTerminated = await terminateClearancesOf(
+            ctx,
+            tx,
+            principal,
+            identity,
+            reason,
+          );
           const agentCounts = {
             ...(handover.reassigned ? { agentsReassigned: handover.reassigned } : {}),
             ...(handover.unsponsored ? { agentsUnsponsored: handover.unsponsored } : {}),
             ...(delegationsRevoked ? { delegationsRevoked } : {}),
+            ...(guestHandover.reassigned ? { guestsReassigned: guestHandover.reassigned } : {}),
+            ...(guestHandover.unsponsored ? { guestsUnsponsored: guestHandover.unsponsored } : {}),
+            ...(clearancesTerminated ? { clearancesTerminated } : {}),
           };
           await ctx.revokeAll(tx, identity.id);
           await revokeInvitationsBy(tx, identity.id);
@@ -1101,7 +1137,8 @@ export function createIdentitiesApi(ctx: ServerContext) {
           );
           return { identity: publicIdentity(disabled), ...counts, ...agentCounts, ...orgCounts };
         },
-      ),
+        // A disabled identity claims no license seat: reconciling releases its seats (licenses.ts).
+      ).then((result) => afterIdentityChange(ctx, input.tenantId, [input.identityId], result)),
     /**
      * Renames an identity, replaces its declared attributes (validated against `permissions.identityAttributes`),
      * changes its email, or schedules/clears its deactivation (`expiresAt`, null to clear). An email change requires
@@ -1202,6 +1239,12 @@ export function createIdentitiesApi(ctx: ServerContext) {
               throw new IamError('INVALID_INPUT', 'Service accounts have no email');
             const address = email(input.email);
             if (address !== identity.email) {
+              // A guest's address is the one their invitation proved and the cross-tenant settings admitted (guests.ts).
+              if (identity.guest)
+                throw new IamError(
+                  'INVALID_INPUT',
+                  'A guest’s email address cannot change: invite the new address instead',
+                );
               await assertAccountControl(ctx, tx, principal, identity);
               if (
                 (
@@ -1321,7 +1364,10 @@ export function createIdentitiesApi(ctx: ServerContext) {
           return ctx.decisions.effectiveBindings(tx, input.tenantId, input.identityId);
         },
       ),
-    /** Invites a person into an existing tenant. Roles and groups are applied when the invitation is accepted, under the inviter's authority. */
+    /**
+     * Invites a person into an existing tenant. Roles and groups are applied when the invitation is accepted, under the
+     * inviter's authority; groups a license product is assigned to need iam:licenses:assign, now and at acceptance.
+     */
     invite: (
       credential: CredentialInput,
       input: {
@@ -1406,6 +1452,8 @@ export function createIdentitiesApi(ctx: ServerContext) {
             }))
               await ctx.grantingAuthority(tx, principal, realm.id, binding.authorityId);
           }
+          // The invitee claims the seats of licensed groups: iam:licenses:assign, checked again at acceptance (flows.ts).
+          await assertMayClaimLicenses(ctx, tx, principal, realm.id, groupIds, seatsMessage);
           const inviteToken = token();
           const now = Date.now();
           const invitation: MemberInvitation = {
@@ -1487,7 +1535,11 @@ export function createIdentitiesApi(ctx: ServerContext) {
           return safe;
         },
       ),
-    /** Re-sends a member invitation with a fresh token and lifetime; the earlier token stops working. */
+    /**
+     * Re-sends a member invitation with a fresh token and lifetime; the earlier token stops working. Only an invitation
+     * that can still be accepted goes out: its inviter must still grant what it grants, as acceptance checks again
+     * (INVITATION_INVALID; revoke it and invite the person again).
+     */
     resendInvitation: (
       credential: CredentialInput,
       input: { tenantId: string; invitationId: string },
@@ -1513,6 +1565,16 @@ export function createIdentitiesApi(ctx: ServerContext) {
           );
           if (invitation.consumed || invitation.revoked)
             throw new IamError('CONFLICT', 'Invitation is already consumed or revoked', 409);
+          // Acceptance would refuse an invitation its inviter can no longer grant (flows.ts): send none.
+          try {
+            await assertMemberInvitationGrantable(ctx, tx, invitation, realm.id);
+          } catch (error) {
+            if (!(error instanceof IamError) || error.code !== 'INVITATION_INVALID') throw error;
+            throw new IamError(
+              'INVITATION_INVALID',
+              `${error.message}: revoke this invitation and invite the person again`,
+            );
+          }
           const inviteToken = token();
           const now = Date.now();
           const renewed = await tx.put('memberInvitations', {

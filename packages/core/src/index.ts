@@ -10,6 +10,7 @@ export * from './delegation-tokens.js';
 export * from './shared-signals.js';
 export * from './plan.js';
 export * from './filter-compilers.js';
+export * from './classification.js';
 
 export class IamError extends Error {
   constructor(
@@ -257,11 +258,29 @@ export interface AgentProfile {
   /** Set while the agent is suspended: who suspended it, when, and why (`agents.suspend`). */
   suspended?: { by: string; at: number; reason?: string };
 }
+/**
+ * The marker of a guest: a person from outside the organization (or from another tenant) who redeemed a guest
+ * invitation. A guest is an ordinary `kind: 'user'` identity of the host tenant; this server-owned profile, which only
+ * the guest collaboration service writes, is what policies see as `principal.guest` (with `principal.guestSponsorId`
+ * and `principal.homeTenantId`). Never set it through attributes or application code.
+ */
+export interface GuestProfile {
+  /** The member of the host tenant who vouches for the guest. */
+  sponsorId: string;
+  /** When the person became a guest (redemption, epoch milliseconds). */
+  since: number;
+  /** The tenant that verified the guest's email domain, when another tenant had (a tenant-sourced guest). */
+  homeTenantId?: string;
+  /** The domain of the guest's email address. */
+  homeDomain?: string;
+}
 export interface Identity extends StoredRecord {
   /** `user` (a person), `service` (a service account) or `agent` (an AI agent with a sponsor, see `agent`). */
   kind: 'user' | 'service' | 'agent';
   /** Agents only: the agent's profile, sponsor and ceiling. */
   agent?: AgentProfile;
+  /** Guests only: set while the person is a guest of this tenant (B2B guest collaboration), with their sponsor. */
+  guest?: GuestProfile;
   email?: string;
   name: string;
   description?: string;

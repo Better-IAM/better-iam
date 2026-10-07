@@ -1,7 +1,9 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { ApiButton, ApiForm } from '@/components/api-form';
+import { MemberClearance } from '@/components/clearances';
 import { ImpersonateForm } from '@/components/impersonation';
+import { MemberLicenses } from '@/components/licenses';
 import {
   Alert,
   Badge,
@@ -15,6 +17,7 @@ import {
 import { orgPage } from '@/lib/org';
 import { tryRead } from '@/lib/session';
 import { riskTone } from '@/lib/threats';
+import { accountStatusLabels, accountStatusTone } from '@/lib/guests';
 
 export default async function Member({ params }: { params: Promise<{ org: string; id: string }> }) {
   const { org, id } = await params;
@@ -55,12 +58,25 @@ export default async function Member({ params }: { params: Promise<{ org: string
   ]);
   // Threat detection's risk for this identity (threats.ts; needs iam:threats:read on iam/threats/risk/{id}).
   const risk = await tryRead(() => iam.api.threats.getRisk(auth, { tenantId, identityId: id }));
+  // Guest collaboration (guests.ts): sponsor, access end and review; needs iam:guests:read on iam/guests/{id}.
+  const guest = identity.guest
+    ? await tryRead(() => iam.api.guests.get(auth, { tenantId, identityId: id }))
+    : undefined;
+  const guestSponsorId = guest?.sponsorId ?? identity.guest?.sponsorId ?? '';
+  const guestSponsorName =
+    guest?.sponsorName ?? members?.find((member) => member.id === guestSponsorId)?.name;
   return (
     <>
       <PageHeader
         title={
           <>
             {identity.name} <StatusBadge status={identity.status} />
+            {identity.guest && (
+              <>
+                {' '}
+                <Badge tone="accent">Guest</Badge>
+              </>
+            )}
           </>
         }
         description={
@@ -360,6 +376,65 @@ export default async function Member({ params }: { params: Promise<{ org: string
             )}
           </Card>
         </div>
+        {identity.guest && (
+          <Card
+            title="Guest"
+            description="A person from outside the organization who joined by invitation. Their sponsor vouches for them, and their access ends unless it is renewed; policies see principal.guest."
+            actions={
+              <Link
+                className="btn small secondary"
+                href={`${base}/guests/${encodeURIComponent(id)}`}
+              >
+                Guest page
+              </Link>
+            }
+          >
+            <KeyValues
+              items={[
+                [
+                  'Sponsor',
+                  <span key="s" className="row">
+                    <Link href={`${base}/members/${encodeURIComponent(guestSponsorId)}`}>
+                      {guestSponsorName ?? guestSponsorId}
+                    </Link>
+                    {guest?.sponsorMissing && <Badge tone="danger">needs a new sponsor</Badge>}
+                  </span>,
+                ],
+                ['Guest since', <Time key="g" value={identity.guest.since} />],
+                [
+                  'From',
+                  identity.guest.homeDomain ?? guest?.homeDomain ?? (
+                    <span key="f" className="muted">
+                      —
+                    </span>
+                  ),
+                ],
+                [
+                  'Guest account',
+                  guest ? (
+                    <Badge key="a" tone={accountStatusTone(guest.accountStatus)}>
+                      {accountStatusLabels[guest.accountStatus]}
+                    </Badge>
+                  ) : (
+                    <span key="a" className="muted">
+                      requires <code>iam:guests:read</code>
+                    </span>
+                  ),
+                ],
+                [
+                  'Next review',
+                  guest?.accountStatus === 'active' ? (
+                    <Time key="r" value={guest.reviewDueAt} />
+                  ) : (
+                    <span key="r" className="muted">
+                      —
+                    </span>
+                  ),
+                ],
+              ]}
+            />
+          </Card>
+        )}
         {risk && (
           <Card
             title="Risk"
@@ -557,6 +632,17 @@ export default async function Member({ params }: { params: Promise<{ org: string
             )}
           </Card>
         </div>
+        {/* License seats (licenses.ts; needs iam:licenses:read, hidden in organizations without products). */}
+        <MemberLicenses
+          page={{ session, tenant, org, iam, auth, tenantId, base }}
+          identityId={id}
+          active={identity.status === 'active'}
+        />
+        {/* Security clearance (clearances.ts; needs iam:clearances:read, hidden otherwise). */}
+        <MemberClearance
+          page={{ session, tenant, org, iam, auth, tenantId, base }}
+          identityId={id}
+        />
         {(memberTeams || memberDepartment !== undefined) && identity.kind === 'user' && (
           <div className="grid cols-2">
             <Card title="Teams" flush>

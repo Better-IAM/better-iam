@@ -4,6 +4,7 @@ import {
   type AuditEvent,
   type AuditSessionContext,
   type AuthenticatedPrincipal,
+  type ClassificationLabel,
   type CredentialInput,
   type HierarchyConfig,
   type IamPlugin,
@@ -128,7 +129,16 @@ export interface AccessibleResourcesRequest extends CredentialInput {
   limit?: number;
   offset?: number;
 }
-export type ResolvedResource = ResourceRef & { attributes?: Record<string, unknown> };
+export type ResolvedResource = ResourceRef & {
+  attributes?: Record<string, unknown>;
+  /**
+   * Security clearances (`clearances` option): the resource's effective classification label, which only the server
+   * sets (never an attribute). `resolve` attaches it, joining the IAM label, labels inherited from managed parents and
+   * a resolver's own `classification` (which can only raise it); `null` means looked up and unlabeled. A resolver may
+   * return a label here for its resources, validated against the tenant's scheme (an invalid one refuses access).
+   */
+  classification?: ClassificationLabel | null;
+};
 
 /**
  * Signing keys for session JWTs (`format: 'jwt'` role sessions and session tokens). They are separate from
@@ -273,6 +283,13 @@ export interface BetterIamOptions {
    */
   verifiableCredentials?: boolean | import('./vc.js').VerifiableCredentialOptions;
   /**
+   * Security clearances and mandatory access control: tenants define a classification scheme, officers adjudicate
+   * clearances and read people into compartments, and resources carry IAM-held classification labels that every party
+   * of a decision must dominate, whatever roles and policies say (`clearances` API group, `iam.clearances`). Off by
+   * default; without it nothing is reserved, read or enforced.
+   */
+  clearances?: ClearanceOptions;
+  /**
    * Secrets vault settings (`vault` API group, `iam.vault`): rotators that apply rotated values to the systems they
    * unlock, dynamic secret engines, size limits and access-record retention. The vault is always available; these
    * extend it.
@@ -291,10 +308,16 @@ export interface BetterIamOptions {
   hosts?: HostOptions;
   /** Multi-region deployments: this deployment's region and where every region's deployment answers. */
   regions?: RegionOptions;
-  /** Required for product resource types; resolves ownership and attributes from trusted storage. */
-  resolveResource?(
-    reference: ResourceRef,
-  ): Promise<ResourceRef & { attributes?: Record<string, unknown> }>;
+  /**
+   * Required for product resource types; resolves ownership and attributes from trusted storage. With the `clearances`
+   * option it may also return the resource's `classification` label, which can only raise the IAM-held one.
+   */
+  resolveResource?(reference: ResourceRef): Promise<
+    ResourceRef & {
+      attributes?: Record<string, unknown>;
+      classification?: ClassificationLabel | null;
+    }
+  >;
   resolveContext?(principal: AuthenticatedPrincipal): Promise<Record<string, unknown>>;
   protocols?: ProtocolMount[];
   /** Temporary credentials: duration ceilings, session JWT signing keys and web-identity federation. */
@@ -304,6 +327,20 @@ export interface BetterIamOptions {
    * documents and poll endpoints, and where transmitters push security events.
    */
   signals?: SignalsOptions;
+}
+
+/** Security clearance settings (`clearances` option); its presence enables the module. */
+export interface ClearanceOptions {
+  /**
+   * Whether root administrators are bound by classification labels too (default true): root keeps its override for
+   * everything else, but reads a labeled application resource only with a clearance issued under the target's scheme.
+   */
+  appliesToRoot?: boolean;
+}
+
+/** Validated clearance settings with defaults applied. */
+export interface ResolvedClearanceConfig {
+  appliesToRoot: boolean;
 }
 
 /** Shared Signals receiver settings. */
@@ -345,6 +382,8 @@ export interface ServerConfig {
   regions?: ResolvedRegionConfig;
   /** Shared Signals receiver settings (`signals` option). */
   signals: ResolvedSignalsConfig;
+  /** Security clearance settings (`clearances` option); undefined when the module is off. */
+  clearances?: ResolvedClearanceConfig;
 }
 
 const defaultHierarchy: HierarchyConfig = {
@@ -386,6 +425,7 @@ export function resolveConfig(options: BetterIamOptions): ServerConfig {
   } catch (error) {
     throw new IamError('INVALID_CONFIG', `tenantDefaults: ${(error as Error).message}`);
   }
+  const clearances = resolveClearanceConfig(options.clearances);
   const regions = resolveRegionConfig(options.regions);
   const hosts = resolveHostConfig(options.hosts, {
     baseURL,
@@ -427,7 +467,26 @@ export function resolveConfig(options: BetterIamOptions): ServerConfig {
     ),
     sts: resolveStsConfig(options.sts, options.sts?.jwt?.issuer ?? `${baseURL.origin}${basePath}`),
     signals: resolveSignalsConfig(options.signals, basePath),
+    ...(clearances ? { clearances } : {}),
   };
+}
+
+/**
+ * Validates `options.clearances` (an object, or absent to leave the module off) and applies the defaults. Anything but
+ * an object fails construction, so `clearances: true` cannot be mistaken for a setting that was applied.
+ */
+function resolveClearanceConfig(
+  options: ClearanceOptions | undefined,
+): ResolvedClearanceConfig | undefined {
+  if (options === undefined) return undefined;
+  if (options === null || typeof options !== 'object' || Array.isArray(options))
+    throw new IamError('INVALID_CONFIG', 'clearances must be an object');
+  for (const key of Object.keys(options))
+    if (key !== 'appliesToRoot')
+      throw new IamError('INVALID_CONFIG', `clearances.${key} is not a known setting`);
+  if (options.appliesToRoot !== undefined && typeof options.appliesToRoot !== 'boolean')
+    throw new IamError('INVALID_CONFIG', 'clearances.appliesToRoot must be a boolean');
+  return { appliesToRoot: options.appliesToRoot !== false };
 }
 
 /** Validates `options.signals` and applies the defaults. */

@@ -13,14 +13,18 @@ export default async function Join({
   const { kind, tenant: tenantId, token } = await searchParams;
   const iam = await getIam();
   const tenant = tenantId ? await iam.store.get<Tenant>('tenants', tenantId) : undefined;
-  const ready = tenant && token && (kind === 'owner' || kind === 'member');
+  const ready = tenant && token && (kind === 'owner' || kind === 'member' || kind === 'guest');
   return (
     <main className="auth">
       <div className="card">
         <div className="card-body stack">
           <div className="brand-mark">
             <strong>
-              {kind === 'owner' ? 'Set up your organization' : 'Join an organization'}
+              {kind === 'owner'
+                ? 'Set up your organization'
+                : kind === 'guest'
+                  ? 'Join an organization as a guest'
+                  : 'Join an organization'}
             </strong>
             <p>{tenant ? tenant.name : 'Paste the details from your invitation'}</p>
           </div>
@@ -38,6 +42,7 @@ export default async function Join({
                 <select id="kind" className="select" name="kind" defaultValue={kind ?? 'member'}>
                   <option value="member">Member invitation</option>
                   <option value="owner">Owner invitation</option>
+                  <option value="guest">Guest invitation</option>
                 </select>
               </div>
               <div className="field">

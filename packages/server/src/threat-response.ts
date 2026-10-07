@@ -13,6 +13,7 @@ import {
 import type { NetworkBlock } from '@better-iam/auth';
 import { assertOwnerControl, revokeInvitationsBy } from './api/identities.js';
 import { afterIdentityChange } from './api/package-automation.js';
+import { assertClearances, suspendClearance } from './clearances.js';
 import type { ServerContext } from './context.js';
 import { deleteDelegatedSessions } from './delegations.js';
 import { OperationDenied } from './operations.js';
@@ -34,7 +35,8 @@ import { integer } from './validation.js';
 
 /**
  * Response actions of the threats module (`threats.ts`): ending an identity's sessions, forgetting its remembered
- * devices, containing it (disabled until `threats.release`), blocking a network, and emailing an incident. The same
+ * devices, containing it (disabled until `threats.release`), suspending its security clearance (until an officer's
+ * `clearances.reinstate`), blocking a network, and emailing an incident. The same
  * primitives serve people responding through the API (who act under their own principal and are checked like the
  * identities and security APIs check them) and automatic playbooks (the `threat-detection` actor, which never touches
  * owners or root administrators and is braked by `maxAutomaticContainments`). Every action taken or skipped is kept
@@ -140,13 +142,15 @@ function references(request: ResponseRequest): Record<string, string> {
 /**
  * Takes one response action and records it: inserts the `ThreatResponse` row (applied or skipped with a reason) and,
  * when applied, the audit event (`threat:revoke-sessions`, `threat:forget-devices`, `threat:contain`,
- * `threat:block-network`, `threat:notify`). Automatic actors skip protected targets (owners and root administrators
- * are never contained automatically) and, with a `brake`, containments beyond the tenant's
- * `maxAutomaticContainments` (skipped `braked`, audited once per brake as `threat:response-braked`), and never block
- * networks on the root tenant. People are refused instead: a root administrator only by root, an owner only by an
- * owner in person or root, the last owner (`LAST_OWNER`), themselves, networks that cover their own address, and
- * blocks on the root tenant unless they are root. Runs inside the caller's transaction; after it commits the caller runs
- * `afterThreatResponses` (package reconciliation of contained identities, network block caches).
+ * `threat:suspend-clearance` after `clearance:suspend`, `threat:block-network`, `threat:notify`). Automatic actors skip
+ * protected targets (owners and root administrators are never contained, nor their clearances suspended,
+ * automatically) and, with a `brake`, containments beyond the tenant's `maxAutomaticContainments` (skipped `braked`,
+ * audited once per brake as `threat:response-braked`), and never block networks on the root tenant. People are
+ * refused instead: a root administrator only by root, an owner only by an owner in person or root, the last owner
+ * (`LAST_OWNER`), themselves, networks that cover their own address, blocks on the root tenant unless they are root,
+ * and a clearance suspension without `iam:clearances:suspend` (as `clearances.suspend` refuses it). Runs inside the
+ * caller's transaction; after it commits the caller runs `afterThreatResponses` (package reconciliation of contained
+ * identities, network block caches).
  */
 export async function applyResponse(
   ctx: ServerContext,
@@ -353,6 +357,61 @@ export async function applyResponse(
         ...refs,
       });
       return save(subject, 'applied', { details: { sessionsEnded } });
+    }
+    case 'suspend-clearance': {
+      const identity = await target();
+      if (typeof identity === 'string') return skip(identity);
+      const subject = identitySubject(identity);
+      if (principal) {
+        // As clearances.suspend: the deployment enables clearances, and the responder may suspend this clearance
+        // besides responding to threats (checked before anything about the clearance is read, so the response tells
+        // nobody else whether the person holds one); never while impersonating, never a guest of the tenant.
+        assertClearances(ctx);
+        if (principal.session.impersonatorId)
+          throw new IamError(
+            'IMPERSONATION_RESTRICTED',
+            'Clearances cannot be changed while impersonating',
+            403,
+          );
+        if (principal.identity.guest !== undefined && principal.identity.tenantId === tenantId)
+          throw new OperationDenied('Guests cannot suspend clearances');
+        const decision = await ctx.decisions.decide(
+          tx,
+          principal,
+          {
+            tenantId,
+            action: 'iam:clearances:suspend',
+            resource: { type: 'iam', id: `clearances/${identity.id}` },
+          },
+          true,
+        );
+        if (!decision.allowed)
+          throw new OperationDenied('Suspending a clearance requires iam:clearances:suspend');
+      } else {
+        if (!ctx.options.clearances) return skip('feature-disabled', subject);
+        // As with containment, automatic responses never touch an owner's or a root administrator's clearance.
+        if (identity.owner || identity.rootAdmin) return skip('protected', subject);
+      }
+      // Lifted only by an officer's clearances.reinstate; threats.release never touches it.
+      const result = await suspendClearance(tx, identity, {
+        by: actorId,
+        at: now,
+        reason,
+        ...(request.incidentId !== undefined ? { incidentId: request.incidentId } : {}),
+      });
+      if (result.outcome !== 'suspended') return skip(result.outcome, subject);
+      // The clearance's own history (`clearance:*`, as clearances.suspend records it), then the response.
+      await threatAudit(ctx, tx, tenantId, request.actor, 'clearance:suspend', identity.id, {
+        level: result.record!.level,
+        reason,
+        ...(request.incidentId !== undefined ? { incidentId: request.incidentId } : {}),
+      });
+      await threatAudit(ctx, tx, tenantId, request.actor, 'threat:suspend-clearance', identity.id, {
+        level: result.record!.level,
+        reason,
+        ...refs,
+      });
+      return save(subject, 'applied');
     }
     case 'block-network': {
       const network = (

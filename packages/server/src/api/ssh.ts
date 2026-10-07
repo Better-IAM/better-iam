@@ -9,6 +9,7 @@ import {
   type Tenant,
 } from '@better-iam/core';
 import type { ServerContext } from '../context.js';
+import { decideOn, isRootOverride, moduleResourceLabels } from '../decisions.js';
 import { presentedDevice } from '../devices.js';
 import { OperationDenied } from '../operations.js';
 import type { ResolvedResource } from '../options.js';
@@ -579,27 +580,39 @@ export function createSshApi(ctx: ServerContext) {
 
   type Prepared = Awaited<ReturnType<typeof ctx.decisions.prepareDecision>>;
   const decideWith = (prepared: Prepared) => (resource: ResolvedResource, action: string) =>
-    'fixed' in prepared ? prepared.fixed : prepared.evaluate(resource, action);
+    decideOn(prepared, resource, action);
   /** A root override from outside the tenant (the platform's administrators acting in an organization). */
   const crossTenantRoot = (prepared: Prepared, principal: AuthenticatedPrincipal, tenantId: string) =>
-    'fixed' in prepared && prepared.fixed.reason === 'ROOT_OVERRIDE' && principal.identity.tenantId !== tenantId;
+    isRootOverride(prepared) && principal.identity.tenantId !== tenantId;
+
+  /** With security clearances, the classification labels of the hosts' `ssh-host` and `ssh-login` resources. */
+  const classifiedHosts = (tx: IamStore, tenantId: string, hosts: SshHost[]) =>
+    moduleResourceLabels(
+      ctx,
+      tx,
+      tenantId,
+      hosts.flatMap((host) => [hostResource(host), ...host.logins.map((login) => loginResource(host, login))]),
+    );
 
   /** The hosts and logins a principal may open, and what forwarding each host allows. */
   function accessOf(
     prepared: Prepared,
     hosts: SshHost[],
-    logins?: Set<string>,
+    logins: Set<string> | undefined,
+    /** The hosts' resources with their classification labels (`classifiedHosts`). */
+    labeled: (resource: ResolvedResource) => ResolvedResource,
   ): { host: SshHost; logins: string[]; forwarding: Record<string, boolean> }[] {
     const decide = decideWith(prepared);
     const result = [];
     for (const host of [...hosts].sort((a, b) => (a.name < b.name ? -1 : 1))) {
       const allowed = host.logins.filter(
-        (login) => (!logins || logins.has(login)) && decide(loginResource(host, login), sshLoginAction).allowed,
+        (login) =>
+          (!logins || logins.has(login)) && decide(labeled(loginResource(host, login)), sshLoginAction).allowed,
       );
       if (!allowed.length) continue;
       const forwarding: Record<string, boolean> = {};
       for (const action of Object.keys(sshForwardingActions))
-        forwarding[action] = decide(hostResource(host), action).allowed;
+        forwarding[action] = decide(labeled(hostResource(host)), action).allowed;
       result.push({ host, logins: allowed, forwarding });
     }
     return result;
@@ -1226,7 +1239,7 @@ export function createSshApi(ctx: ServerContext) {
               hosts.push(host);
             }
           } else hosts = await tx.find<SshHost>('sshHosts', { tenantId, status: 'enrolled' });
-          const access = accessOf(prepared, hosts, requestedLogins);
+          const access = accessOf(prepared, hosts, requestedLogins, await classifiedHosts(tx, tenantId, hosts));
           if (!access.length) return refuse('ACCESS_DENIED', 'Access denied', 403);
           if (access.length > options.maxHostsPerCertificate)
             return {
@@ -1250,7 +1263,7 @@ export function createSshApi(ctx: ServerContext) {
           if (typeof principal.identity.expiresAt === 'number')
             validBefore = Math.min(validBefore, principal.identity.expiresAt);
           if (principal.session.kind === 'delegated') validBefore = Math.min(validBefore, now + DELEGATED_CERTIFICATE_MS);
-          if (!('fixed' in prepared)) validBefore = await grantDeadline(ctx, tx, principal, tenantId, validBefore);
+          if (!isRootOverride(prepared)) validBefore = await grantDeadline(ctx, tx, principal, tenantId, validBefore);
           if (validBefore < now + 60_000)
             return {
               error: new IamError(
@@ -1293,7 +1306,7 @@ export function createSshApi(ctx: ServerContext) {
             },
             key.comment?.replace(/[^\x20-\x7e]/g, '_'),
           );
-          const rootOverride = 'fixed' in prepared && prepared.fixed.reason === 'ROOT_OVERRIDE';
+          const rootOverride = isRootOverride(prepared);
           // The device this request proved, which the sweep judges device conditions by (devices.ts).
           const device = await presentedDevice(tx, principal, now);
           const record = await tx.insert<SshCertificateRecord>('sshCertificates', {
@@ -1380,7 +1393,8 @@ export function createSshApi(ctx: ServerContext) {
           ('fixed' in prepared && !prepared.fixed.allowed) || crossTenantRoot(prepared, principal, tenantId);
         const settings = await loadSshSettings(ctx, tx, tenantId);
         const hosts = refused ? [] : await tx.find<SshHost>('sshHosts', { tenantId, status: 'enrolled' });
-        const hostsView: SshAccessEntry[] = accessOf(prepared, hosts).map(({ host, logins, forwarding }) => ({
+        const labeled = await classifiedHosts(tx, tenantId, hosts);
+        const hostsView: SshAccessEntry[] = accessOf(prepared, hosts, undefined, labeled).map(({ host, logins, forwarding }) => ({
           name: host.name,
           ...(host.description ? { description: host.description } : {}),
           addresses: host.addresses,
@@ -1544,6 +1558,7 @@ export function createSshApi(ctx: ServerContext) {
         const filter: Record<string, unknown> = { tenantId, status: 'active' };
         if (input.kind !== undefined) filter.kind = input.kind;
         const identities = (await tx.find<Identity>('identities', filter)).sort(byId);
+        const labeled = await classifiedHosts(tx, tenantId, [host]);
         const result: { identityId: string; name?: string; email?: string; kind: string; logins: string[] }[] = [];
         for (const identity of identities) {
           if (ctx.identityExpired(identity)) continue;
@@ -1554,7 +1569,7 @@ export function createSshApi(ctx: ServerContext) {
             sshLoginAction,
           );
           const decide = decideWith(prepared);
-          const allowed = logins.filter((login) => decide(loginResource(host, login), sshLoginAction).allowed);
+          const allowed = logins.filter((login) => decide(labeled(loginResource(host, login)), sshLoginAction).allowed);
           if (allowed.length)
             result.push({
               identityId: identity.id,

@@ -86,21 +86,30 @@ grant, or a boundary that caps the grant. The server evaluates every request in 
 1. Validate the credential, the current identity and tenant, and the requested action and resource. An action
    outside the catalog is denied (`UNKNOWN_ACTION`); a resource that cannot be resolved is refused.
 2. Apply the protected universal root override, but only to authenticated root administrators: a root-tenant
-   person with root authority, signed in with an MFA-verified user session.
+   person with root authority, signed in with an MFA-verified user session. With security clearances, the override
+   stops at labeled application resources above root's own clearance (unless `clearances.appliesToRoot` is false).
 3. For every other principal, require an active tenant ancestry and a session that belongs to the target tenant.
-4. Collect the role grants of the identity, from its own bindings and its groups' bindings, and intersect them
+4. With [security clearances](/docs/guides/security-clearances) (the `clearances` option), check the resource's
+   classification label before anything else: unless the action is `iam:*`, every party of the session (the person,
+   and every agent or sponsor acting with them) must hold a clearance that dominates it, or the decision is
+   `CLEARANCE_REQUIRED`.
+5. Collect the role grants of the identity, from its own bindings and its groups' bindings, and intersect them
    with the tenant, principal, issuer (grant authority), and session ceilings.
-5. An applicable explicit deny overrides any allow. Without an effective allow, deny access.
+6. An applicable explicit deny overrides any allow. Without an effective allow, deny access.
 
 ```mermaid
 flowchart TD
   Req["Request: principal, action, resource"] --> Valid{"Credential valid, action in catalog, resource resolved?"}
   Valid -- no --> Refused["Refused"]
   Valid -- yes --> Root{"Root administrator with an MFA session?"}
-  Root -- yes --> Override["allowed (ROOT_OVERRIDE)"]
+  Root -- yes --> RootLabel{"With clearances: labeled above root's own clearance?"}
+  RootLabel -- yes --> Clearance["denied (CLEARANCE_REQUIRED)"]
+  RootLabel -- no --> Override["allowed (ROOT_OVERRIDE)"]
   Root -- no --> Tenant{"Tenant ancestry active and session tenant matches?"}
   Tenant -- no --> Inactive["denied (TENANT_INACTIVE or TENANT_MISMATCH)"]
-  Tenant -- yes --> Deny{"Does any deny statement match?"}
+  Tenant -- yes --> Label{"With clearances: labeled above the session's clearance?"}
+  Label -- yes --> Clearance
+  Label -- no --> Deny{"Does any deny statement match?"}
   Deny -- yes --> ExplicitDeny["denied: explicit-deny"]
   Deny -- no --> Grant{"Does any grant allow it?"}
   Grant -- no --> NoGrant["denied: no-grant"]
@@ -188,6 +197,9 @@ These guarantees hold whatever your roles and policies say, so you can rely on t
 
 - **Deny wins.** An <Term id="explicit-deny">explicit deny</Term> overrides every allow, whichever role it came
   from.
+- **Clearances come first.** With [security clearances](/docs/guides/security-clearances), no grant, ownership,
+  relationship, or policy opens a labeled resource above the session's clearance; only `iam:*` administration is
+  exempt.
 - **Boundaries never grant.** A tenant, principal, authority, trust, or session ceiling can only remove access.
   Principal and tenant ceilings are platform-controlled.
 - **No implicit inheritance across tenants.** Membership in a parent tenant grants nothing in its descendants.

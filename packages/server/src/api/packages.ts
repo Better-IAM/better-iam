@@ -37,7 +37,7 @@ import { assertNotTeamGroup, syncTeamsFromGroups } from '../teams.js';
 import { id } from '../utils.js';
 import { integer, strings, text } from '../validation.js';
 import { createBinding } from './bindings.js';
-import { addGroupMember, updateGroupMember } from './groups.js';
+import { addGroupMember, assertMayClaimLicenses, updateGroupMember } from './groups.js';
 import {
   approveRule,
   autoAssignView,
@@ -333,8 +333,12 @@ export async function allow(
 /**
  * The rights assigning a package by hand needs: iam:bindings:create on each role and iam:groups:update on each
  * group, and (with `groupAuthorities`) the use of every grant authority behind the groups' own bindings, which
- * membership confers. Returns the caller's grant authority when the package has roles (or `requireAuthority`).
- * Callers outside a transaction must pass `authorityId`: the root path of grantingAuthority writes a record.
+ * membership confers. A packaged group that carries license seats (a product is assigned to it, or to a team it syncs
+ * into) needs iam:licenses:assign too, refused with `OperationDenied` (api/groups.ts): so assigning or approving the
+ * package, lengthening an assignment, confirming a rule's held-back changes, and saving or running a rule (its owner;
+ * `ruleHealth` suspends the rule's additions in advance) all need it. Returns the caller's grant authority when the
+ * package has roles (or `requireAuthority`). Callers outside a transaction must pass `authorityId`: the root path of
+ * grantingAuthority writes a record.
  */
 export async function authorizePackage(
   ctx: ServerContext,
@@ -371,6 +375,14 @@ export async function authorizePackage(
       }))
         await ctx.grantingAuthority(tx, principal, pkg.tenantId, binding.authorityId);
   }
+  await assertMayClaimLicenses(
+    ctx,
+    tx,
+    principal,
+    pkg.tenantId,
+    pkg.groupIds,
+    'A group this package includes carries license seats; granting it needs iam:licenses:assign',
+  );
   if (!pkg.roleIds.length && !options.requireAuthority && !options.authorityId) return undefined;
   return ctx.grantingAuthority(tx, principal, pkg.tenantId, options.authorityId);
 }
@@ -1122,7 +1134,9 @@ export async function revokeAssignment(
  * hands it to the package that still needs it longer; lengthening extends a shorter membership of the package's
  * groups (held by hand or through another package) and makes it the assignment's. Authorization is the caller's,
  * for the package's current contents: lengthening therefore reaches only records of roles and groups the package
- * still bundles, and those it no longer bundles (removed by packages.update since) keep their end.
+ * still bundles, and those it no longer bundles (removed by packages.update since) keep their end. A caller nobody
+ * authorized for the current contents (a guest's renewal, api/guests.ts) passes `lengthenOnly`: lengthening then
+ * reaches only those memberships of the assignment, takes no other membership over, and leaves the rest as they are.
  */
 export async function retimeAssignment(
   ctx: ServerContext,
@@ -1130,6 +1144,7 @@ export async function retimeAssignment(
   pkg: AccessPackage,
   assignment: PackageAssignment,
   expiresAt: number | undefined,
+  lengthenOnly?: ReadonlySet<string>,
 ): Promise<PackageAssignment> {
   const { tenantId } = assignment;
   const retime = <T extends { expiresAt?: number }>(record: T): T => {
@@ -1150,20 +1165,22 @@ export async function retimeAssignment(
     const member = await tx.get<GroupMember>('groupMembers', membershipId);
     if (member?.packageAssignmentId === assignment.id) members.set(member.id, member);
   }
-  for (const groupId of pkg.groupIds) {
-    const member = (
-      await tx.find<GroupMember>('groupMembers', {
-        tenantId,
-        uniqueKey: `${groupId}:${assignment.identityId}`,
-      })
-    )[0];
-    if (member) members.set(member.id, member);
-  }
+  if (!lengthenOnly)
+    for (const groupId of pkg.groupIds) {
+      const member = (
+        await tx.find<GroupMember>('groupMembers', {
+          tenantId,
+          uniqueKey: `${groupId}:${assignment.identityId}`,
+        })
+      )[0];
+      if (member) members.set(member.id, member);
+    }
   for (const member of members.values()) {
     if (!ctx.liveMembership(member)) continue;
     if (member.packageAssignmentId === assignment.id) {
       if (lengthening) {
         if (!pkg.groupIds.includes(member.groupId)) continue;
+        if (lengthenOnly && !lengthenOnly.has(member.id)) continue;
       } else {
         const owner = await nextOwner(
           ctx,

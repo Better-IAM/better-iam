@@ -15,6 +15,7 @@ import type {
   ThreatSeverity,
   ThreatSubject,
   ThreatSubjectType,
+  ThreatSubjectView,
 } from 'better-iam/server';
 import type { Tone } from '@/components/ui';
 
@@ -34,9 +35,20 @@ export const responseKinds: readonly ResponseActionKind[] = [
   'revoke-sessions',
   'forget-devices',
   'contain',
+  'suspend-clearance',
   'block-network',
   'notify',
 ];
+
+/**
+ * The response actions a form offers: `suspend-clearance` only where the deployment enables security clearances and
+ * the person may suspend them (the API refuses it otherwise).
+ */
+export function offeredResponseKinds(options: {
+  suspendClearances: boolean;
+}): readonly ResponseActionKind[] {
+  return responseKinds.filter((kind) => kind !== 'suspend-clearance' || options.suspendClearances);
+}
 
 export function severityTone(severity: ThreatSeverity): Tone {
   return severity === 'critical' || severity === 'high'
@@ -81,6 +93,7 @@ export const responseLabels: Record<ResponseActionKind | 'release', string> = {
   'revoke-sessions': 'End sessions',
   'forget-devices': 'Forget devices',
   contain: 'Contain',
+  'suspend-clearance': 'Suspend clearance',
   'block-network': 'Block network',
   notify: 'Notify',
   release: 'Release',
@@ -93,6 +106,8 @@ export const responseHelp: Record<ResponseActionKind, string> = {
     'Removes remembered devices, so the next sign-in asks for the second factor again.',
   contain:
     'Disables the identity and ends its sessions until someone releases it; owners and root administrators are protected.',
+  'suspend-clearance':
+    'Suspends the security clearance, so classified resources are refused, until a clearance officer reinstates it; playbooks leave owners and root administrators alone.',
   'block-network': 'Refuses sign-ins and requests from the network for a while.',
   notify: 'Emails the recipients set on the detection settings page.',
 };
@@ -111,6 +126,8 @@ const skipReasons: Record<string, string> = {
   'not-found': 'identity not found',
   inactive: 'identity is not active',
   'no-incident': 'no incident to report',
+  'no-clearance': 'no clearance to suspend',
+  'feature-disabled': 'security clearances are not enabled',
 };
 
 export function skipReason(reason: string | undefined): string {
@@ -125,13 +142,12 @@ export function durationLabel(ms: number): string {
   return `${Math.round(ms / 1000)} s`;
 }
 
-/** Where a detection's or incident's subject is managed in the console, when it has a page. */
-export function subjectHref(
-  base: string,
-  subject: ThreatSubject,
-  kind?: string,
-): string | undefined {
-  if (subject.type === 'identity') return identityHref(base, subject.id, kind);
+/**
+ * Where a detection's or incident's subject is managed in the console, when it has a page. The threats API gives
+ * identity subjects their `kind`, so agents link to their agent page.
+ */
+export function subjectHref(base: string, subject: ThreatSubjectView): string | undefined {
+  if (subject.type === 'identity') return identityHref(base, subject.id, subject.kind);
   if (subject.type === 'connection') return `${base}/directory`;
   return undefined;
 }

@@ -92,7 +92,7 @@ Passwords, sessions, MFA, passkeys, magic links, recovery, and delivery template
 | `openSecret(value, secrets, context?)` | Opens a sealed value with the first of `secrets` that authenticates it, and says which one (0 is the current secret; higher indexes are previous ones kept during a rotation). Undefined when none does. |  |
 | `parseCredentialToken(value)` | Recognizes a typed credential token and returns its type, or `undefined` when the shape or checksum is wrong, so a mistyped or truncated token can be refused before any database lookup. The type is only a routing hint: the stored session decides what a token is. |  |
 | `pwnedPasswords(options?)` | A Have I Been Pwned "range" client (k-anonymity): hashes the password with SHA-1, sends only the first five hex characters, and matches the returned suffixes locally. Network failures accept the password unless `failClosed`. | [Sign-in methods](/docs/guides/authentication/sign-in-methods) |
-| `renderDeliveryMessage(message, options?)` | Renders the messages Better IAM queues (`verify-email`, `password-reset`, `email-change`, `magic-link`, `code`, `mfa-code`, `new-sign-in`, `sign-in-failures`, `certification-review`, `certification-reminder`, `delegation-request`, `delegation-confirmation`, `team-join-request`, `team-join-decided`, `team-review-requested`, `spend-alert`, `spend-anomaly`, `billing-statement`, `payment-reminder`, `privacy-request-verify`, `privacy-request-received`, `privacy-request-update`, `privacy-request-due`, `workflow-message`, `threat-alert`, `owner-invitation`, `member-invitation`) into a subject, plain text, and HTML, so a delivery callback can hand them to any provider. | [Support and privacy](/docs/guides/recipes/support-and-privacy) |
+| `renderDeliveryMessage(message, options?)` | Renders the messages Better IAM queues (`verify-email`, `password-reset`, `email-change`, `magic-link`, `code`, `mfa-code`, `new-sign-in`, `sign-in-failures`, `certification-review`, `certification-reminder`, `delegation-request`, `delegation-confirmation`, `team-join-request`, `team-join-decided`, `team-review-requested`, `spend-alert`, `spend-anomaly`, `billing-statement`, `payment-reminder`, `privacy-request-verify`, `privacy-request-received`, `privacy-request-update`, `privacy-request-due`, `workflow-message`, `threat-alert`, `license-waiting`, `license-activated`, `guest-invitation`, `guest-review`, `guest-sponsor-missing`, `clearance-reminder`, `clearance-status`, `owner-invitation`, `member-invitation`) into a subject, plain text, and HTML, so a delivery callback can hand them to any provider. | [Guests](/docs/guides/guests) |
 | `class SafeFetchError` | A refused or failed guarded fetch; `reason` says which rule stopped it. |  |
 
 ### @better-iam/auth/templates
@@ -100,7 +100,7 @@ Passwords, sessions, MFA, passkeys, magic links, recovery, and delivery template
 | Export | What it does | Explained in |
 | --- | --- | --- |
 | `describeUserAgent(userAgent)` | A short description of a User-Agent for security notices ("Chrome on Windows"). The header is chosen by whoever sent the request, so it never reaches a message verbatim: otherwise anyone could put their own text and links into a genuine sign-in notice by failing a sign-in with a crafted header. |  |
-| `renderDeliveryMessage(message, options?)` | Renders the messages Better IAM queues (`verify-email`, `password-reset`, `email-change`, `magic-link`, `code`, `mfa-code`, `new-sign-in`, `sign-in-failures`, `certification-review`, `certification-reminder`, `delegation-request`, `delegation-confirmation`, `team-join-request`, `team-join-decided`, `team-review-requested`, `spend-alert`, `spend-anomaly`, `billing-statement`, `payment-reminder`, `privacy-request-verify`, `privacy-request-received`, `privacy-request-update`, `privacy-request-due`, `workflow-message`, `threat-alert`, `owner-invitation`, `member-invitation`) into a subject, plain text, and HTML, so a delivery callback can hand them to any provider. | [Support and privacy](/docs/guides/recipes/support-and-privacy) |
+| `renderDeliveryMessage(message, options?)` | Renders the messages Better IAM queues (`verify-email`, `password-reset`, `email-change`, `magic-link`, `code`, `mfa-code`, `new-sign-in`, `sign-in-failures`, `certification-review`, `certification-reminder`, `delegation-request`, `delegation-confirmation`, `team-join-request`, `team-join-decided`, `team-review-requested`, `spend-alert`, `spend-anomaly`, `billing-statement`, `payment-reminder`, `privacy-request-verify`, `privacy-request-received`, `privacy-request-update`, `privacy-request-due`, `workflow-message`, `threat-alert`, `license-waiting`, `license-activated`, `guest-invitation`, `guest-review`, `guest-sponsor-missing`, `clearance-reminder`, `clearance-status`, `owner-invitation`, `member-invitation`) into a subject, plain text, and HTML, so a delivery callback can hand them to any provider. | [Guests](/docs/guides/guests) |
 
 ## @better-iam/cli
 
@@ -185,6 +185,9 @@ Models, the policy engine, the storage contract, the audit chain, and shared err
 | `canonicalizeJson(value)` | The JSON Canonicalization Scheme (RFC 8785): the single serialization of a JSON value that signers and verifiers agree on. Object members are sorted by the UTF-16 code units of their names at every depth, numbers use the ECMAScript shortest form and strings the escaping of `JSON.stringify`, and there is no whitespace. |  |
 | `canonicalJson(value)` | Deterministic JSON: object keys sorted recursively, `undefined` properties omitted, arrays kept in order. | [Audit chain](/docs/guides/events/audit-chain) |
 | `chainAuditEvent(tx, event)` | Assigns the next chain position to an event and advances the tenant's chain head. The caller stores the returned event; `appendAuditEvent` does both. Must run inside the transaction that records the event. |  |
+| `const classificationIdPattern` | Level and compartment ids: an ASCII letter or digit, then letters, digits, `.`, `_`, `:` or `-` (64 at most). |  |
+| `const classificationLimits` | The bounds `validateScheme` and `validateLabel` enforce. |  |
+| `const classificationTemplates` | Starting points for `clearances.defineScheme({ template })`, frozen (copy with `validateScheme` before changing). | [Security clearances](/docs/guides/security-clearances) |
 | `const COLLECTIONS_SQL` | Distinct collection names in the records table. |  |
 | `compareIds(left, right)` | Compares two IDs in the byte order databases use (SQLite's BINARY, PostgreSQL's "C" collation), so sorting in memory agrees with `ORDER BY` in SQL. |  |
 | `copyStore(source, target, options?)` | Copies every record from `source` into an empty, migrated `target` (for example SQLite to PostgreSQL). Reads in one source transaction and writes in one target transaction, so the copy is consistent and all-or-nothing. | [Storage adapters](/docs/operations/storage) |
@@ -196,6 +199,7 @@ Models, the policy engine, the storage contract, the audit chain, and shared err
 | `const delegationTokenType` | The JWT `typ` header of delegation tokens: verifiers refuse any other. |  |
 | `describeFilter(filter)` | A readable rendering of a filter, for logs, UIs and tests. | [Data filtering](/docs/guides/authorization/data-filtering) |
 | `describeRecords(execute, adapter, settings)` | The adapter-independent part of `IamStore.describe()`: schema version, applied migrations, and record counts per collection. Missing tables read as empty, so an unmigrated database reports empty lists; any other failure rejects. | [Adapters and plugins](/docs/operations/extensions) |
+| `dominates(party, label, scheme)` | Whether a party may read a resource carrying `label` (no read up). | [Security clearances](/docs/guides/security-clearances) |
 | `encodeJsonbDocument(data)` | Record JSON as the PostgreSQL adapter stores it: valid jsonb, reversible by `decodeJsonbDocument`. | [Database operations](/docs/operations/deployment/database) |
 | `encodeLegacyPostgresRows(name, execute)` | Migration hook for PostgreSQL: rewrites rows written before the value encoding existed, whose text jsonb would reject, so the jsonb index of `0002_query_indexes` can be built. |  |
 | `evaluatePolicy(input)` | Decides whether a request is allowed by a set of policy documents, with the same engine the server uses. It needs no database, so it runs anywhere (the [playground](/playground) uses it) and returns the decision, its reason, and the statements that matched. Grants add up; each boundary can only narrow them. | [Policy documents](/docs/guides/authorization/policies) |
@@ -218,7 +222,11 @@ Models, the policy engine, the storage contract, the audit chain, and shared err
 | `ipMatches(address, network)` | True when `address` lies inside `network` (an address or CIDR block of the same family). An IPv4-mapped IPv6 address (`::ffff:198.51.100.7`) matches the IPv4 networks that contain its IPv4 address, and an IPv4 address the IPv4-mapped networks (`::ffff:198.51.100.0/120`) that contain it. |  |
 | `isIpRange(value)` | True for an IPv4/IPv6 address or CIDR block, as accepted by the `IpAddress` operator. |  |
 | `isMissingTable(error)` | A query failed because a table does not exist (PostgreSQL 42P01, SQLite "no such table"). |  |
+| `isValidClassificationLabel(label, scheme)` | True when `label` is a valid label of the scheme; the non-throwing form of `validateLabel`. |  |
+| `joinLabels(a, b, scheme)` | The least restrictive label at least as restrictive as both: the higher level, the union of compartments, NOFORN when either has it, and the intersection of `releasableTo` lists (an absent list is unrestricted, so the other list stands; disjoint lists leave an empty list, owner countries only). | [Security clearances](/docs/guides/security-clearances) |
 | `const JSONB_ESCAPE_KEY` | Reserved object key of the PostgreSQL value encoding (`encodeJsonbDocument`), which stores strings jsonb cannot hold. Filters whose objects use it are evaluated in memory. |  |
+| `labelCovers(upper, lower, scheme)` | True when replacing `lower` with `upper` never declassifies: both are valid labels of the scheme, `upper` is at least as high, carries every compartment of `lower`, keeps NOFORN when `lower` has it, and is releasable to no country `lower` is not (owner countries always count). Anything else needs a declassification. | [Security clearances](/docs/guides/security-clearances) |
+| `labelRank(label, scheme)` | The rank of the label's level in the scheme; undefined when the level is unknown (callers fail closed). |  |
 | `legacyRiscSubject(value)` | Reads the subject of a legacy RISC event (Google's RISC, and SSF drafts before RFC 9493): `events[type].subject` with a hyphenated `subject_type` instead of `format`. |  |
 | `const LOOKUP_INDEX_STEPS` | The lookup fields each schema step indexes (SQLite and libSQL; PostgreSQL's document index covers every field). A released step never changes: new fields get a new step. |  |
 | `matchesFilter(record, filter)` | The in-memory definition of filter semantics. Drivers' SQL must agree with it. |  |
@@ -251,7 +259,9 @@ Models, the policy engine, the storage contract, the audit chain, and shared err
 | `tenantTreeActive(store, tenantId)` | Walks a tenant and its ancestors: true only when every one exists and is active. Cycles read as inactive. |  |
 | `const trueFilter` | The filter every resource passes. |  |
 | `userSubjects(subject)` | The identifiers in a subject that may name a person, without repeats: the subject itself when it is an `iss_sub`, `email`, `opaque`, `account` or `phone_number` identifier, the `user` member of a complex subject, and each entry of an alias list (expanded the same way). |  |
+| `validateLabel(label, scheme)` | Validates a label against a scheme and returns it normalized: compartments and countries sorted, an empty compartment list and `noforn: false` dropped, an empty `releasableTo` kept (it means owner countries only). | [Security clearances](/docs/guides/security-clearances) |
 | `validatePolicy(value)` | Checks that a value is a well-formed policy document and throws `INVALID_POLICY` describing the first problem. The server runs it before storing a document and again before evaluating one. |  |
+| `validateScheme(input)` | Validates a scheme definition and returns a fresh copy (absent `compartments`, `ownerCountries` and `caveats` read as empty). Throws `IamError` `INVALID_INPUT`. Messages name positions, never compartment names or submitted values. | [Security clearances](/docs/guides/security-clearances) |
 | `validPolicyVariables(value)` | Every `${...}` in a value must be a well-formed variable reference. |  |
 | `verifyAuditChain(events, options?)` | Verifies a run of events from one tenant: contiguous sequences, each `previousHash` equal to the previous event's hash (or `previousHash` of the first event when the run starts mid-chain), and every hash recomputable. Events are sorted by sequence first, so exports and database reads can be passed as they come. | [Audit chain](/docs/guides/events/audit-chain) |
 
@@ -274,22 +284,22 @@ A read-only LDAPv3 directory gateway over Better IAM: people, groups and passwor
 | `createLdapServer(options)` | A read-only LDAPv3 gateway over Better IAM. | [LDAP gateway](/docs/federation/ldap) |
 | `decodeFilter(item, depth?, budget?)` | Decodes a BER filter. Deep or huge filters are refused (a search is evaluated against every entry). | [LDAP gateway](/docs/federation/ldap) |
 | `decodeMessage(message)` | Decodes one LDAPMessage element. | [LDAP gateway](/docs/federation/ldap) |
-| `decodeResponse(message)` | No description yet. | [LDAP gateway](/docs/federation/ldap) |
+| `decodeResponse(message)` | Decodes one server answer read with `readElement`: a search entry (`dn` and `attributes`) or a result (`code`, `message`, and an extended response's `responseName` and `responseValue`), with its controls. The client-side counterpart of the `encode*` helpers. | [LDAP gateway](/docs/federation/ldap) |
 | `depthBelow(dn, base)` | How many RDNs `dn` has below `base` (-1 when it is not under it). | [LDAP gateway](/docs/federation/ldap) |
 | `class DnError` | Distinguished names (RFC 4514): parsing with escapes (`\,`, `\2C`), quoting of values, and a normalized form for comparisons (attribute types and values lowercased, insignificant spaces trimmed). Multi-valued RDNs (`+`) are kept in order. | [LDAP gateway](/docs/federation/ldap) |
-| `encodeBind(id, name, password)` | No description yet. | [LDAP gateway](/docs/federation/ldap) |
-| `encodeCompare(id, entry, attribute, value)` | No description yet. | [LDAP gateway](/docs/federation/ldap) |
-| `encodeExtended(id, name, value?)` | No description yet. | [LDAP gateway](/docs/federation/ldap) |
-| `encodeFilter(filter)` | No description yet. | [LDAP gateway](/docs/federation/ldap) |
-| `encodeSearch(id, search, controls?)` | No description yet. | [LDAP gateway](/docs/federation/ldap) |
-| `encodeUnbind(id)` | No description yet. | [LDAP gateway](/docs/federation/ldap) |
+| `encodeBind(id, name, password)` | Encodes an LDAPv3 simple bind request (message ID, bind DN, password) as BER. With the other `encode*` helpers it lets tests and tools talk to the gateway, or any LDAP server, without an LDAP client library. | [LDAP gateway](/docs/federation/ldap) |
+| `encodeCompare(id, entry, attribute, value)` | Encodes a compare request: does the entry with this DN hold this value of this attribute? The server answers with result code `compareTrue` or `compareFalse`. | [LDAP gateway](/docs/federation/ldap) |
+| `encodeExtended(id, name, value?)` | Encodes an extended request by its OID with an optional value, for example `encodeExtended(2, OID.whoAmI)` to ask the gateway which account the connection is bound as. | [LDAP gateway](/docs/federation/ldap) |
+| `encodeFilter(filter)` | Encodes a search filter object as the BER a search request carries, the inverse of `decodeFilter`. `parseFilter` turns an RFC 4515 string such as `(&(objectClass=person)(mail=*))` into the object. | [LDAP gateway](/docs/federation/ldap) |
+| `encodeSearch(id, search, controls?)` | Encodes a search request: base DN, scope (`sub` by default), filter, requested attributes, size limit, and types-only, with optional request controls such as those from `pagedResultsRequest`. | [LDAP gateway](/docs/federation/ldap) |
+| `encodeUnbind(id)` | Encodes the unbind request that ends an LDAP session. | [LDAP gateway](/docs/federation/ldap) |
 | `escapeDnValue(value)` | Escapes an attribute value for use in a DN. | [LDAP gateway](/docs/federation/ldap) |
 | `formatDn(rdns)` | Formats RDNs as a DN string. | [LDAP gateway](/docs/federation/ldap) |
 | `isUnder(dn, base)` | Whether `dn` equals `base` or lies below it. Compared RDN by RDN, never as strings: `cn=a\,ou=people,dc=x` is not under `ou=people,dc=x`. | [LDAP gateway](/docs/federation/ldap) |
 | `matchFilter(filter, attributes)` | Evaluates a filter (RFC 4511 three-valued logic collapsed: Undefined counts as false). | [LDAP gateway](/docs/federation/ldap) |
 | `normalizeDn(dn)` | The comparison form of a DN: lowercased, re-escaped, spaces normalized. Throws on malformed DNs. | [LDAP gateway](/docs/federation/ldap) |
-| `const OID` | No description yet. | [LDAP gateway](/docs/federation/ldap) |
-| `pagedResultsRequest(size, cookie?)` | No description yet. | [LDAP gateway](/docs/federation/ldap) |
+| `const OID` | The object identifiers of the LDAP extensions the gateway's messages use: the "Who am I?" extended operation (the one it supports), StartTLS (which it does not offer; serve LDAPS with `tls` instead), the notice of disconnection it sends before closing a connection, and the paged-results control. | [LDAP gateway](/docs/federation/ldap) |
+| `pagedResultsRequest(size, cookie?)` | Builds the request controls of a paged search (RFC 2696): the page size and the cookie from the previous page's response, empty for the first page. Pass the result to `encodeSearch`. | [LDAP gateway](/docs/federation/ldap) |
 | `parentDn(dn)` | The normalized parent of a normalized DN ('' for a single RDN). | [LDAP gateway](/docs/federation/ldap) |
 | `parseDn(dn)` | Parses a DN into RDNs (each a list of type/value pairs; most have one). The empty DN is the root. | [LDAP gateway](/docs/federation/ldap) |
 | `parseFilter(text)` | Parses the RFC 4515 string form, e.g. `(&(objectClass=person)(\|(uid=alice)(mail=*@acme.test)))`. | [LDAP gateway](/docs/federation/ldap) |
@@ -577,6 +587,7 @@ The `betterIam()` factory: tenants, identities, authorization, governance, HTTP 
 | `amountPaid(statement)` | Payments received on an invoice; invoices marked paid before payments were recorded count as fully paid. |  |
 | `assertionKey(secret)` | Derives, from the deployment secret, the shared key that signs and verifies assertions (`iam.assertionKey()` returns the current one). Services that receive assertions verify them with it, so keep it as secret as the secret itself. | [Architecture overview](/docs/guides/concepts) |
 | `assuranceOf(result, registered)` | The assurance a request gets from a device: `none` unless `registered` (a verified, active device). |  |
+| `attachLabel(ctx, tx, tenantId, resource, known?)` | Attaches a resource's effective classification label as the server-owned `classification` field (never an attribute): its IAM label, joined with the labels inherited from managed parents (at most 16 levels) and with the `classification` the application's resolver returned, which can therefore only raise it. |  |
 | `auditEventHash(event)` | The hash of an event: SHA-256 over the canonical JSON of every field except `hash` itself. Re-exported from `@better-iam/core`. |  |
 | `const authenticatedAuthMethods` | The names of the `auth` methods the HTTP handler serves only to a signed-in caller, such as `signOut` and `listSessions`. |  |
 | `betterIam(options)` | Creates your Better IAM instance from its options: the database, the deployment secret, the public URL, and the rest. The instance carries the typed server API (`iam.api`), the HTTP handler, and the authorization helpers. Create it once and import it wherever server code needs identity or access. | [Deployment](/docs/operations/deployment) |
@@ -584,19 +595,23 @@ The `betterIam()` factory: tenants, identities, authorization, governance, HTTP 
 | `budgetWindow(period, now)` | The current window of a period (UTC), as [start, end). |  |
 | `buildSshKrl(input)` | A binary OpenSSH key revocation list (PROTOCOL.krl) for sshd `RevokedKeys` and ssh `RevokedHostKeys`: certificate serials and key IDs per authority, plus plain keys revoked outright (such as a disabled host's key). |  |
 | `canonicalJson(value)` | Deterministic JSON: object keys sorted recursively, `undefined` properties omitted, arrays kept in order. Re-exported from `@better-iam/core`. | [Audit chain](/docs/guides/events/audit-chain) |
+| `const clearanceCollections` | The collections of the clearance module (tenant scoped; tenant purge sweeps them). |  |
+| `const clearanceLimits` | Limits of the clearance module. |  |
+| `clearanceScope(ctx, tx, principal, target, chain, agentScope, now)` | The mandatory part of a decision for one session in `target`: undefined when no scheme is in force there (nothing to enforce) or the principal is a root administrator and `clearances.appliesToRoot` is false. |  |
 | `const complianceChecks` | The compliance center's built-in checks, each with its `id`, `title`, `description` and `params` (name, default and range), as `compliance.catalog` returns them ([compliance guide](/docs/guides/governance/compliance)). | [Compliance center](/docs/guides/governance/compliance) |
 | `const complianceFrameworks` | The built-in framework mappings (SOC 2, ISO 27001, NIST 800-53 and GDPR): each requirement with the checks that are evidence for it, not full coverage of it ([compliance guide](/docs/guides/governance/compliance)). | [Compliance center](/docs/guides/governance/compliance) |
 | `configOptions(config, context?)` | The options a `defineConfig` value stands for: a factory is called with `context` (default: this process's environment and working directory), plain options are returned as they are. |  |
 | `consentState(purpose, consent, restricted, now)` | The processing decision for one purpose and subject. Restriction holds back everything except legal obligations and vital interests; bases other than consent and legitimate interests are allowed without a record. |  |
 | `createCertificateRequest(input)` | Builds a PEM PKCS#10 certification request for `privateKey` with a subject and subject alternative names, signed with the key (proof of possession). Clients call it to request certificates without OpenSSL. | [Private CA](/docs/guides/secrets-and-keys/private-ca) |
-| `createDisclosure(name, value)` | No description yet. |  |
+| `createDisclosure(name, value)` | Creates one SD-JWT disclosure: the salted `[salt, name, value]` array as base64url JSON, with the SHA-256 digest the issuer signs in the claim's place. The issuer uses it for every selectively disclosable claim; export it for tests and hand-built SD-JWTs. |  |
 | `createInferenceGateway(runtime, options?)` | Builds the inference gateway, an HTTP handler that lets any Better IAM credential call AI models through the Anthropic Messages and OpenAI Chat Completions APIs without holding a provider key. |  |
 | `createJsonlAuditArchive(options)` | A file sink for `auditArchive`: one JSON Lines file per batch at `{directory}/{tenantId}/{fromSequence}-{toSequence}.jsonl` (sequences zero-padded, so files sort in chain order). | [Scheduled jobs](/docs/operations/jobs) |
 | `createMetrics(options?)` | Creates a standalone Prometheus-style metrics collector that you feed from your own `onSpan` hook. Most deployments use the one built from the `metrics` option instead; see [observability](/docs/operations/observability). | [Observability](/docs/operations/observability) |
 | `createSessionTokenVerifier(options)` | Verifies session JWTs issued by Better IAM in your other services, offline, against the published keys (`GET {basePath}/.well-known/jwks.json` or `iam.sessionTokens.jwks()`). | [Temporary access](/docs/guides/authorization/temporary-access) |
-| `const credentialTypeResource` | No description yet. |  |
+| `const credentialTypeResource` | The resource type of verifiable credential types, `credential-type`. Policies allow `vc:request` on `credential-type/{name}` to let people get a credential of that type for themselves ([who gets credentials](/docs/federation/verifiable-credentials#who-gets-credentials)). |  |
 | `dayOf(at, timeZone)` | The local day `YYYY-MM-DD` an instant falls on. |  |
 | `const DEFAULT_SIGNAL_ALGORITHMS` | Used when a source does not name its algorithms. |  |
+| `defaultGuestSettings()` | The settings a tenant has without stored ones. |  |
 | `defineConfig(config)` | Types a deployment configuration for `better-iam.config.{mjs,ts}`: options, or a factory of them that receives `{ command, env, cwd }` from the CLI. It returns its argument unchanged; the value is autocompletion and checking. |  |
 | `defineTenantConfig(config)` | Types a tenant's configuration as code (roles, policies, groups, bindings, packages, invariants, agreements) for `better-iam config-plan\|config-apply --input tenant.config.ts`, or a factory that computes it per tenant and environment. |  |
 | `const delegationTokenLimits` | Lifetimes (seconds) and the longest chain of actors a delegation token carries. Re-exported from `@better-iam/core`. |  |
@@ -606,24 +621,41 @@ The `betterIam()` factory: tenants, identities, authorization, governance, HTTP 
 | `departmentPath(tx, tenantId, departmentId)` | Department IDs from the top of the tree down to `departmentId` itself (for roll-ups); empty when unknown. |  |
 | `const deviceProofHeader` | The request header that carries a device proof (a compact JWS). | [Device posture](/docs/guides/device-posture) |
 | `effectiveRisk(record, now, halfLifeHours)` | The score and level in force at `now`: decayed contributions, raised to an unexpired override's level. |  |
+| `effectiveScheme(tx, chain)` | The scheme in force for a tenant, given its ancestry (`[tenant, parent, ..., root]`): the one defined closest to the root. Undefined when no tenant of the chain defines one. |  |
 | `evaluateCompliance(device, integration, settings, now)` | Judges a device against the tenant's requirements. |  |
 | `generateSecretValue(generator)` | A random value from the generator: uniform draws, with one character of each kept class placed at random. |  |
 | `generateSshAuthorityKey()` | A new Ed25519 authority key, with the private key as base64 PKCS#8 DER (the caller seals it). |  |
-| `const HOLDER_PROOF_TYPE` | No description yet. |  |
+| `const guestCollections` | The collections this module owns, all tenant-scoped (lifecycle.ts purges them with their tenant). |  |
+| `const guestLimits` | Guest lifetimes and list sizes: defaults and bounds, in days where they are durations. |  |
+| `const HOLDER_PROOF_TYPE` | The `typ` of the wallet's proof of possession in OpenID4VCI (`openid4vci-proof+jwt`), sent with a credential request so the credential is bound to the wallet's key. |  |
 | `class IamError` | The same `IamError` class as `@better-iam/core`, re-exported so server code needs one import. Check `error.code` to handle a specific refusal. Re-exported from `@better-iam/core`. | [Adapters and plugins](/docs/operations/extensions) |
+| `inboundRefusal(settings, origin)` | Why the host's inbound settings refuse a guest from `origin`, or undefined when they admit them. A refusal wins (a partner entry with `allow: false`, a blocked domain); a partner entry with `allow: true` then admits the guest over the defaults (`allowGuests`, `allowedDomains`). |  |
 | `const inferenceAction` | The action that calling an AI model needs, `inference:invoke`, which the `inference` option adds to the catalog. Policies grant it on `model/{name}`; use the constant in checks and policies you build in code so they match what the inference gateway and `inference.check` decide. |  |
 | `const inferenceResourceType` | The resource type of AI models, `model`, which the `inference` option adds to the catalog. A model published with `inference.createModel` is the resource `model/{name}`, with its tier, family, provider, and prices as attributes for conditions. |  |
 | `const inferenceToolAction` | The action decided on each `model-tool/{kind}` a request asks for, for models whose `providerTools` is `policy`. |  |
 | `const inferenceToolResourceType` | Tools the provider runs itself (web search, code execution, remote MCP servers, ...), as resources of this type named by kind (`model-tool/web_search`, `model-tool/mcp:{host}`), checked with `inference:use-tool` for models whose `providerTools` is `policy`. |  |
 | `issueSdJwt(input)` | Issues an SD-JWT: `plain` claims are visible to anyone holding the credential; each `disclosable` claim becomes a disclosure the holder decides to reveal or keep. Random decoy digests hide how many claims exist. Returns the issued form `<jwt>~<disclosure>~...~` and its parts. |  |
 | `isTeamMaintainer(tx, tenantId, teamId, identityId, options?)` | Whether a person maintains a team: a live maintainer membership of the team itself or, with `includeAncestors`, of any team above it (a parent team's maintainers manage its child teams too). |  |
-| `const KB_JWT_TYPE` | No description yet. |  |
+| `const KB_JWT_TYPE` | The `typ` of the key-binding JWT (`kb+jwt`) a holder appends to an SD-JWT presentation to prove it holds the credential's key, for the verifier's audience and nonce. |  |
+| `labelKey(type, resourceId)` | The natural key of a resource's label: `{type}/{id}`, hashed when it would exceed 512 UTF-8 bytes. |  |
+| `labelsForType(tx, tenantId, type)` | The effective IAM-held labels of every labeled resource of one type in a tenant, by resource id, for listings: own labels joined with what registered resources inherit from their managed parents. Labels an application resolver asserts are not included (decisions still apply them). Empty when no scheme is in force. |  |
+| `licenseCapacity(pools, now)` | The seats a set of pools provides at `now`. |  |
+| `const licenseCollections` | The storage collections of license management: `licenseProducts`, `licensePools`, `licenseAssignments`, `licenseSeats`, and `licenseSettings`, all tenant-scoped and purged with their tenant. |  |
+| `const licenseContextKey` | The policy key listing the product keys a person holds an active seat for in the decision's tenant. |  |
+| `licenseKey(value)` | Validates a product key: lowercase letters, digits, dots, underscores or hyphens, starting with a letter or digit. |  |
 | `lintPolicy(document, context?)` | Lints a policy document: validates it as storage would, then reports statements that grant more than intended, conditions that can never match or silently fail open, and statements that are shadowed or duplicated. The context tells the linter which identity attributes, resource attributes, and application keys exist. | [Policy documents](/docs/guides/authorization/policies) |
+| `liveLicensePool(pool, now)` | Whether a pool contributes capacity at `now`. |  |
 | `looksLikeJwt(value)` | Tells a session JWT apart from an opaque token by its shape (three dot-separated segments), so code that accepts both can route each to the right check. It proves nothing about validity. |  |
 | `machineIdentity(identity)` | Machine accounts: service accounts and agents. They hold API keys and never sign in. |  |
+| `const maxLicenseAssignmentsPerProduct` | Direct and group assignments of one product in one tenant. |  |
+| `const maxLicenseFeatureKeys` | Feature keys one product may list. |  |
+| `const maxLicensePoolQuantity` | Seats one pool may carry. |  |
+| `const maxLicensePoolsPerProduct` | Pools (live or ended) one tenant may hold for one product; ended pools are swept 400 days after their end. |  |
+| `const maxLicenseProductsPerTenant` | Products one tenant may define. |  |
 | `const maxSignalSourcesPerTenant` | Signal sources one tenant may register. |  |
 | `nextWatermark(current, before, now)` | Computes the next "revoke sessions issued before" time for a role, trust, or OIDC provider: it only ever moves forward and never into the future. Custom revocation tools use it to match `roles.revokeSessions`. |  |
 | `normalizeBaseDn(value)` | Validates a base DN and returns its comparison form: `attr=value` components of letters, digits, spaces, `.`, `_` and `-` (no escapes), lowercased with spaces collapsed, exactly as `@better-iam/ldap` normalizes DNs. |  |
+| `outboundAllows(settings, hostTenantId)` | Whether a home tenant's outbound settings let its people become guests of `hostTenantId`. |  |
 | `parseSshCertificate(line)` | Decodes a certificate line (`*-cert-v01@openssh.com base64 [comment]`). Only Ed25519 authorities verify. |  |
 | `parseSshPublicKey(line, options?)` | Parses and validates one public key line (`type base64 [comment]`). Certificates, DSA keys, RSA keys under 2048 bits, malformed points and trailing data are refused. |  |
 | `periodBounds(period, timeZone)` | The first instant of a period and of the next one. |  |
@@ -648,7 +680,7 @@ The `betterIam()` factory: tenants, identities, authorization, governance, HTTP 
 | `resolveDeviceSettings(stored)` | The requirements for a tenant: the stored settings over the defaults (stored values were validated on write). |  |
 | `resolveThreatSettings(stored?)` | Applies rule defaults and deployment defaults to a tenant's stored settings (absent when never configured). |  |
 | `revokedByWatermark(createdAt, ...watermarks)` | Tells whether a session created at a given time falls under any of the given "revoke sessions issued before" times, the check IAM applies to role sessions on every use. |  |
-| `riskLevelFor(score)` | No description yet. |  |
+| `riskLevelFor(score)` | Maps an identity risk score (0 to 100) to its level: `high` from 70, `medium` from 40, `low` from 10, and `none` below (`riskThresholds`). Policies read the level as `principal.riskLevel` ([identity risk](/docs/guides/threat-detection#identity-risk)). |  |
 | `rolloutBucket(key, tenantId)` | The rollout position (0 to 99.99) of a tenant branch for a flag: stable per key and tenant, so raising the percentage only ever adds tenants, and different flags spread over different tenants. | [Feature flags](/docs/guides/feature-flags) |
 | `const routeGroups` | The API groups the HTTP handler exposes under `{basePath}/{group}/{method}`. Groups not in this set are callable only from server code. |  |
 | `const SD_JWT_VC_TYPE` | The `typ` of an SD-JWT VC (`vc+sd-jwt`, the earlier name, is accepted when verifying). |  |
@@ -663,22 +695,22 @@ The `betterIam()` factory: tenants, identities, authorization, governance, HTTP 
 | `signSshCertificate(authority, spec, comment?)` | Issues an OpenSSH certificate; returns the certificate blob and its `*-cert.pub` line. |  |
 | `signStatusList(input)` | A Status List Token (JWT, `typ: statuslist+jwt`) for a raw list. |  |
 | `splitSdJwt(value)` | Splits `<jwt>~<d1>~...~<dn>~[<kb-jwt>]`. |  |
-| `const SSH_CERT_HOST` | No description yet. |  |
+| `const SSH_CERT_HOST` | The OpenSSH certificate type of a host certificate (`2`); user certificates have `SSH_CERT_USER` (`1`). |  |
 | `const SSH_CERT_USER` | Certificate kinds (PROTOCOL.certkeys `type`). |  |
 | `sshFingerprint(blob)` | `SHA256:` plus the unpadded base64 SHA-256 of a key blob. |  |
 | `const sshForwardingActions` | Forwarding a certificate allows only when every host it names allows it (certificate extensions are global). |  |
 | `sshHostAddress(value)` | A host certificate principal: a DNS name (a leading `*.` is refused), or an IPv4/IPv6 address. |  |
-| `const sshHostResourceType` | No description yet. |  |
+| `const sshHostResourceType` | The resource type of an enrolled SSH host, `ssh-host`, named `ssh-host/{host}`, on which the forwarding actions are decided ([SSH access](/docs/guides/ssh-access#how-access-is-decided)). |  |
 | `sshKeyLine(blob, comment?)` | An `authorized_keys`-style line for a key blob. |  |
 | `const sshKeyTypes` | Public key algorithms accepted in certificates, with their certificate type names. |  |
 | `sshLogin(value)` | A Unix login name, as certificate principals carry them: portable user names only. |  |
-| `const sshLoginAction` | No description yet. |  |
-| `const sshLoginResourceType` | No description yet. |  |
+| `const sshLoginAction` | The action, `ssh:login`, decided for every host and login pair a user certificate is to name. Use it with `iam.authorize` or `policies.simulate` to check SSH access outside certificate issuance. |  |
+| `const sshLoginResourceType` | The resource type of a host and login pair, `ssh-login`, named `ssh-login/{host}/{login}`, on which `ssh:login` is decided ([SSH access](/docs/guides/ssh-access#how-access-is-decided)). |  |
 | `sshSerial()` | A random non-zero 63-bit serial (KRLs cannot revoke serial 0). |  |
 | `sshSigningKey(publicBlob, privatePkcs8)` | Opens a stored authority key. |  |
-| `const STATUS_INVALID` | No description yet. |  |
-| `const STATUS_LIST_JWT_TYPE` | No description yet. |  |
-| `const STATUS_SUSPENDED` | No description yet. |  |
+| `const STATUS_INVALID` | The Token Status List value of a revoked credential (`1`). Compare `statusAt` results with it, `STATUS_VALID` (`0`), and `STATUS_SUSPENDED`. |  |
+| `const STATUS_LIST_JWT_TYPE` | The `typ` of a signed Token Status List (`statuslist+jwt`), served at `{issuer}/status/{listId}`. |  |
+| `const STATUS_SUSPENDED` | The Token Status List value of a suspended credential (`2`), which `reinstate` sets back to `STATUS_VALID`. |  |
 | `const STATUS_VALID` | Status values of the Token Status List. |  |
 | `statusAt(bytes, index, bits)` | Reads the status of `index` from a raw list of `bits`-bit entries (index 0 is the low bits of byte 0). | [Verifiable credentials](/docs/federation/verifiable-credentials) |
 | `teamMaintainers(tx, tenantId, teamId, at?)` | The live direct maintainers of a team (identity IDs, oldest first). |  |
@@ -688,7 +720,7 @@ The `betterIam()` factory: tenants, identities, authorization, governance, HTTP 
 | `usageCost(model, usage)` | Cost of a call in micro-dollars: tokens × dollars per million tokens (cached input at its own price when set). |  |
 | `usageFrom(format, usage)` | Token counts from a provider's usage object (Anthropic, OpenAI Chat Completions / Embeddings, or OpenAI Responses); undefined when there is none. Cached input tokens are counted apart from other input. |  |
 | `validateTenantConfig(value)` | Validates the shape of a desired configuration; references are checked against the tenant during planning. |  |
-| `const vcRequestAction` | No description yet. |  |
+| `const vcRequestAction` | The action, `vc:request`, decided when a person requests a credential of a type for themselves, on `credential-type/{name}` ([who gets credentials](/docs/federation/verifiable-credentials#who-gets-credentials)). |  |
 | `verifyAssertion(token, options)` | Verifies an assertion against the derived key, audience, optional issuer, and time; returns its claims. `key` may list several keys (`iam.assertionKeys()`) while a deployment secret rotates. | [Operations recipes](/docs/guides/recipes/operations) |
 | `verifyAuditChain(events, options?)` | Verifies a run of events from one tenant: contiguous sequences, each `previousHash` equal to the previous event's hash (or `previousHash` of the first event when the run starts mid-chain), and every hash recomputable. Events are sorted by sequence first, so exports and database reads can be passed as they come. Re-exported from `@better-iam/core`. | [Audit chain](/docs/guides/events/audit-chain) |
 | `verifyEvidencePack(pack, keys)` | Verifies an evidence pack offline, with the deployment's published evidence keys (`compliance.evidenceKeys`): the digest must match the pack's content and the signature must verify with the key it names. Needs no server. | [Compliance center](/docs/guides/governance/compliance) |

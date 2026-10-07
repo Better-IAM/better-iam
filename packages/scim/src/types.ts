@@ -141,4 +141,22 @@ export interface ScimConfig {
       credential?: CredentialInput;
     },
   ): Promise<void>;
+  /**
+   * Trusted server callback, called in the transaction after SCIM changed whether a user's identity is active
+   * (`active: false` or `true`, DELETE), so what follows the status moves with it (the server's license seats); the
+   * server's protocol host supplies it.
+   */
+  identityStatusChanged?(
+    tx: IamStore,
+    input: { tenantId: string; connectionId: string; identityId: string },
+  ): Promise<void>;
+  /**
+   * Trusted server callback, called in the transaction before SCIM deletes a group's record (DELETE /Groups, after its
+   * members were removed), so what was given to the group goes with it (the server's license assignments); the
+   * server's protocol host supplies it.
+   */
+  groupDeleted?(
+    tx: IamStore,
+    input: { tenantId: string; connectionId: string; groupId: string },
+  ): Promise<void>;
 }

@@ -99,6 +99,10 @@ export function createAccessPathsApi(ctx: ServerContext) {
       (await allowed(tx, who, tenantId, action, resource)).allowed;
     const base = await allowed(tx, principal, tenantId, action, resource);
     if (base.allowed) return { allowed: true, reason: base.reason, paths: [] };
+    // Mandatory access control (security clearances): nothing a person can do on their own lifts a clearance refusal,
+    // and naming a way would reveal that the resource is labeled above them.
+    if (base.reason === 'CLEARANCE_REQUIRED')
+      return { allowed: false, reason: 'ACCESS_DENIED', paths: [] };
     const found: AccessPath[] = [];
 
     // A second factor.

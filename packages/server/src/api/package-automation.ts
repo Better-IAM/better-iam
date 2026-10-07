@@ -46,6 +46,7 @@ import {
   type RuleOrgFacts,
 } from '../package-rules.js';
 import { invariantSnapshot, invariantVerify } from '../invariants.js';
+import { reconcileLicensesOf } from '../licenses.js';
 import { loadOrgFacts, orgRuleEnvironment, type TenantOrgFacts } from '../org-rules.js';
 import { sodVerify, sodViolations, type SodRule } from '../sod.js';
 import { id } from '../utils.js';
@@ -888,7 +889,11 @@ async function reconcileTenant(
         identityAttributes: ctx.catalog.identityAttributes,
         groups: facts.groupIds,
         packagedGroups: new Set(pkg.groupIds),
-        org: { teams: facts.org.teamIds, departments: facts.org.departmentIds },
+        org: {
+          teams: facts.org.teamIds,
+          departments: facts.org.departmentIds,
+          licenses: facts.org.licenseKeys,
+        },
       });
       if (problem) {
         // A rule that cannot be evaluated freezes everything: never "matches nobody, revoke everyone".
@@ -1135,7 +1140,10 @@ async function reconcileTenant(
   );
 }
 
-/** Reconciles the package rules for identities an administrator just changed; never throws (the schedule catches up). */
+/**
+ * Reconciles the license seats and package rules for identities an administrator just changed; never throws (the
+ * schedules catch up).
+ */
 export async function afterIdentityChange<T>(
   ctx: ServerContext,
   tenantId: string,
@@ -1143,8 +1151,16 @@ export async function afterIdentityChange<T>(
   result: T,
 ): Promise<T> {
   try {
-    if (identityIds.length)
-      await reconcilePackageRules(ctx, { tenantId, identityIds, trigger: 'identity-change' });
+    if (identityIds.length) {
+      // License seats follow the change first (licenses.ts): rules on identity.licenses then see them, and people a
+      // released seat moved off the waiting list are reconciled too.
+      const seated = await reconcileLicensesOf(ctx, tenantId, identityIds);
+      await reconcilePackageRules(ctx, {
+        tenantId,
+        identityIds: [...new Set([...identityIds, ...seated])],
+        trigger: 'identity-change',
+      });
+    }
   } catch {
     /* the scheduled reconcile catches up */
   }

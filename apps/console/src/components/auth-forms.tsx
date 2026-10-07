@@ -893,7 +893,7 @@ export function JoinForm({
   token,
   next,
 }: {
-  kind: 'owner' | 'member';
+  kind: 'owner' | 'member' | 'guest';
   tenantId: string;
   token: string;
   next: string;
@@ -916,7 +916,9 @@ export function JoinForm({
       const outcome =
         kind === 'owner'
           ? await client.tenants.acceptInvitation({ tenantId, token, name, password })
-          : await client.identities.acceptInvitation({ tenantId, token, name, password });
+          : kind === 'guest'
+            ? await client.guests.redeem({ tenantId, token, name, password })
+            : await client.identities.acceptInvitation({ tenantId, token, name, password });
       setPassword('');
       if ('mfaRequired' in outcome) {
         const enrollment = await client.auth.beginMfa({ tenantId, challenge: outcome.challenge });
@@ -1033,7 +1035,9 @@ export function JoinForm({
             ? 'Creating account…'
             : kind === 'owner'
               ? 'Create owner account'
-              : 'Join organization'}
+              : kind === 'guest'
+                ? 'Join as a guest'
+                : 'Join organization'}
         </button>
       </div>
     </form>

@@ -11,6 +11,7 @@ import {
   type Json,
   type Session,
 } from '@better-iam/core';
+import { assertClearances } from '../clearances.js';
 import type { ServerContext } from '../context.js';
 import { OperationDenied } from '../operations.js';
 import { actsInOwnRight } from '../session-kinds.js';
@@ -21,7 +22,7 @@ import {
   releaseIdentity,
   type ResponseRequest,
 } from '../threat-response.js';
-import type { DetectionCandidate } from '../threat-rules.js';
+import { identityLabel, type DetectionCandidate } from '../threat-rules.js';
 import {
   effectiveRisk,
   resolveThreatSettings,
@@ -60,7 +61,7 @@ import {
   type ThreatSubject,
   type ThreatSubjectType,
 } from '../threats.js';
-import { byNewest, id } from '../utils.js';
+import { byId, byNewest, id } from '../utils.js';
 import { email, integer, object, text } from '../validation.js';
 
 /** A detection rule with the setting in force for the tenant (`threats.rules`). */
@@ -155,15 +156,34 @@ export interface IdentityRiskView {
   updatedAt?: number;
 }
 
+/** What a detection or incident is about, as the threats API returns it. */
+export interface ThreatSubjectView extends ThreatSubject {
+  /**
+   * For an identity of the tenant (deleted ones included): whether it is a person, a service account or an AI agent,
+   * so a console can link to the right page. Looked up when read, never stored.
+   */
+  kind?: Identity['kind'];
+}
+
+/** A detection as the threats API returns it: an identity subject carries the identity's `kind`. */
+export interface ThreatDetectionView extends ThreatDetection {
+  subject: ThreatSubjectView;
+}
+
+/** An incident as the threats API returns it: an identity subject carries the identity's `kind`. */
+export interface ThreatIncidentView extends ThreatIncident {
+  subject: ThreatSubjectView;
+}
+
 /** One page of detections, newest first (`threats.listDetections`). */
 export interface DetectionPage {
-  detections: ThreatDetection[];
+  detections: ThreatDetectionView[];
   total: number;
 }
 
 /** One page of incidents, most recently active first (`threats.listIncidents`). */
 export interface IncidentPage {
-  incidents: ThreatIncident[];
+  incidents: ThreatIncidentView[];
   total: number;
 }
 
@@ -175,9 +195,9 @@ export interface RiskPage {
 
 /** An incident with everything an investigator needs (`threats.getIncident`). */
 export interface IncidentDetail {
-  incident: ThreatIncident;
+  incident: ThreatIncidentView;
   /** At most 200, newest first. */
-  detections: ThreatDetection[];
+  detections: ThreatDetectionView[];
   /** Oldest first. */
   notes: ThreatNote[];
   /** Newest first. */
@@ -248,8 +268,10 @@ const detectionResource = (detectionId: string) => `threats/detections/${detecti
 const incidentResource = (incidentId: string) => `threats/incidents/${incidentId}`;
 const riskResource = (identityId: string) => `threats/risk/${identityId}`;
 const playbookResource = (playbookId: string) => `threats/playbooks/${playbookId}`;
-/** How detections and responses name a person: their name, else their email (as the response module does). */
+/** How responses name a person: their name, else their email (as the response module does). */
 const personLabel = (identity: Identity) => identity.name || identity.email || identity.id;
+/** How detections name a person: as the detection rules do, name and email. */
+const detectionLabel = (identity: Identity) => identityLabel(identity, identity.id);
 
 function oneOf<T extends string>(value: unknown, allowed: readonly T[], name: string): T {
   if (typeof value !== 'string' || !(allowed as readonly string[]).includes(value))
@@ -375,6 +397,52 @@ function paging(input: { limit?: unknown; offset?: unknown }): { limit: number; 
     limit: integer(input.limit ?? 100, 'limit', 1, 1000),
     offset: integer(input.offset ?? 0, 'offset', 0, 1_000_000),
   };
+}
+
+/** `listIncidents`' `status`: one status, or a list of one to three distinct ones. */
+function incidentStatusesOf(value: unknown): IncidentStatus[] {
+  if (!Array.isArray(value)) return [oneOf(value, allIncidentStatuses, 'status')];
+  if (value.length < 1 || value.length > allIncidentStatuses.length)
+    throw new IamError(
+      'INVALID_INPUT',
+      `status must list 1-${allIncidentStatuses.length} incident statuses`,
+    );
+  return [...new Set(value.map((entry) => oneOf(entry, allIncidentStatuses, 'status')))];
+}
+
+/** Identity kinds by id already looked up during one read (`undefined` for an identity outside the tenant). */
+type SubjectKinds = Map<string, Identity['kind'] | undefined>;
+
+/**
+ * Detections or incidents as the API returns them: identity subjects gain the identity's `kind` when the identity
+ * belongs to the tenant. Each identity is read once per read (pass the same `kinds` to share lookups between calls);
+ * the kind is never stored.
+ */
+async function withSubjectKinds<T extends { subject: ThreatSubject }>(
+  tx: IamStore,
+  tenantId: string,
+  records: readonly T[],
+  kinds: SubjectKinds = new Map(),
+): Promise<(T & { subject: ThreatSubjectView })[]> {
+  for (const { subject } of records)
+    if (subject.type === 'identity' && !kinds.has(subject.id)) {
+      const identity = await tx.get<Identity>('identities', subject.id);
+      kinds.set(subject.id, identity?.tenantId === tenantId ? identity.kind : undefined);
+    }
+  return records.map((record) => {
+    const kind = record.subject.type === 'identity' ? kinds.get(record.subject.id) : undefined;
+    return kind ? { ...record, subject: { ...record.subject, kind } } : record;
+  });
+}
+
+/** One detection or incident as the API returns it (see `withSubjectKinds`). */
+async function withSubjectKind<T extends { subject: ThreatSubject }>(
+  tx: IamStore,
+  tenantId: string,
+  record: T,
+  kinds?: SubjectKinds,
+): Promise<T & { subject: ThreatSubjectView }> {
+  return (await withSubjectKinds(tx, tenantId, [record], kinds))[0]!;
 }
 
 /**
@@ -655,6 +723,32 @@ function responseActionsOf(value: unknown, name: string): ResponseAction[] {
   });
 }
 
+const suspendsClearances = (actions: readonly ResponseAction[]): boolean =>
+  actions.some((action) => action.kind === 'suspend-clearance');
+
+/**
+ * A playbook that suspends clearances acts as a clearance officer would: it needs the `clearances` option
+ * (FEATURE_DISABLED otherwise), and whoever writes it must be allowed to suspend any clearance of the tenant
+ * (iam:clearances:suspend on iam/clearances, an audited ACCESS_DENIED otherwise), so holding iam:threats:manage alone
+ * never lets someone suspend people's clearances through the threat-detection actor.
+ */
+async function assertMaySuspendClearances(
+  ctx: ServerContext,
+  tx: IamStore,
+  principal: AuthenticatedPrincipal,
+  tenantId: string,
+): Promise<void> {
+  assertClearances(ctx);
+  const decision = await ctx.decisions.decide(
+    tx,
+    principal,
+    { tenantId, action: 'iam:clearances:suspend', resource: { type: 'iam', id: 'clearances' } },
+    true,
+  );
+  if (!decision.allowed)
+    throw new OperationDenied('Playbooks that suspend clearances need iam:clearances:suspend');
+}
+
 function playbookName(value: unknown): string {
   const name = text(value, 'name', 100).trim();
   if (!name) throw new IamError('INVALID_INPUT', 'name is required');
@@ -919,7 +1013,7 @@ export function createThreatsApi(ctx: ServerContext) {
               ruleId: 'guardrail-weakened',
               severity: guardrail.severity,
               title: weakened.length ? 'Threat detection weakened' : 'Detection rules turned off',
-              summary: `${personLabel(principal.identity)} ${listed(changes, 6)}.`,
+              summary: `${detectionLabel(principal.identity)} ${listed(changes, 6)}.`,
               subject: { type: 'tenant', id: tenant.id, name: tenant.name },
               identityId: principal.identity.id,
               dedupeKey: `settings:${id()}`,
@@ -1001,7 +1095,14 @@ export function createThreatsApi(ctx: ServerContext) {
               ...(since !== undefined ? { from: since } : {}),
             },
           );
-          return { detections: detections.slice(offset, offset + limit), total: detections.length };
+          return {
+            detections: await withSubjectKinds(
+              tx,
+              tenant.id,
+              detections.slice(offset, offset + limit),
+            ),
+            total: detections.length,
+          };
         },
       );
     },
@@ -1009,7 +1110,7 @@ export function createThreatsApi(ctx: ServerContext) {
     getDetection: async (
       credential: CredentialInput,
       input: { tenantId: string; detectionId: string },
-    ): Promise<ThreatDetection> => {
+    ): Promise<ThreatDetectionView> => {
       const detectionId = text(input.detectionId, 'detectionId');
       return operation(
         credential,
@@ -1017,7 +1118,16 @@ export function createThreatsApi(ctx: ServerContext) {
         'iam:threats:read',
         detectionResource(detectionId),
         async ({ tx, tenant }) =>
-          ctx.scoped<ThreatDetection>(tx, threatCollections.detections, detectionId, tenant.id),
+          withSubjectKind(
+            tx,
+            tenant.id,
+            await ctx.scoped<ThreatDetection>(
+              tx,
+              threatCollections.detections,
+              detectionId,
+              tenant.id,
+            ),
+          ),
       );
     },
     /**
@@ -1029,7 +1139,7 @@ export function createThreatsApi(ctx: ServerContext) {
     dismissDetection: async (
       credential: CredentialInput,
       input: { tenantId: string; detectionId: string; reason: string },
-    ): Promise<ThreatDetection> => {
+    ): Promise<ThreatDetectionView> => {
       const detectionId = text(input.detectionId, 'detectionId');
       return operation(
         credential,
@@ -1086,19 +1196,20 @@ export function createThreatsApi(ctx: ServerContext) {
               ...(detection.incidentId ? { incidentId: detection.incidentId } : {}),
             },
           );
-          return next;
+          return withSubjectKind(tx, tenant.id, next);
         },
       );
     },
     /**
-     * The tenant's incidents, most recently active first, optionally narrowed by status, severity, assignee and
-     * identity. Requires iam:threats:read on iam/threats/incidents.
+     * The tenant's incidents, most recently active first, optionally narrowed by status (one, or a list such as
+     * `['open', 'investigating']` for every active incident), severity, assignee and identity. Requires
+     * iam:threats:read on iam/threats/incidents.
      */
     listIncidents: async (
       credential: CredentialInput,
       input: {
         tenantId: string;
-        status?: IncidentStatus;
+        status?: IncidentStatus | IncidentStatus[];
         severity?: ThreatSeverity;
         assigneeId?: string;
         identityId?: string;
@@ -1107,10 +1218,12 @@ export function createThreatsApi(ctx: ServerContext) {
       },
     ): Promise<IncidentPage> => {
       const { limit, offset } = paging(input);
+      const wanted = input.status === undefined ? undefined : incidentStatusesOf(input.status);
+      // Every status is no narrowing at all; otherwise each status is read on its own (never the resolved backlog
+      // when only active incidents are wanted) and the results merged.
+      const statuses =
+        wanted === undefined || wanted.length === allIncidentStatuses.length ? [undefined] : wanted;
       const filter: Record<string, unknown> = {
-        ...(input.status !== undefined
-          ? { status: oneOf(input.status, allIncidentStatuses, 'status') }
-          : {}),
         ...(input.severity !== undefined
           ? { severity: oneOf(input.severity, threatSeverities, 'severity') }
           : {}),
@@ -1127,13 +1240,27 @@ export function createThreatsApi(ctx: ServerContext) {
         'iam:threats:read',
         'threats/incidents',
         async ({ tx, tenant }) => {
-          const incidents = await findOrdered<ThreatIncident>(
-            tx,
-            threatCollections.incidents,
-            { ...filter, tenantId: tenant.id },
-            { field: 'lastDetectedAt', direction: 'desc' },
-          );
-          return { incidents: incidents.slice(offset, offset + limit), total: incidents.length };
+          const found: ThreatIncident[][] = [];
+          for (const status of statuses)
+            found.push(
+              await findOrdered<ThreatIncident>(
+                tx,
+                threatCollections.incidents,
+                { ...filter, ...(status !== undefined ? { status } : {}), tenantId: tenant.id },
+                { field: 'lastDetectedAt', direction: 'desc' },
+              ),
+            );
+          const incidents = found.flat();
+          if (found.length > 1)
+            incidents.sort((a, b) => b.lastDetectedAt - a.lastDetectedAt || byId(a, b));
+          return {
+            incidents: await withSubjectKinds(
+              tx,
+              tenant.id,
+              incidents.slice(offset, offset + limit),
+            ),
+            total: incidents.length,
+          };
         },
       );
     },
@@ -1176,7 +1303,14 @@ export function createThreatsApi(ctx: ServerContext) {
               incidentId: incident.id,
             })
           ).sort(byNewest);
-          const detail: IncidentDetail = { incident, detections, notes, responses };
+          // The incident and its detections are mostly about one subject: each identity is looked up once.
+          const kinds: SubjectKinds = new Map();
+          const detail: IncidentDetail = {
+            incident: await withSubjectKind(tx, tenant.id, incident, kinds),
+            detections: await withSubjectKinds(tx, tenant.id, detections, kinds),
+            notes,
+            responses,
+          };
           if (incident.identityId) {
             const identity = await tx.get<Identity>('identities', incident.identityId);
             if (identity?.tenantId === tenant.id)
@@ -1205,7 +1339,7 @@ export function createThreatsApi(ctx: ServerContext) {
         assigneeId?: string | null;
         severity?: ThreatSeverity;
       },
-    ): Promise<ThreatIncident> => {
+    ): Promise<ThreatIncidentView> => {
       const incidentId = text(input.incidentId, 'incidentId');
       return operation(
         credential,
@@ -1264,7 +1398,7 @@ export function createThreatsApi(ctx: ServerContext) {
             false,
             { changes, status, severity, assigneeId: assigneeId ?? null },
           );
-          return next;
+          return withSubjectKind(tx, tenant.id, next);
         },
       );
     },
@@ -1338,7 +1472,7 @@ export function createThreatsApi(ctx: ServerContext) {
         resolution: IncidentResolution;
         note?: string;
       },
-    ): Promise<ThreatIncident> => {
+    ): Promise<ThreatIncidentView> => {
       const incidentId = text(input.incidentId, 'incidentId');
       const resolution = oneOf(input.resolution, resolutions, 'resolution');
       const note = input.note === undefined ? undefined : multiline(input.note, 'note', 4000);
@@ -1440,17 +1574,18 @@ export function createThreatsApi(ctx: ServerContext) {
               ...(incident.identityId ? { identityId: incident.identityId } : {}),
             },
           );
-          return next;
+          return withSubjectKind(tx, tenant.id, next);
         },
       );
     },
     /**
      * Responds by hand to an incident (its subject), an identity or a network: exactly one target, one to five
-     * actions (`revoke-sessions`, `forget-devices`, `contain`, `block-network` with `durationMs`, `notify`) run in
-     * order. A response to an identity or network with an open incident is filed under it. Actions that do not apply
-     * to the target, or that protections refuse, come back `skipped` with a reason. Requires iam:threats:respond on
-     * iam/threats/incidents/{id} (iam/threats/responses without an incident) and recent authentication; each action
-     * is audited as `threat:{action}`.
+     * actions (`revoke-sessions`, `forget-devices`, `contain`, `suspend-clearance`, `block-network` with
+     * `durationMs`, `notify`) run in order. A response to an identity or network with an open incident is filed under
+     * it. Actions that do not apply to the target, or that protections refuse, come back `skipped` with a reason.
+     * Requires iam:threats:respond on iam/threats/incidents/{id} (iam/threats/responses without an incident) and
+     * recent authentication, and `suspend-clearance` also iam:clearances:suspend on iam/clearances/{identityId} (and
+     * the `clearances` option); each action is audited as `threat:{action}`.
      */
     respond: async (
       credential: CredentialInput,
@@ -1737,13 +1872,19 @@ export function createThreatsApi(ctx: ServerContext) {
       );
     },
     /**
-     * The identity's recent audit trail, newest first: events it performed and events about it, from `since`
-     * (default seven days ago), at most `limit` (default 200, up to 500). Requires iam:threats:read on
-     * iam/threats/risk/{id}.
+     * The identity's recent audit trail, newest first: events it performed and events about it, from `since` up to
+     * and including `until` (epoch milliseconds, after `since`; default now), where `since` defaults to seven days
+     * before `until`; at most `limit` (default 200, up to 500). Requires iam:threats:read on iam/threats/risk/{id}.
      */
     timeline: async (
       credential: CredentialInput,
-      input: { tenantId: string; identityId: string; since?: number; limit?: number },
+      input: {
+        tenantId: string;
+        identityId: string;
+        since?: number;
+        until?: number;
+        limit?: number;
+      },
     ): Promise<AuditEvent[]> => {
       const identityId = text(input.identityId, 'identityId');
       const limit = integer(input.limit ?? 200, 'limit', 1, 500);
@@ -1751,6 +1892,12 @@ export function createThreatsApi(ctx: ServerContext) {
         input.since === undefined
           ? undefined
           : integer(input.since, 'since', 0, Number.MAX_SAFE_INTEGER);
+      const until =
+        input.until === undefined
+          ? undefined
+          : integer(input.until, 'until', 0, Number.MAX_SAFE_INTEGER);
+      if (since !== undefined && until !== undefined && until <= since)
+        throw new IamError('INVALID_INPUT', 'until must be after since');
       return operation(
         credential,
         input.tenantId,
@@ -1765,7 +1912,8 @@ export function createThreatsApi(ctx: ServerContext) {
             {
               field: 'timestamp',
               direction: 'desc',
-              from: since ?? ctx.now() - 7 * day,
+              from: since ?? Math.max(0, (until ?? ctx.now()) - 7 * day),
+              ...(until !== undefined ? { to: until } : {}),
               limit,
               where: (event) =>
                 event.actorId === identity.id ||
@@ -1794,9 +1942,11 @@ export function createThreatsApi(ctx: ServerContext) {
     /**
      * Defines an automatic response: when a new detection matches `trigger` (rules, minimum severity, subject types;
      * fields left out match everything), `actions` run in order as the threat-detection actor. Automatic actions
-     * never contain owners or root administrators, and at most `maxAutomaticContainments` identities are contained
-     * per run. Names are unique per tenant; at most 50 playbooks. Requires iam:threats:manage on
-     * iam/threats/playbooks and recent authentication; audited as `threat:playbook-create`.
+     * never contain owners or root administrators (nor suspend their clearances), and at most
+     * `maxAutomaticContainments` identities are contained per run. Names are unique per tenant; at most 50 playbooks.
+     * Requires iam:threats:manage on iam/threats/playbooks and recent authentication, plus iam:clearances:suspend on
+     * iam/clearances for a playbook that suspends clearances (FEATURE_DISABLED without the `clearances` option);
+     * audited as `threat:playbook-create`.
      */
     createPlaybook: async (
       credential: CredentialInput,
@@ -1817,6 +1967,8 @@ export function createThreatsApi(ctx: ServerContext) {
           const enabled = input.enabled === undefined ? true : flag(input.enabled, 'enabled');
           const trigger = playbookTrigger(input.trigger);
           const actions = responseActionsOf(input.actions, 'actions');
+          if (suspendsClearances(actions))
+            await assertMaySuspendClearances(ctx, tx, principal, tenant.id);
           const uniqueKey = `name:${name.toLowerCase()}`;
           const existing = await tx.find<ThreatPlaybook>(threatCollections.playbooks, {
             tenantId: tenant.id,
@@ -1919,6 +2071,16 @@ export function createThreatsApi(ctx: ServerContext) {
             updatedAt: ctx.now(),
             updatedBy: principal.identity.id,
           });
+          // Widening what a playbook that suspends clearances does (adding the action, changing what triggers it, or
+          // switching it on) takes what writing one takes; renaming, describing or switching it off does not. A
+          // refusal rolls the change back.
+          if (
+            suspendsClearances(next.actions) &&
+            (!suspendsClearances(playbook.actions) ||
+              JSON.stringify(next.trigger) !== JSON.stringify(playbook.trigger) ||
+              (next.enabled && !playbook.enabled))
+          )
+            await assertMaySuspendClearances(ctx, tx, principal, tenant.id);
           await ctx.events.audit(
             tx,
             principal,
@@ -2116,13 +2278,13 @@ export function createThreatsApi(ctx: ServerContext) {
         const subject: ThreatSubject = {
           type: 'identity',
           id: identity.id,
-          name: personLabel(identity),
+          name: detectionLabel(identity),
         };
         const candidate: DetectionCandidate = {
           ruleId: 'user-reported',
           severity: rule.severity,
           title: threatRule('user-reported').title,
-          summary: `${personLabel(identity)} reported activity on their account that was not them.`,
+          summary: `${detectionLabel(identity)} reported activity on their account that was not them.`,
           subject,
           identityId: identity.id,
           dedupeKey: id(),

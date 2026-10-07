@@ -724,6 +724,10 @@ const groupInfo = {
   credentials: ['KeySquare', 'API keys with scopes, labels, expiry, and last-use tracking.'],
   domains: ['Globe', 'Verified email domains for discovery and single sign-on routing.'],
   groups: ['Users', 'Groups and (optionally temporary) group memberships.'],
+  guests: [
+    'UserPlus',
+    'B2B guests: email invitations, sponsors who renew access, cross-tenant access settings, and a guest ceiling.',
+  ],
   identities: [
     'UserRound',
     'People in a tenant: invitations, profiles, attributes, sessions, offboarding, and data-subject export.',
@@ -877,6 +881,14 @@ const groupInfo = {
   ldap: [
     'ListTree',
     'The LDAP directory gateway: publish an organization directory to applications that only speak LDAP.',
+  ],
+  licenses: [
+    'Ticket',
+    'License management: products, pools of seats, assignments to people and groups, and seats with a waiting list.',
+  ],
+  clearances: [
+    'ShieldKeyhole',
+    'Security clearances: classification schemes, adjudicated clearances and compartments, and labels every decision enforces.',
   ],
 };
 
@@ -1144,6 +1156,7 @@ async function generateApiPages(filter) {
         [
           'auth',
           'identities',
+          'guests',
           'teams',
           'departments',
           'serviceAccounts',
@@ -1173,6 +1186,7 @@ async function generateApiPages(filter) {
           'resources',
           'relationships',
           'filters',
+          'clearances',
         ],
       ],
       [
@@ -1205,8 +1219,8 @@ async function generateApiPages(filter) {
       ],
       [
         'Billing and usage',
-        'What people, teams, and organizations spend, the budgets and statements around it, and API usage plans.',
-        ['billing', 'quotas'],
+        'What people, teams, and organizations spend, the budgets and statements around it, API usage plans, and license seats.',
+        ['billing', 'quotas', 'licenses'],
       ],
       [
         'Secrets, keys, and certificates',

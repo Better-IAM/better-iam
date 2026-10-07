@@ -10,7 +10,8 @@ separate grants, and removing it takes away exactly what it gave. See the
 A package can reach a person in three ways, and one package can use all of them:
 
 - **Assignment.** An administrator calls `assign`. The caller needs `iam:packages:assign` on the package plus
-  everything the direct calls need: `iam:bindings:create` on each role and `iam:groups:update` on each group. The
+  everything the direct calls need: `iam:bindings:create` on each role and `iam:groups:update` on each group, and
+  `iam:licenses:assign` when a [license product](/docs/reference/api/licenses) is assigned to one of the groups. The
   records are created under the caller's own [grant authority](/docs/guides/authorization/roles#grant-authorities),
   so a package never lets anyone grant more than they could grant by hand.
 - **Self-service request.** When the package is `requestable`, a member holding `iam:packages:request` on it asks
@@ -26,7 +27,9 @@ A package can reach a person in three ways, and one package can use all of them:
   rule and taken back from automatic holders that stop matching. A reconciler applies the rule under the grant
   authority of the rule's owner (whoever last saved the rule or changed the package's contents). It runs after
   identity changes and rule saves, on demand with `reconcile`, and as the scheduled job
-  [`iam.reconcilePackages()`](/docs/reference/api#reconcilepackages), which you must schedule. See
+  [`iam.reconcilePackages()`](/docs/reference/api#reconcilepackages), which you must schedule. When a packaged group
+  is licensed later and the owner lacks `iam:licenses:assign`, the rule is suspended (`owner-lacks-rights`) instead
+  of granting, until the owner holds it. See
   [automatic assignment](/docs/guides/privileged-access/automatic-assignment) for the rule language, grace
   periods, and the safety brake.
 
@@ -61,7 +64,8 @@ or group cannot be deleted while a package includes it.
 Grants a pending package request by assigning the package to the requester under your own authority.
 
 - **Permission:** `iam:packages:approve` on the package; when the package names approvers, membership of the
-  approver group or being the requester's manager (or root); plus the rights `assign` needs for every role and group.
+  approver group or being the requester's manager (or root); plus the rights `assign` needs for every role and group,
+  including `iam:licenses:assign` when a license product is assigned to one of the groups.
 - **Audited as:** `iam:packages:approve`, plus `package:request-approved` with the assignment's counts, skips, and end.
 - **Errors:** `INVALID_TRANSITION` when the request is no longer pending or the package is no longer requestable;
   `NOT_FOUND` when the request is not in this tenant; `INVALID_INPUT` for your own request or an end the package
@@ -89,7 +93,8 @@ await iam.api.packages.approveRequest(credential, {
 Grants a package to a person: one binding per role and one membership per group, all ending together.
 
 - **Permission:** `iam:packages:assign` on the package, `iam:bindings:create` on each packaged role,
-  `iam:groups:update` on each packaged group, and authority over the role bindings of each group the person joins.
+  `iam:groups:update` on each packaged group, authority over the role bindings of each group the person joins, and
+  `iam:licenses:assign` when a license product is assigned to one of the groups or to a team it syncs into.
 - **Audited as:** `iam:packages:assign`, plus `package:assign` with the created counts, `skipped`, end, and
   justification.
 - **Errors:** `CONFLICT` when the person already holds a manual assignment of the package that is not broken;
@@ -130,7 +135,8 @@ Withdraws one of your own pending package requests.
 Defines a package of roles and groups, optionally requestable or assigned automatically by a rule.
 
 - **Permission:** `iam:packages:create` on the tenant. With `autoAssign`, also `iam:packages:assign` on the package
-  and every right `assign` needs, including authority over the packaged groups' bindings.
+  and every right `assign` needs, including authority over the packaged groups' bindings and `iam:licenses:assign`
+  when a license product is assigned to one of the groups.
 - **Audited as:** `iam:packages:create`, plus `package:auto-rule` when a rule is set.
 - **Errors:** `CONFLICT` when a package with the same name (ignoring case) exists; `INVALID_INPUT` when it has no
   role or group, more than 50 of either, a `maxDurationMs` outside one minute to ten years, or a rule that does not
@@ -191,7 +197,7 @@ Denying needs no grant rights, since nothing is granted. When the deployment sen
 Moves the end of a person's manual assignment, for the assignment and every record it created at once.
 
 - **Permission:** `iam:packages:assign` on the package. Lengthening, or `expiresAt: null`, is granting: it also
-  needs the rights `assign` needs and a grant authority.
+  needs the rights `assign` needs (including `iam:licenses:assign` for a licensed group) and a grant authority.
 - **Audited as:** `iam:packages:assign`, plus `package:extend` with the previous and new end.
 - **Errors:** `NOT_FOUND` when the person holds no live assignment of the package; `INVALID_TRANSITION` for an
   automatic assignment; `INVALID_INPUT` when `expiresAt` is missing or the new end breaks the package's
@@ -382,7 +388,7 @@ Changes a package's name, description, contents, request settings, or rule.
 
 - **Permission:** `iam:packages:update` on the package. Setting, changing, or clearing a rule, or changing a rule
   package's roles or groups, also needs `iam:packages:assign` and, except when clearing, the rule-owner checks of
-  `create`.
+  `create` (`iam:licenses:assign` included, for a licensed group).
 - **Audited as:** `iam:packages:update`, plus `package:auto-rule` (`set`, `change`, `owner`, `contents`, or `clear`)
   when the rule changes.
 - **Errors:** `CONFLICT` for a name another package uses; `INVALID_INPUT` when the rule no longer fits new contents,

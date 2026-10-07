@@ -263,6 +263,30 @@ Deployment operations without HTTP routes: `initialize`, `bootstrap`, `recoverRo
 | `remind` | `POST /certifications/remind` | required |
 | `review` | `POST /certifications/review` | required |
 
+## clearances
+
+| Method | HTTP | Credential |
+| --- | --- | --- |
+| `debrief` | `POST /clearances/debrief` | required |
+| `declassify` | `POST /clearances/declassify` | required |
+| `defineScheme` | `POST /clearances/defineScheme` | required |
+| `explain` | `POST /clearances/explain` | required |
+| `get` | `POST /clearances/get` | required |
+| `getLabel` | `POST /clearances/getLabel` | required |
+| `getScheme` | `POST /clearances/getScheme` | required |
+| `grant` | `POST /clearances/grant` | required |
+| `label` | `POST /clearances/label` | required |
+| `list` | `POST /clearances/list` | required |
+| `listLabels` | `POST /clearances/listLabels` | required |
+| `mine` | `POST /clearances/mine` | required |
+| `readIn` | `POST /clearances/readIn` | required |
+| `reinstate` | `POST /clearances/reinstate` | required |
+| `revoke` | `POST /clearances/revoke` | required |
+| `suspend` | `POST /clearances/suspend` | required |
+| `templates` | `POST /clearances/templates` | required |
+| `update` | `POST /clearances/update` | required |
+| `updateScheme` | `POST /clearances/updateScheme` | required |
+
 ## compliance
 
 | Method | HTTP | Credential |
@@ -414,6 +438,25 @@ Deployment operations without HTTP routes: `initialize`, `bootstrap`, `recoverRo
 | `update` | `POST /groups/update` | required |
 | `updateMember` | `POST /groups/updateMember` | required |
 
+## guests
+
+| Method | HTTP | Credential |
+| --- | --- | --- |
+| `attest` | `POST /guests/attest` | required |
+| `configure` | `POST /guests/configure` | required |
+| `convertToMember` | `POST /guests/convertToMember` | required |
+| `get` | `POST /guests/get` | required |
+| `getSettings` | `POST /guests/getSettings` | required |
+| `invite` | `POST /guests/invite` | required |
+| `list` | `POST /guests/list` | required |
+| `listInvitations` | `POST /guests/listInvitations` | required |
+| `mine` | `POST /guests/mine` | required |
+| `redeem` | `POST /guests/redeem` | none |
+| `remove` | `POST /guests/remove` | required |
+| `resendInvitation` | `POST /guests/resendInvitation` | required |
+| `revokeInvitation` | `POST /guests/revokeInvitation` | required |
+| `setSponsor` | `POST /guests/setSponsor` | required |
+
 ## hostnames
 
 | Method | HTTP | Credential |
@@ -532,6 +575,29 @@ Deployment operations without HTTP routes: `initialize`, `bootstrap`, `recoverRo
 | `directory` | `POST /ldap/directory` | required |
 | `getSettings` | `POST /ldap/getSettings` | required |
 | `updateSettings` | `POST /ldap/updateSettings` | required |
+
+## licenses
+
+| Method | HTTP | Credential |
+| --- | --- | --- |
+| `addPool` | `POST /licenses/addPool` | required |
+| `assign` | `POST /licenses/assign` | required |
+| `assignMany` | `POST /licenses/assignMany` | required |
+| `configure` | `POST /licenses/configure` | required |
+| `createProduct` | `POST /licenses/createProduct` | required |
+| `getProduct` | `POST /licenses/getProduct` | required |
+| `getSettings` | `POST /licenses/getSettings` | required |
+| `listAssignments` | `POST /licenses/listAssignments` | required |
+| `listPools` | `POST /licenses/listPools` | required |
+| `listProducts` | `POST /licenses/listProducts` | required |
+| `listSeats` | `POST /licenses/listSeats` | required |
+| `mine` | `POST /licenses/mine` | required |
+| `removePool` | `POST /licenses/removePool` | required |
+| `retireProduct` | `POST /licenses/retireProduct` | required |
+| `unassign` | `POST /licenses/unassign` | required |
+| `updatePool` | `POST /licenses/updatePool` | required |
+| `updateProduct` | `POST /licenses/updateProduct` | required |
+| `usage` | `POST /licenses/usage` | required |
 
 ## links
 
@@ -1037,4 +1103,4 @@ Deployment operations without HTTP routes: `initialize`, `bootstrap`, `recoverRo
 | `run` | `POST /workflows/run` | required |
 | `update` | `POST /workflows/update` | required |
 
-61 groups, 716 methods.
+64 groups, 767 methods.

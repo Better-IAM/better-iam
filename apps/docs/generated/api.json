@@ -1,5 +1,5 @@
 {
- "generatedAt": "2026-09-24T17:57:29.683Z",
+ "generatedAt": "2026-10-07T14:17:07.450Z",
  "basePath": "/api/iam",
  "groups": [
   {
@@ -10860,6 +10860,993 @@
    ]
   },
   {
+   "name": "clearances",
+   "routed": true,
+   "methods": [
+    {
+     "name": "debrief",
+     "http": "POST /clearances/debrief",
+     "credential": "required",
+     "description": "",
+     "tags": [],
+     "params": [
+      {
+       "name": "credential",
+       "optional": false,
+       "type": "CredentialInput",
+       "schema": {
+        "$ref": "#/components/schemas/CredentialInput"
+       }
+      },
+      {
+       "name": "input",
+       "optional": false,
+       "type": "{\n  tenantId: string;\n  identityId: string;\n  compartmentId: string;\n  reason?: string;\n}",
+       "schema": {
+        "type": "object",
+        "properties": {
+         "tenantId": {
+          "type": "string"
+         },
+         "identityId": {
+          "type": "string"
+         },
+         "compartmentId": {
+          "type": "string"
+         },
+         "reason": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "tenantId",
+         "identityId",
+         "compartmentId"
+        ],
+        "additionalProperties": false
+       }
+      }
+     ],
+     "async": true,
+     "result": "ClearanceView",
+     "resultSchema": {
+      "$ref": "#/components/schemas/ClearanceView"
+     }
+    },
+    {
+     "name": "declassify",
+     "http": "POST /clearances/declassify",
+     "credential": "required",
+     "description": "",
+     "tags": [],
+     "params": [
+      {
+       "name": "credential",
+       "optional": false,
+       "type": "CredentialInput",
+       "schema": {
+        "$ref": "#/components/schemas/CredentialInput"
+       }
+      },
+      {
+       "name": "input",
+       "optional": false,
+       "type": "{\n  tenantId: string;\n  type: string;\n  id: string;\n  label: ClassificationLabel | null;\n  reason: string;\n  inheritToChildren?: boolean;\n}",
+       "schema": {
+        "type": "object",
+        "properties": {
+         "tenantId": {
+          "type": "string"
+         },
+         "type": {
+          "type": "string"
+         },
+         "id": {
+          "type": "string"
+         },
+         "label": {
+          "anyOf": [
+           {
+            "type": "null"
+           },
+           {
+            "$ref": "#/components/schemas/ClassificationLabel"
+           }
+          ]
+         },
+         "reason": {
+          "type": "string"
+         },
+         "inheritToChildren": {
+          "type": "boolean"
+         }
+        },
+        "required": [
+         "tenantId",
+         "type",
+         "id",
+         "label",
+         "reason"
+        ],
+        "additionalProperties": false
+       }
+      }
+     ],
+     "async": true,
+     "result": "ResourceLabelView | null",
+     "resultSchema": {
+      "anyOf": [
+       {
+        "type": "null"
+       },
+       {
+        "$ref": "#/components/schemas/ResourceLabelView"
+       }
+      ]
+     }
+    },
+    {
+     "name": "defineScheme",
+     "http": "POST /clearances/defineScheme",
+     "credential": "required",
+     "description": "",
+     "tags": [],
+     "params": [
+      {
+       "name": "credential",
+       "optional": false,
+       "type": "CredentialInput",
+       "schema": {
+        "$ref": "#/components/schemas/CredentialInput"
+       }
+      },
+      {
+       "name": "input",
+       "optional": false,
+       "type": "ClassificationSchemeInput & { tenantId: string }",
+       "schema": {
+        "allOf": [
+         {
+          "$ref": "#/components/schemas/ClassificationSchemeInput"
+         },
+         {
+          "type": "object",
+          "properties": {
+           "tenantId": {
+            "type": "string"
+           }
+          },
+          "required": [
+           "tenantId"
+          ],
+          "additionalProperties": false
+         }
+        ]
+       }
+      }
+     ],
+     "async": true,
+     "result": "ClassificationSchemeView",
+     "resultSchema": {
+      "$ref": "#/components/schemas/ClassificationSchemeView"
+     }
+    },
+    {
+     "name": "explain",
+     "http": "POST /clearances/explain",
+     "credential": "required",
+     "description": "",
+     "tags": [],
+     "params": [
+      {
+       "name": "credential",
+       "optional": false,
+       "type": "CredentialInput",
+       "schema": {
+        "$ref": "#/components/schemas/CredentialInput"
+       }
+      },
+      {
+       "name": "input",
+       "optional": false,
+       "type": "{ tenantId: string; identityId: string; type: string; id: string }",
+       "schema": {
+        "type": "object",
+        "properties": {
+         "tenantId": {
+          "type": "string"
+         },
+         "identityId": {
+          "type": "string"
+         },
+         "type": {
+          "type": "string"
+         },
+         "id": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "tenantId",
+         "identityId",
+         "type",
+         "id"
+        ],
+        "additionalProperties": false
+       }
+      }
+     ],
+     "async": true,
+     "result": "ClearanceExplanation",
+     "resultSchema": {
+      "$ref": "#/components/schemas/ClearanceExplanation"
+     }
+    },
+    {
+     "name": "get",
+     "http": "POST /clearances/get",
+     "credential": "required",
+     "description": "",
+     "tags": [],
+     "params": [
+      {
+       "name": "credential",
+       "optional": false,
+       "type": "CredentialInput",
+       "schema": {
+        "$ref": "#/components/schemas/CredentialInput"
+       }
+      },
+      {
+       "name": "input",
+       "optional": false,
+       "type": "{ tenantId: string; identityId: string }",
+       "schema": {
+        "type": "object",
+        "properties": {
+         "tenantId": {
+          "type": "string"
+         },
+         "identityId": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "tenantId",
+         "identityId"
+        ],
+        "additionalProperties": false
+       }
+      }
+     ],
+     "async": true,
+     "result": "ClearanceView | null",
+     "resultSchema": {
+      "anyOf": [
+       {
+        "type": "null"
+       },
+       {
+        "$ref": "#/components/schemas/ClearanceView"
+       }
+      ]
+     }
+    },
+    {
+     "name": "getLabel",
+     "http": "POST /clearances/getLabel",
+     "credential": "required",
+     "description": "",
+     "tags": [],
+     "params": [
+      {
+       "name": "credential",
+       "optional": false,
+       "type": "CredentialInput",
+       "schema": {
+        "$ref": "#/components/schemas/CredentialInput"
+       }
+      },
+      {
+       "name": "input",
+       "optional": false,
+       "type": "{ tenantId: string; type: string; id: string }",
+       "schema": {
+        "type": "object",
+        "properties": {
+         "tenantId": {
+          "type": "string"
+         },
+         "type": {
+          "type": "string"
+         },
+         "id": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "tenantId",
+         "type",
+         "id"
+        ],
+        "additionalProperties": false
+       }
+      }
+     ],
+     "async": true,
+     "result": "ResourceLabelState",
+     "resultSchema": {
+      "$ref": "#/components/schemas/ResourceLabelState"
+     }
+    },
+    {
+     "name": "getScheme",
+     "http": "POST /clearances/getScheme",
+     "credential": "required",
+     "description": "",
+     "tags": [],
+     "params": [
+      {
+       "name": "credential",
+       "optional": false,
+       "type": "CredentialInput",
+       "schema": {
+        "$ref": "#/components/schemas/CredentialInput"
+       }
+      },
+      {
+       "name": "input",
+       "optional": false,
+       "type": "{ tenantId: string }",
+       "schema": {
+        "type": "object",
+        "properties": {
+         "tenantId": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "tenantId"
+        ],
+        "additionalProperties": false
+       }
+      }
+     ],
+     "async": true,
+     "result": "ClassificationSchemeView | null",
+     "resultSchema": {
+      "anyOf": [
+       {
+        "type": "null"
+       },
+       {
+        "$ref": "#/components/schemas/ClassificationSchemeView"
+       }
+      ]
+     }
+    },
+    {
+     "name": "grant",
+     "http": "POST /clearances/grant",
+     "credential": "required",
+     "description": "",
+     "tags": [],
+     "params": [
+      {
+       "name": "credential",
+       "optional": false,
+       "type": "CredentialInput",
+       "schema": {
+        "$ref": "#/components/schemas/CredentialInput"
+       }
+      },
+      {
+       "name": "input",
+       "optional": false,
+       "type": "ClearanceGrantInput",
+       "schema": {
+        "$ref": "#/components/schemas/ClearanceGrantInput"
+       }
+      }
+     ],
+     "async": true,
+     "result": "ClearanceView",
+     "resultSchema": {
+      "$ref": "#/components/schemas/ClearanceView"
+     }
+    },
+    {
+     "name": "label",
+     "http": "POST /clearances/label",
+     "credential": "required",
+     "description": "",
+     "tags": [],
+     "params": [
+      {
+       "name": "credential",
+       "optional": false,
+       "type": "CredentialInput",
+       "schema": {
+        "$ref": "#/components/schemas/CredentialInput"
+       }
+      },
+      {
+       "name": "input",
+       "optional": false,
+       "type": "{\n  tenantId: string;\n  type: string;\n  id: string;\n  label: ClassificationLabel;\n  inheritToChildren?: boolean;\n}",
+       "schema": {
+        "type": "object",
+        "properties": {
+         "tenantId": {
+          "type": "string"
+         },
+         "type": {
+          "type": "string"
+         },
+         "id": {
+          "type": "string"
+         },
+         "label": {
+          "$ref": "#/components/schemas/ClassificationLabel"
+         },
+         "inheritToChildren": {
+          "type": "boolean"
+         }
+        },
+        "required": [
+         "tenantId",
+         "type",
+         "id",
+         "label"
+        ],
+        "additionalProperties": false
+       }
+      }
+     ],
+     "async": true,
+     "result": "ResourceLabelView",
+     "resultSchema": {
+      "$ref": "#/components/schemas/ResourceLabelView"
+     }
+    },
+    {
+     "name": "list",
+     "http": "POST /clearances/list",
+     "credential": "required",
+     "description": "",
+     "tags": [],
+     "params": [
+      {
+       "name": "credential",
+       "optional": false,
+       "type": "CredentialInput",
+       "schema": {
+        "$ref": "#/components/schemas/CredentialInput"
+       }
+      },
+      {
+       "name": "input",
+       "optional": false,
+       "type": "{\n  tenantId: string;\n  status?: ClearanceStatus;\n  level?: string;\n  expiringWithinDays?: number;\n  limit?: number;\n  offset?: number;\n}",
+       "schema": {
+        "type": "object",
+        "properties": {
+         "tenantId": {
+          "type": "string"
+         },
+         "status": {
+          "type": "string",
+          "enum": [
+           "active",
+           "suspended",
+           "revoked",
+           "interim",
+           "terminated"
+          ]
+         },
+         "level": {
+          "type": "string"
+         },
+         "expiringWithinDays": {
+          "type": "number"
+         },
+         "limit": {
+          "type": "number"
+         },
+         "offset": {
+          "type": "number"
+         }
+        },
+        "required": [
+         "tenantId"
+        ],
+        "additionalProperties": false
+       }
+      }
+     ],
+     "async": true,
+     "result": "ClearancePage",
+     "resultSchema": {
+      "$ref": "#/components/schemas/ClearancePage"
+     }
+    },
+    {
+     "name": "listLabels",
+     "http": "POST /clearances/listLabels",
+     "credential": "required",
+     "description": "",
+     "tags": [],
+     "params": [
+      {
+       "name": "credential",
+       "optional": false,
+       "type": "CredentialInput",
+       "schema": {
+        "$ref": "#/components/schemas/CredentialInput"
+       }
+      },
+      {
+       "name": "input",
+       "optional": false,
+       "type": "{\n  tenantId: string;\n  type?: string;\n  level?: string;\n  limit?: number;\n  offset?: number;\n}",
+       "schema": {
+        "type": "object",
+        "properties": {
+         "tenantId": {
+          "type": "string"
+         },
+         "type": {
+          "type": "string"
+         },
+         "level": {
+          "type": "string"
+         },
+         "limit": {
+          "type": "number"
+         },
+         "offset": {
+          "type": "number"
+         }
+        },
+        "required": [
+         "tenantId"
+        ],
+        "additionalProperties": false
+       }
+      }
+     ],
+     "async": true,
+     "result": "ResourceLabelPage",
+     "resultSchema": {
+      "$ref": "#/components/schemas/ResourceLabelPage"
+     }
+    },
+    {
+     "name": "mine",
+     "http": "POST /clearances/mine",
+     "credential": "required",
+     "description": "",
+     "tags": [],
+     "params": [
+      {
+       "name": "credential",
+       "optional": false,
+       "type": "CredentialInput",
+       "schema": {
+        "$ref": "#/components/schemas/CredentialInput"
+       }
+      },
+      {
+       "name": "input",
+       "optional": false,
+       "type": "{ tenantId: string }",
+       "schema": {
+        "type": "object",
+        "properties": {
+         "tenantId": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "tenantId"
+        ],
+        "additionalProperties": false
+       }
+      }
+     ],
+     "async": true,
+     "result": "MyClearance",
+     "resultSchema": {
+      "$ref": "#/components/schemas/MyClearance"
+     }
+    },
+    {
+     "name": "readIn",
+     "http": "POST /clearances/readIn",
+     "credential": "required",
+     "description": "",
+     "tags": [],
+     "params": [
+      {
+       "name": "credential",
+       "optional": false,
+       "type": "CredentialInput",
+       "schema": {
+        "$ref": "#/components/schemas/CredentialInput"
+       }
+      },
+      {
+       "name": "input",
+       "optional": false,
+       "type": "{\n  tenantId: string;\n  identityId: string;\n  compartmentId: string;\n  agreementId?: string;\n}",
+       "schema": {
+        "type": "object",
+        "properties": {
+         "tenantId": {
+          "type": "string"
+         },
+         "identityId": {
+          "type": "string"
+         },
+         "compartmentId": {
+          "type": "string"
+         },
+         "agreementId": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "tenantId",
+         "identityId",
+         "compartmentId"
+        ],
+        "additionalProperties": false
+       }
+      }
+     ],
+     "async": true,
+     "result": "ClearanceView",
+     "resultSchema": {
+      "$ref": "#/components/schemas/ClearanceView"
+     }
+    },
+    {
+     "name": "reinstate",
+     "http": "POST /clearances/reinstate",
+     "credential": "required",
+     "description": "",
+     "tags": [],
+     "params": [
+      {
+       "name": "credential",
+       "optional": false,
+       "type": "CredentialInput",
+       "schema": {
+        "$ref": "#/components/schemas/CredentialInput"
+       }
+      },
+      {
+       "name": "input",
+       "optional": false,
+       "type": "{ tenantId: string; identityId: string; reason?: string }",
+       "schema": {
+        "type": "object",
+        "properties": {
+         "tenantId": {
+          "type": "string"
+         },
+         "identityId": {
+          "type": "string"
+         },
+         "reason": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "tenantId",
+         "identityId"
+        ],
+        "additionalProperties": false
+       }
+      }
+     ],
+     "async": true,
+     "result": "ClearanceView",
+     "resultSchema": {
+      "$ref": "#/components/schemas/ClearanceView"
+     }
+    },
+    {
+     "name": "revoke",
+     "http": "POST /clearances/revoke",
+     "credential": "required",
+     "description": "",
+     "tags": [],
+     "params": [
+      {
+       "name": "credential",
+       "optional": false,
+       "type": "CredentialInput",
+       "schema": {
+        "$ref": "#/components/schemas/CredentialInput"
+       }
+      },
+      {
+       "name": "input",
+       "optional": false,
+       "type": "{\n  tenantId: string;\n  identityId: string;\n  reason: string;\n  notifyPerson?: boolean;\n}",
+       "schema": {
+        "type": "object",
+        "properties": {
+         "tenantId": {
+          "type": "string"
+         },
+         "identityId": {
+          "type": "string"
+         },
+         "reason": {
+          "type": "string"
+         },
+         "notifyPerson": {
+          "type": "boolean"
+         }
+        },
+        "required": [
+         "tenantId",
+         "identityId",
+         "reason"
+        ],
+        "additionalProperties": false
+       }
+      }
+     ],
+     "async": true,
+     "result": "ClearanceView",
+     "resultSchema": {
+      "$ref": "#/components/schemas/ClearanceView"
+     }
+    },
+    {
+     "name": "suspend",
+     "http": "POST /clearances/suspend",
+     "credential": "required",
+     "description": "",
+     "tags": [],
+     "params": [
+      {
+       "name": "credential",
+       "optional": false,
+       "type": "CredentialInput",
+       "schema": {
+        "$ref": "#/components/schemas/CredentialInput"
+       }
+      },
+      {
+       "name": "input",
+       "optional": false,
+       "type": "{\n  tenantId: string;\n  identityId: string;\n  reason: string;\n  incidentId?: string;\n  notifyPerson?: boolean;\n}",
+       "schema": {
+        "type": "object",
+        "properties": {
+         "tenantId": {
+          "type": "string"
+         },
+         "identityId": {
+          "type": "string"
+         },
+         "reason": {
+          "type": "string"
+         },
+         "incidentId": {
+          "type": "string"
+         },
+         "notifyPerson": {
+          "type": "boolean"
+         }
+        },
+        "required": [
+         "tenantId",
+         "identityId",
+         "reason"
+        ],
+        "additionalProperties": false
+       }
+      }
+     ],
+     "async": true,
+     "result": "ClearanceView",
+     "resultSchema": {
+      "$ref": "#/components/schemas/ClearanceView"
+     }
+    },
+    {
+     "name": "templates",
+     "http": "POST /clearances/templates",
+     "credential": "required",
+     "description": "",
+     "tags": [],
+     "params": [
+      {
+       "name": "credential",
+       "optional": false,
+       "type": "CredentialInput",
+       "schema": {
+        "$ref": "#/components/schemas/CredentialInput"
+       }
+      }
+     ],
+     "async": true,
+     "result": "ClassificationTemplateView[]",
+     "resultSchema": {
+      "type": "array",
+      "items": {
+       "$ref": "#/components/schemas/ClassificationTemplateView"
+      }
+     }
+    },
+    {
+     "name": "update",
+     "http": "POST /clearances/update",
+     "credential": "required",
+     "description": "",
+     "tags": [],
+     "params": [
+      {
+       "name": "credential",
+       "optional": false,
+       "type": "CredentialInput",
+       "schema": {
+        "$ref": "#/components/schemas/CredentialInput"
+       }
+      },
+      {
+       "name": "input",
+       "optional": false,
+       "type": "ClearanceUpdateInput",
+       "schema": {
+        "$ref": "#/components/schemas/ClearanceUpdateInput"
+       }
+      }
+     ],
+     "async": true,
+     "result": "ClearanceView",
+     "resultSchema": {
+      "$ref": "#/components/schemas/ClearanceView"
+     }
+    },
+    {
+     "name": "updateScheme",
+     "http": "POST /clearances/updateScheme",
+     "credential": "required",
+     "description": "",
+     "tags": [],
+     "params": [
+      {
+       "name": "credential",
+       "optional": false,
+       "type": "CredentialInput",
+       "schema": {
+        "$ref": "#/components/schemas/CredentialInput"
+       }
+      },
+      {
+       "name": "input",
+       "optional": false,
+       "type": "Partial<ClassificationSchemeInput> & { tenantId: string; version?: number }",
+       "schema": {
+        "allOf": [
+         {
+          "type": "object",
+          "properties": {
+           "name": {
+            "type": "string"
+           },
+           "template": {
+            "type": "string",
+            "enum": [
+             "us",
+             "uk",
+             "nato",
+             "corporate"
+            ],
+            "description": "Start from a built-in template; give either this or `definition`."
+           },
+           "definition": {
+            "$ref": "#/components/schemas/ClassificationSchemeDefinition"
+           },
+           "requireLabels": {
+            "type": "array",
+            "items": {
+             "type": "string"
+            },
+            "description": "Resource types that must carry a label (`*`: every application type)."
+           },
+           "defaultLabel": {
+            "anyOf": [
+             {
+              "type": "null"
+             },
+             {
+              "$ref": "#/components/schemas/ClassificationLabel"
+             }
+            ]
+           },
+           "guestCeiling": {
+            "anyOf": [
+             {
+              "type": "null"
+             },
+             {
+              "type": "string"
+             }
+            ],
+            "description": "Level id guests count at most at; null (the default) means guests hold no clearance."
+           },
+           "interimAllowed": {
+            "type": "boolean"
+           },
+           "adjudication": {
+            "type": "string",
+            "enum": [
+             "within-own",
+             "unrestricted"
+            ],
+            "description": "`within-own` (the default) or `unrestricted`."
+           },
+           "notify": {
+            "anyOf": [
+             {
+              "type": "null"
+             },
+             {
+              "type": "object",
+              "properties": {
+               "emails": {
+                "type": "array",
+                "items": {
+                 "type": "string"
+                }
+               }
+              },
+              "required": [
+               "emails"
+              ],
+              "additionalProperties": false
+             }
+            ],
+            "description": "Extra recipients of clearance reminders besides the owners."
+           }
+          },
+          "additionalProperties": false
+         },
+         {
+          "type": "object",
+          "properties": {
+           "tenantId": {
+            "type": "string"
+           },
+           "version": {
+            "type": "number"
+           }
+          },
+          "required": [
+           "tenantId"
+          ],
+          "additionalProperties": false
+         }
+        ]
+       }
+      }
+     ],
+     "async": true,
+     "result": "ClassificationSchemeView",
+     "resultSchema": {
+      "$ref": "#/components/schemas/ClassificationSchemeView"
+     }
+    }
+   ]
+  },
+  {
    "name": "compliance",
    "routed": true,
    "methods": [
@@ -11576,7 +12563,7 @@
       }
      ],
      "async": true,
-     "result": "{\n  status: 'pending' | 'revoked' | 'approved';\n  active: boolean;\n  controlKey: string;\n  subject: string;\n  reason: string;\n  expiresAt: number;\n  createdBy: string;\n  createdAt: number;\n  approvedBy?: string;\n  approvedAt?: number;\n  revokedBy?: string;\n  revokedAt?: number;\n  id: string;\n  tenantId: string;\n  uniqueKey?: string;\n}[]",
+     "result": "{\n  status: 'pending' | 'approved' | 'revoked';\n  active: boolean;\n  controlKey: string;\n  subject: string;\n  reason: string;\n  expiresAt: number;\n  createdBy: string;\n  createdAt: number;\n  approvedBy?: string;\n  approvedAt?: number;\n  revokedBy?: string;\n  revokedAt?: number;\n  id: string;\n  tenantId: string;\n  uniqueKey?: string;\n}[]",
      "resultSchema": {
       "type": "array",
       "items": {
@@ -16733,6 +17720,625 @@
    ]
   },
   {
+   "name": "guests",
+   "routed": true,
+   "methods": [
+    {
+     "name": "attest",
+     "http": "POST /guests/attest",
+     "credential": "required",
+     "description": "",
+     "tags": [],
+     "params": [
+      {
+       "name": "credential",
+       "optional": false,
+       "type": "CredentialInput",
+       "schema": {
+        "$ref": "#/components/schemas/CredentialInput"
+       }
+      },
+      {
+       "name": "input",
+       "optional": false,
+       "type": "{ tenantId: string; identityId: string; days?: number }",
+       "schema": {
+        "type": "object",
+        "properties": {
+         "tenantId": {
+          "type": "string"
+         },
+         "identityId": {
+          "type": "string"
+         },
+         "days": {
+          "type": "number"
+         }
+        },
+        "required": [
+         "tenantId",
+         "identityId"
+        ],
+        "additionalProperties": false
+       }
+      }
+     ],
+     "async": true,
+     "result": "GuestView",
+     "resultSchema": {
+      "$ref": "#/components/schemas/GuestView"
+     }
+    },
+    {
+     "name": "configure",
+     "http": "POST /guests/configure",
+     "credential": "required",
+     "description": "",
+     "tags": [],
+     "params": [
+      {
+       "name": "credential",
+       "optional": false,
+       "type": "CredentialInput",
+       "schema": {
+        "$ref": "#/components/schemas/CredentialInput"
+       }
+      },
+      {
+       "name": "input",
+       "optional": false,
+       "type": "GuestSettingsInput",
+       "schema": {
+        "$ref": "#/components/schemas/GuestSettingsInput"
+       }
+      }
+     ],
+     "async": true,
+     "result": "GuestSettingsView",
+     "resultSchema": {
+      "$ref": "#/components/schemas/GuestSettingsView"
+     }
+    },
+    {
+     "name": "convertToMember",
+     "http": "POST /guests/convertToMember",
+     "credential": "required",
+     "description": "",
+     "tags": [],
+     "params": [
+      {
+       "name": "credential",
+       "optional": false,
+       "type": "CredentialInput",
+       "schema": {
+        "$ref": "#/components/schemas/CredentialInput"
+       }
+      },
+      {
+       "name": "input",
+       "optional": false,
+       "type": "{ tenantId: string; identityId: string; clearExpiry?: boolean }",
+       "schema": {
+        "type": "object",
+        "properties": {
+         "tenantId": {
+          "type": "string"
+         },
+         "identityId": {
+          "type": "string"
+         },
+         "clearExpiry": {
+          "type": "boolean"
+         }
+        },
+        "required": [
+         "tenantId",
+         "identityId"
+        ],
+        "additionalProperties": false
+       }
+      }
+     ],
+     "async": true,
+     "result": "PublicIdentity",
+     "resultSchema": {
+      "$ref": "#/components/schemas/PublicIdentity"
+     }
+    },
+    {
+     "name": "get",
+     "http": "POST /guests/get",
+     "credential": "required",
+     "description": "",
+     "tags": [],
+     "params": [
+      {
+       "name": "credential",
+       "optional": false,
+       "type": "CredentialInput",
+       "schema": {
+        "$ref": "#/components/schemas/CredentialInput"
+       }
+      },
+      {
+       "name": "input",
+       "optional": false,
+       "type": "{ tenantId: string; identityId: string }",
+       "schema": {
+        "type": "object",
+        "properties": {
+         "tenantId": {
+          "type": "string"
+         },
+         "identityId": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "tenantId",
+         "identityId"
+        ],
+        "additionalProperties": false
+       }
+      }
+     ],
+     "async": true,
+     "result": "GuestView",
+     "resultSchema": {
+      "$ref": "#/components/schemas/GuestView"
+     }
+    },
+    {
+     "name": "getSettings",
+     "http": "POST /guests/getSettings",
+     "credential": "required",
+     "description": "",
+     "tags": [],
+     "params": [
+      {
+       "name": "credential",
+       "optional": false,
+       "type": "CredentialInput",
+       "schema": {
+        "$ref": "#/components/schemas/CredentialInput"
+       }
+      },
+      {
+       "name": "input",
+       "optional": false,
+       "type": "{ tenantId: string }",
+       "schema": {
+        "type": "object",
+        "properties": {
+         "tenantId": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "tenantId"
+        ],
+        "additionalProperties": false
+       }
+      }
+     ],
+     "async": true,
+     "result": "GuestSettingsView",
+     "resultSchema": {
+      "$ref": "#/components/schemas/GuestSettingsView"
+     }
+    },
+    {
+     "name": "invite",
+     "http": "POST /guests/invite",
+     "credential": "required",
+     "description": "",
+     "tags": [],
+     "params": [
+      {
+       "name": "credential",
+       "optional": false,
+       "type": "CredentialInput",
+       "schema": {
+        "$ref": "#/components/schemas/CredentialInput"
+       }
+      },
+      {
+       "name": "input",
+       "optional": false,
+       "type": "GuestInviteInput",
+       "schema": {
+        "$ref": "#/components/schemas/GuestInviteInput"
+       }
+      }
+     ],
+     "async": true,
+     "result": "GuestInvitationView",
+     "resultSchema": {
+      "$ref": "#/components/schemas/GuestInvitationView"
+     }
+    },
+    {
+     "name": "list",
+     "http": "POST /guests/list",
+     "credential": "required",
+     "description": "",
+     "tags": [],
+     "params": [
+      {
+       "name": "credential",
+       "optional": false,
+       "type": "CredentialInput",
+       "schema": {
+        "$ref": "#/components/schemas/CredentialInput"
+       }
+      },
+      {
+       "name": "input",
+       "optional": false,
+       "type": "{\n  tenantId: string;\n  sponsorId?: string;\n  status?: GuestAccountStatus;\n  expiringWithinDays?: number;\n  limit?: number;\n  offset?: number;\n}",
+       "schema": {
+        "type": "object",
+        "properties": {
+         "tenantId": {
+          "type": "string"
+         },
+         "sponsorId": {
+          "type": "string"
+         },
+         "status": {
+          "type": "string",
+          "enum": [
+           "expired",
+           "active",
+           "removed",
+           "converted"
+          ]
+         },
+         "expiringWithinDays": {
+          "type": "number"
+         },
+         "limit": {
+          "type": "number"
+         },
+         "offset": {
+          "type": "number"
+         }
+        },
+        "required": [
+         "tenantId"
+        ],
+        "additionalProperties": false
+       }
+      }
+     ],
+     "async": true,
+     "result": "GuestPage",
+     "resultSchema": {
+      "$ref": "#/components/schemas/GuestPage"
+     }
+    },
+    {
+     "name": "listInvitations",
+     "http": "POST /guests/listInvitations",
+     "credential": "required",
+     "description": "",
+     "tags": [],
+     "params": [
+      {
+       "name": "credential",
+       "optional": false,
+       "type": "CredentialInput",
+       "schema": {
+        "$ref": "#/components/schemas/CredentialInput"
+       }
+      },
+      {
+       "name": "input",
+       "optional": false,
+       "type": "{ tenantId: string; status?: GuestInvitationStatus }",
+       "schema": {
+        "type": "object",
+        "properties": {
+         "tenantId": {
+          "type": "string"
+         },
+         "status": {
+          "type": "string",
+          "enum": [
+           "pending",
+           "expired",
+           "revoked",
+           "redeemed"
+          ]
+         }
+        },
+        "required": [
+         "tenantId"
+        ],
+        "additionalProperties": false
+       }
+      }
+     ],
+     "async": true,
+     "result": "GuestInvitationView[]",
+     "resultSchema": {
+      "type": "array",
+      "items": {
+       "$ref": "#/components/schemas/GuestInvitationView"
+      }
+     }
+    },
+    {
+     "name": "mine",
+     "http": "POST /guests/mine",
+     "credential": "required",
+     "description": "",
+     "tags": [],
+     "params": [
+      {
+       "name": "credential",
+       "optional": false,
+       "type": "CredentialInput",
+       "schema": {
+        "$ref": "#/components/schemas/CredentialInput"
+       }
+      },
+      {
+       "name": "input",
+       "optional": false,
+       "type": "{ tenantId: string }",
+       "schema": {
+        "type": "object",
+        "properties": {
+         "tenantId": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "tenantId"
+        ],
+        "additionalProperties": false
+       }
+      }
+     ],
+     "async": true,
+     "result": "GuestView[]",
+     "resultSchema": {
+      "type": "array",
+      "items": {
+       "$ref": "#/components/schemas/GuestView"
+      }
+     }
+    },
+    {
+     "name": "redeem",
+     "http": "POST /guests/redeem",
+     "credential": "none",
+     "description": "",
+     "tags": [],
+     "params": [
+      {
+       "name": "input",
+       "optional": false,
+       "type": "{ tenantId: string; token: string; name: string; password: string }",
+       "schema": {
+        "type": "object",
+        "properties": {
+         "tenantId": {
+          "type": "string"
+         },
+         "token": {
+          "type": "string"
+         },
+         "name": {
+          "type": "string"
+         },
+         "password": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "tenantId",
+         "token",
+         "name",
+         "password"
+        ],
+        "additionalProperties": false
+       }
+      }
+     ],
+     "async": true,
+     "result": "EnrollmentResult",
+     "resultSchema": {
+      "$ref": "#/components/schemas/EnrollmentResult"
+     }
+    },
+    {
+     "name": "remove",
+     "http": "POST /guests/remove",
+     "credential": "required",
+     "description": "",
+     "tags": [],
+     "params": [
+      {
+       "name": "credential",
+       "optional": false,
+       "type": "CredentialInput",
+       "schema": {
+        "$ref": "#/components/schemas/CredentialInput"
+       }
+      },
+      {
+       "name": "input",
+       "optional": false,
+       "type": "{ tenantId: string; identityId: string; reason: string }",
+       "schema": {
+        "type": "object",
+        "properties": {
+         "tenantId": {
+          "type": "string"
+         },
+         "identityId": {
+          "type": "string"
+         },
+         "reason": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "tenantId",
+         "identityId",
+         "reason"
+        ],
+        "additionalProperties": false
+       }
+      }
+     ],
+     "async": true,
+     "result": "GuestRemoval",
+     "resultSchema": {
+      "$ref": "#/components/schemas/GuestRemoval"
+     }
+    },
+    {
+     "name": "resendInvitation",
+     "http": "POST /guests/resendInvitation",
+     "credential": "required",
+     "description": "",
+     "tags": [],
+     "params": [
+      {
+       "name": "credential",
+       "optional": false,
+       "type": "CredentialInput",
+       "schema": {
+        "$ref": "#/components/schemas/CredentialInput"
+       }
+      },
+      {
+       "name": "input",
+       "optional": false,
+       "type": "{ tenantId: string; invitationId: string; expiresInDays?: number }",
+       "schema": {
+        "type": "object",
+        "properties": {
+         "tenantId": {
+          "type": "string"
+         },
+         "invitationId": {
+          "type": "string"
+         },
+         "expiresInDays": {
+          "type": "number"
+         }
+        },
+        "required": [
+         "tenantId",
+         "invitationId"
+        ],
+        "additionalProperties": false
+       }
+      }
+     ],
+     "async": true,
+     "result": "GuestInvitationView",
+     "resultSchema": {
+      "$ref": "#/components/schemas/GuestInvitationView"
+     }
+    },
+    {
+     "name": "revokeInvitation",
+     "http": "POST /guests/revokeInvitation",
+     "credential": "required",
+     "description": "",
+     "tags": [],
+     "params": [
+      {
+       "name": "credential",
+       "optional": false,
+       "type": "CredentialInput",
+       "schema": {
+        "$ref": "#/components/schemas/CredentialInput"
+       }
+      },
+      {
+       "name": "input",
+       "optional": false,
+       "type": "{ tenantId: string; invitationId: string }",
+       "schema": {
+        "type": "object",
+        "properties": {
+         "tenantId": {
+          "type": "string"
+         },
+         "invitationId": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "tenantId",
+         "invitationId"
+        ],
+        "additionalProperties": false
+       }
+      }
+     ],
+     "async": true,
+     "result": "GuestInvitationView",
+     "resultSchema": {
+      "$ref": "#/components/schemas/GuestInvitationView"
+     }
+    },
+    {
+     "name": "setSponsor",
+     "http": "POST /guests/setSponsor",
+     "credential": "required",
+     "description": "",
+     "tags": [],
+     "params": [
+      {
+       "name": "credential",
+       "optional": false,
+       "type": "CredentialInput",
+       "schema": {
+        "$ref": "#/components/schemas/CredentialInput"
+       }
+      },
+      {
+       "name": "input",
+       "optional": false,
+       "type": "{ tenantId: string; identityId: string; sponsorId: string }",
+       "schema": {
+        "type": "object",
+        "properties": {
+         "tenantId": {
+          "type": "string"
+         },
+         "identityId": {
+          "type": "string"
+         },
+         "sponsorId": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "tenantId",
+         "identityId",
+         "sponsorId"
+        ],
+        "additionalProperties": false
+       }
+      }
+     ],
+     "async": true,
+     "result": "GuestView",
+     "resultSchema": {
+      "$ref": "#/components/schemas/GuestView"
+     }
+    }
+   ]
+  },
+  {
    "name": "hostnames",
    "routed": true,
    "methods": [
@@ -18585,7 +20191,7 @@
       }
      ],
      "async": true,
-     "result": "{\n  departmentsReassigned?: number | undefined;\n  teamsLeft?: number | undefined;\n  delegationsRevoked?: number | undefined;\n  agentsUnsponsored?: number | undefined;\n  agentsReassigned?: number | undefined;\n  sessions: number;\n  bindings: number;\n  memberships: number;\n  activations: number;\n  packages: number;\n  relationships: number;\n  accessRequests: number;\n  authorities: number;\n  resourcesReassigned: number;\n  resourcesOwned: number;\n  reportsReassigned: number;\n  identity: PublicIdentity;\n}",
+     "result": "{\n  departmentsReassigned?: number | undefined;\n  teamsLeft?: number | undefined;\n  clearancesTerminated?: number | undefined;\n  guestsUnsponsored?: number | undefined;\n  guestsReassigned?: number | undefined;\n  delegationsRevoked?: number | undefined;\n  agentsUnsponsored?: number | undefined;\n  agentsReassigned?: number | undefined;\n  sessions: number;\n  bindings: number;\n  memberships: number;\n  activations: number;\n  packages: number;\n  relationships: number;\n  accessRequests: number;\n  authorities: number;\n  resourcesReassigned: number;\n  resourcesOwned: number;\n  reportsReassigned: number;\n  identity: PublicIdentity;\n}",
      "resultSchema": {
       "type": "object",
       "properties": {
@@ -18593,6 +20199,15 @@
         "type": "number"
        },
        "teamsLeft": {
+        "type": "number"
+       },
+       "clearancesTerminated": {
+        "type": "number"
+       },
+       "guestsUnsponsored": {
+        "type": "number"
+       },
+       "guestsReassigned": {
         "type": "number"
        },
        "delegationsRevoked": {
@@ -22506,6 +24121,1020 @@
      "result": "LdapSettingsView",
      "resultSchema": {
       "$ref": "#/components/schemas/LdapSettingsView"
+     }
+    }
+   ]
+  },
+  {
+   "name": "licenses",
+   "routed": true,
+   "methods": [
+    {
+     "name": "addPool",
+     "http": "POST /licenses/addPool",
+     "credential": "required",
+     "description": "",
+     "tags": [],
+     "params": [
+      {
+       "name": "credential",
+       "optional": false,
+       "type": "CredentialInput",
+       "schema": {
+        "$ref": "#/components/schemas/CredentialInput"
+       }
+      },
+      {
+       "name": "input",
+       "optional": false,
+       "type": "{\n  tenantId: string;\n  productId: string;\n  quantity: number;\n  startsAt?: number;\n  endsAt?: number;\n  note?: string;\n  subscriptionId?: string;\n}",
+       "schema": {
+        "type": "object",
+        "properties": {
+         "tenantId": {
+          "type": "string"
+         },
+         "productId": {
+          "type": "string"
+         },
+         "quantity": {
+          "type": "number"
+         },
+         "startsAt": {
+          "type": "number"
+         },
+         "endsAt": {
+          "type": "number"
+         },
+         "note": {
+          "type": "string"
+         },
+         "subscriptionId": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "tenantId",
+         "productId",
+         "quantity"
+        ],
+        "additionalProperties": false
+       }
+      }
+     ],
+     "async": true,
+     "result": "LicensePoolResult",
+     "resultSchema": {
+      "$ref": "#/components/schemas/LicensePoolResult"
+     }
+    },
+    {
+     "name": "assign",
+     "http": "POST /licenses/assign",
+     "credential": "required",
+     "description": "",
+     "tags": [],
+     "params": [
+      {
+       "name": "credential",
+       "optional": false,
+       "type": "CredentialInput",
+       "schema": {
+        "$ref": "#/components/schemas/CredentialInput"
+       }
+      },
+      {
+       "name": "input",
+       "optional": false,
+       "type": "{\n  tenantId: string;\n  productId: string;\n  subjectType: LicenseSubjectType;\n  subjectId: string;\n}",
+       "schema": {
+        "type": "object",
+        "properties": {
+         "tenantId": {
+          "type": "string"
+         },
+         "productId": {
+          "type": "string"
+         },
+         "subjectType": {
+          "$ref": "#/components/schemas/LicenseSubjectType"
+         },
+         "subjectId": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "tenantId",
+         "productId",
+         "subjectType",
+         "subjectId"
+        ],
+        "additionalProperties": false
+       }
+      }
+     ],
+     "async": true,
+     "result": "LicenseAssignResult",
+     "resultSchema": {
+      "$ref": "#/components/schemas/LicenseAssignResult"
+     }
+    },
+    {
+     "name": "assignMany",
+     "http": "POST /licenses/assignMany",
+     "credential": "required",
+     "description": "",
+     "tags": [],
+     "params": [
+      {
+       "name": "credential",
+       "optional": false,
+       "type": "CredentialInput",
+       "schema": {
+        "$ref": "#/components/schemas/CredentialInput"
+       }
+      },
+      {
+       "name": "input",
+       "optional": false,
+       "type": "{ tenantId: string; productId: string; identityIds: string[] }",
+       "schema": {
+        "type": "object",
+        "properties": {
+         "tenantId": {
+          "type": "string"
+         },
+         "productId": {
+          "type": "string"
+         },
+         "identityIds": {
+          "type": "array",
+          "items": {
+           "type": "string"
+          }
+         }
+        },
+        "required": [
+         "tenantId",
+         "productId",
+         "identityIds"
+        ],
+        "additionalProperties": false
+       }
+      }
+     ],
+     "async": true,
+     "result": "LicenseAssignManyResult",
+     "resultSchema": {
+      "$ref": "#/components/schemas/LicenseAssignManyResult"
+     }
+    },
+    {
+     "name": "configure",
+     "http": "POST /licenses/configure",
+     "credential": "required",
+     "description": "",
+     "tags": [],
+     "params": [
+      {
+       "name": "credential",
+       "optional": false,
+       "type": "CredentialInput",
+       "schema": {
+        "$ref": "#/components/schemas/CredentialInput"
+       }
+      },
+      {
+       "name": "input",
+       "optional": false,
+       "type": "{\n  tenantId: string;\n  reclaimAfterDays?: number | null;\n  notifyWaiting?: boolean;\n}",
+       "schema": {
+        "type": "object",
+        "properties": {
+         "tenantId": {
+          "type": "string"
+         },
+         "reclaimAfterDays": {
+          "anyOf": [
+           {
+            "type": "null"
+           },
+           {
+            "type": "number"
+           }
+          ]
+         },
+         "notifyWaiting": {
+          "type": "boolean"
+         }
+        },
+        "required": [
+         "tenantId"
+        ],
+        "additionalProperties": false
+       }
+      }
+     ],
+     "async": true,
+     "result": "LicenseSettingsView",
+     "resultSchema": {
+      "$ref": "#/components/schemas/LicenseSettingsView"
+     }
+    },
+    {
+     "name": "createProduct",
+     "http": "POST /licenses/createProduct",
+     "credential": "required",
+     "description": "",
+     "tags": [],
+     "params": [
+      {
+       "name": "credential",
+       "optional": false,
+       "type": "CredentialInput",
+       "schema": {
+        "$ref": "#/components/schemas/CredentialInput"
+       }
+      },
+      {
+       "name": "input",
+       "optional": false,
+       "type": "{\n  tenantId: string;\n  key: string;\n  name: string;\n  description?: string;\n  featureKeys?: string[];\n}",
+       "schema": {
+        "type": "object",
+        "properties": {
+         "tenantId": {
+          "type": "string"
+         },
+         "key": {
+          "type": "string"
+         },
+         "name": {
+          "type": "string"
+         },
+         "description": {
+          "type": "string"
+         },
+         "featureKeys": {
+          "type": "array",
+          "items": {
+           "type": "string"
+          }
+         }
+        },
+        "required": [
+         "tenantId",
+         "key",
+         "name"
+        ],
+        "additionalProperties": false
+       }
+      }
+     ],
+     "async": true,
+     "result": "LicenseProductView",
+     "resultSchema": {
+      "$ref": "#/components/schemas/LicenseProductView"
+     }
+    },
+    {
+     "name": "getProduct",
+     "http": "POST /licenses/getProduct",
+     "credential": "required",
+     "description": "",
+     "tags": [],
+     "params": [
+      {
+       "name": "credential",
+       "optional": false,
+       "type": "CredentialInput",
+       "schema": {
+        "$ref": "#/components/schemas/CredentialInput"
+       }
+      },
+      {
+       "name": "input",
+       "optional": false,
+       "type": "{ tenantId: string; productId: string }",
+       "schema": {
+        "type": "object",
+        "properties": {
+         "tenantId": {
+          "type": "string"
+         },
+         "productId": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "tenantId",
+         "productId"
+        ],
+        "additionalProperties": false
+       }
+      }
+     ],
+     "async": true,
+     "result": "LicenseProductView",
+     "resultSchema": {
+      "$ref": "#/components/schemas/LicenseProductView"
+     }
+    },
+    {
+     "name": "getSettings",
+     "http": "POST /licenses/getSettings",
+     "credential": "required",
+     "description": "",
+     "tags": [],
+     "params": [
+      {
+       "name": "credential",
+       "optional": false,
+       "type": "CredentialInput",
+       "schema": {
+        "$ref": "#/components/schemas/CredentialInput"
+       }
+      },
+      {
+       "name": "input",
+       "optional": false,
+       "type": "{ tenantId: string }",
+       "schema": {
+        "type": "object",
+        "properties": {
+         "tenantId": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "tenantId"
+        ],
+        "additionalProperties": false
+       }
+      }
+     ],
+     "async": true,
+     "result": "LicenseSettingsView",
+     "resultSchema": {
+      "$ref": "#/components/schemas/LicenseSettingsView"
+     }
+    },
+    {
+     "name": "listAssignments",
+     "http": "POST /licenses/listAssignments",
+     "credential": "required",
+     "description": "",
+     "tags": [],
+     "params": [
+      {
+       "name": "credential",
+       "optional": false,
+       "type": "CredentialInput",
+       "schema": {
+        "$ref": "#/components/schemas/CredentialInput"
+       }
+      },
+      {
+       "name": "input",
+       "optional": false,
+       "type": "{\n  tenantId: string;\n  productId?: string;\n  subjectType?: LicenseSubjectType;\n  subjectId?: string;\n  limit?: number;\n  offset?: number;\n}",
+       "schema": {
+        "type": "object",
+        "properties": {
+         "tenantId": {
+          "type": "string"
+         },
+         "productId": {
+          "type": "string"
+         },
+         "subjectType": {
+          "type": "string",
+          "enum": [
+           "identity",
+           "group"
+          ]
+         },
+         "subjectId": {
+          "type": "string"
+         },
+         "limit": {
+          "type": "number"
+         },
+         "offset": {
+          "type": "number"
+         }
+        },
+        "required": [
+         "tenantId"
+        ],
+        "additionalProperties": false
+       }
+      }
+     ],
+     "async": true,
+     "result": "{ assignments: LicenseAssignmentView[]; total: number }",
+     "resultSchema": {
+      "type": "object",
+      "properties": {
+       "assignments": {
+        "type": "array",
+        "items": {
+         "$ref": "#/components/schemas/LicenseAssignmentView"
+        }
+       },
+       "total": {
+        "type": "number"
+       }
+      },
+      "required": [
+       "assignments",
+       "total"
+      ],
+      "additionalProperties": false
+     }
+    },
+    {
+     "name": "listPools",
+     "http": "POST /licenses/listPools",
+     "credential": "required",
+     "description": "",
+     "tags": [],
+     "params": [
+      {
+       "name": "credential",
+       "optional": false,
+       "type": "CredentialInput",
+       "schema": {
+        "$ref": "#/components/schemas/CredentialInput"
+       }
+      },
+      {
+       "name": "input",
+       "optional": false,
+       "type": "{\n  tenantId: string;\n  productId?: string;\n  includeEnded?: boolean;\n  limit?: number;\n  offset?: number;\n}",
+       "schema": {
+        "type": "object",
+        "properties": {
+         "tenantId": {
+          "type": "string"
+         },
+         "productId": {
+          "type": "string"
+         },
+         "includeEnded": {
+          "type": "boolean"
+         },
+         "limit": {
+          "type": "number"
+         },
+         "offset": {
+          "type": "number"
+         }
+        },
+        "required": [
+         "tenantId"
+        ],
+        "additionalProperties": false
+       }
+      }
+     ],
+     "async": true,
+     "result": "{ pools: LicensePoolView[]; total: number }",
+     "resultSchema": {
+      "type": "object",
+      "properties": {
+       "pools": {
+        "type": "array",
+        "items": {
+         "$ref": "#/components/schemas/LicensePoolView"
+        }
+       },
+       "total": {
+        "type": "number"
+       }
+      },
+      "required": [
+       "pools",
+       "total"
+      ],
+      "additionalProperties": false
+     }
+    },
+    {
+     "name": "listProducts",
+     "http": "POST /licenses/listProducts",
+     "credential": "required",
+     "description": "",
+     "tags": [],
+     "params": [
+      {
+       "name": "credential",
+       "optional": false,
+       "type": "CredentialInput",
+       "schema": {
+        "$ref": "#/components/schemas/CredentialInput"
+       }
+      },
+      {
+       "name": "input",
+       "optional": false,
+       "type": "{ tenantId: string; status?: LicenseProductStatus }",
+       "schema": {
+        "type": "object",
+        "properties": {
+         "tenantId": {
+          "type": "string"
+         },
+         "status": {
+          "type": "string",
+          "enum": [
+           "active",
+           "retired"
+          ]
+         }
+        },
+        "required": [
+         "tenantId"
+        ],
+        "additionalProperties": false
+       }
+      }
+     ],
+     "async": true,
+     "result": "{ tenantId: string; products: LicenseProductView[] }",
+     "resultSchema": {
+      "type": "object",
+      "properties": {
+       "tenantId": {
+        "type": "string"
+       },
+       "products": {
+        "type": "array",
+        "items": {
+         "$ref": "#/components/schemas/LicenseProductView"
+        }
+       }
+      },
+      "required": [
+       "tenantId",
+       "products"
+      ],
+      "additionalProperties": false
+     }
+    },
+    {
+     "name": "listSeats",
+     "http": "POST /licenses/listSeats",
+     "credential": "required",
+     "description": "",
+     "tags": [],
+     "params": [
+      {
+       "name": "credential",
+       "optional": false,
+       "type": "CredentialInput",
+       "schema": {
+        "$ref": "#/components/schemas/CredentialInput"
+       }
+      },
+      {
+       "name": "input",
+       "optional": false,
+       "type": "{\n  tenantId: string;\n  productId?: string;\n  status?: LicenseSeatStatus;\n  identityId?: string;\n  limit?: number;\n  offset?: number;\n}",
+       "schema": {
+        "type": "object",
+        "properties": {
+         "tenantId": {
+          "type": "string"
+         },
+         "productId": {
+          "type": "string"
+         },
+         "status": {
+          "type": "string",
+          "enum": [
+           "active",
+           "waiting"
+          ]
+         },
+         "identityId": {
+          "type": "string"
+         },
+         "limit": {
+          "type": "number"
+         },
+         "offset": {
+          "type": "number"
+         }
+        },
+        "required": [
+         "tenantId"
+        ],
+        "additionalProperties": false
+       }
+      }
+     ],
+     "async": true,
+     "result": "{ seats: LicenseSeatView[]; total: number }",
+     "resultSchema": {
+      "type": "object",
+      "properties": {
+       "seats": {
+        "type": "array",
+        "items": {
+         "$ref": "#/components/schemas/LicenseSeatView"
+        }
+       },
+       "total": {
+        "type": "number"
+       }
+      },
+      "required": [
+       "seats",
+       "total"
+      ],
+      "additionalProperties": false
+     }
+    },
+    {
+     "name": "mine",
+     "http": "POST /licenses/mine",
+     "credential": "required",
+     "description": "",
+     "tags": [],
+     "params": [
+      {
+       "name": "credential",
+       "optional": false,
+       "type": "CredentialInput",
+       "schema": {
+        "$ref": "#/components/schemas/CredentialInput"
+       }
+      },
+      {
+       "name": "input",
+       "optional": false,
+       "type": "{ tenantId: string }",
+       "schema": {
+        "type": "object",
+        "properties": {
+         "tenantId": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "tenantId"
+        ],
+        "additionalProperties": false
+       }
+      }
+     ],
+     "async": true,
+     "result": "MyLicenses",
+     "resultSchema": {
+      "$ref": "#/components/schemas/MyLicenses"
+     }
+    },
+    {
+     "name": "removePool",
+     "http": "POST /licenses/removePool",
+     "credential": "required",
+     "description": "",
+     "tags": [],
+     "params": [
+      {
+       "name": "credential",
+       "optional": false,
+       "type": "CredentialInput",
+       "schema": {
+        "$ref": "#/components/schemas/CredentialInput"
+       }
+      },
+      {
+       "name": "input",
+       "optional": false,
+       "type": "{ tenantId: string; poolId: string }",
+       "schema": {
+        "type": "object",
+        "properties": {
+         "tenantId": {
+          "type": "string"
+         },
+         "poolId": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "tenantId",
+         "poolId"
+        ],
+        "additionalProperties": false
+       }
+      }
+     ],
+     "async": true,
+     "result": "{ removed: true; seats: LicenseSeatChange[] }",
+     "resultSchema": {
+      "type": "object",
+      "properties": {
+       "removed": {
+        "type": "boolean",
+        "const": true
+       },
+       "seats": {
+        "type": "array",
+        "items": {
+         "$ref": "#/components/schemas/LicenseSeatChange"
+        }
+       }
+      },
+      "required": [
+       "removed",
+       "seats"
+      ],
+      "additionalProperties": false
+     }
+    },
+    {
+     "name": "retireProduct",
+     "http": "POST /licenses/retireProduct",
+     "credential": "required",
+     "description": "",
+     "tags": [],
+     "params": [
+      {
+       "name": "credential",
+       "optional": false,
+       "type": "CredentialInput",
+       "schema": {
+        "$ref": "#/components/schemas/CredentialInput"
+       }
+      },
+      {
+       "name": "input",
+       "optional": false,
+       "type": "{ tenantId: string; productId: string }",
+       "schema": {
+        "type": "object",
+        "properties": {
+         "tenantId": {
+          "type": "string"
+         },
+         "productId": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "tenantId",
+         "productId"
+        ],
+        "additionalProperties": false
+       }
+      }
+     ],
+     "async": true,
+     "result": "LicenseProductRetireResult",
+     "resultSchema": {
+      "$ref": "#/components/schemas/LicenseProductRetireResult"
+     }
+    },
+    {
+     "name": "unassign",
+     "http": "POST /licenses/unassign",
+     "credential": "required",
+     "description": "",
+     "tags": [],
+     "params": [
+      {
+       "name": "credential",
+       "optional": false,
+       "type": "CredentialInput",
+       "schema": {
+        "$ref": "#/components/schemas/CredentialInput"
+       }
+      },
+      {
+       "name": "input",
+       "optional": false,
+       "type": "{\n  tenantId: string;\n  assignmentId?: string;\n  productId?: string;\n  subjectType?: LicenseSubjectType;\n  subjectId?: string;\n}",
+       "schema": {
+        "type": "object",
+        "properties": {
+         "tenantId": {
+          "type": "string"
+         },
+         "assignmentId": {
+          "type": "string"
+         },
+         "productId": {
+          "type": "string"
+         },
+         "subjectType": {
+          "type": "string",
+          "enum": [
+           "identity",
+           "group"
+          ]
+         },
+         "subjectId": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "tenantId"
+        ],
+        "additionalProperties": false
+       }
+      }
+     ],
+     "async": true,
+     "result": "{ removed: true; seats: LicenseSeatChange[] }",
+     "resultSchema": {
+      "type": "object",
+      "properties": {
+       "removed": {
+        "type": "boolean",
+        "const": true
+       },
+       "seats": {
+        "type": "array",
+        "items": {
+         "$ref": "#/components/schemas/LicenseSeatChange"
+        }
+       }
+      },
+      "required": [
+       "removed",
+       "seats"
+      ],
+      "additionalProperties": false
+     }
+    },
+    {
+     "name": "updatePool",
+     "http": "POST /licenses/updatePool",
+     "credential": "required",
+     "description": "",
+     "tags": [],
+     "params": [
+      {
+       "name": "credential",
+       "optional": false,
+       "type": "CredentialInput",
+       "schema": {
+        "$ref": "#/components/schemas/CredentialInput"
+       }
+      },
+      {
+       "name": "input",
+       "optional": false,
+       "type": "{\n  tenantId: string;\n  poolId: string;\n  quantity?: number;\n  endsAt?: number | null;\n  note?: string | null;\n}",
+       "schema": {
+        "type": "object",
+        "properties": {
+         "tenantId": {
+          "type": "string"
+         },
+         "poolId": {
+          "type": "string"
+         },
+         "quantity": {
+          "type": "number"
+         },
+         "endsAt": {
+          "anyOf": [
+           {
+            "type": "null"
+           },
+           {
+            "type": "number"
+           }
+          ]
+         },
+         "note": {
+          "anyOf": [
+           {
+            "type": "null"
+           },
+           {
+            "type": "string"
+           }
+          ]
+         }
+        },
+        "required": [
+         "tenantId",
+         "poolId"
+        ],
+        "additionalProperties": false
+       }
+      }
+     ],
+     "async": true,
+     "result": "LicensePoolResult",
+     "resultSchema": {
+      "$ref": "#/components/schemas/LicensePoolResult"
+     }
+    },
+    {
+     "name": "updateProduct",
+     "http": "POST /licenses/updateProduct",
+     "credential": "required",
+     "description": "",
+     "tags": [],
+     "params": [
+      {
+       "name": "credential",
+       "optional": false,
+       "type": "CredentialInput",
+       "schema": {
+        "$ref": "#/components/schemas/CredentialInput"
+       }
+      },
+      {
+       "name": "input",
+       "optional": false,
+       "type": "{\n  tenantId: string;\n  productId: string;\n  name?: string;\n  description?: string | null;\n  featureKeys?: string[];\n}",
+       "schema": {
+        "type": "object",
+        "properties": {
+         "tenantId": {
+          "type": "string"
+         },
+         "productId": {
+          "type": "string"
+         },
+         "name": {
+          "type": "string"
+         },
+         "description": {
+          "anyOf": [
+           {
+            "type": "null"
+           },
+           {
+            "type": "string"
+           }
+          ]
+         },
+         "featureKeys": {
+          "type": "array",
+          "items": {
+           "type": "string"
+          }
+         }
+        },
+        "required": [
+         "tenantId",
+         "productId"
+        ],
+        "additionalProperties": false
+       }
+      }
+     ],
+     "async": true,
+     "result": "LicenseProductView",
+     "resultSchema": {
+      "$ref": "#/components/schemas/LicenseProductView"
+     }
+    },
+    {
+     "name": "usage",
+     "http": "POST /licenses/usage",
+     "credential": "required",
+     "description": "",
+     "tags": [],
+     "params": [
+      {
+       "name": "credential",
+       "optional": false,
+       "type": "CredentialInput",
+       "schema": {
+        "$ref": "#/components/schemas/CredentialInput"
+       }
+      },
+      {
+       "name": "input",
+       "optional": false,
+       "type": "{ tenantId: string }",
+       "schema": {
+        "type": "object",
+        "properties": {
+         "tenantId": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "tenantId"
+        ],
+        "additionalProperties": false
+       }
+      }
+     ],
+     "async": true,
+     "result": "LicenseUsageReport",
+     "resultSchema": {
+      "$ref": "#/components/schemas/LicenseUsageReport"
      }
     }
    ]
@@ -37243,7 +39872,7 @@
       }
      ],
      "async": true,
-     "result": "{\n  deletedAt?: number;\n  status: 'suspended' | 'deleted' | 'active';\n  name: string;\n  type: string;\n  parentId: string | null;\n  slug?: string;\n  region?: string;\n  boundary?: PolicyDocument;\n  authPolicy?: TenantAuthPolicy;\n  accessPolicy?: TenantAccessPolicy;\n  limits?: TenantLimits;\n  createdAt: number;\n  id: string;\n  tenantId: string;\n  uniqueKey?: string;\n}",
+     "result": "{\n  deletedAt?: number;\n  status: 'active' | 'suspended' | 'deleted';\n  name: string;\n  type: string;\n  parentId: string | null;\n  slug?: string;\n  region?: string;\n  boundary?: PolicyDocument;\n  authPolicy?: TenantAuthPolicy;\n  accessPolicy?: TenantAccessPolicy;\n  limits?: TenantLimits;\n  createdAt: number;\n  id: string;\n  tenantId: string;\n  uniqueKey?: string;\n}",
      "resultSchema": {
       "type": "object",
       "properties": {
@@ -37795,9 +40424,9 @@
       }
      ],
      "async": true,
-     "result": "ThreatDetection",
+     "result": "ThreatDetectionView",
      "resultSchema": {
-      "$ref": "#/components/schemas/ThreatDetection"
+      "$ref": "#/components/schemas/ThreatDetectionView"
      }
     },
     {
@@ -37838,9 +40467,9 @@
       }
      ],
      "async": true,
-     "result": "ThreatDetection",
+     "result": "ThreatDetectionView",
      "resultSchema": {
-      "$ref": "#/components/schemas/ThreatDetection"
+      "$ref": "#/components/schemas/ThreatDetectionView"
      }
     },
     {
@@ -38018,6 +40647,7 @@
            "directory-mass-change",
            "impersonation-burst",
            "denial-burst",
+           "classified-access-attempts",
            "recon-burst",
            "guardrail-weakened",
            "token-replay",
@@ -38083,7 +40713,7 @@
       {
        "name": "input",
        "optional": false,
-       "type": "{\n  tenantId: string;\n  status?: IncidentStatus;\n  severity?: ThreatSeverity;\n  assigneeId?: string;\n  identityId?: string;\n  limit?: number;\n  offset?: number;\n}",
+       "type": "{\n  tenantId: string;\n  status?: IncidentStatus | IncidentStatus[];\n  severity?: ThreatSeverity;\n  assigneeId?: string;\n  identityId?: string;\n  limit?: number;\n  offset?: number;\n}",
        "schema": {
         "type": "object",
         "properties": {
@@ -38091,11 +40721,25 @@
           "type": "string"
          },
          "status": {
-          "type": "string",
-          "enum": [
-           "open",
-           "resolved",
-           "investigating"
+          "anyOf": [
+           {
+            "type": "string",
+            "const": "open"
+           },
+           {
+            "type": "string",
+            "const": "resolved"
+           },
+           {
+            "type": "string",
+            "const": "investigating"
+           },
+           {
+            "type": "array",
+            "items": {
+             "$ref": "#/components/schemas/IncidentStatus"
+            }
+           }
           ]
          },
          "severity": {
@@ -38364,9 +41008,9 @@
       }
      ],
      "async": true,
-     "result": "ThreatIncident",
+     "result": "ThreatIncidentView",
      "resultSchema": {
-      "$ref": "#/components/schemas/ThreatIncident"
+      "$ref": "#/components/schemas/ThreatIncidentView"
      }
     },
     {
@@ -38584,7 +41228,7 @@
       {
        "name": "input",
        "optional": false,
-       "type": "{ tenantId: string; identityId: string; since?: number; limit?: number }",
+       "type": "{\n  tenantId: string;\n  identityId: string;\n  since?: number;\n  until?: number;\n  limit?: number;\n}",
        "schema": {
         "type": "object",
         "properties": {
@@ -38595,6 +41239,9 @@
           "type": "string"
          },
          "since": {
+          "type": "number"
+         },
+         "until": {
           "type": "number"
          },
          "limit": {
@@ -38682,9 +41329,9 @@
       }
      ],
      "async": true,
-     "result": "ThreatIncident",
+     "result": "ThreatIncidentView",
      "resultSchema": {
-      "$ref": "#/components/schemas/ThreatIncident"
+      "$ref": "#/components/schemas/ThreatIncidentView"
      }
     },
     {
@@ -43222,10 +45869,10 @@
           "enum": [
            "pending",
            "cancelled",
+           "waiting",
            "failed",
            "completed",
-           "running",
-           "waiting"
+           "running"
           ]
          },
          "limit": {
@@ -45931,6 +48578,9 @@
     "agent": {
      "$ref": "#/components/schemas/AgentProfile"
     },
+    "guest": {
+     "$ref": "#/components/schemas/GuestProfile"
+    },
     "email": {
      "type": "string"
     },
@@ -46020,6 +48670,32 @@
     "tenantId"
    ],
    "additionalProperties": {}
+  },
+  "GuestProfile": {
+   "type": "object",
+   "properties": {
+    "sponsorId": {
+     "type": "string",
+     "description": "The member of the host tenant who vouches for the guest."
+    },
+    "since": {
+     "type": "number",
+     "description": "When the person became a guest (redemption, epoch milliseconds)."
+    },
+    "homeTenantId": {
+     "type": "string",
+     "description": "The tenant that verified the guest's email domain, when another tenant had (a tenant-sourced guest)."
+    },
+    "homeDomain": {
+     "type": "string",
+     "description": "The domain of the guest's email address."
+    }
+   },
+   "required": [
+    "sponsorId",
+    "since"
+   ],
+   "additionalProperties": false
   },
   "AgentDirectoryEntry": {
    "type": "object",
@@ -47631,6 +50307,9 @@
     },
     "agent": {
      "$ref": "#/components/schemas/AgentProfile"
+    },
+    "guest": {
+     "$ref": "#/components/schemas/GuestProfile"
     },
     "email": {
      "type": "string"
@@ -50987,6 +53666,1046 @@
     "tenantId"
    ],
    "additionalProperties": {}
+  },
+  "ClearanceView": {
+   "type": "object",
+   "properties": {
+    "identityId": {
+     "type": "string"
+    },
+    "identity": {
+     "type": "object",
+     "properties": {
+      "id": {
+       "type": "string"
+      },
+      "name": {
+       "type": "string"
+      },
+      "email": {
+       "type": "string"
+      },
+      "kind": {
+       "type": "string",
+       "enum": [
+        "user",
+        "agent",
+        "service"
+       ]
+      },
+      "status": {
+       "type": "string",
+       "enum": [
+        "active",
+        "disabled",
+        "deleted"
+       ]
+      },
+      "guest": {
+       "type": "boolean"
+      }
+     },
+     "required": [
+      "id",
+      "name",
+      "kind",
+      "status",
+      "guest"
+     ],
+     "additionalProperties": false
+    },
+    "schemeTenantId": {
+     "type": "string"
+    },
+    "level": {
+     "type": "object",
+     "properties": {
+      "id": {
+       "type": "string"
+      },
+      "name": {
+       "type": "string"
+      },
+      "rank": {
+       "type": "number"
+      }
+     },
+     "required": [
+      "id"
+     ],
+     "additionalProperties": false
+    },
+    "status": {
+     "$ref": "#/components/schemas/ClearanceStatus"
+    },
+    "effectiveStatus": {
+     "$ref": "#/components/schemas/EffectiveClearanceStatus"
+    },
+    "effectiveLevel": {
+     "type": "string",
+     "description": "The level decisions count (a guest's is capped); absent when the clearance does not count."
+    },
+    "citizenship": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     }
+    },
+    "investigation": {
+     "type": "object",
+     "properties": {
+      "kind": {
+       "type": "string"
+      },
+      "completedAt": {
+       "type": "number"
+      }
+     },
+     "required": [
+      "kind",
+      "completedAt"
+     ],
+     "additionalProperties": false
+    },
+    "reinvestigationDue": {
+     "type": "number"
+    },
+    "expiresAt": {
+     "type": "number"
+    },
+    "readIns": {
+     "type": "array",
+     "items": {
+      "$ref": "#/components/schemas/ClearanceReadInView"
+     }
+    },
+    "grantedAt": {
+     "type": "number"
+    },
+    "grantedBy": {
+     "type": "string"
+    },
+    "updatedAt": {
+     "type": "number"
+    },
+    "updatedBy": {
+     "type": "string"
+    },
+    "suspended": {
+     "type": "object",
+     "properties": {
+      "by": {
+       "type": "string"
+      },
+      "at": {
+       "type": "number"
+      },
+      "reason": {
+       "type": "string"
+      },
+      "incidentId": {
+       "type": "string"
+      }
+     },
+     "required": [
+      "by",
+      "at",
+      "reason"
+     ],
+     "additionalProperties": false
+    },
+    "revoked": {
+     "type": "object",
+     "properties": {
+      "by": {
+       "type": "string"
+      },
+      "at": {
+       "type": "number"
+      },
+      "reason": {
+       "type": "string"
+      }
+     },
+     "required": [
+      "by",
+      "at",
+      "reason"
+     ],
+     "additionalProperties": false
+    },
+    "terminated": {
+     "type": "object",
+     "properties": {
+      "by": {
+       "type": "string"
+      },
+      "at": {
+       "type": "number"
+      },
+      "reason": {
+       "type": "string"
+      }
+     },
+     "required": [
+      "by",
+      "at",
+      "reason"
+     ],
+     "additionalProperties": false
+    }
+   },
+   "required": [
+    "identityId",
+    "identity",
+    "schemeTenantId",
+    "level",
+    "status",
+    "effectiveStatus",
+    "citizenship",
+    "readIns",
+    "grantedAt",
+    "grantedBy",
+    "updatedAt",
+    "updatedBy"
+   ],
+   "additionalProperties": false
+  },
+  "ClearanceStatus": {
+   "type": "string",
+   "enum": [
+    "active",
+    "suspended",
+    "revoked",
+    "interim",
+    "terminated"
+   ]
+  },
+  "EffectiveClearanceStatus": {
+   "type": "string",
+   "enum": [
+    "expired",
+    "active",
+    "suspended",
+    "revoked",
+    "interim",
+    "terminated",
+    "none"
+   ]
+  },
+  "ClearanceReadInView": {
+   "type": "object",
+   "properties": {
+    "compartmentId": {
+     "type": "string"
+    },
+    "compartmentName": {
+     "type": "string",
+     "description": "The compartment's name in the scheme (absent once the scheme no longer has it)."
+    },
+    "readInAt": {
+     "type": "number"
+    },
+    "readInBy": {
+     "type": "string"
+    },
+    "agreementId": {
+     "type": "string"
+    },
+    "acceptedAt": {
+     "type": "number"
+    },
+    "current": {
+     "type": "boolean",
+     "description": "Whether the read-in counts right now: the compartment exists and any NDA has a current acceptance."
+    }
+   },
+   "required": [
+    "compartmentId",
+    "readInAt",
+    "readInBy",
+    "current"
+   ],
+   "additionalProperties": false
+  },
+  "ClassificationLabel": {
+   "type": "object",
+   "properties": {
+    "level": {
+     "type": "string",
+     "description": "A level id of the scheme."
+    },
+    "compartments": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     },
+     "description": "Compartment ids the reader must be read into, every one of them."
+    },
+    "noforn": {
+     "type": "boolean",
+     "description": "Not releasable to foreign nationals: readers must be citizens of an owner country. Needs the NOFORN caveat."
+    },
+    "releasableTo": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     },
+     "description": "REL TO: alpha-3 codes of the countries whose citizens may read it besides the owners. Needs the RELTO caveat."
+    }
+   },
+   "required": [
+    "level"
+   ],
+   "additionalProperties": false
+  },
+  "ResourceLabelView": {
+   "type": "object",
+   "properties": {
+    "type": {
+     "type": "string"
+    },
+    "id": {
+     "type": "string"
+    },
+    "label": {
+     "$ref": "#/components/schemas/ClassificationLabel"
+    },
+    "levelName": {
+     "type": "string"
+    },
+    "inheritToChildren": {
+     "type": "boolean"
+    },
+    "labeledBy": {
+     "type": "string"
+    },
+    "labeledAt": {
+     "type": "number"
+    },
+    "version": {
+     "type": "number"
+    }
+   },
+   "required": [
+    "type",
+    "id",
+    "label",
+    "inheritToChildren",
+    "labeledBy",
+    "labeledAt",
+    "version"
+   ],
+   "additionalProperties": false
+  },
+  "ClassificationSchemeInput": {
+   "type": "object",
+   "properties": {
+    "name": {
+     "type": "string"
+    },
+    "template": {
+     "type": "string",
+     "enum": [
+      "us",
+      "uk",
+      "nato",
+      "corporate"
+     ],
+     "description": "Start from a built-in template; give either this or `definition`."
+    },
+    "definition": {
+     "$ref": "#/components/schemas/ClassificationSchemeDefinition"
+    },
+    "requireLabels": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     },
+     "description": "Resource types that must carry a label (`*`: every application type)."
+    },
+    "defaultLabel": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "$ref": "#/components/schemas/ClassificationLabel"
+      }
+     ]
+    },
+    "guestCeiling": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "type": "string"
+      }
+     ],
+     "description": "Level id guests count at most at; null (the default) means guests hold no clearance."
+    },
+    "interimAllowed": {
+     "type": "boolean"
+    },
+    "adjudication": {
+     "type": "string",
+     "enum": [
+      "within-own",
+      "unrestricted"
+     ],
+     "description": "`within-own` (the default) or `unrestricted`."
+    },
+    "notify": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "type": "object",
+       "properties": {
+        "emails": {
+         "type": "array",
+         "items": {
+          "type": "string"
+         }
+        }
+       },
+       "required": [
+        "emails"
+       ],
+       "additionalProperties": false
+      }
+     ],
+     "description": "Extra recipients of clearance reminders besides the owners."
+    }
+   },
+   "required": [
+    "name"
+   ],
+   "additionalProperties": false
+  },
+  "ClassificationSchemeDefinition": {
+   "type": "object",
+   "properties": {
+    "levels": {
+     "type": "array",
+     "items": {
+      "$ref": "#/components/schemas/ClassificationLevel"
+     },
+     "description": "2 to 20 levels in rank order: unique ids, integer ranks strictly increasing from 0."
+    },
+    "compartments": {
+     "type": "array",
+     "items": {
+      "$ref": "#/components/schemas/Compartment"
+     },
+     "description": "0 to 200 compartments with unique ids."
+    },
+    "ownerCountries": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     },
+     "description": "ISO 3166-1 alpha-3 codes (upper case) of the countries that own the information; NOFORN means their citizens only."
+    },
+    "caveats": {
+     "type": "array",
+     "items": {
+      "type": "string",
+      "enum": [
+       "NOFORN",
+       "RELTO"
+      ]
+     },
+     "description": "The dissemination controls labels of this scheme may carry."
+    }
+   },
+   "required": [
+    "levels",
+    "compartments",
+    "ownerCountries",
+    "caveats"
+   ],
+   "additionalProperties": false
+  },
+  "ClassificationLevel": {
+   "type": "object",
+   "properties": {
+    "id": {
+     "type": "string",
+     "description": "Opaque, stable identifier (`classificationIdPattern`), unique within the scheme ignoring case."
+    },
+    "name": {
+     "type": "string",
+     "description": "Display name, such as `TOP SECRET`."
+    },
+    "rank": {
+     "type": "number"
+    },
+    "abbreviation": {
+     "type": "string",
+     "description": "Short marking for banners, such as `TS`."
+    }
+   },
+   "required": [
+    "id",
+    "name",
+    "rank"
+   ],
+   "additionalProperties": false
+  },
+  "Compartment": {
+   "type": "object",
+   "properties": {
+    "id": {
+     "type": "string"
+    },
+    "name": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "id",
+    "name"
+   ],
+   "additionalProperties": false
+  },
+  "ClassificationSchemeView": {
+   "type": "object",
+   "properties": {
+    "tenantId": {
+     "type": "string",
+     "description": "The defining tenant: the scheme applies to it and every tenant below it."
+    },
+    "inherited": {
+     "type": "boolean",
+     "description": "True when an ancestor of the asking tenant defines it (change it there)."
+    },
+    "name": {
+     "type": "string"
+    },
+    "definition": {
+     "$ref": "#/components/schemas/ClassificationSchemeDefinition"
+    },
+    "requireLabels": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     }
+    },
+    "defaultLabel": {
+     "$ref": "#/components/schemas/ClassificationLabel"
+    },
+    "guestCeiling": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "type": "string"
+      }
+     ]
+    },
+    "interimAllowed": {
+     "type": "boolean"
+    },
+    "adjudication": {
+     "$ref": "#/components/schemas/AdjudicationMode"
+    },
+    "notify": {
+     "type": "object",
+     "properties": {
+      "emails": {
+       "type": "array",
+       "items": {
+        "type": "string"
+       }
+      }
+     },
+     "required": [
+      "emails"
+     ],
+     "additionalProperties": false
+    },
+    "createdAt": {
+     "type": "number"
+    },
+    "createdBy": {
+     "type": "string"
+    },
+    "updatedAt": {
+     "type": "number"
+    },
+    "updatedBy": {
+     "type": "string"
+    },
+    "version": {
+     "type": "number"
+    }
+   },
+   "required": [
+    "tenantId",
+    "inherited",
+    "name",
+    "definition",
+    "requireLabels",
+    "guestCeiling",
+    "interimAllowed",
+    "adjudication",
+    "createdAt",
+    "createdBy",
+    "updatedAt",
+    "updatedBy",
+    "version"
+   ],
+   "additionalProperties": false
+  },
+  "AdjudicationMode": {
+   "type": "string",
+   "enum": [
+    "within-own",
+    "unrestricted"
+   ]
+  },
+  "ClearanceExplanation": {
+   "type": "object",
+   "properties": {
+    "allowed": {
+     "type": "boolean"
+    },
+    "failure": {
+     "type": "string",
+     "enum": [
+      "level",
+      "compartment",
+      "noforn",
+      "releasability",
+      "invalid-label"
+     ],
+     "description": "The dimension the first refused party failed; `invalid-label` also for a missing required label."
+    },
+    "label": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "$ref": "#/components/schemas/ClassificationLabel"
+      }
+     ],
+     "description": "The label decisions apply (after inheritance, the resolver and the default); null when unlabeled."
+    },
+    "party": {
+     "$ref": "#/components/schemas/ClearancePartyView"
+    },
+    "parties": {
+     "type": "array",
+     "items": {
+      "$ref": "#/components/schemas/ClearancePartyView"
+     },
+     "description": "Every party of the person's own sessions (an agent's sponsor too)."
+    }
+   },
+   "required": [
+    "allowed",
+    "label",
+    "party",
+    "parties"
+   ],
+   "additionalProperties": false
+  },
+  "ClearancePartyView": {
+   "type": "object",
+   "properties": {
+    "identityId": {
+     "type": "string"
+    },
+    "status": {
+     "$ref": "#/components/schemas/EffectiveClearanceStatus"
+    },
+    "level": {
+     "type": "string"
+    },
+    "rank": {
+     "type": "number"
+    },
+    "compartments": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     }
+    },
+    "citizenship": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     }
+    }
+   },
+   "required": [
+    "identityId",
+    "status",
+    "rank",
+    "compartments",
+    "citizenship"
+   ],
+   "additionalProperties": false
+  },
+  "ResourceLabelState": {
+   "type": "object",
+   "properties": {
+    "type": {
+     "type": "string"
+    },
+    "id": {
+     "type": "string"
+    },
+    "label": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "$ref": "#/components/schemas/ResourceLabelView"
+      }
+     ]
+    },
+    "inherited": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "$ref": "#/components/schemas/ClassificationLabel"
+      }
+     ],
+     "description": "The join of the labels its managed ancestors pass down (`inheritToChildren`)."
+    }
+   },
+   "required": [
+    "type",
+    "id",
+    "label",
+    "inherited"
+   ],
+   "additionalProperties": false
+  },
+  "ClearanceGrantInput": {
+   "type": "object",
+   "properties": {
+    "tenantId": {
+     "type": "string"
+    },
+    "identityId": {
+     "type": "string"
+    },
+    "level": {
+     "type": "string",
+     "description": "A level id of the scheme in force."
+    },
+    "citizenship": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     },
+     "description": "Adjudicated citizenship, ISO 3166-1 alpha-3 codes in upper case (at most 10; may be empty)."
+    },
+    "interim": {
+     "type": "boolean",
+     "description": "Grants an interim clearance (the scheme must allow interim clearances)."
+    },
+    "investigation": {
+     "type": "object",
+     "properties": {
+      "kind": {
+       "type": "string"
+      },
+      "completedAt": {
+       "type": "number"
+      }
+     },
+     "required": [
+      "kind",
+      "completedAt"
+     ],
+     "additionalProperties": false
+    },
+    "reinvestigationDue": {
+     "type": "number"
+    },
+    "expiresAt": {
+     "type": "number"
+    }
+   },
+   "required": [
+    "tenantId",
+    "identityId",
+    "level",
+    "citizenship"
+   ],
+   "additionalProperties": false
+  },
+  "ClearancePage": {
+   "type": "object",
+   "properties": {
+    "clearances": {
+     "type": "array",
+     "items": {
+      "$ref": "#/components/schemas/ClearanceView"
+     }
+    },
+    "total": {
+     "type": "number"
+    }
+   },
+   "required": [
+    "clearances",
+    "total"
+   ],
+   "additionalProperties": false
+  },
+  "ResourceLabelPage": {
+   "type": "object",
+   "properties": {
+    "labels": {
+     "type": "array",
+     "items": {
+      "$ref": "#/components/schemas/ResourceLabelView"
+     }
+    },
+    "total": {
+     "type": "number"
+    }
+   },
+   "required": [
+    "labels",
+    "total"
+   ],
+   "additionalProperties": false
+  },
+  "MyClearance": {
+   "type": "object",
+   "properties": {
+    "scheme": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "type": "object",
+       "properties": {
+        "tenantId": {
+         "type": "string"
+        },
+        "name": {
+         "type": "string"
+        },
+        "levels": {
+         "type": "array",
+         "items": {
+          "$ref": "#/components/schemas/ClassificationLevel"
+         }
+        }
+       },
+       "required": [
+        "tenantId",
+        "name",
+        "levels"
+       ],
+       "additionalProperties": false
+      }
+     ]
+    },
+    "clearance": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "type": "object",
+       "properties": {
+        "level": {
+         "type": "object",
+         "properties": {
+          "id": {
+           "type": "string"
+          },
+          "name": {
+           "type": "string"
+          }
+         },
+         "required": [
+          "id"
+         ],
+         "additionalProperties": false
+        },
+        "status": {
+         "$ref": "#/components/schemas/ClearanceStatus"
+        },
+        "effectiveStatus": {
+         "$ref": "#/components/schemas/EffectiveClearanceStatus"
+        },
+        "effectiveLevel": {
+         "type": "string"
+        },
+        "citizenship": {
+         "type": "array",
+         "items": {
+          "type": "string"
+         }
+        },
+        "reinvestigationDue": {
+         "type": "number"
+        },
+        "expiresAt": {
+         "type": "number"
+        },
+        "readIns": {
+         "type": "array",
+         "items": {
+          "type": "object",
+          "properties": {
+           "compartmentId": {
+            "type": "string"
+           },
+           "compartmentName": {
+            "type": "string"
+           },
+           "agreementId": {
+            "type": "string"
+           },
+           "current": {
+            "type": "boolean",
+            "description": "False while the compartment's NDA still needs accepting (or re-accepting)."
+           }
+          },
+          "required": [
+           "compartmentId",
+           "current"
+          ],
+          "additionalProperties": false
+         }
+        }
+       },
+       "required": [
+        "level",
+        "status",
+        "effectiveStatus",
+        "citizenship",
+        "readIns"
+       ],
+       "additionalProperties": false
+      }
+     ]
+    }
+   },
+   "required": [
+    "scheme",
+    "clearance"
+   ],
+   "additionalProperties": false
+  },
+  "ClassificationTemplateView": {
+   "type": "object",
+   "properties": {
+    "id": {
+     "$ref": "#/components/schemas/ClassificationTemplateName"
+    },
+    "name": {
+     "type": "string"
+    },
+    "definition": {
+     "$ref": "#/components/schemas/ClassificationSchemeDefinition"
+    }
+   },
+   "required": [
+    "id",
+    "name",
+    "definition"
+   ],
+   "additionalProperties": false
+  },
+  "ClassificationTemplateName": {
+   "type": "string",
+   "enum": [
+    "us",
+    "uk",
+    "nato",
+    "corporate"
+   ]
+  },
+  "ClearanceUpdateInput": {
+   "type": "object",
+   "properties": {
+    "tenantId": {
+     "type": "string"
+    },
+    "identityId": {
+     "type": "string"
+    },
+    "level": {
+     "type": "string"
+    },
+    "citizenship": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     }
+    },
+    "interim": {
+     "type": "boolean",
+     "description": "true makes the clearance interim, false final (active)."
+    },
+    "investigation": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "type": "object",
+       "properties": {
+        "kind": {
+         "type": "string"
+        },
+        "completedAt": {
+         "type": "number"
+        }
+       },
+       "required": [
+        "kind",
+        "completedAt"
+       ],
+       "additionalProperties": false
+      }
+     ]
+    },
+    "reinvestigationDue": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "type": "number"
+      }
+     ]
+    },
+    "expiresAt": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "type": "number"
+      }
+     ]
+    }
+   },
+   "required": [
+    "tenantId",
+    "identityId"
+   ],
+   "additionalProperties": false
   },
   "ComplianceControl": {
    "type": "object",
@@ -57880,6 +61599,552 @@
    ],
    "additionalProperties": {}
   },
+  "GuestView": {
+   "type": "object",
+   "properties": {
+    "identityId": {
+     "type": "string"
+    },
+    "tenantId": {
+     "type": "string"
+    },
+    "name": {
+     "type": "string"
+    },
+    "email": {
+     "type": "string"
+    },
+    "status": {
+     "type": "string",
+     "enum": [
+      "active",
+      "disabled",
+      "deleted"
+     ],
+     "description": "The identity's own status."
+    },
+    "accountStatus": {
+     "$ref": "#/components/schemas/GuestAccountStatus"
+    },
+    "sponsorId": {
+     "type": "string"
+    },
+    "sponsorName": {
+     "type": "string"
+    },
+    "sponsorMissing": {
+     "type": "boolean",
+     "description": "The sponsor left or can no longer sponsor guests: assign another one with `setSponsor`."
+    },
+    "homeTenantId": {
+     "type": "string",
+     "description": "The tenant that verified the guest's email domain, when another tenant had."
+    },
+    "homeDomain": {
+     "type": "string",
+     "description": "The domain of the guest's email address."
+    },
+    "invitationId": {
+     "type": "string"
+    },
+    "invitedBy": {
+     "type": "string"
+    },
+    "redeemedAt": {
+     "type": "number"
+    },
+    "attestedAt": {
+     "type": "number"
+    },
+    "attestedBy": {
+     "type": "string"
+    },
+    "reviewDueAt": {
+     "type": "number",
+     "description": "When the sponsor is next asked to confirm that the guest still needs access."
+    },
+    "expiresAt": {
+     "type": "number",
+     "description": "When the guest's access ends (the identity's `expiresAt`)."
+    },
+    "lastSignInAt": {
+     "type": "number",
+     "description": "The guest's most recent sign-in, if any."
+    }
+   },
+   "required": [
+    "identityId",
+    "tenantId",
+    "name",
+    "status",
+    "accountStatus",
+    "sponsorId",
+    "sponsorMissing",
+    "invitationId",
+    "invitedBy",
+    "redeemedAt",
+    "reviewDueAt"
+   ],
+   "additionalProperties": false
+  },
+  "GuestAccountStatus": {
+   "type": "string",
+   "enum": [
+    "expired",
+    "active",
+    "removed",
+    "converted"
+   ]
+  },
+  "GuestSettingsInput": {
+   "type": "object",
+   "properties": {
+    "tenantId": {
+     "type": "string"
+    },
+    "inbound": {
+     "type": "object",
+     "properties": {
+      "allowGuests": {
+       "type": "boolean",
+       "description": "Whether the tenant accepts guests at all (partners with `allow: true` excepted)."
+      },
+      "allowedDomains": {
+       "type": "array",
+       "items": {
+        "type": "string"
+       },
+       "description": "When non-empty, only addresses at these domains (or their subdomains) may be invited."
+      },
+      "blockedDomains": {
+       "type": "array",
+       "items": {
+        "type": "string"
+       },
+       "description": "Addresses at these domains (or their subdomains) are never invited; this wins over every allow."
+      },
+      "partners": {
+       "type": "array",
+       "items": {
+        "$ref": "#/components/schemas/CrossTenantPartner"
+       },
+       "description": "Organizations (by the tenant that verified the address's domain) admitted or refused over the defaults."
+      }
+     },
+     "additionalProperties": false
+    },
+    "outbound": {
+     "type": "object",
+     "properties": {
+      "allowGuestInvitations": {
+       "type": "boolean",
+       "description": "Whether people whose address is at one of this tenant's verified domains may redeem guest invitations of other\ntenants (partners excepted)."
+      },
+      "partners": {
+       "type": "array",
+       "items": {
+        "$ref": "#/components/schemas/CrossTenantPartner"
+       },
+       "description": "Host organizations allowed or refused over the default."
+      }
+     },
+     "additionalProperties": false
+    },
+    "accessDays": {
+     "type": "number",
+     "description": "How long a guest's access lasts after redemption or attestation, 1 to 365 days."
+    },
+    "reviewEveryDays": {
+     "type": "number",
+     "description": "How often sponsors confirm their guests still need access, 7 to 365 days."
+    },
+    "guestBoundary": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "$ref": "#/components/schemas/PolicyDocument"
+      }
+     ],
+     "description": "A ceiling on every guest's decisions in the tenant; null removes it."
+    }
+   },
+   "required": [
+    "tenantId"
+   ],
+   "additionalProperties": false
+  },
+  "CrossTenantPartner": {
+   "type": "object",
+   "properties": {
+    "tenantId": {
+     "type": "string"
+    },
+    "allow": {
+     "type": "boolean"
+    }
+   },
+   "required": [
+    "tenantId",
+    "allow"
+   ],
+   "additionalProperties": false
+  },
+  "GuestSettingsView": {
+   "type": "object",
+   "properties": {
+    "tenantId": {
+     "type": "string"
+    },
+    "configured": {
+     "type": "boolean",
+     "description": "False while the tenant uses the defaults."
+    },
+    "updatedAt": {
+     "type": "number"
+    },
+    "updatedBy": {
+     "type": "string"
+    },
+    "inbound": {
+     "$ref": "#/components/schemas/InboundGuestSettings"
+    },
+    "outbound": {
+     "$ref": "#/components/schemas/OutboundGuestSettings"
+    },
+    "accessDays": {
+     "type": "number",
+     "description": "How long a guest's access lasts after redemption or attestation, in days (1 to 365)."
+    },
+    "reviewEveryDays": {
+     "type": "number",
+     "description": "How often the sponsor confirms a guest still needs access, in days (7 to 365)."
+    },
+    "guestBoundary": {
+     "$ref": "#/components/schemas/PolicyDocument"
+    }
+   },
+   "required": [
+    "tenantId",
+    "configured",
+    "inbound",
+    "outbound",
+    "accessDays",
+    "reviewEveryDays"
+   ],
+   "additionalProperties": false
+  },
+  "InboundGuestSettings": {
+   "type": "object",
+   "properties": {
+    "allowGuests": {
+     "type": "boolean",
+     "description": "Whether the tenant accepts guests at all (partners with `allow: true` excepted)."
+    },
+    "allowedDomains": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     },
+     "description": "When non-empty, only addresses at these domains (or their subdomains) may be invited."
+    },
+    "blockedDomains": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     },
+     "description": "Addresses at these domains (or their subdomains) are never invited; this wins over every allow."
+    },
+    "partners": {
+     "type": "array",
+     "items": {
+      "$ref": "#/components/schemas/CrossTenantPartner"
+     },
+     "description": "Organizations (by the tenant that verified the address's domain) admitted or refused over the defaults."
+    }
+   },
+   "required": [
+    "allowGuests",
+    "allowedDomains",
+    "blockedDomains",
+    "partners"
+   ],
+   "additionalProperties": false
+  },
+  "OutboundGuestSettings": {
+   "type": "object",
+   "properties": {
+    "allowGuestInvitations": {
+     "type": "boolean",
+     "description": "Whether people whose address is at one of this tenant's verified domains may redeem guest invitations of other\ntenants (partners excepted)."
+    },
+    "partners": {
+     "type": "array",
+     "items": {
+      "$ref": "#/components/schemas/CrossTenantPartner"
+     },
+     "description": "Host organizations allowed or refused over the default."
+    }
+   },
+   "required": [
+    "allowGuestInvitations",
+    "partners"
+   ],
+   "additionalProperties": false
+  },
+  "GuestInviteInput": {
+   "type": "object",
+   "properties": {
+    "tenantId": {
+     "type": "string"
+    },
+    "email": {
+     "type": "string"
+    },
+    "sponsorId": {
+     "type": "string",
+     "description": "The member who vouches for the guest; the caller when omitted, who must then be able to sponsor guests."
+    },
+    "message": {
+     "type": "string",
+     "description": "A note for the invitee, included in the email (one line, at most 1000 characters)."
+    },
+    "roleIds": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     },
+     "description": "Roles bound to the guest at redemption, until their access ends."
+    },
+    "groupIds": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     },
+     "description": "Groups the guest joins at redemption, until their access ends (never a team's backing group)."
+    },
+    "packageIds": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     },
+     "description": "Access packages assigned at redemption, until their access ends (or the package's maximum duration)."
+    },
+    "accessDays": {
+     "type": "number",
+     "description": "How long the guest's access lasts after redemption, 1 to 365 days (default: the tenant's `accessDays`)."
+    },
+    "expiresInDays": {
+     "type": "number",
+     "description": "How long the invitation can be redeemed, 1 to 30 days (default 14)."
+    }
+   },
+   "required": [
+    "tenantId",
+    "email"
+   ],
+   "additionalProperties": false
+  },
+  "GuestInvitationView": {
+   "type": "object",
+   "properties": {
+    "id": {
+     "type": "string"
+    },
+    "tenantId": {
+     "type": "string"
+    },
+    "email": {
+     "type": "string"
+    },
+    "status": {
+     "$ref": "#/components/schemas/GuestInvitationStatus"
+    },
+    "sponsorId": {
+     "type": "string"
+    },
+    "sponsorName": {
+     "type": "string"
+    },
+    "invitedBy": {
+     "type": "string"
+    },
+    "inviterName": {
+     "type": "string"
+    },
+    "message": {
+     "type": "string"
+    },
+    "roleIds": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     }
+    },
+    "groupIds": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     }
+    },
+    "packageIds": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     }
+    },
+    "accessDays": {
+     "type": "number",
+     "description": "How long the guest's access lasts from redemption, in days."
+    },
+    "homeTenantId": {
+     "type": "string"
+    },
+    "expiresAt": {
+     "type": "number"
+    },
+    "createdAt": {
+     "type": "number"
+    },
+    "sentAt": {
+     "type": "number"
+    },
+    "redeemedAt": {
+     "type": "number"
+    },
+    "identityId": {
+     "type": "string"
+    },
+    "revokedAt": {
+     "type": "number"
+    },
+    "revokedBy": {
+     "type": "string"
+    },
+    "revokedReason": {
+     "type": "string",
+     "enum": [
+      "sponsor-inactive",
+      "inviter-inactive"
+     ]
+    }
+   },
+   "required": [
+    "id",
+    "tenantId",
+    "email",
+    "status",
+    "sponsorId",
+    "invitedBy",
+    "roleIds",
+    "groupIds",
+    "packageIds",
+    "accessDays",
+    "expiresAt",
+    "createdAt",
+    "sentAt"
+   ],
+   "additionalProperties": false
+  },
+  "GuestInvitationStatus": {
+   "type": "string",
+   "enum": [
+    "pending",
+    "expired",
+    "revoked",
+    "redeemed"
+   ]
+  },
+  "GuestPage": {
+   "type": "object",
+   "properties": {
+    "guests": {
+     "type": "array",
+     "items": {
+      "$ref": "#/components/schemas/GuestView"
+     }
+    },
+    "total": {
+     "type": "number"
+    }
+   },
+   "required": [
+    "guests",
+    "total"
+   ],
+   "additionalProperties": false
+  },
+  "EnrollmentResult": {
+   "anyOf": [
+    {
+     "allOf": [
+      {
+       "type": "object",
+       "properties": {
+        "identity": {
+         "$ref": "#/components/schemas/PublicIdentity"
+        }
+       },
+       "required": [
+        "identity"
+       ],
+       "additionalProperties": false
+      },
+      {
+       "$ref": "#/components/schemas/SessionResult"
+      }
+     ]
+    },
+    {
+     "allOf": [
+      {
+       "type": "object",
+       "properties": {
+        "identity": {
+         "$ref": "#/components/schemas/PublicIdentity"
+        }
+       },
+       "required": [
+        "identity"
+       ],
+       "additionalProperties": false
+      },
+      {
+       "$ref": "#/components/schemas/MfaRequired"
+      }
+     ]
+    }
+   ]
+  },
+  "GuestRemoval": {
+   "type": "object",
+   "properties": {
+    "guest": {
+     "$ref": "#/components/schemas/GuestView"
+    },
+    "sessions": {
+     "type": "number"
+    },
+    "bindings": {
+     "type": "number"
+    },
+    "memberships": {
+     "type": "number"
+    },
+    "packages": {
+     "type": "number"
+    }
+   },
+   "required": [
+    "guest",
+    "sessions",
+    "bindings",
+    "memberships",
+    "packages"
+   ],
+   "additionalProperties": false
+  },
   "PublicHostname": {
    "type": "object",
    "properties": {
@@ -57984,48 +62249,6 @@
     "dnsRecords"
    ],
    "additionalProperties": false
-  },
-  "EnrollmentResult": {
-   "anyOf": [
-    {
-     "allOf": [
-      {
-       "type": "object",
-       "properties": {
-        "identity": {
-         "$ref": "#/components/schemas/PublicIdentity"
-        }
-       },
-       "required": [
-        "identity"
-       ],
-       "additionalProperties": false
-      },
-      {
-       "$ref": "#/components/schemas/SessionResult"
-      }
-     ]
-    },
-    {
-     "allOf": [
-      {
-       "type": "object",
-       "properties": {
-        "identity": {
-         "$ref": "#/components/schemas/PublicIdentity"
-        }
-       },
-       "required": [
-        "identity"
-       ],
-       "additionalProperties": false
-      },
-      {
-       "$ref": "#/components/schemas/MfaRequired"
-      }
-     ]
-    }
-   ]
   },
   "Relationship": {
    "type": "object",
@@ -60144,6 +64367,645 @@
    },
    "required": [
     "tenantId"
+   ],
+   "additionalProperties": false
+  },
+  "LicensePoolResult": {
+   "type": "object",
+   "properties": {
+    "pool": {
+     "$ref": "#/components/schemas/LicensePoolView"
+    },
+    "seats": {
+     "type": "array",
+     "items": {
+      "$ref": "#/components/schemas/LicenseSeatChange"
+     }
+    }
+   },
+   "required": [
+    "pool",
+    "seats"
+   ],
+   "additionalProperties": false
+  },
+  "LicensePoolView": {
+   "type": "object",
+   "properties": {
+    "id": {
+     "type": "string"
+    },
+    "tenantId": {
+     "type": "string",
+     "description": "The consuming tenant."
+    },
+    "tenantName": {
+     "type": "string"
+    },
+    "productId": {
+     "type": "string"
+    },
+    "productKey": {
+     "type": "string"
+    },
+    "productName": {
+     "type": "string"
+    },
+    "quantity": {
+     "type": "number"
+    },
+    "startsAt": {
+     "type": "number"
+    },
+    "endsAt": {
+     "type": "number"
+    },
+    "note": {
+     "type": "string"
+    },
+    "source": {
+     "$ref": "#/components/schemas/LicensePoolSource"
+    },
+    "subscriptionId": {
+     "type": "string"
+    },
+    "live": {
+     "type": "boolean",
+     "description": "Whether the pool contributes capacity right now (started and not ended)."
+    },
+    "createdAt": {
+     "type": "number"
+    },
+    "createdBy": {
+     "type": "string"
+    },
+    "updatedAt": {
+     "type": "number"
+    },
+    "updatedBy": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "id",
+    "tenantId",
+    "tenantName",
+    "productId",
+    "productKey",
+    "productName",
+    "quantity",
+    "source",
+    "live",
+    "createdAt",
+    "createdBy"
+   ],
+   "additionalProperties": false
+  },
+  "LicensePoolSource": {
+   "type": "string",
+   "enum": [
+    "subscription",
+    "manual"
+   ]
+  },
+  "LicenseSeatChange": {
+   "type": "object",
+   "properties": {
+    "tenantId": {
+     "type": "string"
+    },
+    "productId": {
+     "type": "string"
+    },
+    "productKey": {
+     "type": "string"
+    },
+    "identityId": {
+     "type": "string"
+    },
+    "from": {
+     "type": "string",
+     "enum": [
+      "active",
+      "none",
+      "waiting"
+     ]
+    },
+    "to": {
+     "type": "string",
+     "enum": [
+      "active",
+      "none",
+      "waiting"
+     ]
+    }
+   },
+   "required": [
+    "tenantId",
+    "productId",
+    "productKey",
+    "identityId",
+    "from",
+    "to"
+   ],
+   "additionalProperties": false
+  },
+  "LicenseSubjectType": {
+   "type": "string",
+   "enum": [
+    "identity",
+    "group"
+   ]
+  },
+  "LicenseAssignResult": {
+   "type": "object",
+   "properties": {
+    "assignment": {
+     "$ref": "#/components/schemas/LicenseAssignmentView"
+    },
+    "seats": {
+     "type": "array",
+     "items": {
+      "$ref": "#/components/schemas/LicenseSeatChange"
+     },
+     "description": "Seats the assignment created or moved."
+    }
+   },
+   "required": [
+    "assignment",
+    "seats"
+   ],
+   "additionalProperties": false
+  },
+  "LicenseAssignmentView": {
+   "type": "object",
+   "properties": {
+    "id": {
+     "type": "string"
+    },
+    "tenantId": {
+     "type": "string"
+    },
+    "productId": {
+     "type": "string"
+    },
+    "productKey": {
+     "type": "string"
+    },
+    "productName": {
+     "type": "string"
+    },
+    "subjectType": {
+     "$ref": "#/components/schemas/LicenseSubjectType"
+    },
+    "subjectId": {
+     "type": "string"
+    },
+    "subjectName": {
+     "type": "string",
+     "description": "The person's or the group's name; the ID when the subject no longer exists."
+    },
+    "subjectEmail": {
+     "type": "string"
+    },
+    "assignedBy": {
+     "type": "string"
+    },
+    "assignedAt": {
+     "type": "number"
+    }
+   },
+   "required": [
+    "id",
+    "tenantId",
+    "productId",
+    "productKey",
+    "productName",
+    "subjectType",
+    "subjectId",
+    "subjectName",
+    "assignedBy",
+    "assignedAt"
+   ],
+   "additionalProperties": false
+  },
+  "LicenseAssignManyResult": {
+   "type": "object",
+   "properties": {
+    "assigned": {
+     "type": "array",
+     "items": {
+      "$ref": "#/components/schemas/LicenseAssignmentView"
+     }
+    },
+    "skipped": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     },
+     "description": "Identities that already held a direct assignment of the product."
+    },
+    "seats": {
+     "type": "array",
+     "items": {
+      "$ref": "#/components/schemas/LicenseSeatChange"
+     }
+    }
+   },
+   "required": [
+    "assigned",
+    "skipped",
+    "seats"
+   ],
+   "additionalProperties": false
+  },
+  "LicenseSettingsView": {
+   "type": "object",
+   "properties": {
+    "tenantId": {
+     "type": "string"
+    },
+    "reclaimAfterDays": {
+     "type": "number"
+    },
+    "notifyWaiting": {
+     "type": "boolean"
+    },
+    "updatedAt": {
+     "type": "number"
+    },
+    "updatedBy": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "tenantId",
+    "notifyWaiting"
+   ],
+   "additionalProperties": false
+  },
+  "LicenseProductView": {
+   "type": "object",
+   "properties": {
+    "id": {
+     "type": "string"
+    },
+    "key": {
+     "type": "string"
+    },
+    "name": {
+     "type": "string"
+    },
+    "description": {
+     "type": "string"
+    },
+    "featureKeys": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     }
+    },
+    "status": {
+     "$ref": "#/components/schemas/LicenseProductStatus"
+    },
+    "scope": {
+     "type": "string",
+     "enum": [
+      "platform",
+      "tenant"
+     ],
+     "description": "`platform` when the root tenant defines the product."
+    },
+    "definedBy": {
+     "type": "string",
+     "description": "The defining tenant: the tenant the view was read in or one of its ancestors."
+    },
+    "definedHere": {
+     "type": "boolean",
+     "description": "Whether the tenant the view was read in defines the product (and so may change it)."
+    },
+    "shadowed": {
+     "type": "boolean",
+     "description": "An enclosing tenant defines the same key as well. Its product wins: this one's seats stay but no longer grant the key\nor its feature keys (`principal.licenses`, `identity.licenses`, `iam.licenses`, `licenses.mine`)."
+    },
+    "createdAt": {
+     "type": "number"
+    },
+    "createdBy": {
+     "type": "string"
+    },
+    "updatedAt": {
+     "type": "number"
+    },
+    "updatedBy": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "id",
+    "key",
+    "name",
+    "featureKeys",
+    "status",
+    "scope",
+    "definedBy",
+    "definedHere",
+    "shadowed",
+    "createdAt",
+    "createdBy",
+    "updatedAt",
+    "updatedBy"
+   ],
+   "additionalProperties": false
+  },
+  "LicenseProductStatus": {
+   "type": "string",
+   "enum": [
+    "active",
+    "retired"
+   ]
+  },
+  "LicenseSeatView": {
+   "type": "object",
+   "properties": {
+    "id": {
+     "type": "string"
+    },
+    "tenantId": {
+     "type": "string"
+    },
+    "productId": {
+     "type": "string"
+    },
+    "productKey": {
+     "type": "string"
+    },
+    "productName": {
+     "type": "string"
+    },
+    "identityId": {
+     "type": "string"
+    },
+    "identityName": {
+     "type": "string"
+    },
+    "identityEmail": {
+     "type": "string"
+    },
+    "identityKind": {
+     "type": "string",
+     "enum": [
+      "user",
+      "agent",
+      "service"
+     ]
+    },
+    "status": {
+     "$ref": "#/components/schemas/LicenseSeatStatus"
+    },
+    "position": {
+     "type": "number",
+     "description": "Place on the product's waiting list, from 1 (waiting seats only)."
+    },
+    "direct": {
+     "type": "boolean",
+     "description": "Held through a direct assignment."
+    },
+    "groupIds": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     },
+     "description": "The assigned groups the holder is a member of."
+    },
+    "assignedAt": {
+     "type": "number"
+    },
+    "activatedAt": {
+     "type": "number"
+    },
+    "lastActivityAt": {
+     "type": "number"
+    }
+   },
+   "required": [
+    "id",
+    "tenantId",
+    "productId",
+    "productKey",
+    "productName",
+    "identityId",
+    "identityName",
+    "status",
+    "direct",
+    "groupIds",
+    "assignedAt"
+   ],
+   "additionalProperties": false
+  },
+  "LicenseSeatStatus": {
+   "type": "string",
+   "enum": [
+    "active",
+    "waiting"
+   ]
+  },
+  "MyLicenses": {
+   "type": "object",
+   "properties": {
+    "tenantId": {
+     "type": "string"
+    },
+    "identityId": {
+     "type": "string"
+    },
+    "licenses": {
+     "type": "array",
+     "items": {
+      "$ref": "#/components/schemas/MyLicense"
+     }
+    },
+    "featureKeys": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     },
+     "description": "The union of the feature keys of the caller's active seats of **platform** products: what the platform sells,\nwhich no tenant can mint for itself (`iam.licenses.features` by default)."
+    },
+    "allFeatureKeys": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     },
+     "description": "The union of the feature keys of all the caller's active seats, the products their tenant or a tenant above it\ndefines included. Any tenant can list any feature key in a product of its own, so never read these as entitlements\nthe platform sells; filter `licenses` by `definedBy` for the tenants you trust instead."
+    }
+   },
+   "required": [
+    "tenantId",
+    "identityId",
+    "licenses",
+    "featureKeys",
+    "allFeatureKeys"
+   ],
+   "additionalProperties": false
+  },
+  "MyLicense": {
+   "type": "object",
+   "properties": {
+    "productId": {
+     "type": "string"
+    },
+    "key": {
+     "type": "string"
+    },
+    "name": {
+     "type": "string"
+    },
+    "description": {
+     "type": "string"
+    },
+    "status": {
+     "$ref": "#/components/schemas/LicenseSeatStatus"
+    },
+    "position": {
+     "type": "number",
+     "description": "Place on the waiting list, from 1 (waiting only)."
+    },
+    "featureKeys": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     },
+     "description": "The feature keys the seat unlocks (none while waiting)."
+    },
+    "platform": {
+     "type": "boolean",
+     "description": "Whether the platform (the root tenant) defines the product: only its feature keys are paid entitlements."
+    },
+    "definedBy": {
+     "type": "string",
+     "description": "The tenant that defines the product: the root tenant, the caller's tenant, or a tenant above it."
+    }
+   },
+   "required": [
+    "productId",
+    "key",
+    "name",
+    "status",
+    "featureKeys",
+    "platform",
+    "definedBy"
+   ],
+   "additionalProperties": false
+  },
+  "LicenseProductRetireResult": {
+   "type": "object",
+   "properties": {
+    "product": {
+     "$ref": "#/components/schemas/LicenseProductView"
+    },
+    "seats": {
+     "type": "array",
+     "items": {
+      "$ref": "#/components/schemas/LicenseSeatChange"
+     },
+     "description": "The seats released in every tenant that held the product."
+    }
+   },
+   "required": [
+    "product",
+    "seats"
+   ],
+   "additionalProperties": false
+  },
+  "LicenseUsageReport": {
+   "type": "object",
+   "properties": {
+    "tenantId": {
+     "type": "string"
+    },
+    "reclaimAfterDays": {
+     "type": "number"
+    },
+    "products": {
+     "type": "array",
+     "items": {
+      "$ref": "#/components/schemas/LicenseUsage"
+     }
+    }
+   },
+   "required": [
+    "tenantId",
+    "products"
+   ],
+   "additionalProperties": false
+  },
+  "LicenseUsage": {
+   "type": "object",
+   "properties": {
+    "productId": {
+     "type": "string"
+    },
+    "key": {
+     "type": "string"
+    },
+    "name": {
+     "type": "string"
+    },
+    "scope": {
+     "type": "string",
+     "enum": [
+      "platform",
+      "tenant"
+     ]
+    },
+    "status": {
+     "$ref": "#/components/schemas/LicenseProductStatus"
+    },
+    "capacity": {
+     "type": "number",
+     "description": "Seats the live pools provide."
+    },
+    "active": {
+     "type": "number"
+    },
+    "waiting": {
+     "type": "number"
+    },
+    "available": {
+     "type": "number",
+     "description": "Capacity not taken by an active seat."
+    },
+    "pools": {
+     "type": "number",
+     "description": "Live pools."
+    },
+    "assignments": {
+     "type": "number"
+    },
+    "reclaimable": {
+     "type": "number",
+     "description": "Active seats of people inactive for `reclaimAfterDays` (0 when reclaim is off)."
+    },
+    "reclaimableThroughGroups": {
+     "type": "number",
+     "description": "The part of `reclaimable` held only through groups, which the reclaim job leaves (remove the people from the group)."
+    }
+   },
+   "required": [
+    "productId",
+    "key",
+    "name",
+    "scope",
+    "status",
+    "capacity",
+    "active",
+    "waiting",
+    "available",
+    "pools",
+    "assignments",
+    "reclaimable",
+    "reclaimableThroughGroups"
    ],
    "additionalProperties": false
   },
@@ -68636,6 +73498,9 @@
     "agent": {
      "$ref": "#/components/schemas/AgentProfile"
     },
+    "guest": {
+     "$ref": "#/components/schemas/GuestProfile"
+    },
     "email": {
      "type": "string"
     },
@@ -72255,6 +77120,16 @@
         }
        ]
       },
+      "classified-access-attempts": {
+       "anyOf": [
+        {
+         "type": "null"
+        },
+        {
+         "$ref": "#/components/schemas/ThreatRuleSettingInput"
+        }
+       ]
+      },
       "recon-burst": {
        "anyOf": [
         {
@@ -72788,6 +77663,29 @@
         }
        ]
       },
+      "classified-access-attempts": {
+       "allOf": [
+        {
+         "type": "object",
+         "properties": {
+          "enabled": {
+           "type": "boolean"
+          },
+          "severity": {
+           "$ref": "#/components/schemas/ThreatSeverity"
+          }
+         },
+         "required": [
+          "enabled",
+          "severity"
+         ],
+         "additionalProperties": false
+        },
+        {
+         "$ref": "#/components/schemas/ThreatRuleSetting"
+        }
+       ]
+      },
       "recon-burst": {
        "allOf": [
         {
@@ -72965,6 +77863,7 @@
       "directory-mass-change",
       "impersonation-burst",
       "denial-burst",
+      "classified-access-attempts",
       "recon-burst",
       "guardrail-weakened",
       "token-replay",
@@ -73132,6 +78031,7 @@
     "directory-mass-change",
     "impersonation-burst",
     "denial-burst",
+    "classified-access-attempts",
     "recon-burst",
     "guardrail-weakened",
     "token-replay",
@@ -73177,6 +78077,7 @@
     "revoke-sessions",
     "forget-devices",
     "contain",
+    "suspend-clearance",
     "block-network"
    ]
   },
@@ -73312,9 +78213,12 @@
    ],
    "additionalProperties": false
   },
-  "ThreatDetection": {
+  "ThreatDetectionView": {
    "type": "object",
    "properties": {
+    "subject": {
+     "$ref": "#/components/schemas/ThreatSubjectView"
+    },
     "ruleId": {
      "$ref": "#/components/schemas/ThreatRuleId"
     },
@@ -73327,9 +78231,6 @@
     "summary": {
      "type": "string",
      "description": "One sentence for lists and emails."
-    },
-    "subject": {
-     "$ref": "#/components/schemas/ThreatSubject"
     },
     "identityId": {
      "type": "string",
@@ -73384,11 +78285,11 @@
     }
    },
    "required": [
+    "subject",
     "ruleId",
     "severity",
     "title",
     "summary",
-    "subject",
     "evidence",
     "status",
     "occurredAt",
@@ -73398,9 +78299,18 @@
    ],
    "additionalProperties": {}
   },
-  "ThreatSubject": {
+  "ThreatSubjectView": {
    "type": "object",
    "properties": {
+    "kind": {
+     "type": "string",
+     "enum": [
+      "user",
+      "agent",
+      "service"
+     ],
+     "description": "For an identity of the tenant (deleted ones included): whether it is a person, a service account or an AI agent,\nso a console can link to the right page. Looked up when read, never stored."
+    },
     "type": {
      "$ref": "#/components/schemas/ThreatSubjectType"
     },
@@ -73478,12 +78388,12 @@
    "type": "object",
    "properties": {
     "incident": {
-     "$ref": "#/components/schemas/ThreatIncident"
+     "$ref": "#/components/schemas/ThreatIncidentView"
     },
     "detections": {
      "type": "array",
      "items": {
-      "$ref": "#/components/schemas/ThreatDetection"
+      "$ref": "#/components/schemas/ThreatDetectionView"
      },
      "description": "At most 200, newest first."
     },
@@ -73513,11 +78423,11 @@
    ],
    "additionalProperties": false
   },
-  "ThreatIncident": {
+  "ThreatIncidentView": {
    "type": "object",
    "properties": {
     "subject": {
-     "$ref": "#/components/schemas/ThreatSubject"
+     "$ref": "#/components/schemas/ThreatSubjectView"
     },
     "identityId": {
      "type": "string",
@@ -73629,6 +78539,7 @@
       "revoke-sessions",
       "forget-devices",
       "contain",
+      "suspend-clearance",
       "block-network",
       "release"
      ]
@@ -73645,7 +78556,7 @@
     },
     "reason": {
      "type": "string",
-     "description": "Why a response was skipped: `protected`, `no-network`, `trusted-network`, `already-applied`, `braked`, `no-recipients`, `not-identity`, ..."
+     "description": "Why a response was skipped: `protected`, `no-network`, `trusted-network`, `already-applied`, `braked`, `no-recipients`, `not-identity`, `no-clearance`, `feature-disabled`, ..."
     },
     "incidentId": {
      "type": "string"
@@ -73691,6 +78602,26 @@
     "tenantId"
    ],
    "additionalProperties": {}
+  },
+  "ThreatSubject": {
+   "type": "object",
+   "properties": {
+    "type": {
+     "$ref": "#/components/schemas/ThreatSubjectType"
+    },
+    "id": {
+     "type": "string",
+     "description": "Identity id, network key (`ipCounterKey` form: an IPv4 address or an IPv6 /64), tenant id, or `scim:{connectionId}`."
+    },
+    "name": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "type",
+    "id"
+   ],
+   "additionalProperties": false
   },
   "IdentityRiskView": {
    "type": "object",
@@ -73858,7 +78789,7 @@
     "detections": {
      "type": "array",
      "items": {
-      "$ref": "#/components/schemas/ThreatDetection"
+      "$ref": "#/components/schemas/ThreatDetectionView"
      }
     },
     "total": {
@@ -73877,7 +78808,7 @@
     "incidents": {
      "type": "array",
      "items": {
-      "$ref": "#/components/schemas/ThreatIncident"
+      "$ref": "#/components/schemas/ThreatIncidentView"
      }
     },
     "total": {
@@ -74165,6 +79096,9 @@
        "type": "number"
       },
       "denial-burst": {
+       "type": "number"
+      },
+      "classified-access-attempts": {
        "type": "number"
       },
       "recon-burst": {
@@ -78451,10 +83385,10 @@
    "enum": [
     "pending",
     "cancelled",
+    "waiting",
     "failed",
     "completed",
-    "running",
-    "waiting"
+    "running"
    ]
   },
   "WorkflowStepResult": {
@@ -79992,7 +84926,7 @@
     "_construct": {
      "description": "Function (not serializable)"
     },
-    "__@captureRejectionSymbol@13133": {
+    "__@captureRejectionSymbol@14019": {
      "description": "Function (not serializable)"
     }
    },
@@ -80094,7 +85028,7 @@
      "type": "boolean",
      "description": "If `false` then the stream will automatically end the writable side when the\nreadable side ends. Set initially by the `allowHalfOpen` constructor option,\nwhich defaults to `true`.\n\nThis can be changed manually to change the half-open behavior of an existing\n`Duplex` stream instance, but must be changed before the `'end'` event is emitted."
     },
-    "__@captureRejectionSymbol@13133": {
+    "__@captureRejectionSymbol@14019": {
      "description": "Function (not serializable)"
     },
     "readableAborted": {
@@ -80683,7 +85617,7 @@
     "_construct": {
      "description": "Function (not serializable)"
     },
-    "__@captureRejectionSymbol@13133": {
+    "__@captureRejectionSymbol@14019": {
      "description": "Function (not serializable)"
     }
    },

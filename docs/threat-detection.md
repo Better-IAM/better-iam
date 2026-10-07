@@ -2,11 +2,12 @@
 
 Better IAM watches its own audit trail for attacks on identities (ITDR: identity threat detection and response). It
 reports password sprays, password and second-factor guessing, stolen sessions, replayed tokens, accounts taken over
-and then locked in, self-granted administrator access, mass deletions, weakened security settings, and tampering with
-the audit log itself. Detections about the same person, network, tenant, or directory connection are grouped into one
-**incident** for investigation. Each identity gets a decaying **risk score** that policies read as
-`principal.riskLevel` and `principal.riskScore`. Administrators respond by hand (end sessions, forget devices, contain
-an account, block a network, send an alert), or define **playbooks** that respond automatically.
+and then locked in, self-granted administrator access, mass deletions, weakened security settings, repeated attempts
+to read classified resources, and tampering with the audit log itself. Detections about the same person, network,
+tenant, or directory connection are grouped into one **incident** for investigation. Each identity gets a decaying
+**risk score** that policies read as `principal.riskLevel` and `principal.riskScore`. Administrators respond by hand
+(end sessions, forget devices, contain an account, suspend a security clearance, block a network, send an alert), or
+define **playbooks** that respond automatically.
 
 Everything lives in the `threats` API group. Reading needs `iam:threats:read`, tuning and triage need
 `iam:threats:manage`, and acting on identities and networks needs `iam:threats:respond`, all on `iam/threats/...`.
@@ -82,6 +83,7 @@ window.
 | `directory-mass-change`        | A SCIM connection updating or deleting many people                                                | medium   | connection | 25 in 10 minutes          | T1531        |
 | `impersonation-burst`          | One administrator starting many "view as" sessions                                                | medium   | identity   | 5 in 1 day                | T1078        |
 | `denial-burst`                 | One actor denied many times (AI agents included): probing for access                              | medium   | identity   | 30 in 10 minutes          | T1069        |
+| `classified-access-attempts`   | One actor refused classified resources for want of a clearance: reading up                        | high     | identity   | 3 in 1 hour               | T1213        |
 | `recon-burst`                  | Far more administrative reads than usual, or many data-subject exports                            | low      | identity   | 300 reads in 10 minutes   | T1087        |
 | `guardrail-weakened`           | A protection dropped from the sign-in policy, a network block lifted, or a detection rule off     | medium   | tenant     | every occurrence          | T1562        |
 | `token-replay`                 | A web identity token presented a second time to assume a role                                     | high     | identity   | every occurrence          | T1550        |
@@ -120,6 +122,15 @@ What each rule reads, and the details that matter when tuning it:
   `denial-burst`, and `recon-burst` count identities only, never the deployment's own actors (`deployment-operator`,
   `threat-detection`, SCIM connections). `directory-mass-change` counts SCIM `UpdateUser` and `DeleteUser` per
   connection.
+- `classified-access-attempts` counts only refusals for want of a clearance: the `deny` events the decision services
+  mark `{ mandatory: 'clearance' }` when a session's clearance does not dominate a resource's label
+  ([security clearances](security-clearances.md)). Like `denial-burst` it counts identities only and holds the
+  administrator behind a "view as" session responsible, also when it is the administrator's own clearance that
+  fails. It reports the actions and how many resources were refused, never a label; officers learn which dimension
+  failed with `clearances.explain`. Without the `clearances` option nothing is marked and the rule never fires. Every
+  check of `authorizeMany` that a clearance refuses counts, so an application that checks a page of labeled resources
+  at once should list with `listAccessible` or a data filter instead, or the tenant should raise the threshold
+  (1 to 1000, in one minute to seven days).
 - `recon-burst` counts allowed `iam:*:read` operations (reading the threats module itself excepted), and separately
   data-subject exports (`identity:export`) at a threshold of the larger of 3 and one fiftieth of the read threshold.
 - `guardrail-weakened` fires when the tenant sign-in policy drops `requireMfa`, `requireMfaForOwners`,
@@ -359,15 +370,16 @@ See [policies](policies.md#risk-context).
 
 ## Responding
 
-Five response actions exist, taken by a person through `threats.respond` or automatically by a playbook:
+Six response actions exist, taken by a person through `threats.respond` or automatically by a playbook:
 
-| Action            | Effect                                                                                                                                                                                        |
-| ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `revoke-sessions` | Ends the identity's sessions, the role sessions it assumed, and (for an agent) its delegated sessions, and deletes pending sign-in challenges. API keys are kept unless `keepApiKeys: false`. |
-| `forget-devices`  | Deletes the identity's remembered devices, so the next sign-in asks for the second factor again.                                                                                              |
-| `contain`         | Disables the identity until `threats.release`: every session except API keys ends, remembered devices and challenges go, and its keys are refused while it is disabled.                       |
-| `block-network`   | Blocks the network for the tenant, like [`security.blockNetwork`](authentication.md), for `durationMs` (one minute to 30 days; one day by default).                                           |
-| `notify`          | Emails the incident (template `threat-alert`) to the tenant's `notify` recipients.                                                                                                            |
+| Action              | Effect                                                                                                                                                                                        |
+| ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `revoke-sessions`   | Ends the identity's sessions, the role sessions it assumed, and (for an agent) its delegated sessions, and deletes pending sign-in challenges. API keys are kept unless `keepApiKeys: false`. |
+| `forget-devices`    | Deletes the identity's remembered devices, so the next sign-in asks for the second factor again.                                                                                              |
+| `contain`           | Disables the identity until `threats.release`: every session except API keys ends, remembered devices and challenges go, and its keys are refused while it is disabled.                       |
+| `suspend-clearance` | Suspends the identity's security clearance ([security clearances](security-clearances.md)) until an officer reinstates it with `clearances.reinstate`, so every labeled resource is refused.  |
+| `block-network`     | Blocks the network for the tenant, like [`security.blockNetwork`](authentication.md), for `durationMs` (one minute to 30 days; one day by default).                                           |
+| `notify`            | Emails the incident (template `threat-alert`) to the tenant's `notify` recipients.                                                                                                            |
 
 ```ts
 const responses = await iam.api.threats.respond(admin, {
@@ -383,8 +395,9 @@ actions with each kind at most once, and a reason. It needs `iam:threats:respond
 `iam/threats/responses` without one) and a recent sign-in. A response to an identity or network with an open
 incident is filed under that incident. Every action comes back as a response record, `applied` or `skipped` with a
 reason: `not-identity` (an identity action on a network), `no-network`, `trusted-network`, `already-applied`
-(already contained, or a block at least as long already covers the network), `inactive`, `no-incident`,
-`no-transport`, `no-recipients`. Every applied action is audited as `threat:{action}`.
+(already contained or suspended, or a block at least as long already covers the network), `inactive`, `no-incident`,
+`no-transport`, `no-recipients`, `no-clearance` (nothing to suspend), `feature-disabled` (a playbook's suspension on
+a deployment without clearances). Every applied action is audited as `threat:{action}`.
 
 Protections apply to people responding:
 
@@ -396,6 +409,11 @@ Protections apply to people responding:
   lock yourself out. Trusted networks are never blocked.
 - Blocks on the root tenant decide whether root administrators can sign in, so, as with `security.blockNetwork`, only
   a root administrator sets them (`ACCESS_DENIED`); playbooks skip them as `protected`.
+- Suspending a clearance takes what `clearances.suspend` takes: `iam:clearances:suspend` on
+  `iam/clearances/{identityId}` besides `iam:threats:respond` (`ACCESS_DENIED`, checked before anything about the
+  clearance is read, so the answer tells nobody else whether the person holds one), never while impersonating
+  (`IMPERSONATION_RESTRICTED`) or as a guest of the organization, and the deployment's `clearances` option
+  (`FEATURE_DISABLED`).
 
 **Containment** is reversible. The identity is disabled, its sessions end, and its API keys are refused while it stays
 disabled. `threats.release({ tenantId, identityId, note })` makes it active again: it signs in as usual, and its keys
@@ -406,6 +424,13 @@ disabled, suspended, or re-enabled since can be released (`INVALID_TRANSITION` o
 (`identities.setStatus`, `identities.offboard`, service accounts' `setStatus`, `agents.suspend` and `agents.resume`,
 workflow steps) ends the containment, so a release never undoes what they did. Containing and releasing re-evaluate
 the identity's rule-based access packages at once.
+
+**Clearance suspensions** take an active or interim clearance out of force at once, recording who suspended it
+(`threat-detection` for playbooks), why, and the incident on the clearance. They are audited as `clearance:suspend`, as
+`clearances.suspend` records it, and as `threat:suspend-clearance`. The person is not emailed, so an investigation does
+not tip them off. Only an officer lifts a suspension (`clearances.reinstate`, with a recent sign-in, never the person
+themselves): `threats.release` ends a containment and never touches the clearance, so an identity contained and
+suspended together comes back without its clearance.
 
 **Blocks** are ordinary tenant network blocks with the reason prefixed `threat: `: they refuse sign-ins, sessions, and
 keys from the network, show in `security.listBlocks`, and lapse on their own. A network that a tenant or platform
@@ -453,14 +478,27 @@ await iam.api.threats.createPlaybook(admin, {
   trigger: { ruleIds: ['token-replay'], subjectTypes: ['identity'] },
   actions: [{ kind: 'revoke-sessions', keepApiKeys: false }],
 });
+
+// Security clearances: take the clearance of anyone who keeps trying to read above it out of force until an officer
+// has looked (written by someone who may suspend clearances).
+await iam.api.threats.createPlaybook(securityOfficer, {
+  tenantId,
+  name: 'Suspend on classified probing',
+  trigger: { ruleIds: ['classified-access-attempts'] },
+  actions: [{ kind: 'suspend-clearance' }, { kind: 'notify' }],
+});
 ```
 
 - A trigger matches when every clause it sets matches: `ruleIds`, `minSeverity`, and `subjectTypes`. `{}` matches
   every detection.
 - Playbooks run for new detections only, in the order they were created. Emails go out only through playbooks (or a
   person's `notify`): detection itself never emails anyone.
-- **Automatic responses never touch owners or root administrators.** Containing one is skipped as `protected`
-  (ending their sessions or forgetting their devices is allowed).
+- **Automatic responses never touch owners or root administrators.** Containing one, or suspending their clearance,
+  is skipped as `protected` (ending their sessions or forgetting their devices is allowed).
+- **Playbooks that suspend clearances act for a clearance officer.** Writing one also needs `iam:clearances:suspend`
+  on `iam/clearances` (`ACCESS_DENIED`, `FEATURE_DISABLED` without the `clearances` option), and so does adding the
+  action to a playbook, changing the trigger of one that has it, or switching one on. Renaming, describing, switching
+  off, and removing the action do not, so anyone with `iam:threats:manage` can stop one.
 - **The brake.** A run contains at most `maxAutomaticContainments` identities per tenant (3 by default; 0 turns
   automatic containment off). Further containments are skipped as `braked`, counted in the run's `braked`, and
   audited once per run as `threat:response-braked`, so a noisy rule or a flood of forged events cannot lock out the

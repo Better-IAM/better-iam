@@ -21,6 +21,7 @@ import {
 } from '@better-iam/core';
 import { calculateJwkThumbprint, exportJWK, type JWK } from 'jose';
 import type { ServerContext } from './context.js';
+import { decideOn, isRootOverride, moduleResourceLabels } from './decisions.js';
 import { departmentOf } from './departments.js';
 import type { ResolvedResource } from './options.js';
 import {
@@ -387,9 +388,12 @@ export async function mayRequest(
   type: VcCredentialType,
 ): Promise<boolean> {
   const prepared = await ctx.decisions.prepareDecision(tx, principal, tenant, vcRequestAction);
-  if ('fixed' in prepared)
-    return prepared.fixed.allowed && principal.identity.tenantId === tenant.id;
-  return prepared.evaluate(typeResource(type), vcRequestAction).allowed;
+  if (isRootOverride(prepared) && principal.identity.tenantId !== tenant.id) return false;
+  if ('fixed' in prepared) return prepared.fixed.allowed;
+  // With security clearances, the type carries its classification label, as `resolve` attaches it.
+  const resource = typeResource(type);
+  const labeled = await moduleResourceLabels(ctx, tx, tenant.id, [resource]);
+  return decideOn(prepared, labeled(resource), vcRequestAction).allowed;
 }
 
 const claimName = /^[a-zA-Z_][a-zA-Z0-9_]{0,63}$/;

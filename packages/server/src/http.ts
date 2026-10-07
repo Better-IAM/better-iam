@@ -122,6 +122,9 @@ export const routeGroups = new Set([
   'filters',
   'signals',
   'quotas',
+  'licenses',
+  'guests',
+  'clearances',
 ]);
 export const publicApiMethods = new Set([
   'tenants/acceptInvitation',
@@ -145,6 +148,9 @@ export const publicApiMethods = new Set([
   'verifiableCredentials/nonce',
   'verifiableCredentials/verify',
   'verifiableCredentials/issuerMetadata',
+  // Guest invitations (api/guests.ts): the emailed token is the credential; rate limited per organization, client
+  // address and token.
+  'guests/redeem',
 ]);
 /**
  * Public routes that act in one organization named by `tenantId`: on an organization's own address they act in that
@@ -160,6 +166,7 @@ const tenantBoundPublicMethods = new Set([
   // An organization's SSH trust and revocation lists are served on its own address only for it.
   'ssh/trust',
   'ssh/revocationList',
+  'guests/redeem',
 ]);
 /**
  * Routes whose session becomes the browser's session, so their answer sets the session cookie: sign-in ceremonies,
@@ -180,6 +187,7 @@ const sessionCookieRoutes = new Set([
   'auth/reauthenticate',
   'tenants/acceptInvitation',
   'identities/acceptInvitation',
+  'guests/redeem',
   'links/switch',
 ]);
 

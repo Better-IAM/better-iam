@@ -3,12 +3,14 @@ import type { ThreatRuleView } from '@better-iam/server';
 import {
   actionsSummary,
   durationLabel,
+  offeredResponseKinds,
   playbookBody,
   playbookDraft,
   responseActions,
   ruleDraft,
   ruleDraftChanged,
   ruleSettingChange,
+  skipReason,
   splitList,
   triggerSummary,
 } from '../apps/console/src/lib/threats.js';
@@ -107,6 +109,34 @@ describe('console threats helpers', () => {
     expect(
       triggerSummary({ ruleIds: ['brute-force'], minSeverity: 'high' }, () => 'Password guessing'),
     ).toBe('Password guessing · high severity or higher');
+  });
+
+  it('offers suspending a clearance only to people who may', () => {
+    expect(offeredResponseKinds({ suspendClearances: false })).toEqual([
+      'revoke-sessions',
+      'forget-devices',
+      'contain',
+      'block-network',
+      'notify',
+    ]);
+    expect(offeredResponseKinds({ suspendClearances: true })).toEqual([
+      'revoke-sessions',
+      'forget-devices',
+      'contain',
+      'suspend-clearance',
+      'block-network',
+      'notify',
+    ]);
+    expect(responseActions(['notify', 'suspend-clearance', 'contain'])).toEqual([
+      { kind: 'contain' },
+      { kind: 'suspend-clearance' },
+      { kind: 'notify' },
+    ]);
+    expect(actionsSummary([{ kind: 'contain' }, { kind: 'suspend-clearance' }])).toBe(
+      'Contain, Suspend clearance',
+    );
+    expect(skipReason('no-clearance')).toBe('no clearance to suspend');
+    expect(skipReason('feature-disabled')).toBe('security clearances are not enabled');
   });
 
   it('sends bodies the threats API accepts', async () => {

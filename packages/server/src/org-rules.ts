@@ -12,6 +12,7 @@ import {
   type Department,
   type DepartmentMember,
 } from './departments.js';
+import { licenseRuleKeys, loadLicenseFacts } from './licenses.js';
 import type { AccessPackage } from './models.js';
 import {
   orgRuleKeys,
@@ -25,6 +26,8 @@ import { liveTeamMember, teamChain, teamCollections, type Team, type TeamMember 
 export interface TenantOrgFacts {
   teamIds: Set<string>;
   departmentIds: Set<string>;
+  /** The keys of the license products visible to the tenant: the valid identity.licenses values (licenses.ts). */
+  licenseKeys: Set<string>;
   /** What a rule sees for one person, given their live memberships no access package created. */
   of(identityId: string, directGroupIds: readonly string[]): RuleOrgFacts;
 }
@@ -51,9 +54,11 @@ export async function loadOrgFacts(
       (placement) => [placement.identityId, placement.departmentId],
     ),
   );
+  const licenses = await loadLicenseFacts(reader, tenantId);
   return {
     teamIds: new Set(teams.keys()),
     departmentIds: new Set(departments.keys()),
+    licenseKeys: licenses.keys,
     of(identityId, directGroupIds) {
       const direct = new Set(directGroupIds);
       const teamIds = new Set<string>();
@@ -68,6 +73,12 @@ export async function loadOrgFacts(
         for (const link of teamChain(teams, team.id)) teamIds.add(link.id);
       }
       const departmentId = placements.get(identityId);
+      // Seats held through groups count through the same memberships, a counted team's backing group included.
+      const licenseGroups = new Set(direct);
+      for (const teamId of teamIds) {
+        const groupId = teams.get(teamId)?.groupId;
+        if (groupId) licenseGroups.add(groupId);
+      }
       return {
         teams: [...teamIds].sort(),
         departments: departmentId
@@ -75,12 +86,16 @@ export async function loadOrgFacts(
               .map((department) => department.id)
               .sort()
           : [],
+        licenses: licenses.of(identityId, licenseGroups),
       };
     },
   };
 }
 
-/** The valid identity.teams and identity.departments values of a tenant: its team and department IDs. */
+/**
+ * The valid identity.teams and identity.departments values of a tenant: its team and department IDs; and the valid
+ * identity.licenses values, the keys of the license products it can use.
+ */
 export async function orgRuleEnvironment(
   reader: IamStore,
   tenantId: string,
@@ -94,6 +109,7 @@ export async function orgRuleEnvironment(
         (department) => department.id,
       ),
     ),
+    licenses: await licenseRuleKeys(reader, tenantId),
   };
 }
 

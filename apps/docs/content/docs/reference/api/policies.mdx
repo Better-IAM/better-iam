@@ -44,6 +44,7 @@ it. See [access reviews](/docs/guides/authorization/reviews).
 | `NO_APPLICABLE_GRANT` | No role grants the action within its authority ceilings. |
 | `no-grant` | Returned by `test` only: the tested document does not allow the action. |
 | `ROOT_OVERRIDE` | The identity is a platform root administrator evaluated with MFA; the root override applies. |
+| `CLEARANCE_REQUIRED` | With [security clearances](/docs/reference/api/clearances): the resource carries a classification label the identity's clearance does not dominate. Checked before anything else, for root administrators too unless `clearances.appliesToRoot` is false; never for `iam:*` actions. |
 | `TENANT_INACTIVE` | The tenant or one of its ancestors is not active. |
 | `UNKNOWN_ACTION` | Returned by `simulate` only: the action is not in the catalog. |
 
@@ -404,7 +405,8 @@ Lists every active identity that could perform an action on a resource, with the
 Every active identity of the tenant is evaluated, people and service accounts alike; `kind` narrows to one. The
 result has `identities` (id, name, email, kind, and the decision reason) and `total`, the number of matches before
 paging with `limit` (100 by default) and `offset`. Grants are loaded per identity, so the cost grows with the
-directory: use it on review screens, not on every request.
+directory: use it on review screens, not on every request. With security clearances, identities whose clearance does
+not dominate the resource's label are left out, whatever their roles grant.
 
 <ApiShape id="policies.whoCan" http />
 

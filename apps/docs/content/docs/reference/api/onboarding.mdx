@@ -64,7 +64,9 @@ Creates a flow at this tenant's level.
 
 - **Permission:** `iam:onboarding:manage` on the tenant. Form fields that fill identity attributes (`attribute`) also
   need `iam:identities:update`; `completionGroupIds` need `iam:groups:update` on each group and the use of the grant
-  authorities behind the group's bindings. Both are refused from role sessions, session tokens, and impersonation.
+  authorities behind the group's bindings, and `iam:licenses:assign` when a license product is assigned to a group
+  or to a team it syncs into. Both are refused from role sessions, session tokens, and impersonation. At completion
+  the flow's owner is checked again, and groups they can no longer fill (a group licensed since included) are skipped.
 - **Audited as:** `iam:onboarding:manage`.
 - **Errors:** `CONFLICT` (409) for a name the tenant already uses; `LIMIT_EXCEEDED` (409) past 50 flows;
   `INVALID_INPUT` for an unknown field, a step kind the audience does not allow, duplicate step IDs, an undeclared or
@@ -396,7 +398,7 @@ Changes any field of a flow but its audience. Changing the steps bumps `version`
 <ApiEndpoint group="onboarding" method="updateFlow" http="POST /onboarding/updateFlow" credential="required" />
 
 - **Permission:** `iam:onboarding:manage` on the flow, plus the attribute and group permissions of `createFlow` for newly
-  mapped attributes and newly added completion groups.
+  mapped attributes and newly added completion groups (`iam:licenses:assign` included, for a licensed group).
 - **Audited as:** `iam:onboarding:manage`.
 - **Errors:** as `createFlow`, and `NOT_FOUND` when this tenant does not define the flow.
 

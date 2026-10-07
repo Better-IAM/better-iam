@@ -8,7 +8,7 @@ import {
   type PolicyDocument,
   type ResourceTypeDefinition,
 } from '@better-iam/core';
-import { reservedSessionPrincipalNames } from './context-keys.js';
+import { clearanceServerKeys, reservedSessionPrincipalNames } from './context-keys.js';
 import type { ActionDefinition, ResourceRecord, ResourceTypeRecord } from './models.js';
 import type { BetterIamOptions, ResolvedResource, ServerConfig } from './options.js';
 import { id } from './utils.js';
@@ -251,6 +251,26 @@ export const builtInActions = [
   // and changing sources, reprocessing events and polling on demand.
   'signals:read',
   'signals:manage',
+  // License management (licenses.ts, api/licenses.ts): reading products, pools, assignments, seats and usage; defining
+  // products, adding capacity and settings; assigning products to people and groups.
+  'licenses:read',
+  'licenses:manage',
+  'licenses:assign',
+  // B2B guest collaboration (guests.ts, api/guests.ts): reading guests, invitations and settings; inviting guests;
+  // managing guests (revoking invitations, renewing, sponsors, removal, conversion); cross-tenant access settings.
+  'guests:read',
+  'guests:invite',
+  'guests:manage',
+  'guests:settings',
+  // Security clearances (clearances.ts, api/clearances.ts): reading clearances, schemes and labels; adjudicating
+  // (grant, update, read-in, debrief, reinstate, revoke, explain); suspending in an incident; defining the scheme;
+  // labeling resources (raise only); declassifying (lowering or removing a label).
+  'clearances:read',
+  'clearances:adjudicate',
+  'clearances:suspend',
+  'classifications:manage',
+  'classifications:label',
+  'classifications:declassify',
 ].map((action) => `iam:${action}`);
 
 /** Resource types the platform resolves itself; products and tenants cannot redefine them. */
@@ -293,7 +313,11 @@ export function relationNames(value: unknown): string[] {
   return unique;
 }
 
-export function attributeSchema(value: unknown): Record<string, AttributeType> {
+export function attributeSchema(
+  value: unknown,
+  /** Names the deployment reserves besides `tenantId` (`Catalog.reservedAttributes`). */
+  reserved?: ReadonlySet<string>,
+): Record<string, AttributeType> {
   if (value === undefined) return {};
   const schema = object(value);
   const result: Record<string, AttributeType> = {};
@@ -302,6 +326,8 @@ export function attributeSchema(value: unknown): Record<string, AttributeType> {
   for (const [key, type] of Object.entries(schema)) {
     if (!/^[a-zA-Z][a-zA-Z0-9_]{0,63}$/.test(key) || key === 'tenantId')
       throw new IamError('INVALID_INPUT', `Invalid attribute name ${key}`);
+    if (reserved?.has(key))
+      throw new IamError('INVALID_INPUT', `Attribute name ${key} is reserved`);
     if (typeof type !== 'string' || !attributeTypes.has(type as AttributeType))
       throw new IamError('INVALID_INPUT', `Attribute ${key} must be string, number, or boolean`);
     result[key] = type as AttributeType;
@@ -390,8 +416,26 @@ export const reservedPrincipalKeys = new Set([
   'consents',
   'riskLevel',
   'riskScore',
+  'licenses',
+  'guest',
+  'guestSponsorId',
+  'homeTenantId',
   ...reservedSessionPrincipalNames,
 ]);
+
+/**
+ * Names reserved only when the deployment enables security clearances (`options.clearances`), so configurations that
+ * use them keep working without it: the clearance keys as identity attributes (`principal.clearanceRank`), and a
+ * classification label's keys as resource attributes (`resource.classification`): labels are IAM-held, never attributes.
+ */
+const clearanceNames = (prefix: string) =>
+  new Set(
+    [...clearanceServerKeys]
+      .filter((key) => key.startsWith(prefix))
+      .map((key) => key.slice(prefix.length)),
+  );
+export const clearancePrincipalNames: ReadonlySet<string> = clearanceNames('principal.');
+export const classificationAttributeNames: ReadonlySet<string> = clearanceNames('resource.');
 
 export class Catalog {
   readonly actions = new Set(builtInActions);
@@ -400,6 +444,11 @@ export class Catalog {
   readonly namespaces: Set<string>;
   /** Typed attributes administrators may set on identities; exposed to policies as principal.{name}. */
   readonly identityAttributes: Record<string, AttributeType>;
+  /**
+   * Resource attribute names this deployment reserves besides `tenantId`: a classification label's keys when
+   * `options.clearances` is set (`classificationAttributeNames`), none otherwise. Pass to `attributeSchema`.
+   */
+  readonly reservedAttributes: ReadonlySet<string> | undefined;
 
   constructor(
     options: BetterIamOptions,
@@ -417,8 +466,13 @@ export class Catalog {
       throw new IamError('INVALID_CONFIG', `identityAttributes: ${(error as Error).message}`);
     }
     for (const key of Object.keys(this.identityAttributes))
-      if (reservedPrincipalKeys.has(key))
+      if (
+        reservedPrincipalKeys.has(key) ||
+        (config.clearances !== undefined && clearancePrincipalNames.has(key))
+      )
         throw new IamError('INVALID_CONFIG', `identityAttributes cannot redefine principal.${key}`);
+    this.reservedAttributes =
+      config.clearances !== undefined ? classificationAttributeNames : undefined;
     const declaredTypes = [
       ...Object.entries(options.permissions?.resourceTypes ?? {}),
       ...plugins.flatMap((plugin) => Object.entries(plugin.resourceTypes ?? {})),
@@ -432,7 +486,7 @@ export class Catalog {
       let attributes: Record<string, AttributeType>;
       let relations: string[];
       try {
-        attributes = attributeSchema(declared.attributes);
+        attributes = attributeSchema(declared.attributes, this.reservedAttributes);
         relations = relationNames(declared.relations);
       } catch (error) {
         throw new IamError('INVALID_CONFIG', `Resource type ${name}: ${(error as Error).message}`);

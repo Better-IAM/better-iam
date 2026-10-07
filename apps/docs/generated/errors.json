@@ -18,7 +18,7 @@
    "@better-iam/nestjs",
    "@better-iam/server"
   ],
-  "occurrences": 113
+  "occurrences": 118
  },
  {
   "code": "ACCESS_EXPIRING",
@@ -299,7 +299,7 @@
    "@better-iam/scim",
    "@better-iam/server"
   ],
-  "occurrences": 100
+  "occurrences": 112
  },
  {
   "code": "CREDENTIAL_CHAINING_DISABLED",
@@ -438,16 +438,16 @@
   ],
   "messages": [
    "Reminders require an email delivery callback",
+   "Clearance reminders require an email delivery callback",
+   "Guest invitations require an email delivery callback",
+   "Guest review reminders require an email delivery callback",
    "Member invitations require an email delivery callback",
-   "Public requests need an email delivery callback",
-   "Public requests need an email delivery callback to confirm addresses",
-   "Organization invitations require an email delivery callback",
-   "The access digest requires an email delivery callback"
+   "Public requests need an email delivery callback"
   ],
   "packages": [
    "@better-iam/server"
   ],
-  "occurrences": 9
+  "occurrences": 13
  },
  {
   "code": "DOCTOR_FINDINGS",
@@ -531,7 +531,7 @@
    "@better-iam/auth",
    "@better-iam/server"
   ],
-  "occurrences": 34
+  "occurrences": 35
  },
  {
   "code": "FEATURE_LOCKED",
@@ -586,6 +586,20 @@
    "@better-iam/server"
   ],
   "occurrences": 1
+ },
+ {
+  "code": "GUEST_NOT_ALLOWED",
+  "statuses": [
+   403
+  ],
+  "messages": [
+   "… is a verified domain of this organization: invite the person as a member",
+   "The person’s organization does not allow its members to join this organization as guests"
+  ],
+  "packages": [
+   "@better-iam/server"
+  ],
+  "occurrences": 3
  },
  {
   "code": "HOST_KEY_CHANGED",
@@ -727,7 +741,7 @@
    "@better-iam/oauth",
    "@better-iam/server"
   ],
-  "occurrences": 27
+  "occurrences": 32
  },
  {
   "code": "INSUFFICIENT_SCOPE",
@@ -837,7 +851,7 @@
    "@better-iam/cli",
    "@better-iam/server"
   ],
-  "occurrences": 71
+  "occurrences": 74
  },
  {
   "code": "INVALID_CREDENTIAL",
@@ -920,7 +934,7 @@
   "packages": [
    "@better-iam/server"
   ],
-  "occurrences": 5
+  "occurrences": 6
  },
  {
   "code": "INVALID_IDENTITY",
@@ -950,9 +964,9 @@
    "Unknown credential token type",
    "limit must be between 1 and 1000",
    "Only active people with an email can reset a password",
+   "A guest’s email address cannot change: ask the organization to invite the new address",
    "limit must be a positive integer",
-   "name must not be empty",
-   "A passkey authentication response is required"
+   "name must not be empty"
   ],
   "packages": [
    "@better-iam/auth",
@@ -964,7 +978,7 @@
    "@better-iam/scim",
    "@better-iam/server"
   ],
-  "occurrences": 965
+  "occurrences": 1029
  },
  {
   "code": "INVALID_LINK",
@@ -1145,12 +1159,14 @@
   ],
   "messages": [
    "An agent sponsor must be an active person of the same tenant",
-   "Name the person accountable for the agent (sponsorId)"
+   "Name the person accountable for the agent (sponsorId)",
+   "Name a sponsor (sponsorId): only an active member of the organization who is not a guest can sponsor guests",
+   "A guest’s sponsor must be an active member of the organization who is not a guest"
   ],
   "packages": [
    "@better-iam/server"
   ],
-  "occurrences": 2
+  "occurrences": 4
  },
  {
   "code": "INVALID_TENANT_TREE",
@@ -1210,7 +1226,7 @@
    "@better-iam/projects",
    "@better-iam/server"
   ],
-  "occurrences": 100
+  "occurrences": 114
  },
  {
   "code": "INVARIANT_VIOLATION",
@@ -1246,14 +1262,14 @@
   ],
   "messages": [
    "Invitation is invalid",
-   "Invitation authority revoked",
-   "The inviter can no longer invite",
-   "The inviter can no longer grant this access"
+   "The sponsor can no longer sponsor guests",
+   "…: revoke this invitation and invite the person again",
+   "Invitation authority revoked"
   ],
   "packages": [
    "@better-iam/server"
   ],
-  "occurrences": 10
+  "occurrences": 9
  },
  {
   "code": "IP_BLOCKED",
@@ -1344,7 +1360,7 @@
   "packages": [
    "@better-iam/server"
   ],
-  "occurrences": 2
+  "occurrences": 3
  },
  {
   "code": "LAST_ROOT_ADMIN",
@@ -1405,7 +1421,7 @@
    "@better-iam/scim",
    "@better-iam/server"
   ],
-  "occurrences": 46
+  "occurrences": 50
  },
  {
   "code": "LINKING_DISABLED",
@@ -1592,7 +1608,7 @@
    "@better-iam/scim",
    "@better-iam/server"
   ],
-  "occurrences": 178
+  "occurrences": 191
  },
  {
   "code": "NOT_INITIALIZED",
@@ -1829,7 +1845,7 @@
   "packages": [
    "@better-iam/server"
   ],
-  "occurrences": 20
+  "occurrences": 21
  },
  {
   "code": "QUOTA_EXCEEDED",
@@ -1900,12 +1916,12 @@
    "Delete registered resources first",
    "Delete relationships first",
    "Other resource types use this type as their parent",
-   "Move or delete the departments below it first: …"
+   "A level that clearances or labels use cannot be removed or re-ranked"
   ],
   "packages": [
    "@better-iam/server"
   ],
-  "occurrences": 25
+  "occurrences": 28
  },
  {
   "code": "RESOURCE_MISMATCH",
@@ -2299,7 +2315,7 @@
    "@better-iam/scim",
    "@better-iam/server"
   ],
-  "occurrences": 21
+  "occurrences": 23
  },
  {
   "code": "TENANT_MISMATCH",
@@ -2495,12 +2511,16 @@
   "messages": [
    "… conditions cannot be expressed in …; filter these resources with filterMatches or authorize",
    "These policies are too complex to plan as a filter; check the resources with authorize",
-   "A policy compares a value with …, one of the resource’s own attributes, which a filter cannot express; check the resources with authorize"
+   "A policy compares a value with …, one of the resource’s own attributes, which a filter cannot express; check the resources with authorize",
+   "A policy has a condition on …, which the server derives for each resource rather than reading from the row; check the resources with authorize",
+   "Resources of this type must carry a classification label, which a filter cannot check for application resources; check them with authorize",
+   "Classification labels pass down to application resources through the parents their resolver reports, which a filter cannot check; check them with authorize"
   ],
   "packages": [
-   "@better-iam/core"
+   "@better-iam/core",
+   "@better-iam/server"
   ],
-  "occurrences": 4
+  "occurrences": 7
  },
  {
   "code": "UNTRUSTED_ORIGIN",
@@ -2536,13 +2556,14 @@
   ],
   "messages": [
    "The agreement changed; review the current version before accepting",
+   "The scheme changed; reload it first",
    "Policy version changed",
    "The purpose changed; review the current version before deciding"
   ],
   "packages": [
    "@better-iam/server"
   ],
-  "occurrences": 3
+  "occurrences": 4
  },
  {
   "code": "VERSION_DESTROYED",

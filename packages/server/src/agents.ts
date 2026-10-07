@@ -301,6 +301,11 @@ export interface AgentDecisionScope {
   confirm?: (action: string, resourceType: string, resourceId: string) => Decision | undefined;
   /** Credential issuer authorities whose ceilings apply as well (the keys behind the sessions that handed work on). */
   authorities?: string[];
+  /**
+   * The agents taking part: the acting agent (its own key or a delegated session) and, after hand-offs, every agent
+   * that handed the work on. Empty when no agent acts. Security clearances require each of them to dominate a label.
+   */
+  agentIds: string[];
 }
 
 /**
@@ -319,11 +324,16 @@ export async function agentDecisionScope(
 ): Promise<AgentDecisionScope | undefined> {
   const session: Session = principal.session;
   const delegated = session.kind === 'delegated';
-  const scope: AgentDecisionScope = { keys: { 'principal.delegated': delegated }, boundaries: [] };
+  const scope: AgentDecisionScope = {
+    keys: { 'principal.delegated': delegated },
+    boundaries: [],
+    agentIds: [],
+  };
   const agent = await actingAgent(tx, principal);
   if (!agent) return delegated ? undefined : scope;
   const profile = agent.agent;
   scope.keys['principal.agentId'] = agent.id;
+  scope.agentIds.push(agent.id);
   if (typeof profile?.sponsorId === 'string')
     scope.keys['principal.agentSponsorId'] = profile.sponsorId;
   if (typeof profile?.model === 'string') scope.keys['principal.agentModel'] = profile.model;
@@ -357,6 +367,7 @@ export async function agentDecisionScope(
     handedOn(delegation);
     for (const ancestor of ancestors) {
       if (!ancestor.delegation.policy) return undefined;
+      scope.agentIds.push(ancestor.agent.id);
       scope.boundaries.push(ancestor.delegation.policy);
       if (ancestor.agent.agent?.boundary) scope.boundaries.push(ancestor.agent.agent.boundary);
       handedOn(ancestor.delegation);

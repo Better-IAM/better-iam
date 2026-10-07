@@ -10,6 +10,7 @@ import {
 import { appClientAllowed } from './applications.js';
 import { attributeValues } from './catalog.js';
 import type { ServerContext } from './context.js';
+import { reconcileIdentityLicenses, releaseGroupLicenses } from './licenses.js';
 import type { Binding } from './models.js';
 import { syncTeamsFromGroups } from './teams.js';
 import { id } from './utils.js';
@@ -215,6 +216,32 @@ export function createFederation(ctx: ServerContext, bindings: BindingApi) {
       }),
     completeAuthentication,
     syncRoleMappings,
+    /**
+     * After SCIM deactivated or reactivated a person (in its transaction): their license seats follow at once, as after
+     * an administrator's `identities.setStatus` (licenses.ts).
+     */
+    identityStatusChanged: async (
+      tx: IamStore,
+      input: { tenantId: string; connectionId: string; identityId: string },
+    ): Promise<void> => {
+      await reconcileIdentityLicenses(
+        ctx,
+        tx,
+        input.tenantId,
+        [input.identityId],
+        'directory-sync',
+      );
+    },
+    /**
+     * Before SCIM deletes a group's record (in its transaction): the group's license assignments go with it and the
+     * seats they carried are released, as `groups.delete` does (licenses.ts).
+     */
+    groupDeleted: async (
+      tx: IamStore,
+      input: { tenantId: string; connectionId: string; groupId: string },
+    ): Promise<void> => {
+      await releaseGroupLicenses(ctx, tx, input.tenantId, input.groupId, 'directory-sync');
+    },
     /** Records a protocol's audit event and fans it out (webhooks, plugins, `iam.events` subscribers). */
     recordAudit: (tx: IamStore, event: AuditEvent) => ctx.events.recordAudit(tx, event),
     /**

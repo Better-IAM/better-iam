@@ -127,7 +127,7 @@ export async function registerResourceType(
     tenantId: input.tenantId,
     uniqueKey: name,
     name,
-    attributes: attributeSchema(input.attributes),
+    attributes: attributeSchema(input.attributes, catalog.reservedAttributes),
     createdAt: Date.now(),
   };
   if (input.description !== undefined)
@@ -191,7 +191,7 @@ export async function updateResourceType(
       throw new IamError('RESOURCE_IN_USE', 'Remove relationships before dropping a relation', 409);
   }
   if (input.attributes !== undefined) {
-    next.attributes = attributeSchema(input.attributes);
+    next.attributes = attributeSchema(input.attributes, catalog.reservedAttributes);
     // Registered resources must keep satisfying the schema, otherwise conditions would silently stop matching.
     for (const resource of await tx.find<ResourceRecord>('resources', {
       tenantId: input.tenantId,

@@ -33,8 +33,13 @@ A maintainer of a team, or of any team above it, may add, update and remove memb
 requests from their own user session without `iam:teams:update`, unless the team's `memberManagement` is `admins`.
 Such calls are audited with `via: team-maintainer`; separation-of-duties rules and enforced invariants still apply.
 Administrators need `iam:teams:update` and, like [`groups.addMember`](/docs/reference/api/groups#addmember),
-authority over the bindings of the team's backing group and of the teams above it. Members of a team (directly or
-through a team below it) may read it with `get` and `listMembers`.
+authority over the bindings of the team's backing group and of the teams above it. When a
+[license product](/docs/reference/api/licenses) is assigned to the backing group of the team or of a team above it,
+administrators also need `iam:licenses:assign` for every change that puts people in or keeps them longer: adding
+members, approving join requests, lengthening or clearing an end, appointing a maintainer, syncing a group in, moving
+a staffed team under it, and opening an admins-only team to maintainers. Maintainers do not, since they manage the
+team under the delegation its administrators gave them. Members of a team (directly or through a team below it) may
+read it with `get` and `listMembers`.
 
 ## Birthright packages
 
@@ -57,7 +62,8 @@ packages follow at once.
 
 Adds a person to a team as a `member` (default) or `maintainer`, optionally until `expiresAt`.
 
-- **Permission:** `iam:teams:update` on `iam/{teamId}`, or maintaining the team or a team above it.
+- **Permission:** `iam:teams:update` on `iam/{teamId}`, or maintaining the team or a team above it. Administrators
+  also need `iam:licenses:assign` when a license product is assigned to the team's backing group or one above it.
 - **Audited as:** `iam:teams:update` and `team:member:add` (`identityId`, `role`, `source`, `expiresAt`, `via`).
 - **Errors:** `CONFLICT` (409) when the person is already a live member; `INVALID_INPUT` for a service account, agent,
   or inactive person; `GRANT_AUTHORITY_REQUIRED` / `ACCESS_DENIED` when an administrator lacks authority over what the
@@ -88,7 +94,8 @@ Adds up to 100 people with the same role and expiry in one transaction; one fail
 Grants a pending join request: the requester joins as a member (optionally until `expiresAt`) and is emailed
 (`team-join-decided`). Nobody decides their own request.
 
-- **Permission:** `iam:teams:update` on the team, or maintaining it or a team above it.
+- **Permission:** `iam:teams:update` on the team, or maintaining it or a team above it. Administrators also need
+  `iam:licenses:assign` when a license product is assigned to the team's backing group or one above it.
 - **Audited as:** `iam:teams:update`, `team:member:add` (`source: approve`), and `team:join:approve`.
 - **Errors:** `INVALID_TRANSITION` (409) when the request is no longer pending (decided, withdrawn, or lapsed);
   `ACCESS_DENIED` for your own request; `NOT_FOUND`.
@@ -137,7 +144,8 @@ Creates a team with its backing group. `slug` defaults to one derived from the n
 [team sync](#team-sync).
 
 - **Permission:** `iam:teams:create` on the tenant. With `parentId`, also `iam:teams:update` on the parent and
-  authority over what the parent (and the teams above it) hold.
+  authority over what the parent (and the teams above it) hold, and `iam:licenses:assign` when a license product is
+  assigned to one of their backing groups and the new team has `maintainerIds` or `syncGroupIds`.
 - **Audited as:** `iam:teams:create`, `team:create`, and `team:member:add` per maintainer.
 - **Errors:** `CONFLICT` (409) when the slug is taken; `INVALID_INPUT` for a bad slug, more than ten levels of nesting,
   or more than 20 maintainers; `LIMIT_EXCEEDED` past 1000 teams or the tenant's group limit.
@@ -241,7 +249,7 @@ every team below, each with the team they belong to.
 ## listMine
 
 Your teams (with role, expiry, and parents), your join requests (newest first), the teams that take join requests that
-you are not in, and the open membership reviews of teams you maintain (eviews, soonest due first, with how many
+you are not in, and the open membership reviews of teams you maintain (`reviews`, soonest due first, with how many
 people other than you are still undecided).
 
 - **Permission:** None beyond an ordinary user session of the organization.
@@ -329,7 +337,9 @@ team, or changes `joinPolicy`, `memberManagement`, or `syncGroupIds` ([team sync
 parents.
 
 - **Permission:** `iam:teams:update` on the team; moving under a parent also needs `iam:teams:update` on it and
-  authority over what it holds. Maintainers cannot change settings.
+  authority over what it holds. Maintainers cannot change settings. When a license product is assigned to the
+  team's backing group or one above it (after the move), syncing groups in, moving a team with members, and setting
+  `memberManagement` to `maintainers` also need `iam:licenses:assign`.
 - **Audited as:** `iam:teams:update` and `team:update` (`fields`, and the parents when moved).
 - **Errors:** `INVALID_INPUT` when moving under itself or a team below it, or past ten levels; `CONFLICT` for a taken
   slug.
@@ -338,7 +348,8 @@ parents.
 
 Changes a member's `role` or expiry (`expiresAt: null` makes the membership permanent).
 
-- **Permission:** as `addMember`.
+- **Permission:** as `addMember`. On a licensed team, an administrator's `iam:licenses:assign` is needed to lengthen
+  or clear an end or to appoint a maintainer; shortening needs no more than `iam:teams:update`.
 - **Audited as:** `iam:teams:update` and `team:member:update`.
 - **Errors:** `NOT_FOUND` when the person is not a live direct member; `INVALID_TRANSITION` (409) for a new end of a
   synced membership (it follows the source group).

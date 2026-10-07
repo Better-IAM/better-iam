@@ -164,6 +164,7 @@ export function createAnalysisApi(ctx: ServerContext) {
    */
   async function lintContext(tx: IamStore, tenantId: string): Promise<PolicyLintContext> {
     const context: PolicyLintContext = { identityAttributes: ctx.catalog.identityAttributes };
+    if (ctx.config.clearances) context.clearances = true;
     if (!ctx.options.resolveResource) {
       const names = new Set<string>();
       for (const type of ctx.catalog.resourceTypes.values())

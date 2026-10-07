@@ -61,7 +61,7 @@ import {
 import { actsInOwnRight } from '../session-kinds.js';
 import { id } from '../utils.js';
 import { integer, strings, text } from '../validation.js';
-import { createGroup, deleteGroup } from './groups.js';
+import { assertMayClaimLicenses, createGroup, deleteGroup } from './groups.js';
 import { afterIdentityChange } from './package-automation.js';
 
 export interface TeamInput {
@@ -516,6 +516,37 @@ function teamModule(ctx: ServerContext) {
         await ctx.grantingAuthority(tx, principal, tenantId, binding.authorityId);
   }
 
+  /** Per transaction: the callers and team chains `assertMayClaimTeamLicenses` already cleared. */
+  const clearedLicenses = new WeakMap<IamStore, Set<string>>();
+  /**
+   * Administrators who put people into a team, keep them there longer, or appoint its maintainers claim license seats
+   * for them when a product is assigned to the backing group of the team or of a team above it (`teams`: that chain):
+   * that needs iam:licenses:assign, as adding them to those groups directly does (api/groups.ts), refused with
+   * `OperationDenied`. Maintainers acting as maintainers skip this by design: they manage their own team under the
+   * delegation its administrators gave them, as with `assertAuthorityOver`. Checked once per caller and chain in a
+   * transaction, so batches ask once.
+   */
+  async function assertMayClaimTeamLicenses(
+    tx: IamStore,
+    principal: AuthenticatedPrincipal,
+    tenantId: string,
+    teams: Team[],
+  ): Promise<void> {
+    const key = `${principal.identity.id}:${teams.map((team) => team.id).join(',')}`;
+    const cleared = clearedLicenses.get(tx) ?? new Set<string>();
+    if (cleared.has(key)) return;
+    await assertMayClaimLicenses(
+      ctx,
+      tx,
+      principal,
+      tenantId,
+      teams.map((team) => team.groupId),
+      'This team, or a team above it, carries license seats; adding people to it, changing how long they stay, or appointing its maintainers needs iam:licenses:assign',
+    );
+    cleared.add(key);
+    clearedLicenses.set(tx, cleared);
+  }
+
   /** The backing groups of `team` and of the teams above it that hold the person right now. */
   async function heldChainGroups(
     tx: IamStore,
@@ -705,7 +736,10 @@ function teamModule(ctx: ServerContext) {
     return identity;
   }
 
-  /** Adds or re-adds a direct member, then refreshes the backing groups. Shared by add, approve and create. */
+  /**
+   * Adds or re-adds a direct member, then refreshes the backing groups. Shared by add, approve, create and configuration
+   * sync. An administrator (`via: 'permission'`) needs iam:licenses:assign when the team's chain carries license seats.
+   */
   async function putMember(
     mutation: TeamMutation,
     input: { identityId: unknown; role?: unknown; expiresAt?: unknown },
@@ -718,6 +752,13 @@ function teamModule(ctx: ServerContext) {
       input.expiresAt === undefined || input.expiresAt === null
         ? undefined
         : ctx.bindingExpiry(input.expiresAt);
+    if (mutation.via === 'permission')
+      await assertMayClaimTeamLicenses(
+        tx,
+        principal,
+        team.tenantId,
+        teamChain(await allTeams(tx, team.tenantId), team.id),
+      );
     const uniqueKey = `${team.id}:${identity.id}`;
     const existing = (
       await tx.find<TeamMember>(teamCollections.members, { tenantId: team.tenantId, uniqueKey })
@@ -921,11 +962,14 @@ function teamModule(ctx: ServerContext) {
         { identityId, role: 'maintainer' },
         'create',
       );
-    if (syncGroupIds.length)
+    if (syncGroupIds.length) {
+      // Syncing brings the source groups' members into the teams above it too.
+      await assertMayClaimTeamLicenses(tx, principal, tenant.id, [team, ...chain]);
       await syncTeamsFromGroups(ctx, tx, tenant.id, {
         teamIds: [team.id],
         actorId: principal.identity.id,
       });
+    }
     await audit(tx, principal, 'team:create', team, {
       name,
       ...(team.parentId ? { parentId: team.parentId } : {}),
@@ -983,8 +1027,10 @@ function teamModule(ctx: ServerContext) {
           : await teamSyncGroups(tx, team.tenantId, input.syncGroupIds);
       if (sources.length) next.syncGroupIds = sources;
       // Syncing brings people in, and with them what the team and the teams above it hold.
-      if (sources.some((groupId) => !team.syncGroupIds?.includes(groupId)))
+      if (sources.some((groupId) => !team.syncGroupIds?.includes(groupId))) {
         await assertAuthorityOver(tx, principal, team.tenantId, teamChain(teams, team.id));
+        await assertMayClaimTeamLicenses(tx, principal, team.tenantId, teamChain(teams, team.id));
+      }
     }
     const previousParent = team.parentId;
     if (input.parentId !== undefined && (input.parentId ?? undefined) !== team.parentId) {
@@ -1004,15 +1050,21 @@ function teamModule(ctx: ServerContext) {
           team,
           ...teamDescendants(teams.values(), team.id),
         ]);
+        // Its members claim the seats of the new chain, and the new parent's maintainers hand out the moved teams'.
+        await assertMayClaimTeamLicenses(tx, principal, team.tenantId, [
+          ...chain,
+          team,
+          ...teamDescendants(teams.values(), team.id),
+        ]);
         next.parentId = parent.id;
       }
     }
     // Opening an admins-only team to its maintainers lets them grant what it and the teams above it hold.
-    if (team.memberManagement === 'admins' && next.memberManagement !== 'admins')
-      await assertAuthorityOver(tx, principal, team.tenantId, [
-        team,
-        ...(next.parentId ? teamChain(teams, next.parentId) : []),
-      ]);
+    if (team.memberManagement === 'admins' && next.memberManagement !== 'admins') {
+      const opened = [team, ...(next.parentId ? teamChain(teams, next.parentId) : [])];
+      await assertAuthorityOver(tx, principal, team.tenantId, opened);
+      await assertMayClaimTeamLicenses(tx, principal, team.tenantId, opened);
+    }
     await tx.put<Team>(teamCollections.teams, next);
     if (next.slug !== team.slug || next.name !== team.name) {
       const group = await tx.get<Group>('groups', team.groupId);
@@ -1402,6 +1454,21 @@ function teamModule(ctx: ServerContext) {
                   await heldChainGroups(tx, team, member.identityId),
                 );
             }
+            // An administrator keeping someone longer, or appointing a maintainer (who then adds people), claims
+            // license seats of a licensed team; shortening or demoting does not.
+            const longer =
+              member.expiresAt !== undefined &&
+              (next.expiresAt === undefined || next.expiresAt > member.expiresAt);
+            if (
+              via === 'permission' &&
+              (longer || (next.role === 'maintainer' && member.role !== 'maintainer'))
+            )
+              await assertMayClaimTeamLicenses(
+                tx,
+                principal,
+                team.tenantId,
+                teamChain(await allTeams(tx, team.tenantId), team.id),
+              );
             await tx.put<TeamMember>(teamCollections.members, next);
             await syncTeamGroups(tx, team.tenantId, [team.id], ctx.now());
             await audit(tx, principal, 'team:member:update', team, {
@@ -2093,6 +2160,7 @@ function teamModule(ctx: ServerContext) {
       removeMember,
       memberRecord,
       assertAuthorityOver,
+      assertMayClaimTeamLicenses,
       allTeams,
     },
   };

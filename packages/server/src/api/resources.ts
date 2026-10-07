@@ -12,7 +12,7 @@ import {
   type CatalogResourceType,
 } from '../catalog.js';
 import type { ServerContext } from '../context.js';
-import { impersonatingActor } from '../decisions.js';
+import { decideOn, impersonatingActor } from '../decisions.js';
 import type { ResourceRecord } from '../models.js';
 import { id } from '../utils.js';
 import { integer, object, text } from '../validation.js';
@@ -272,9 +272,7 @@ export function createResourcesApi(ctx: ServerContext) {
               id: `${record.type}/${record.resourceId}`,
               attributes: resolvedManaged(record).attributes,
             };
-            return prepared.every(
-              (ready) => ('fixed' in ready ? ready.fixed : ready.evaluate(resource)).allowed,
-            );
+            return prepared.every((ready) => decideOn(ready, resource).allowed);
           };
           // Order by type/id rather than by opaque record ID so pages are meaningful to callers.
           return (await tx.find<ResourceRecord>('resources', filter))

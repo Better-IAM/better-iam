@@ -38,6 +38,10 @@ export default async function Deliveries() {
           `${origin}/cloud/${encodeURIComponent(slugById.get(tenantId) ?? tenantId)}/account`,
         certification: ({ tenantId, campaignId }) =>
           `${origin}/cloud/${encodeURIComponent(slugById.get(tenantId) ?? tenantId)}/certifications/${encodeURIComponent(campaignId)}`,
+        guestInvitation: ({ tenantId, token }) =>
+          joinLink(origin, 'guest-invitation', tenantId, token) ?? '',
+        guests: ({ tenantId, guestId }) =>
+          `${origin}/cloud/${encodeURIComponent(slugById.get(tenantId) ?? tenantId)}/guests${guestId ? `/${encodeURIComponent(guestId)}` : ''}`,
       },
     });
   return (

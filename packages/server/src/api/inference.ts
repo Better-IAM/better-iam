@@ -8,6 +8,7 @@ import {
   type StoredRecord,
 } from '@better-iam/core';
 import type { ServerContext } from '../context.js';
+import { decideOn } from '../decisions.js';
 import {
   createInferenceGateway,
   type GatewayRuntime,
@@ -267,7 +268,7 @@ async function invocableModels(
       type: inferenceResourceType,
       id: model.name,
     });
-    const decision = 'fixed' in prepared ? prepared.fixed : prepared.evaluate(resource);
+    const decision = decideOn(prepared, resource);
     if (decision.allowed) result.push(view);
   }
   return result;

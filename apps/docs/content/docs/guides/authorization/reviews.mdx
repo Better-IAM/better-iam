@@ -62,6 +62,7 @@ The reasons a server decision can carry:
 | --- | --- | --- |
 | `allowed` | A grant allowed it, no deny matched, and every boundary allowed it. | |
 | `ROOT_OVERRIDE` | A root administrator in an MFA-verified session; policies are not consulted. | |
+| `CLEARANCE_REQUIRED` | With security clearances (the `clearances` option): the resource carries a classification label that the person's clearance, or that of another party of the session, does not dominate. It is checked before anything else, root administrators included unless `clearances.appliesToRoot` is false, and never for `iam:*` actions; no grant can lift it. | The officer-only [`clearances.explain`](/docs/guides/security-clearances#explain-a-refusal) |
 | `explicit-deny` | A deny statement matched, in one of the person's roles or in a boundary. | The `matched` list names the statement. |
 | `boundary-deny` | A tenant, principal, session, or credential boundary does not allow the action. | [Boundaries](/docs/guides/authorization/policies#boundaries) |
 | `NO_APPLICABLE_GRANT` | No role allowed it within its authority ceilings: no role with the action, a condition that did not hold, or a ceiling that cut it off. | [`effectiveActions`](#what-can-a-person-do), the person's bindings |
@@ -129,6 +130,8 @@ const { identities, total } = await iam.api.policies.whoCan(credential, {
 - It requires `iam:policies:simulate` on the tenant.
 - Root administrators are not listed because their override applies everywhere.
 - Access through groups, inheritance, relationships, activations, and access windows all counts.
+- With security clearances, people whose clearance does not dominate the resource's classification label are left
+  out, whatever their roles grant.
 - The resource is resolved once, but grants are loaded per identity, so the call scales with the tenant's
   directory size. It is meant for review screens, not per-request checks.
 
@@ -153,7 +156,8 @@ const { allowed, results } = await iam.api.policies.effectiveActions(credential,
 
 It requires `iam:policies:simulate` on the identity. More than 200 actions fail with `INVALID_INPUT`, and an
 action outside the catalog with `INVALID_ACTION`. Platform resources (`iam/...`) are accepted, so you can also ask
-which administrative actions someone holds on a role or group.
+which administrative actions someone holds on a role or group. With security clearances, a resource labeled above
+the person's clearance refuses every application action with `CLEARANCE_REQUIRED` and still allows the `iam:` ones.
 
 ## What simulations take into account
 
@@ -170,6 +174,9 @@ The synthetic session differs from a real one in a few ways:
   demand recent MFA or a particular network do not hold. `principal.authTime` is the moment of evaluation, and
   the session carries no tags.
 - The session is never impersonated, and no session policy or API key scope applies.
+- With [security clearances](/docs/guides/security-clearances), the identity's real clearance applies, as for the
+  session kind simulated (an agent with its sponsor), so the mandatory check runs first exactly as it would for the
+  person.
 
 ## Scan for risky configuration
 

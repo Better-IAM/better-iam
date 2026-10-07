@@ -48,6 +48,13 @@ export const principalServerKeys: ReadonlyMap<string, ContextKeyType> = new Map<
   // Threat detection (threats.ts): the identity's effective risk level ('none' | 'low' | 'medium' | 'high') and score.
   ['principal.riskLevel', 'identifier'],
   ['principal.riskScore', 'number'],
+  // License management (licenses.ts): keys of the license products the person holds an active seat for in the tenant.
+  ['principal.licenses', 'list'],
+  // B2B guest collaboration (guests.ts): whether the person is a guest of the tenant, their sponsor, and the tenant that
+  // verified their email domain (a tenant-sourced guest).
+  ['principal.guest', 'boolean'],
+  ['principal.guestSponsorId', 'identifier'],
+  ['principal.homeTenantId', 'identifier'],
   // Session-aware keys: 'simulation' is the session id of simulated principals.
   ['principal.sessionId', 'identifier'],
   ['principal.tokenIssueTime', 'timestamp'],
@@ -80,6 +87,47 @@ export const principalServerKeys: ReadonlyMap<string, ContextKeyType> = new Map<
   ['request.deviceCompliant', 'boolean'],
   ['request.deviceId', 'identifier'],
   ['request.devicePlatform', 'identifier'],
+  // Security clearances (clearances.ts), only with `options.clearances`: the session's clearance level (absent without
+  // one), its rank (-1 without; the lowest across the session's parties), its status, and the compartments and
+  // citizenship every party shares. Without the option they are ordinary keys (see `clearanceServerKeys`).
+  ['principal.clearanceLevel', 'identifier'],
+  ['principal.clearanceRank', 'number'],
+  ['principal.clearanceStatus', 'identifier'],
+  ['principal.clearanceCompartments', 'list'],
+  ['principal.clearanceCitizenship', 'list'],
+]);
+
+/**
+ * `resource.*` keys the server derives from a resource's classification label (clearances.ts, only with
+ * `options.clearances`): the level ID (absent when unlabeled), its rank (-1 unlabeled), the compartment IDs, whether it
+ * is NOFORN, and the countries it is releasable to. Written after the resource's attributes, so neither attributes nor
+ * application context can stand in for them. Query plans refuse conditions on them (they are not row columns).
+ */
+export const resourceServerKeys: ReadonlyMap<string, ContextKeyType> = new Map<
+  string,
+  ContextKeyType
+>([
+  ['resource.classification', 'identifier'],
+  ['resource.classificationRank', 'number'],
+  ['resource.compartments', 'list'],
+  ['resource.noforn', 'boolean'],
+  ['resource.releasableTo', 'list'],
+]);
+
+/** Resource server keys missing from some decisions: an unlabeled resource has no classification level. */
+export const optionalResourceServerKeys: ReadonlySet<string> = new Set(['resource.classification']);
+
+/**
+ * The keys only the server sets once the deployment enables clearances (`options.clearances`). Without the option the
+ * server never sets them, and an application's context may supply them as before.
+ */
+export const clearanceServerKeys: ReadonlySet<string> = new Set([
+  'principal.clearanceLevel',
+  'principal.clearanceRank',
+  'principal.clearanceStatus',
+  'principal.clearanceCompartments',
+  'principal.clearanceCitizenship',
+  ...resourceServerKeys.keys(),
 ]);
 
 /**
@@ -112,10 +160,15 @@ export const optionalPrincipalServerKeys: ReadonlySet<string> = new Set([
   'principal.agentProvider',
   'principal.delegationChain',
   'principal.departmentId',
+  // Only for guests (guests.ts), and the home tenant only for tenant-sourced ones.
+  'principal.guestSponsorId',
+  'principal.homeTenantId',
   'request.sourceIp',
   // Only when the request carries a verified device proof (devices.ts).
   'request.deviceId',
   'request.devicePlatform',
+  // Only while the session holds a clearance (clearances.ts).
+  'principal.clearanceLevel',
 ]);
 
 /** Session tags appear as `principal.sessionTags.<key>` (optional strings), one key per tag. */
@@ -156,10 +209,18 @@ export const sessionScopedPrincipalKeys: readonly string[] = reservedSessionPrin
   .filter((name) => name !== 'sessionTags')
   .map((name) => `principal.${name}`);
 
-/** Whether only the server may set this context key: a registry member or any `principal.sessionTags.` key. */
-export function isServerOwnedKey(key: string): boolean {
+/**
+ * Whether only the server may set this context key: a registry member or any `principal.sessionTags.` key. The
+ * clearance keys (`clearanceServerKeys`) count only when `clearances` is true (the deployment sets
+ * `options.clearances`); it defaults to true, the strict reading.
+ */
+export function isServerOwnedKey(key: string, clearances = true): boolean {
+  if (!clearances && clearanceServerKeys.has(key)) return false;
   return (
-    principalServerKeys.has(key) || tenantServerKeys.has(key) || key.startsWith(sessionTagPrefix)
+    principalServerKeys.has(key) ||
+    tenantServerKeys.has(key) ||
+    resourceServerKeys.has(key) ||
+    key.startsWith(sessionTagPrefix)
   );
 }
 

@@ -21,7 +21,8 @@ one by hand takes it over, so revoking the package no longer removes it.
 
 Adds a person to a group so they receive every role bound to the group, optionally until a given time.
 
-- **Permission:** `iam:groups:update` on the group, plus grant authority for each of the group's role bindings.
+- **Permission:** `iam:groups:update` on the group, plus grant authority for each of the group's role bindings, and
+  `iam:licenses:assign` when a license product is assigned to the group or to a team it syncs into.
 - **Audited as:** `iam:groups:update`.
 - **Errors:** `CONFLICT` when the person is already a live member; `NOT_FOUND` when the group or person is not in
   this tenant; `ACCESS_DENIED` without authority over one of the group's bindings; `SOD_CONFLICT` when the
@@ -45,7 +46,8 @@ await iam.api.groups.addMember(credential, {
 
 Adds up to 100 people to a group in one transaction, all with the same optional expiry.
 
-- **Permission:** `iam:groups:update` on the group, plus grant authority for each of the group's role bindings.
+- **Permission:** `iam:groups:update` on the group, plus grant authority for each of the group's role bindings, and
+  `iam:licenses:assign` when a license product is assigned to the group or to a team it syncs into.
 - **Audited as:** `iam:groups:update`.
 - **Errors:** `INVALID_INPUT` when `identityIds` is empty; any error `addMember` can raise for one person
   (including `SOD_CONFLICT`) rejects the whole batch.
@@ -126,7 +128,8 @@ Renames a group or changes its description.
 
 Extends, shortens, or clears the expiry of an existing membership.
 
-- **Permission:** `iam:groups:update` on the group, plus grant authority for each of the group's role bindings.
+- **Permission:** `iam:groups:update` on the group, plus grant authority for each of the group's role bindings, and
+  `iam:licenses:assign` when a license product is assigned to the group or to a team it syncs into.
 - **Audited as:** `iam:groups:update`.
 - **Errors:** `NOT_FOUND` when the person is not a live member of the group.
 

@@ -1,7 +1,7 @@
 import { IamError, type CredentialInput } from '@better-iam/core';
 import { managedResource, resolvedManaged } from '../catalog.js';
 import type { ServerContext } from '../context.js';
-import { impersonatingActor } from '../decisions.js';
+import { decideOn, impersonatingActor } from '../decisions.js';
 import type { Relationship } from '../models.js';
 import { byNewest, id } from '../utils.js';
 import { text } from '../validation.js';
@@ -123,9 +123,7 @@ export function createRelationshipsApi(ctx: ServerContext) {
                 id: key,
                 ...(record ? { attributes: resolvedManaged(record).attributes } : {}),
               };
-              verdict = prepared.every(
-                (ready) => ('fixed' in ready ? ready.fixed : ready.evaluate(resource)).allowed,
-              );
+              verdict = prepared.every((ready) => decideOn(ready, resource).allowed);
               verdicts.set(key, verdict);
             }
             return verdict;

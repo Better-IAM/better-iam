@@ -52,6 +52,18 @@ export interface TemplateLinks {
   }): string;
   /** A security incident's page (threat detection and response); threat alerts fall back to `account`. */
   threats?(input: { tenantId: string; incidentId?: string; signInUrl?: string }): string;
+  /**
+   * Where an invited guest accepts a guest invitation (the page calls `guests.redeem` with the token, a name and a
+   * password); without it the email shows the token.
+   */
+  guestInvitation?(input: { tenantId: string; token: string; signInUrl?: string }): string;
+  /** The guests page, or one guest's page with `guestId`; guest emails fall back to `account`. */
+  guests?(input: { tenantId: string; guestId?: string; signInUrl?: string }): string;
+  /**
+   * The clearances page, or one person's clearance with `identityId` (security clearances); clearance emails fall back
+   * to `account`.
+   */
+  clearances?(input: { tenantId: string; identityId?: string; signInUrl?: string }): string;
 }
 
 export interface TemplateOptions {
@@ -126,6 +138,9 @@ function layout(
  * `privacy-request-verify`, `privacy-request-received`, `privacy-request-update`, `privacy-request-due`,
  * `workflow-message`,
  * `threat-alert`,
+ * `license-waiting`, `license-activated`,
+ * `guest-invitation`, `guest-review`, `guest-sponsor-missing`,
+ * `clearance-reminder`, `clearance-status`,
  * `owner-invitation`, `member-invitation`)
  * into a subject, plain text, and HTML, so a
  * delivery callback can hand them to any provider. Returns undefined for templates it does not know (plugins,
@@ -673,6 +688,76 @@ export function renderDeliveryMessage(
       const lines = (payload.body ?? '').split(/\r?\n/).slice(0, 200);
       return compose(subject, subject, lines, message.tenantId ? accountAction : undefined);
     }
+    case 'guest-invitation': {
+      const tenantName = payload.tenantName ?? 'an organization';
+      const inviter = payload.inviterName;
+      const sponsor = payload.sponsorName;
+      const expires = payload.expiresAt ? new Date(payload.expiresAt) : undefined;
+      return compose(
+        `${inviter ? `${inviter} invited you` : 'You are invited'} to join ${tenantName} as a guest`,
+        `Join ${tenantName} as a guest`,
+        [
+          `${inviter ? `${inviter} invited` : 'You have been invited'} you to collaborate with ${tenantName} as a guest.${sponsor && sponsor !== inviter ? ` ${sponsor} sponsors your access.` : ''}`,
+          ...(payload.message ? [`Their message: “${payload.message}”`] : []),
+          'Guest access is limited, and it ends unless your sponsor renews it.',
+          `The invitation is personal: accept it from the same email address${expires && !Number.isNaN(expires.getTime()) ? ` by ${expires.toUTCString()}` : ''}.`,
+        ],
+        {
+          href: links.guestInvitation?.({
+            tenantId: linkTenant,
+            ...site,
+            token: payload.token ?? '',
+          }),
+          label: 'Accept invitation',
+          fallbackToken: payload.token,
+        },
+      );
+    }
+    case 'guest-review':
+    case 'guest-sponsor-missing': {
+      const tenantId = message.tenantId ?? payload.tenantId;
+      const href = tenantId
+        ? links.guests
+          ? links.guests({
+              tenantId,
+              ...(payload.guestId ? { guestId: payload.guestId } : {}),
+              ...site,
+            })
+          : links.account?.({ tenantId, ...site })
+        : undefined;
+      const organization = payload.tenantName ?? 'your organization';
+      const guest = payload.guestName ?? 'A guest';
+      const who = `${guest}${payload.guestEmail ? ` (${payload.guestEmail})` : ''}`;
+      if (message.template === 'guest-sponsor-missing')
+        return compose(
+          `${guest} at ${organization} has no sponsor`,
+          'A guest needs a sponsor',
+          [
+            `${payload.sponsorName ? `${payload.sponsorName}, who sponsored ${who},` : `The person who sponsored ${who}`} is no longer an active member of ${organization}.`,
+            'Assign the guest a new sponsor, or remove them if nobody vouches for them any more.',
+          ],
+          { href, label: 'Review the guest' },
+        );
+      const ends = payload.expiresAt ? new Date(payload.expiresAt) : undefined;
+      const review = payload.reviewDueAt ? new Date(payload.reviewDueAt) : undefined;
+      const valid = (date: Date | undefined): date is Date =>
+        date !== undefined && !Number.isNaN(date.getTime());
+      return compose(
+        `Does ${guest} still need access to ${organization}?`,
+        'Review a guest you sponsor',
+        [
+          `You sponsor ${who}, a guest at ${organization}.`,
+          ...(valid(ends)
+            ? [`Their access ends on ${ends.toUTCString()} unless you renew it.`]
+            : []),
+          ...(valid(review) && (!valid(ends) || review.getTime() < ends.getTime())
+            ? [`Please confirm by ${review.toUTCString()} that they still need it.`]
+            : []),
+          'Renew their access if they still need it; otherwise let it end, or ask an administrator to remove them.',
+        ],
+        { href, label: 'Review the guest' },
+      );
+    }
     case 'owner-invitation':
     case 'member-invitation': {
       const kind = message.template === 'owner-invitation' ? 'owner' : 'member';
@@ -695,6 +780,88 @@ export function renderDeliveryMessage(
           label: 'Accept invitation',
           fallbackToken: payload.token,
         },
+      );
+    }
+    case 'license-waiting':
+    case 'license-activated': {
+      const product = payload.productName ?? payload.productKey ?? 'a license';
+      const organization = payload.tenantName || 'your organization';
+      if (message.template === 'license-waiting')
+        return compose(
+          `You are on the waiting list for ${product}`,
+          `Waiting for a ${product} seat`,
+          [
+            `You were given ${product} at ${organization}, but every seat is taken right now, so you are on the waiting list.`,
+            'You get the next free seat automatically, and we will let you know when it is yours.',
+          ],
+          accountAction,
+        );
+      return compose(
+        `Your ${product} seat is ready`,
+        `${product} is ready for you`,
+        [
+          `A seat of ${product} at ${organization} became free and is now yours.`,
+          'You can use everything it includes right away.',
+        ],
+        accountAction,
+      );
+    }
+    // Security clearances. Mail passes through third-party providers, so these name the level only: never
+    // compartments, caveats or the reasons officers recorded.
+    case 'clearance-reminder':
+    case 'clearance-status': {
+      const tenantId = message.tenantId ?? payload.tenantId;
+      const organization = payload.tenantName || 'your organization';
+      const level = payload.levelName ? ` (level: ${payload.levelName})` : '';
+      const valid = (value: string | undefined): Date | undefined => {
+        const date = value ? new Date(value) : undefined;
+        return date && !Number.isNaN(date.getTime()) ? date : undefined;
+      };
+      if (message.template === 'clearance-reminder') {
+        const href = tenantId
+          ? links.clearances
+            ? links.clearances({
+                tenantId,
+                ...(payload.identityId ? { identityId: payload.identityId } : {}),
+                ...site,
+              })
+            : links.account?.({ tenantId, ...site })
+          : undefined;
+        const person = payload.personName ?? 'A person';
+        const reinvestigation = valid(payload.reinvestigationDue);
+        const ends = valid(payload.expiresAt);
+        const interim = payload.status === 'interim';
+        return compose(
+          `Clearance review due at ${organization}`,
+          'Clearance review due',
+          [
+            `${person} holds ${interim ? 'an interim' : 'a'} security clearance at ${organization}${level}.`,
+            ...(reinvestigation
+              ? [`Their periodic reinvestigation is due on ${reinvestigation.toUTCString()}.`]
+              : []),
+            ...(ends
+              ? [
+                  `The ${interim ? 'interim ' : ''}clearance ends on ${ends.toUTCString()} unless it is renewed.`,
+                ]
+              : []),
+            'Review the clearance: schedule the investigation, renew or end it.',
+          ],
+          { href, label: 'Review the clearance' },
+        );
+      }
+      const status = payload.status;
+      const outcome =
+        status === 'reinstated' ? 'reinstated' : status === 'revoked' ? 'revoked' : 'suspended';
+      return compose(
+        `Your security clearance at ${organization} was ${outcome}`,
+        `Clearance ${outcome}`,
+        [
+          `Your security clearance at ${organization}${level} was ${outcome}.`,
+          status === 'reinstated'
+            ? 'Access that depends on it is available again.'
+            : 'Access to classified resources that depends on it has stopped. Your security officer can tell you more.',
+        ],
+        accountAction,
       );
     }
     default:

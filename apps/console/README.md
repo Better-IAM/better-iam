@@ -45,6 +45,8 @@ To rotate the secret, follow the steps in [docs/deployment.md](../../docs/deploy
 
 The console also runs, in-process and hourly, the retention sweep (`iam.sweepExpired()`) and the invariant monitor (`iam.checkInvariants()`), and records which actions people use (`accessUsage`) for the Role mining and Governance pages.
 
+The configuration also enables security clearances (`clearances`; nothing is enforced until an organization defines a classification scheme). The Security section then has **Clearances** (the register with status, expiry and reinvestigation filters; each person's page grants, changes, reads in and debriefs, suspends, reinstates and revokes, asking for the password again where the API needs a recent sign-in, with the history from the audit trail) and **Classification** (the scheme from a template or your own definition, its settings, labels with raise and declassify forms, and an explain tool for officers), plus a Clearance card on member pages. Compartment names appear only to holders of `iam:clearances:read`. A daily job runs `iam.clearances.sendReminders()`.
+
 ## Notes
 
 - One session cookie per browser: signing in to an organization replaces an admin session and vice versa, exactly as the IAM server scopes it.

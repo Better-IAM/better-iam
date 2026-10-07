@@ -12,7 +12,7 @@ describe('threats API', () => {
     const threats = f.iam.api.threats;
     expect(routeGroups.has('threats')).toBe(true);
     const rules = await threats.rules(f.ownerCredential, { tenantId: f.tenantId });
-    expect(rules).toHaveLength(21);
+    expect(rules).toHaveLength(22);
     expect(rules.find((rule) => rule.id === 'new-network')).toMatchObject({
       everyone: false,
       customized: false,
@@ -648,5 +648,180 @@ describe('threats API protections', () => {
     // Restoring the half-life brings the earlier detection's weight back.
     await threats.configure(await f.ownerSignIn(), { tenantId, riskHalfLifeHours: 24 });
     expect(await risk()).toMatchObject({ level: 'high', score: 85 });
+  });
+});
+
+describe('threats API views', () => {
+  it('names people as the rules do and gives identity subjects their kind when read', async () => {
+    const f = await organizationFixture();
+    const { tenantId } = f;
+    const threats = f.iam.api.threats;
+    const alice = await f.member('alice');
+    const report = await threats.reportSuspicious(
+      { token: (await f.signIn('alice')).token },
+      { tenantId },
+    );
+    const reported = await threats.getDetection(f.ownerCredential, {
+      tenantId,
+      detectionId: report.detectionId,
+    });
+    expect(reported.subject).toEqual({
+      type: 'identity',
+      id: alice.id,
+      name: 'alice (alice@acme.test)',
+      kind: 'user',
+    });
+    expect(reported.summary).toBe(
+      'alice (alice@acme.test) reported activity on their account that was not them.',
+    );
+    const detail = await threats.getIncident(f.ownerCredential, {
+      tenantId,
+      incidentId: report.incidentId,
+    });
+    expect(detail.incident.subject).toEqual(reported.subject);
+    expect(detail.detections[0]!.subject.kind).toBe('user');
+    // The kind is looked up when read, never stored.
+    for (const [collection, recordId] of [
+      ['threatDetections', report.detectionId],
+      ['threatIncidents', report.incidentId],
+    ] as const)
+      expect(
+        (await f.iam.store.get<Stored<{ subject: object }>>(collection, recordId))?.subject,
+      ).toEqual({ type: 'identity', id: alice.id, name: 'alice (alice@acme.test)' });
+
+    // An AI agent denied again and again: its detection and incident link to an agent.
+    const owner = await f.ownerSignIn();
+    const agent = await f.iam.api.agents.create(owner, {
+      tenantId,
+      name: 'Triage bot',
+      sponsorId: f.ownerId,
+    } as never);
+    const { token } = await f.iam.api.credentials.create(f.ownerCredential, {
+      tenantId,
+      identityId: agent.id,
+    });
+    await threats.configure(owner, {
+      tenantId,
+      rules: { 'denial-burst': { threshold: 5 }, 'recon-burst': { enabled: false } },
+    });
+    await f.iam.detectThreats({ tenantId });
+    for (let attempt = 0; attempt < 5; attempt++)
+      expect(
+        (await f.iam.authorize({ token, tenantId, action: 'documents:read', resource: doc }))
+          .allowed,
+      ).toBe(false);
+    await f.iam.detectThreats({ tenantId });
+    const [denials] = (
+      await threats.listDetections(f.ownerCredential, { tenantId, ruleId: 'denial-burst' })
+    ).detections;
+    expect(denials?.subject).toMatchObject({ type: 'identity', id: agent.id, kind: 'agent' });
+    const [agentIncident] = (
+      await threats.listIncidents(f.ownerCredential, { tenantId, identityId: agent.id })
+    ).incidents;
+    expect(agentIncident?.subject).toMatchObject({ id: agent.id, kind: 'agent' });
+    expect(
+      await threats.updateIncident(f.ownerCredential, {
+        tenantId,
+        incidentId: agentIncident!.id,
+        status: 'investigating',
+      }),
+    ).toMatchObject({ status: 'investigating', subject: { kind: 'agent' } });
+
+    // Subjects other than identities have no kind; the settings detection names its author as the rules do.
+    const [weakened] = (
+      await threats.listDetections(f.ownerCredential, { tenantId, ruleId: 'guardrail-weakened' })
+    ).detections;
+    expect(weakened!.subject).toEqual({ type: 'tenant', id: tenantId, name: 'Acme' });
+    expect(weakened!.summary).toMatch(/^Owner \(owner@acme\.test\) turned off 1 detection rule: /);
+  });
+
+  it('lists incidents in one status or several', async () => {
+    const f = await organizationFixture();
+    const { tenantId } = f;
+    const threats = f.iam.api.threats;
+    const reports: Record<string, string> = {};
+    for (const name of ['alice', 'bob', 'carol']) {
+      await f.member(name);
+      reports[name] = (
+        await threats.reportSuspicious({ token: (await f.signIn(name)).token }, { tenantId })
+      ).incidentId;
+      f.advance(60_000);
+    }
+    const owner = await f.ownerSignIn();
+    await threats.updateIncident(owner, {
+      tenantId,
+      incidentId: reports.bob!,
+      status: 'investigating',
+    });
+    await threats.resolveIncident(owner, {
+      tenantId,
+      incidentId: reports.carol!,
+      resolution: 'true-positive',
+    });
+    const list = async (status: unknown, page: { limit?: number; offset?: number } = {}) => {
+      const result = await threats.listIncidents(f.ownerCredential, {
+        tenantId,
+        status: status as 'open',
+        ...page,
+      });
+      return {
+        ids: result.incidents.map((incident) => incident.id),
+        total: result.total,
+      };
+    };
+    // Most recently active first across the statuses asked for.
+    expect(await list(['open', 'investigating'])).toEqual({
+      ids: [reports.bob, reports.alice],
+      total: 2,
+    });
+    expect(await list(['open', 'investigating'], { limit: 1, offset: 1 })).toEqual({
+      ids: [reports.alice],
+      total: 2,
+    });
+    expect(await list('open')).toEqual({ ids: [reports.alice], total: 1 });
+    expect(await list(['open', 'open'])).toEqual({ ids: [reports.alice], total: 1 });
+    expect(await list(['resolved'])).toEqual({ ids: [reports.carol], total: 1 });
+    expect(await list(['resolved', 'investigating', 'open'])).toEqual({
+      ids: [reports.carol, reports.bob, reports.alice],
+      total: 3,
+    });
+    for (const bad of [
+      [],
+      ['open', 'closed'],
+      'closed',
+      3,
+      ['open', 'investigating', 'resolved', 'open'],
+    ])
+      await expect(list(bad)).rejects.toMatchObject({ code: 'INVALID_INPUT' });
+  });
+
+  it('bounds the timeline with until', async () => {
+    const f = await organizationFixture();
+    const { tenantId } = f;
+    const threats = f.iam.api.threats;
+    const alice = await f.member('alice');
+    await threats.reportSuspicious({ token: (await f.signIn('alice')).token }, { tenantId });
+    // A later sign-in (auth events follow the injected clock).
+    f.advance(hour);
+    await f.signIn('alice');
+    const timeline = (window: { since?: number; until?: number }) =>
+      threats.timeline(f.ownerCredential, { tenantId, identityId: alice.id, ...window });
+    const everything = await timeline({ since: 0 });
+    const reportedAt = everything.find((event) => event.action === 'threat:user-report')!.timestamp;
+    const before = everything.filter((event) => event.timestamp <= reportedAt);
+    expect(before.length).toBeLessThan(everything.length);
+    const bounded = await timeline({ since: 0, until: reportedAt });
+    expect(bounded.map((event) => event.id)).toEqual(before.map((event) => event.id));
+    // Without since, the window is the seven days before until.
+    expect((await timeline({ until: reportedAt })).map((event) => event.id)).toEqual(
+      before.map((event) => event.id),
+    );
+    for (const bad of [
+      { since: reportedAt, until: reportedAt },
+      { since: reportedAt, until: reportedAt - 1 },
+      { until: -1 },
+      { until: 'soon' as unknown as number },
+    ])
+      await expect(timeline(bad)).rejects.toMatchObject({ code: 'INVALID_INPUT' });
   });
 });

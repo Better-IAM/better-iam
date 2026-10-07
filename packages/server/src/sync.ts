@@ -15,6 +15,7 @@ import { createBinding, deleteBinding } from './api/bindings.js';
 import { deleteResourceType, registerResourceType, updateResourceType } from './api/catalog.js';
 import { addGroupMember, createGroup, deleteGroup, removeGroupMember } from './api/groups.js';
 import { createPackage, deletePackage, updatePackage } from './api/packages.js';
+import { batchGroupLicenses, licenseRuleKeys } from './licenses.js';
 import { mapRuleGroups, parseAutoAssign, ruleInput } from './package-rules.js';
 import { isTeamGroup } from './teams.js';
 import {
@@ -531,6 +532,8 @@ interface CurrentState {
   org: OrgState;
   /** AI agents, models and budgets (ai-sync.ts). */
   ai: AiState;
+  /** The keys of the license products visible to the tenant: the valid identity.licenses values (licenses.ts). */
+  licenseKeys: Set<string>;
 }
 
 async function readState(
@@ -615,6 +618,7 @@ async function readState(
     agreements,
     org: await readOrgState(ctx, tx, tenantId),
     ai: await readAiState(ctx, tx, tenantId),
+    licenseKeys: await licenseRuleKeys(tx, tenantId),
   };
 }
 
@@ -1175,7 +1179,8 @@ function computePlan(
             identityAttributes: ctx.catalog.identityAttributes,
             groups: groupNamesAfter,
             packagedGroups: new Set(pkg.groups ?? []),
-            org: orgAfter.env,
+            // Rules name license products by key, checked at plan time as apply checks them (licenses.ts).
+            org: { ...orgAfter.env, licenses: state.licenseKeys },
           },
           `Package ${pkg.name}: autoAssign`,
         );
@@ -1651,16 +1656,19 @@ export function createConfigApi(ctx: ServerContext) {
         const currentIds = new Set(
           (state.members.get(groupId!) ?? []).map((identity) => identity.id),
         );
-        for (const identityId of wantedIds)
-          if (!currentIds.has(identityId))
-            await addGroupMember(ctx, tx, principal, { tenantId, groupId: groupId!, identityId });
-        for (const identityId of currentIds)
-          if (!wantedIds.has(identityId))
-            await removeGroupMember(ctx, tx, principal, {
-              tenantId,
-              groupId: groupId!,
-              identityId,
-            });
+        // License seats of the group's products are reconciled once, after its members changed.
+        await batchGroupLicenses(ctx, tx, async () => {
+          for (const identityId of wantedIds)
+            if (!currentIds.has(identityId))
+              await addGroupMember(ctx, tx, principal, { tenantId, groupId: groupId!, identityId });
+          for (const identityId of currentIds)
+            if (!wantedIds.has(identityId))
+              await removeGroupMember(ctx, tx, principal, {
+                tenantId,
+                groupId: groupId!,
+                identityId,
+              });
+        });
       }
     }
     // Group bindings

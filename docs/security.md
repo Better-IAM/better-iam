@@ -4,7 +4,7 @@ Trust boundaries are the application server, configured SQL adapter, cryptograph
 
 ## Root and delegation
 
-Root authority is a protected boolean capability on a root-tenant human identity, validated from current storage and requiring an MFA user session. A role called `root-admin`, a matching email, a linked account, or a JWT claim cannot confer it. Root overrides policy restrictions across tenants but not malformed input, expired credentials, CSRF, signature validation, or resource ownership validation. Cross-tenant root actions are recorded.
+Root authority is a protected boolean capability on a root-tenant human identity, validated from current storage and requiring an MFA user session. A role called `root-admin`, a matching email, a linked account, or a JWT claim cannot confer it. Root overrides policy restrictions across tenants but not malformed input, expired credentials, CSRF, signature validation, or resource ownership validation. Cross-tenant root actions are recorded. With [security clearances](security-clearances.md#root-administrators) enabled, root does not read up either: it is refused on labeled application resources above its own clearance (it keeps every `iam:*` administration action), unless the deployment sets `clearances.appliesToRoot: false`.
 
 Bootstrap runs only against an uninitialized installation. Recovery creates a new root identity through a deployment-operator command and writes an audit event. Protect access to configuration, database credentials, and recovery execution as root-equivalent capabilities.
 

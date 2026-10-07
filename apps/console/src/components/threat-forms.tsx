@@ -12,6 +12,7 @@ import type {
 import { describeError, iamClient } from '@/lib/client';
 import {
   durationLabel,
+  offeredResponseKinds,
   playbookBody,
   playbookDraft,
   responseActions,
@@ -629,10 +630,13 @@ export function PlaybookForm({
   tenantId,
   rules,
   playbook,
+  kinds,
 }: {
   tenantId: string;
   rules: { id: string; title: string }[];
   playbook?: ThreatPlaybook;
+  /** The actions offered (`offeredResponseKinds`); every kind but `suspend-clearance` by default. */
+  kinds?: readonly ResponseActionKind[];
 }) {
   const id = useId();
   const { run, busy, feedback } = useThreatCall(tenantId);
@@ -640,6 +644,11 @@ export function PlaybookForm({
   const [saved, setSaved] = useState(false);
   const set = (change: Partial<PlaybookDraft>) =>
     setDraft((current) => ({ ...current, ...change }));
+  // An action the playbook already takes stays listed, so it can be unticked.
+  const offered = kinds ?? offeredResponseKinds({ suspendClearances: false });
+  const shownKinds = responseKinds.filter(
+    (kind) => offered.includes(kind) || draft.actions.includes(kind),
+  );
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -751,7 +760,7 @@ export function PlaybookForm({
           </fieldset>
         </div>
         <ActionChoices
-          kinds={responseKinds}
+          kinds={shownKinds}
           chosen={draft.actions}
           onChange={(actions) => set({ actions })}
           blockHours={draft.blockHours}

@@ -348,8 +348,8 @@ What the token may say is bounded twice:
   matches only the root. Scheme, host and port must otherwise match exactly. A requested audience never contains `*`.
 - **What it claims.** Every scope must be allowed outright, on every resource and without conditions, by every limit
   the session is under: the delegation and those above it, the agents' ceilings, the session's scope-down policy, the
-  key's scopes and issuer, and the person's and organization's boundaries. A delegation given as a resource-limited
-  policy therefore carries no scopes. Two more rules keep a token from saying more than the person would:
+  key's scopes and issuer, and the person's and organization's boundaries (for a [guest](guests.md), the
+  organization's guest boundary too). A delegation given as a resource-limited policy therefore carries no scopes. Two more rules keep a token from saying more than the person would:
   - no scope may be an action the person confirms call by call (`confirm`, anywhere in the chain);
   - no scope may be one a deny statement among the person's own grants could touch, whatever its resources or
     conditions (a token carries neither).

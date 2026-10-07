@@ -29,7 +29,10 @@ every writer's events: the authentication service, SCIM, protocols, and deployme
   the networks, identities, and actions involved.
 - **Incidents** group detections by subject (an identity, a network, the tenant, or a SCIM connection). A subject has
   at most one open or investigating incident; resolving it closes it, and the next detection opens a new one.
-- **Subjects and networks.** Networks are client addresses reduced to an IPv4 address or an IPv6 /64. Addresses are
+- **Subjects and networks.** An identity subject is named by name and email (`Carol (carol@acme.test)`), whichever
+  rule or report recorded it. Detections and incidents this group returns also give an identity subject of the tenant
+  its `kind` (`user`, `service`, or `agent`), looked up when read and never stored, so a console can link an AI agent
+  to its agent page. Networks are client addresses reduced to an IPv4 address or an IPv6 /64. Addresses are
   known only when the deployment records them (`http.clientInfo`). Networks in the tenant's `trustedNetworks` are
   never reported and never blocked.
 - **Actors.** Detections, incidents, and playbook responses are recorded by the actor `threat-detection`; everything
@@ -52,17 +55,23 @@ automation) always see `none` and 0.
 
 ## Responses and protections
 
-The five response actions are `revoke-sessions` (API keys kept unless `keepApiKeys: false`), `forget-devices`,
+The six response actions are `revoke-sessions` (API keys kept unless `keepApiKeys: false`), `forget-devices`,
 `contain` (the identity is disabled until [`release`](#release); its API keys are kept but refused meanwhile),
-`block-network` (a tenant network block for `durationMs`, one minute to 30 days, one day by default), and `notify`
-(the `threat-alert` email to the tenant's `notify` recipients). People take them with [`respond`](#respond);
-playbooks take them for new detections that match their trigger.
+`suspend-clearance` (the identity's [security clearance](/docs/reference/api/clearances) is suspended until an
+officer's `clearances.reinstate`; `release` never touches it), `block-network` (a tenant network block for
+`durationMs`, one minute to 30 days, one day by default), and `notify` (the `threat-alert` email to the tenant's
+`notify` recipients). People take them with [`respond`](#respond); playbooks take them for new detections that match
+their trigger.
 
 - People cannot contain themselves or the last owner, contain an owner unless they are an owner of the tenant in
   person or root, end a root administrator's sessions or contain one unless they are root, block a network that
   covers their own address, or block a network on the root tenant unless they are root.
-- Playbooks never contain owners or root administrators and never block networks on the root tenant (skipped as
-  `protected`), contain at most
+- Suspending a clearance by hand also needs `iam:clearances:suspend` on `iam/clearances/{identityId}`, checked before
+  anything about the clearance is read, and is refused while impersonating or to a guest of the tenant; writing a
+  playbook that suspends clearances (adding the action, changing such a playbook's trigger, or switching one on)
+  needs `iam:clearances:suspend` on `iam/clearances`. Without the `clearances` option both are `FEATURE_DISABLED`.
+- Playbooks never contain owners or root administrators, nor suspend their clearances, and never block networks on
+  the root tenant (skipped as `protected`), contain at most
   `maxAutomaticContainments` identities per tenant and run (skipped as `braked` beyond it, audited once as
   `threat:response-braked`), and email an incident again only when its severity rose.
 - Nobody blocks a trusted network (skipped as `trusted-network`).
@@ -190,7 +199,9 @@ Defines an automatic response: actions that run when a new detection matches the
 - **Errors:** `INVALID_INPUT` for a missing or over-long name, a missing `trigger`, an unknown rule, severity, or
   subject type, or `actions` that are not one to five known kinds each listed once (`durationMs` only on
   `block-network`, one minute to 30 days; `keepApiKeys` only on `revoke-sessions`); `CONFLICT` (409) when a playbook
-  has the same name (case-insensitive); `LIMIT_EXCEEDED` (409) past 50 playbooks; `RECENT_AUTH_REQUIRED`.
+  has the same name (case-insensitive); `LIMIT_EXCEEDED` (409) past 50 playbooks; `RECENT_AUTH_REQUIRED`;
+  `ACCESS_DENIED` for `suspend-clearance` without `iam:clearances:suspend` on `iam/clearances`, and
+  `FEATURE_DISABLED` for it without the `clearances` option.
 
 The trigger matches when every clause it sets matches: `ruleIds`, `minSeverity`, and `subjectTypes`; `trigger: {}`
 matches every detection. Actions run in order as the `threat-detection` actor, under the protections in
@@ -282,7 +293,7 @@ even when nothing open is left in it, until someone resolves it with [`resolveIn
 iam.api.threats.dismissDetection(
   credential: CredentialInput,
   input: { tenantId: string; detectionId: string; reason: string },
-): Promise<ThreatDetection>
+): Promise<ThreatDetectionView>
 ```
 
 ## getDetection
@@ -295,7 +306,8 @@ Returns one detection with its evidence.
 - **Audited as:** `iam:threats:read`.
 - **Errors:** `NOT_FOUND` when the detection is not in this tenant.
 
-A detection names its `ruleId`, `severity`, `title` and one-sentence `summary`, its `subject`, the `identityId` whose
+A detection names its `ruleId`, `severity`, `title` and one-sentence `summary`, its `subject` (with the identity's
+`kind` for an identity of the tenant), the `identityId` whose
 risk it raised and the `network` it came from when there are ones, its `incidentId`, `status` (`open`, `dismissed`,
 or `resolved`), when the activity happened (`occurredAt`) and when it was recorded (`detectedAt`), rule-specific
 `metadata`, and `evidence` with up to 20 audit event ids to open in the audit log.
@@ -306,7 +318,7 @@ or `resolved`), when the activity happened (`occurredAt`) and when it was record
 iam.api.threats.getDetection(
   credential: CredentialInput,
   input: { tenantId: string; detectionId: string },
-): Promise<ThreatDetection>
+): Promise<ThreatDetectionView>
 ```
 
 ## getIncident
@@ -419,10 +431,20 @@ Lists the tenant's incidents, most recently active first, optionally narrowed by
 
 - **Permission:** `iam:threats:read` on `iam/threats/incidents`.
 - **Audited as:** `iam:threats:read`.
-- **Errors:** `INVALID_INPUT` for an unknown `status` or `severity`, or a `limit` outside 1 to 1000.
+- **Errors:** `INVALID_INPUT` for an unknown `status` or `severity`, a `status` list that is empty or longer than
+  three, or a `limit` outside 1 to 1000.
 
-Incidents are ordered by their latest detection. `status` is `open`, `investigating`, or `resolved`. The result is
-`{ incidents, total }`; page with `limit` (100 by default) and `offset`.
+Incidents are ordered by their latest detection. `status` is `open`, `investigating`, or `resolved`, or a list of
+them: `['open', 'investigating']` returns every incident still being worked on in one call, ordered and paged
+together. The result is `{ incidents, total }`; page with `limit` (100 by default) and `offset`.
+
+```ts
+const { incidents } = await iam.api.threats.listIncidents(credential, {
+  tenantId,
+  status: ['open', 'investigating'],
+  limit: 50,
+});
+```
 
 <ApiShape id="threats.listIncidents" http />
 
@@ -431,7 +453,7 @@ iam.api.threats.listIncidents(
   credential: CredentialInput,
   input: {
     tenantId: string;
-    status?: IncidentStatus;
+    status?: IncidentStatus | IncidentStatus[];
     severity?: ThreatSeverity;
     assigneeId?: string;
     identityId?: string;
@@ -580,7 +602,7 @@ iam.api.threats.resolveIncident(
     resolution: IncidentResolution;
     note?: string;
   },
-): Promise<ThreatIncident>
+): Promise<ThreatIncidentView>
 ```
 
 ## respond
@@ -592,13 +614,16 @@ Responds by hand to an incident, an identity, or a network with one to five resp
 - **Permission:** `iam:threats:respond` on `iam/threats/incidents/{id}` (on `iam/threats/responses` without an
   incident), and a recent sign-in.
 - **Audited as:** `iam:threats:respond`, and each applied action as `threat:revoke-sessions`,
-  `threat:forget-devices`, `threat:contain`, `threat:block-network`, or `threat:notify`.
+  `threat:forget-devices`, `threat:contain`, `threat:suspend-clearance` (after `clearance:suspend`),
+  `threat:block-network`, or `threat:notify`.
 - **Errors:** `INVALID_INPUT` without exactly one of `incidentId`, `identityId`, and `network`, for a network that is
   not an address or CIDR block, actions that are not one to five known kinds each listed once, a missing `reason`,
   containing yourself, or blocking a network that covers your own address; `ACCESS_DENIED` for ending a root
   administrator's sessions or containing one without being root, containing an owner without being an owner of the
-  tenant in person or root, or blocking a network on the root tenant without being root; `LAST_OWNER` (409) for
-  containing the last owner; `NOT_FOUND`; `RECENT_AUTH_REQUIRED`.
+  tenant in person or root, blocking a network on the root tenant without being root, or suspending a clearance
+  without `iam:clearances:suspend` or as a guest; `IMPERSONATION_RESTRICTED` for suspending a clearance while
+  impersonating; `FEATURE_DISABLED` for it without the `clearances` option; `LAST_OWNER` (409) for containing the
+  last owner; `NOT_FOUND`; `RECENT_AUTH_REQUIRED`.
 
 An incident target acts on the incident's subject (and its identity and network). An incident about the tenant, a
 network, or a connection names an identity only while all its detections that name one name the same one; once two
@@ -606,7 +631,7 @@ differ (`severalIdentities`), identity actions on it are skipped as `not-identit
 `identityId` instead. A response to an identity or
 network that has an open incident is filed under it. The result lists one response per action, `applied` or `skipped`
 with a reason such as `not-identity`, `no-network`, `trusted-network`, `already-applied`, `inactive`, `no-incident`,
-`no-transport`, or `no-recipients`. Revoking your own sessions keeps the one you are responding from. Containment and
+`no-transport`, `no-recipients`, or `no-clearance`. Revoking your own sessions keeps the one you are responding from. Containment and
 network blocks take effect at once; contained identities' rule-based access packages are re-evaluated right after.
 
 ```ts
@@ -719,16 +744,34 @@ Returns an identity's recent audit trail, newest first: what it did and what was
 
 - **Permission:** `iam:threats:read` on `iam/threats/risk/{identityId}`.
 - **Audited as:** `iam:threats:read`.
-- **Errors:** `NOT_FOUND` when the identity is not in this tenant; `INVALID_INPUT` for a `limit` outside 1 to 500.
+- **Errors:** `NOT_FOUND` when the identity is not in this tenant; `INVALID_INPUT` for a `limit` outside 1 to 500, a
+  malformed `since` or `until`, or an `until` that is not after `since`.
 
-It lists events the identity performed and events whose resource is the identity, allowed and denied, from `since` (epoch milliseconds; seven days ago by default), at most `limit` (200 by default).
+It lists events the identity performed and events whose resource is the identity, allowed and denied, from `since`
+up to and including `until` (epoch milliseconds), at most `limit` (200 by default). `until` defaults to now and
+`since` to seven days before `until`. Bound it to an incident's window to see what happened around it:
+
+```ts
+const trail = await iam.api.threats.timeline(credential, {
+  tenantId,
+  identityId: incident.identityId,
+  since: incident.firstDetectedAt - 86_400_000,
+  until: incident.resolvedAt,
+});
+```
 
 <ApiShape id="threats.timeline" http />
 
 ```ts title="Signature"
 iam.api.threats.timeline(
   credential: CredentialInput,
-  input: { tenantId: string; identityId: string; since?: number; limit?: number },
+  input: {
+    tenantId: string;
+    identityId: string;
+    since?: number;
+    until?: number;
+    limit?: number;
+  },
 ): Promise<AuditEvent[]>
 ```
 
@@ -760,7 +803,7 @@ iam.api.threats.updateIncident(
     assigneeId?: string | null;
     severity?: ThreatSeverity;
   },
-): Promise<ThreatIncident>
+): Promise<ThreatIncidentView>
 ```
 
 ## updatePlaybook

@@ -131,6 +131,9 @@ export async function createOptions(overrides = {}) {
     ssh: true,
     // Verifiable credentials for the Credentials page; wallets reach the issuer at /api/iam/vc/{tenantId}.
     verifiableCredentials: true,
+    // Security clearances and classification labels (Clearances and Classification pages). Nothing is enforced until
+    // an organization defines a classification scheme; root administrators read labeled resources only when cleared.
+    clearances: {},
     // Attested A2A agent cards (Agents page); the public keys are served at /api/a2a/jwks.json.
     ...(cardKey
       ? {

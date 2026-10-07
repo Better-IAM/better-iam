@@ -11,7 +11,7 @@ import {
 } from '@better-iam/core';
 import { agentStanding } from '../agents.js';
 import type { ServerContext } from '../context.js';
-import { impersonatingActor } from '../decisions.js';
+import { decideOn, impersonatingActor } from '../decisions.js';
 import { delegationAncestors, delegationLive, useConfirmation, type Delegation } from '../delegations.js';
 import { aliasNames, assertUsable, findKey, keyAttributes } from '../kms.js';
 import { OperationDenied } from '../operations.js';
@@ -847,7 +847,7 @@ export function createVaultApi(ctx: ServerContext) {
     const actor = await impersonatingActor(tx, principal);
     for (const subject of actor ? [principal, actor] : [principal]) {
       const prepared = await ctx.decisions.prepareDecision(tx, subject, realm, action);
-      const decision = 'fixed' in prepared ? prepared.fixed : prepared.evaluate(resource);
+      const decision = decideOn(prepared, resource);
       if (!decision.allowed)
         throw new OperationDenied(
           action === 'iam:kms:encrypt'
@@ -1518,15 +1518,12 @@ export function createVaultApi(ctx: ServerContext) {
         const actor = await impersonatingActor(tx, principal);
         const own = actor && (await ctx.decisions.prepareDecision(tx, actor, realm, 'iam:vault:read'));
         const allows = (evaluator: typeof prepared, secret: VaultSecret) =>
-          ('fixed' in evaluator
-            ? evaluator.fixed
-            : evaluator.evaluate({
-                tenantId: realm.id,
-                type: 'iam',
-                id: secretResource(secret.name),
-                attributes: secretAttributes(secret),
-              })
-          ).allowed;
+          decideOn(evaluator, {
+            tenantId: realm.id,
+            type: 'iam',
+            id: secretResource(secret.name),
+            attributes: secretAttributes(secret),
+          }).allowed;
         const visible = (await tx.find<VaultSecret>(vaultCollections.secrets, { tenantId: realm.id }))
           .filter(
             (secret) =>

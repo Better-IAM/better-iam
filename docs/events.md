@@ -330,6 +330,7 @@ event is `allow`. `incidentId`, `detectionId` and `playbookId` appear on respons
 | `threat:revoke-sessions`   | A `revoke-sessions` response ended the identity's sessions (resource: the identity)                                     | `revoked`, `keptApiKeys`, `reason`, `incidentId`, `detectionId`, `playbookId`              |
 | `threat:forget-devices`    | A `forget-devices` response removed remembered devices (resource: the identity)                                         | `removed`, `reason`, `incidentId`, `detectionId`, `playbookId`                             |
 | `threat:contain`           | A `contain` response disabled the identity (resource: the identity)                                                     | `reason`, `sessionsEnded`, `incidentId`, `detectionId`, `playbookId`                       |
+| `threat:suspend-clearance` | A `suspend-clearance` response suspended the identity's clearance (resource: the identity)                              | `level`, `reason`, `incidentId`, `detectionId`, `playbookId`                               |
 | `threat:release`           | `threats.release` lifted a containment (resource: the identity)                                                         | `note`, `containedAt`, `incidentId`                                                        |
 | `threat:block-network`     | A `block-network` response blocked a network (resource `threats/networks/{network}`)                                    | `network`, `expiresAt`, `renewed`, `reason`, `incidentId`, `detectionId`, `playbookId`     |
 | `threat:notify`            | A `notify` response queued `threat-alert` emails (resource: the incident)                                               | `recipients` (count), `severity`, `incidentId`                                             |
@@ -395,6 +396,110 @@ carries a key, a proof or an enrollment code; `keyId` is the public key's thumbp
 `device:compliance-change` comes from reports only. Compliance that changes because the requirements changed, an
 integration was disabled, or a device stopped checking in shows up in decisions and in `devices.list` but records no
 event.
+
+## License events
+
+Every `licenses` call except `mine` records its operation event (`iam:licenses:read`, `iam:licenses:manage` or
+`iam:licenses:assign`). [License management](licenses.md) also records these, subscribable as `license:*`. Every event
+is `allow`. Product events name `licenses/products/{productId}`, pool events `licenses/pools/{poolId}`, settings
+`licenses/settings`, and assignment, seat and reclaim events the person or group they concern. Changes made through the
+API are recorded by the person who made them; seat changes that follow a group membership change by whoever changed
+it (the inviter for an accepted invitation, `directory-sync` for SCIM); and the jobs (`iam.licenses.reconcile`,
+`iam.licenses.reclaim`) and seat changes that follow an identity change (disabling, offboarding) by
+`deployment-operator`, or by `directory-sync` when SCIM deactivates, reactivates or deletes a person or deletes a
+group. Pool events are recorded in the tenant that receives the seats,
+retirement in the tenant that defines the product, and each seat event in the seat's tenant.
+
+| Action                   | When                                                                                                | Metadata                                                                                          |
+| ------------------------ | --------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `license:product-create` | `licenses.createProduct` defined a product                                                          | `productId`, `key`, `name`, `description`, `featureKeys`, `status`                                |
+| `license:product-update` | `licenses.updateProduct` changed its name, description or feature keys                              | `before`, `after` (the product fields above)                                                      |
+| `license:product-retire` | `licenses.retireProduct` retired a product                                                          | `productId`, `key`, `releasedSeats`, `tenants` (where seats were released)                        |
+| `license:pool-add`       | `licenses.addPool` gave a tenant seats                                                              | `poolId`, `productId`, `productKey`, `quantity`, `startsAt`, `endsAt`, `source`, `subscriptionId` |
+| `license:pool-update`    | `licenses.updatePool` changed a pool's quantity, end or note                                        | `before`, `after` (the pool fields above)                                                         |
+| `license:pool-remove`    | `licenses.removePool` removed a pool                                                                | the pool fields above                                                                             |
+| `license:assign`         | `licenses.assign` or `assignMany` gave a product to a person or group (one event per subject)       | `assignmentId`, `productId`, `productKey`, `subjectType`                                          |
+| `license:unassign`       | `licenses.unassign` removed an assignment                                                           | `assignmentId`, `productId`, `productKey`, `subjectType`                                          |
+| `license:seat-activate`  | A person got an active seat, new or from the waiting list (resource: the identity)                  | `productId`, `productKey`, `from` (`none` or `waiting`), `to`, `reason`                           |
+| `license:seat-waiting`   | A person joined a waiting list, or a capacity cut moved their active seat back to it                | `productId`, `productKey`, `from` (`none` or `active`), `to`, `reason`                            |
+| `license:seat-release`   | A person's seat was released: no claim left, the person inactive or deleted, or the product retired | `productId`, `productKey`, `from` (`active` or `waiting`), `to` (`none`), `reason`                |
+| `license:reclaim`        | `iam.licenses.reclaim` removed an inactive person's direct assignment (actor `deployment-operator`) | `productId`, `productKey`, `assignedAt`, `lastActivityAt`, `reclaimAfterDays`                     |
+| `license:settings`       | `licenses.configure` changed reclaim or waiting-list email                                          | `reclaimAfterDays`, `notifyWaiting`, `previousReclaimAfterDays`, `previousNotifyWaiting`          |
+
+`reason` says what moved a seat: `assign`, `unassign`, `pool-add`, `pool-update`, `pool-remove`, `product-retired`,
+`group-membership`, `group-deleted`, `identity-deleted`, `identity-change` (disabling, offboarding, and other identity
+changes), `reclaim`, or `schedule` (the hourly job). Absent optional values (`description`, `startsAt`, `endsAt`,
+`subscriptionId`, `reclaimAfterDays`) are `null`. A refused pool change on another tenant's product is recorded as a
+denied operation event in the caller's own tenant, with `targetTenantId`.
+
+## Guest collaboration events
+
+Every `guests` call made with a permission records its operation event (`iam:guests:read`, `iam:guests:invite`,
+`iam:guests:manage` or `iam:guests:settings`); `redeem`, `mine` and a sponsor's own `attest` need no permission and
+record no operation event. [Guest collaboration](guests.md) also records these, subscribable as `guest:*`. Invitation
+events name the invitation as their resource, `guest:settings` the tenant, and the rest the guest. Changes made
+through the API are recorded by the person who made them, `guest:redeem` by the new guest, and the jobs
+(`iam.guests.sweep`, `iam.guests.sendReviewReminders`) by `deployment-operator`. Every event is `allow`, and none
+carries an invitation token.
+
+| Action                    | When                                                                                                                                 | Metadata                                                                                                                                                                                |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `guest:invite`            | `guests.invite` emailed an invitation                                                                                                | `email`, `sponsorId`, `roleIds`, `groupIds`, `packageIds`, `accessDays`, `expiresAt` (when the invitation lapses), `homeTenantId`                                                       |
+| `guest:invitation-revoke` | `guests.revokeInvitation` withdrew a pending invitation                                                                              | `email`                                                                                                                                                                                 |
+| `guest:invitation-resend` | `guests.resendInvitation` sent an invitation again with a new token                                                                  | `email`, `expiresAt`                                                                                                                                                                    |
+| `guest:redeem`            | A person redeemed an invitation and became a guest (actor and resource: the guest)                                                   | `invitationId`, `invitedBy`, `sponsorId`, `roleIds`, `groupIds`, `packageIds`, `expiresAt` (when the access ends), `homeTenantId`                                                       |
+| `guest:attest`            | The sponsor (`asSponsor: true`) or an administrator renewed a guest's access                                                         | `days`, `expiresAt`, `reviewDueAt`, `asSponsor`, `previousExpiresAt`                                                                                                                    |
+| `guest:sponsor-change`    | `guests.setSponsor` (`reason: 'administrator'`) or offboarding with a successor (`reason: 'offboarding'`) gave a guest a new sponsor | `from`, `to`, `reason`                                                                                                                                                                  |
+| `guest:sponsor-missing`   | The sponsor was offboarded without a successor who can sponsor or deleted (`reason`), or `iam.guests.sweep` found them inactive      | `sponsorId`, `reason` (`offboarding` or `deletion`; absent from the sweep)                                                                                                              |
+| `guest:remove`            | `guests.remove` removed a guest                                                                                                      | `reason`, `sponsorId`, `sessions`, `bindings`, `memberships`, `packages`                                                                                                                |
+| `guest:convert`           | `guests.convertToMember` made a guest an ordinary member                                                                             | `sponsorId`, `clearExpiry`, `expiresAt` (the access end before conversion)                                                                                                              |
+| `guest:settings`          | `guests.configure` changed the cross-tenant access settings, or `iam.guests.sweep` removed partner entries naming purged tenants     | `changed` (setting names) and the settings after the change (below); from the sweep only `partnersRemoved`                                                                              |
+| `guest:expire`            | `iam.guests.sweep` found a guest's access ended and closed their guest account                                                       | `sponsorId`, `expiresAt`                                                                                                                                                                |
+| `guest:review-reminder`   | `iam.guests.sendReviewReminders` emailed the sponsor about a review or the end of access                                             | `sponsorId`, `dueAt` (the earliest date reminded), `expiresAt`                                                                                                                          |
+
+The settings `guest:settings` records are `allowGuests`, `allowedDomains`, `blockedDomains`, `inboundPartners`,
+`allowGuestInvitations`, `outboundPartners`, `accessDays`, `reviewEveryDays` and `guestBoundary` (whether one is set,
+never the document). Offboarding records the guests it handed on or left without a sponsor on `identity:offboard`
+(`guestsReassigned`, `guestsUnsponsored`, when not zero), and the purge worker disables a guest whose access ended
+with `identity:expire`, as for any identity with a deadline.
+
+## Security clearance events
+
+Every `clearances` call made with a permission records its operation event (`iam:clearances:read`,
+`iam:clearances:adjudicate`, `iam:clearances:suspend`, `iam:classifications:manage`, `iam:classifications:label` or
+`iam:classifications:declassify`); `templates` and `mine` record none. [Security clearances](security-clearances.md)
+also record these, subscribable as `clearance:*` and `classification:*`. Every event is `allow`. Clearance events name
+the identity whose clearance changed as their resource, scheme events the scheme's id, and label events the label's
+key (`{type}/{id}`, or `sha256:{hex}` of it when longer than 512 bytes). Changes made through the API are recorded by
+the officer who made them, offboarding's by whoever offboarded the person, a `suspend-clearance` threat response's by
+the responder (`threat-detection` for a playbook), and `clearance:reminder` by `deployment-operator`. Metadata carries
+level and compartment ids, never level or compartment names, and never the contents of a resource.
+
+| Action                         | When                                                                                                                      | Metadata                                                                                                                                                                     |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `classification:scheme-define` | `clearances.defineScheme` defined the tenant's scheme                                                                     | `template` (when one was used), `levels` and `compartments` (ids), `requireLabels`, `guestCeiling`, `interimAllowed`, `adjudication`                                         |
+| `classification:scheme-update` | `clearances.updateScheme` changed it                                                                                      | `changed` (field names), `version`; with a new definition `levels`, `compartments` (ids) and `ownerCountries`; `guestCeiling`, `adjudication`, `interimAllowed` when changed |
+| `clearance:grant`              | `clearances.grant` issued a clearance                                                                                     | `level`, `status` (`active` or `interim`), `expiresAt`, `bootstrap: true` for a [bootstrap grant](security-clearances.md#who-may-adjudicate)                                 |
+| `clearance:update`             | `clearances.update` changed one                                                                                           | `level`, `previousLevel` (when it changed), `status`, `changed` (field names), `bootstrap`                                                                                   |
+| `clearance:read-in`            | `clearances.readIn` read the person into a compartment                                                                    | `compartmentId`, `level`, `agreementId` (the NDA), `bootstrap`                                                                                                               |
+| `clearance:debrief`            | `clearances.debrief` ended a read-in, or offboarding debriefed every compartment (one event each, `reason: 'terminated'`) | `compartmentId`, `reason`                                                                                                                                                    |
+| `clearance:suspend`            | `clearances.suspend` took a clearance out of force, or a `suspend-clearance` threat response did                          | `level`, `reason`, `incidentId`                                                                                                                                              |
+| `clearance:reinstate`          | `clearances.reinstate` lifted a suspension                                                                                | `level`, `status` (back to `active` or `interim`), `reason`, `bootstrap`                                                                                                     |
+| `clearance:revoke`             | `clearances.revoke` revoked a clearance for cause                                                                         | `level`, `reason`, `debriefed` (compartment ids)                                                                                                                             |
+| `clearance:terminate`          | Offboarding (`identities.offboard`) ended the leaver's clearance                                                          | `level`, `previousStatus`, `reason` (the offboarding reason)                                                                                                                 |
+| `clearance:reminder`           | `iam.clearances.sendReminders` emailed the scheme tenant's owners about a reinvestigation or an end coming up             | `level`, `dueAt` (the earliest date reminded), `kinds` (`reinvestigation`, `interim-end`, `expiry`), `recipients` (how many addresses)                                       |
+| `classification:label`         | `clearances.label` labeled a resource or raised its label                                                                 | `type`, `level`, `compartments`, `noforn`, `releasableTo`, `inheritToChildren`, `previousLevel` (when it replaced a label)                                                   |
+| `classification:declassify`    | `clearances.declassify` lowered, changed or removed a label                                                               | `type`, `previous` (the label before), `label` (the label after) or `removed: true`, `reason`                                                                                |
+
+Optional values are left out rather than `null` (`template`, `expiresAt`, `previousLevel`, `agreementId`, `incidentId`,
+`bootstrap`, a debrief's or reinstatement's `reason`, and a label's `compartments`, `noforn` and `releasableTo`).
+Offboarding also records `clearancesTerminated` on `identity:offboard` when it ended a clearance; deleting an identity
+keeps its clearance as terminated history without an event of its own.
+
+A decision refused because the session's clearance does not dominate the resource's label is recorded like any denied
+check, as a `deny` event of the requested action, with the metadata `{ mandatory: 'clearance' }` and nothing about the
+label. Filter on `metadata.mandatory` to watch attempts to read up; the `classified-access-attempts` threat rule counts
+only these events, and `denial-burst` counts them like any other denial.
 
 ## Temporary credential events
 

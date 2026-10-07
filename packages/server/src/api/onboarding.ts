@@ -53,6 +53,7 @@ import { sodAssertIdentity } from '../sod.js';
 import { assertNotTeamGroup, teamChainBindings, teamsSyncingFrom } from '../teams.js';
 import { id } from '../utils.js';
 import { text } from '../validation.js';
+import { assertMayClaimLicenses } from './groups.js';
 import { afterIdentityChange } from './package-automation.js';
 import { allow } from './packages.js';
 
@@ -227,7 +228,8 @@ const sameJson = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringif
 /**
  * Whether `principal` may put people into a completion group: iam:groups:update on it and the use of the grant
  * authority behind each of its bindings, and behind those of the teams that sync from it (and of the teams above
- * them), since team sync copies the group's members there.
+ * them), since team sync copies the group's members there; and iam:licenses:assign when a license product is assigned
+ * to the group or to one of those teams, since the people who finish the flow claim its seats (api/groups.ts).
  */
 async function authorizeCompletionGroup(
   ctx: ServerContext,
@@ -251,6 +253,14 @@ async function authorizeCompletionGroup(
     ...(await teamChainBindings(tx, tenantId, syncing)),
   ])
     await ctx.grantingAuthority(tx, principal, tenantId, binding.authorityId);
+  await assertMayClaimLicenses(
+    ctx,
+    tx,
+    principal,
+    tenantId,
+    groupId,
+    'A completion group carries license seats; adding people to it needs iam:licenses:assign',
+  );
 }
 
 /**

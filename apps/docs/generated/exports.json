@@ -404,7 +404,7 @@
      "message",
      "options?"
     ],
-    "doc": "Renders the messages Better IAM queues (`verify-email`, `password-reset`, `email-change`, `magic-link`, `code`,\n`mfa-code`, `new-sign-in`, `sign-in-failures`, `certification-review`, `certification-reminder`, `delegation-request`,\n`delegation-confirmation`, `team-join-request`, `team-join-decided`, `team-review-requested`, `spend-alert`,\n`spend-anomaly`, `billing-statement`, `payment-reminder`,\n`privacy-request-verify`, `privacy-request-received`, `privacy-request-update`, `privacy-request-due`,\n`workflow-message`,\n`threat-alert`,\n`owner-invitation`, `member-invitation`)\ninto a subject, plain text, and HTML, so a\ndelivery callback can hand them to any provider. Returns undefined for templates it does not know (plugins,\nnewer features), which the callback should render itself.",
+    "doc": "Renders the messages Better IAM queues (`verify-email`, `password-reset`, `email-change`, `magic-link`, `code`,\n`mfa-code`, `new-sign-in`, `sign-in-failures`, `certification-review`, `certification-reminder`, `delegation-request`,\n`delegation-confirmation`, `team-join-request`, `team-join-decided`, `team-review-requested`, `spend-alert`,\n`spend-anomaly`, `billing-statement`, `payment-reminder`,\n`privacy-request-verify`, `privacy-request-received`, `privacy-request-update`, `privacy-request-due`,\n`workflow-message`,\n`threat-alert`,\n`license-waiting`, `license-activated`,\n`guest-invitation`, `guest-review`, `guest-sponsor-missing`,\n`clearance-reminder`, `clearance-status`,\n`owner-invitation`, `member-invitation`)\ninto a subject, plain text, and HTML, so a\ndelivery callback can hand them to any provider. Returns undefined for templates it does not know (plugins,\nnewer features), which the callback should render itself.",
     "deprecated": false
    },
    {
@@ -436,7 +436,7 @@
      "message",
      "options?"
     ],
-    "doc": "Renders the messages Better IAM queues (`verify-email`, `password-reset`, `email-change`, `magic-link`, `code`,\n`mfa-code`, `new-sign-in`, `sign-in-failures`, `certification-review`, `certification-reminder`, `delegation-request`,\n`delegation-confirmation`, `team-join-request`, `team-join-decided`, `team-review-requested`, `spend-alert`,\n`spend-anomaly`, `billing-statement`, `payment-reminder`,\n`privacy-request-verify`, `privacy-request-received`, `privacy-request-update`, `privacy-request-due`,\n`workflow-message`,\n`threat-alert`,\n`owner-invitation`, `member-invitation`)\ninto a subject, plain text, and HTML, so a\ndelivery callback can hand them to any provider. Returns undefined for templates it does not know (plugins,\nnewer features), which the callback should render itself.",
+    "doc": "Renders the messages Better IAM queues (`verify-email`, `password-reset`, `email-change`, `magic-link`, `code`,\n`mfa-code`, `new-sign-in`, `sign-in-failures`, `certification-review`, `certification-reminder`, `delegation-request`,\n`delegation-confirmation`, `team-join-request`, `team-join-decided`, `team-review-requested`, `spend-alert`,\n`spend-anomaly`, `billing-statement`, `payment-reminder`,\n`privacy-request-verify`, `privacy-request-received`, `privacy-request-update`, `privacy-request-due`,\n`workflow-message`,\n`threat-alert`,\n`license-waiting`, `license-activated`,\n`guest-invitation`, `guest-review`, `guest-sponsor-missing`,\n`clearance-reminder`, `clearance-status`,\n`owner-invitation`, `member-invitation`)\ninto a subject, plain text, and HTML, so a\ndelivery callback can hand them to any provider. Returns undefined for templates it does not know (plugins,\nnewer features), which the callback should render itself.",
     "deprecated": false
    }
   ]
@@ -895,6 +895,27 @@
     "deprecated": false
    },
    {
+    "name": "classificationIdPattern",
+    "kind": "const",
+    "params": null,
+    "doc": "Level and compartment ids: an ASCII letter or digit, then letters, digits, `.`, `_`, `:` or `-` (64 at most).",
+    "deprecated": false
+   },
+   {
+    "name": "classificationLimits",
+    "kind": "const",
+    "params": null,
+    "doc": "The bounds `validateScheme` and `validateLabel` enforce.",
+    "deprecated": false
+   },
+   {
+    "name": "classificationTemplates",
+    "kind": "const",
+    "params": null,
+    "doc": "Starting points for `clearances.defineScheme({ template })`, frozen (copy with `validateScheme` before changing).\nCompartments are always empty: tenants add their own.\n- `us`: U, C, S, TS; owner USA; NOFORN and REL TO.\n- `uk`: OFFICIAL, SECRET, TOP-SECRET; owner GBR; NOFORN (UK EYES ONLY) and REL TO.\n- `nato`: NU, NR, NC, NS, CTS; NATO is not a country, so no owner countries and REL TO only.\n- `corporate`: public, internal, confidential, restricted; no dissemination controls.",
+    "deprecated": false
+   },
+   {
     "name": "COLLECTIONS_SQL",
     "kind": "const",
     "params": null,
@@ -988,6 +1009,17 @@
      "settings"
     ],
     "doc": "The adapter-independent part of `IamStore.describe()`: schema version, applied migrations, and\nrecord counts per collection. Missing tables read as empty, so an unmigrated database reports\nempty lists; any other failure rejects. Run it outside a transaction on PostgreSQL (a failed\nstatement would abort the transaction).",
+    "deprecated": false
+   },
+   {
+    "name": "dominates",
+    "kind": "function",
+    "params": [
+     "party",
+     "label",
+     "scheme"
+    ],
+    "doc": "Whether a party may read a resource carrying `label` (no read up). Returns undefined when it may, or the first\ndimension it fails: `invalid-label` (the label is not valid for the scheme), `level` (rank below the label's, or no\nusable rank), `compartment` (not read into every compartment), `noforn` (no citizenship of an owner country) or\n`releasability` (no citizenship among `releasableTo` and the owner countries).",
     "deprecated": false
    },
    {
@@ -1197,10 +1229,52 @@
     "deprecated": false
    },
    {
+    "name": "isValidClassificationLabel",
+    "kind": "function",
+    "params": [
+     "label",
+     "scheme"
+    ],
+    "doc": "True when `label` is a valid label of the scheme; the non-throwing form of `validateLabel`.",
+    "deprecated": false
+   },
+   {
+    "name": "joinLabels",
+    "kind": "function",
+    "params": [
+     "a",
+     "b",
+     "scheme"
+    ],
+    "doc": "The least restrictive label at least as restrictive as both: the higher level, the union of compartments, NOFORN\nwhen either has it, and the intersection of `releasableTo` lists (an absent list is unrestricted, so the other list\nstands; disjoint lists leave an empty list, owner countries only). Absent (`undefined` or `null`) inputs are\nignored; both absent gives undefined. Never lowers either input. An input that is not a valid label of the scheme\nmakes the result that input unchanged, so it stays invalid and `dominates` refuses every party (fail closed).",
+    "deprecated": false
+   },
+   {
     "name": "JSONB_ESCAPE_KEY",
     "kind": "const",
     "params": null,
     "doc": "Reserved object key of the PostgreSQL value encoding (`encodeJsonbDocument`), which stores\nstrings jsonb cannot hold. Filters whose objects use it are evaluated in memory.",
+    "deprecated": false
+   },
+   {
+    "name": "labelCovers",
+    "kind": "function",
+    "params": [
+     "upper",
+     "lower",
+     "scheme"
+    ],
+    "doc": "True when replacing `lower` with `upper` never declassifies: both are valid labels of the scheme, `upper` is at\nleast as high, carries every compartment of `lower`, keeps NOFORN when `lower` has it, and is releasable to no\ncountry `lower` is not (owner countries always count). Anything else needs a declassification.",
+    "deprecated": false
+   },
+   {
+    "name": "labelRank",
+    "kind": "function",
+    "params": [
+     "label",
+     "scheme"
+    ],
+    "doc": "The rank of the label's level in the scheme; undefined when the level is unknown (callers fail closed).",
     "deprecated": false
    },
    {
@@ -1478,12 +1552,31 @@
     "deprecated": false
    },
    {
+    "name": "validateLabel",
+    "kind": "function",
+    "params": [
+     "label",
+     "scheme"
+    ],
+    "doc": "Validates a label against a scheme and returns it normalized: compartments and countries sorted, an empty\ncompartment list and `noforn: false` dropped, an empty `releasableTo` kept (it means owner countries only).\nThrows `IamError` `INVALID_INPUT` for an unknown field, level, compartment or caveat, a caveat the scheme does not\nuse, a malformed country code, or a repeated entry.",
+    "deprecated": false
+   },
+   {
     "name": "validatePolicy",
     "kind": "function",
     "params": [
      "value"
     ],
     "doc": "Validate untrusted documents before storage and again before evaluation.",
+    "deprecated": false
+   },
+   {
+    "name": "validateScheme",
+    "kind": "function",
+    "params": [
+     "input"
+    ],
+    "doc": "Validates a scheme definition and returns a fresh copy (absent `compartments`, `ownerCountries` and `caveats` read\nas empty). Throws `IamError` `INVALID_INPUT`. Messages name positions, never compartment names or submitted values.",
     "deprecated": false
    },
    {
@@ -3367,6 +3460,19 @@
     "deprecated": false
    },
    {
+    "name": "attachLabel",
+    "kind": "function",
+    "params": [
+     "ctx",
+     "tx",
+     "tenantId",
+     "resource",
+     "known?"
+    ],
+    "doc": "Attaches a resource's effective classification label as the server-owned `classification` field (never an\nattribute): its IAM label, joined with the labels inherited from managed parents (at most 16 levels) and with the\n`classification` the application's resolver returned, which can therefore only raise it. An asserted label that is\nnot valid for the scheme makes the result invalid, so every party is refused. `null` means looked up and unlabeled.\nWithout a scheme in force the resource is returned unchanged. Platform-internal resources carry a label only as\n`iam/{type}/{id}`, labeled as the resource it names. Pass `known.scheme` when the caller already resolved the scheme\n(`null` for none) to save the ancestry reads.",
+    "deprecated": false
+   },
+   {
     "name": "auditEventHash",
     "kind": "function",
     "params": [
@@ -3430,6 +3536,35 @@
     "doc": "Deterministic JSON: object keys sorted recursively, `undefined` properties omitted, arrays kept in order.",
     "deprecated": false,
     "from": "@better-iam/core"
+   },
+   {
+    "name": "clearanceCollections",
+    "kind": "const",
+    "params": null,
+    "doc": "The collections of the clearance module (tenant scoped; tenant purge sweeps them).",
+    "deprecated": false
+   },
+   {
+    "name": "clearanceLimits",
+    "kind": "const",
+    "params": null,
+    "doc": "Limits of the clearance module.",
+    "deprecated": false
+   },
+   {
+    "name": "clearanceScope",
+    "kind": "function",
+    "params": [
+     "ctx",
+     "tx",
+     "principal",
+     "target",
+     "chain",
+     "agentScope",
+     "now"
+    ],
+    "doc": "The mandatory part of a decision for one session in `target`: undefined when no scheme is in force there (nothing to\nenforce) or the principal is a root administrator and `clearances.appliesToRoot` is false. Otherwise the session's\nparties (see `sessionParties`) with their clearances at `now`, their policy keys, and the check every party must pass\non labeled resources. Called by `prepareDecision` after the tenant checks and the agent scope; `chain` is the\ntarget's ancestry from itself to the root.",
+    "deprecated": false
    },
    {
     "name": "complianceChecks",
@@ -3548,6 +3683,13 @@
     "deprecated": false
    },
    {
+    "name": "defaultGuestSettings",
+    "kind": "function",
+    "params": [],
+    "doc": "The settings a tenant has without stored ones.",
+    "deprecated": false
+   },
+   {
     "name": "defineConfig",
     "kind": "function",
     "params": [
@@ -3634,6 +3776,16 @@
     "deprecated": false
    },
    {
+    "name": "effectiveScheme",
+    "kind": "function",
+    "params": [
+     "tx",
+     "chain"
+    ],
+    "doc": "The scheme in force for a tenant, given its ancestry (`[tenant, parent, ..., root]`): the one defined closest to the\nroot. Undefined when no tenant of the chain defines one.",
+    "deprecated": false
+   },
+   {
     "name": "evaluateCompliance",
     "kind": "function",
     "params": [
@@ -3662,6 +3814,20 @@
     "deprecated": false
    },
    {
+    "name": "guestCollections",
+    "kind": "const",
+    "params": null,
+    "doc": "The collections this module owns, all tenant-scoped (lifecycle.ts purges them with their tenant).",
+    "deprecated": false
+   },
+   {
+    "name": "guestLimits",
+    "kind": "const",
+    "params": null,
+    "doc": "Guest lifetimes and list sizes: defaults and bounds, in days where they are durations.",
+    "deprecated": false
+   },
+   {
     "name": "HOLDER_PROOF_TYPE",
     "kind": "const",
     "params": null,
@@ -3675,6 +3841,16 @@
     "doc": "",
     "deprecated": false,
     "from": "@better-iam/core"
+   },
+   {
+    "name": "inboundRefusal",
+    "kind": "function",
+    "params": [
+     "settings",
+     "origin"
+    ],
+    "doc": "Why the host's inbound settings refuse a guest from `origin`, or undefined when they admit them. A refusal wins\n(a partner entry with `allow: false`, a blocked domain); a partner entry with `allow: true` then admits the guest\nover the defaults (`allowGuests`, `allowedDomains`).",
+    "deprecated": false
    },
    {
     "name": "inferenceAction",
@@ -3734,6 +3910,60 @@
     "deprecated": false
    },
    {
+    "name": "labelKey",
+    "kind": "function",
+    "params": [
+     "type",
+     "resourceId"
+    ],
+    "doc": "The natural key of a resource's label: `{type}/{id}`, hashed when it would exceed 512 UTF-8 bytes.",
+    "deprecated": false
+   },
+   {
+    "name": "labelsForType",
+    "kind": "function",
+    "params": [
+     "tx",
+     "tenantId",
+     "type"
+    ],
+    "doc": "The effective IAM-held labels of every labeled resource of one type in a tenant, by resource id, for listings: own\nlabels joined with what registered resources inherit from their managed parents. Labels an application resolver\nasserts are not included (decisions still apply them). Empty when no scheme is in force.",
+    "deprecated": false
+   },
+   {
+    "name": "licenseCapacity",
+    "kind": "function",
+    "params": [
+     "pools",
+     "now"
+    ],
+    "doc": "The seats a set of pools provides at `now`.",
+    "deprecated": false
+   },
+   {
+    "name": "licenseCollections",
+    "kind": "const",
+    "params": null,
+    "doc": "",
+    "deprecated": false
+   },
+   {
+    "name": "licenseContextKey",
+    "kind": "const",
+    "params": null,
+    "doc": "The policy key listing the product keys a person holds an active seat for in the decision's tenant.",
+    "deprecated": false
+   },
+   {
+    "name": "licenseKey",
+    "kind": "function",
+    "params": [
+     "value"
+    ],
+    "doc": "Validates a product key: lowercase letters, digits, dots, underscores or hyphens, starting with a letter or digit.",
+    "deprecated": false
+   },
+   {
     "name": "lintPolicy",
     "kind": "function",
     "params": [
@@ -3741,6 +3971,16 @@
      "context?"
     ],
     "doc": "Lints a policy document: validates it as storage would, then reports statements that grant more than intended,\nconditions that can never match or silently fail open, and statements that are shadowed or duplicated. The\ncontext tells the linter which identity attributes, resource attributes, and application keys exist. Pattern\ncomparisons are budgeted: past the budget, a `shadowed-allow-skipped` note replaces the rest of the shadow check.",
+    "deprecated": false
+   },
+   {
+    "name": "liveLicensePool",
+    "kind": "function",
+    "params": [
+     "pool",
+     "now"
+    ],
+    "doc": "Whether a pool contributes capacity at `now`.",
     "deprecated": false
    },
    {
@@ -3759,6 +3999,41 @@
      "identity"
     ],
     "doc": "Machine accounts: service accounts and agents. They hold API keys and never sign in.",
+    "deprecated": false
+   },
+   {
+    "name": "maxLicenseAssignmentsPerProduct",
+    "kind": "const",
+    "params": null,
+    "doc": "Direct and group assignments of one product in one tenant.",
+    "deprecated": false
+   },
+   {
+    "name": "maxLicenseFeatureKeys",
+    "kind": "const",
+    "params": null,
+    "doc": "Feature keys one product may list.",
+    "deprecated": false
+   },
+   {
+    "name": "maxLicensePoolQuantity",
+    "kind": "const",
+    "params": null,
+    "doc": "Seats one pool may carry.",
+    "deprecated": false
+   },
+   {
+    "name": "maxLicensePoolsPerProduct",
+    "kind": "const",
+    "params": null,
+    "doc": "Pools (live or ended) one tenant may hold for one product; ended pools are swept 400 days after their end.",
+    "deprecated": false
+   },
+   {
+    "name": "maxLicenseProductsPerTenant",
+    "kind": "const",
+    "params": null,
+    "doc": "Products one tenant may define.",
     "deprecated": false
    },
    {
@@ -3786,6 +4061,16 @@
      "value"
     ],
     "doc": "Validates a base DN and returns its comparison form: `attr=value` components of letters, digits, spaces, `.`, `_`\nand `-` (no escapes), lowercased with spaces collapsed, exactly as `@better-iam/ldap` normalizes DNs.",
+    "deprecated": false
+   },
+   {
+    "name": "outboundAllows",
+    "kind": "function",
+    "params": [
+     "settings",
+     "hostTenantId"
+    ],
+    "doc": "Whether a home tenant's outbound settings let its people become guests of `hostTenantId`.",
     "deprecated": false
    },
    {

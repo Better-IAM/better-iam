@@ -54,6 +54,9 @@ import { createDevicesApi } from './devices.js';
 import { createFiltersApi } from './filters.js';
 import { createQuotasApi } from './quotas.js';
 import { createSignalsApi } from './signals.js';
+import { createLicensesApi } from './licenses.js';
+import { createGuestsApi } from './guests.js';
+import { createClearancesApi } from './clearances.js';
 
 /**
  * The provisioning API. Every group is an object of `(credential, input)` operations that run through the
@@ -122,6 +125,9 @@ export function createApi(ctx: ServerContext, auth: AuthApi) {
     filters: createFiltersApi(ctx),
     quotas: createQuotasApi(ctx),
     signals: createSignalsApi(ctx),
+    licenses: createLicensesApi(ctx),
+    guests: createGuestsApi(ctx),
+    clearances: createClearancesApi(ctx),
   };
 }
 export type Api = ReturnType<typeof createApi>;

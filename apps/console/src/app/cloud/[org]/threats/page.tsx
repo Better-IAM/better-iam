@@ -22,30 +22,28 @@ export default async function Threats({ params }: { params: Promise<{ org: strin
   const page = await orgPage(org);
   const { iam, auth, tenantId, base, session } = page;
   // Each read is permission-gated on its own; without iam:threats:read the page explains what it needs.
-  const [summary, open, investigating, risky, detections, rules, members, allowed] =
-    await Promise.all([
-      tryRead(() => iam.api.threats.summary(auth, { tenantId })),
-      tryRead(() => iam.api.threats.listIncidents(auth, { tenantId, status: 'open', limit: 50 })),
-      tryRead(() =>
-        iam.api.threats.listIncidents(auth, { tenantId, status: 'investigating', limit: 50 }),
-      ),
-      tryRead(() => iam.api.threats.listRisk(auth, { tenantId, limit: 25 })),
-      tryRead(() => iam.api.threats.listDetections(auth, { tenantId, limit: 25 })),
-      tryRead(() => iam.api.threats.rules(auth, { tenantId })),
-      tryRead(() => iam.api.identities.list(auth, { tenantId, limit: 1000 })),
-      can(page, [{ action: 'iam:threats:manage', resource: detectionsResource }]),
-    ]);
+  const [summary, active, risky, detections, rules, members, allowed] = await Promise.all([
+    tryRead(() => iam.api.threats.summary(auth, { tenantId })),
+    // Open and under investigation, most recently active first.
+    tryRead(() =>
+      iam.api.threats.listIncidents(auth, {
+        tenantId,
+        status: ['open', 'investigating'],
+        limit: 50,
+      }),
+    ),
+    tryRead(() => iam.api.threats.listRisk(auth, { tenantId, limit: 25 })),
+    tryRead(() => iam.api.threats.listDetections(auth, { tenantId, limit: 25 })),
+    tryRead(() => iam.api.threats.rules(auth, { tenantId })),
+    tryRead(() => iam.api.identities.list(auth, { tenantId, limit: 1000 })),
+    can(page, [{ action: 'iam:threats:manage', resource: detectionsResource }]),
+  ]);
   const mayManage = allowed[key('iam:threats:manage', detectionsResource)] === true;
   const ruleTitle = (ruleId: string) => rules?.find((rule) => rule.id === ruleId)?.title ?? ruleId;
   const person = (identityId: string) => {
     const member = members?.find((candidate) => candidate.id === identityId);
     return member ? member.name || member.email || member.id : identityId;
   };
-  const kindOf = (identityId: string) =>
-    members?.find((candidate) => candidate.id === identityId)?.kind;
-  const active = [...(open?.incidents ?? []), ...(investigating?.incidents ?? [])].sort(
-    (a, b) => b.lastDetectedAt - a.lastDetectedAt,
-  );
   const openTotal = summary
     ? Object.values(summary.openIncidents).reduce((total, count) => total + count, 0)
     : 0;
@@ -134,16 +132,23 @@ export default async function Threats({ params }: { params: Promise<{ org: strin
           <Card
             title="Open incidents"
             description="Detections about the same identity, network, or directory connection are grouped into one incident until someone resolves it."
+            actions={
+              active &&
+              active.total > active.incidents.length && (
+                <Link
+                  className="btn small secondary"
+                  href={`${base}/threats/incidents?status=active`}
+                >
+                  All {active.total}
+                </Link>
+              )
+            }
             flush
           >
             <Table
               head={['Severity', 'Incident', 'Status', 'Detections', 'Last activity', 'Assignee']}
-              rows={active.map((incident) => {
-                const href = subjectHref(
-                  base,
-                  incident.subject,
-                  incident.subject.type === 'identity' ? kindOf(incident.subject.id) : undefined,
-                );
+              rows={(active?.incidents ?? []).map((incident) => {
+                const href = subjectHref(base, incident.subject);
                 return [
                   <Badge key="s" tone={severityTone(incident.severity)}>
                     {incident.severity}
@@ -176,7 +181,7 @@ export default async function Threats({ params }: { params: Promise<{ org: strin
                   ),
                 ];
               })}
-              empty={open && investigating ? 'No open incidents.' : 'Incidents are not readable.'}
+              empty={active ? 'No open incidents.' : 'Incidents are not readable.'}
             />
           </Card>
           <Card
@@ -242,13 +247,7 @@ export default async function Threats({ params }: { params: Promise<{ org: strin
               <Table
                 head={['Severity', 'Detection', 'Subject', 'Occurred', 'Status', '']}
                 rows={detections.detections.map((detection) => {
-                  const href = subjectHref(
-                    base,
-                    detection.subject,
-                    detection.subject.type === 'identity'
-                      ? kindOf(detection.subject.id)
-                      : undefined,
-                  );
+                  const href = subjectHref(base, detection.subject);
                   return [
                     <Badge key="s" tone={severityTone(detection.severity)}>
                       {detection.severity}

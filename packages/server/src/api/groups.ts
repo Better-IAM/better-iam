@@ -8,16 +8,68 @@ import {
 } from '@better-iam/core';
 import { releaseGroupApps } from '../applications.js';
 import type { ServerContext } from '../context.js';
+import { batchGroupLicenses, groupsHoldLicenses, releaseGroupLicenses } from '../licenses.js';
 import type { AccessPackage, Binding, BindingActivation, Group, GroupMember } from '../models.js';
+import { OperationDenied } from '../operations.js';
 import { ruleGroupIds } from '../package-rules.js';
 import {
   assertNotTeamGroup,
   syncTeamsFromGroups,
+  teamChain,
   teamChainBindings,
+  teamCollections,
   teamsSyncingFrom,
+  type Team,
 } from '../teams.js';
 import { id, publicIdentity, type PublicIdentity } from '../utils.js';
 import { strings, text } from '../validation.js';
+
+/**
+ * A license product assigned to a group gives each member a claim on a seat, as assigning the product to them would:
+ * adding someone to such a group, or changing how long they stay, needs iam:licenses:assign in the tenant as well. The
+ * same holds for the backing groups the write fills through team sync (of the teams that sync from the group and of
+ * the teams above them). Team maintainers manage their own team under its administrators' delegation instead, and
+ * directory sync (SCIM) sets members as the directory says.
+ *
+ * Every other writer that puts people into groups (`identities.createMany` and `invite`, guest invitations, access
+ * packages, onboarding completion groups, the teams API for administrators) asks the same, through this check: it
+ * refuses with `OperationDenied`, which an operation records as a denial of itself. Pass the groups the write fills
+ * (`groupIds`) and, optionally, the refusal's message.
+ */
+export async function assertMayClaimLicenses(
+  ctx: ServerContext,
+  tx: IamStore,
+  principal: AuthenticatedPrincipal,
+  tenantId: string,
+  groupId: string | readonly string[],
+  message = 'Members of this group hold license seats through it; changing them needs iam:licenses:assign',
+): Promise<void> {
+  const direct = [...new Set(typeof groupId === 'string' ? [groupId] : groupId)];
+  if (!direct.length) return;
+  const groupIds = [...direct];
+  let teams: Map<string, Team> | undefined;
+  for (const each of direct) {
+    const syncing = await teamsSyncingFrom(tx, tenantId, each);
+    if (!syncing.length) continue;
+    teams ??= new Map(
+      (await tx.find<Team>(teamCollections.teams, { tenantId })).map((team) => [team.id, team]),
+    );
+    for (const team of syncing)
+      for (const link of teamChain(teams, team.id)) groupIds.push(link.groupId);
+  }
+  if (!(await groupsHoldLicenses(tx, tenantId, groupIds))) return;
+  const decision = await ctx.decisions.decide(
+    tx,
+    principal,
+    {
+      tenantId,
+      action: 'iam:licenses:assign',
+      resource: { type: 'iam', id: 'licenses/assignments' },
+    },
+    true,
+  );
+  if (!decision.allowed) throw new OperationDenied(message);
+}
 
 /**
  * Brings the teams that sync their members from the group in step (teams.ts). A synced person joins or leaves those
@@ -70,8 +122,9 @@ export async function createGroup(
 
 /**
  * Adds an identity to a group; membership confers every group binding, so each binding's authority is required (and,
- * for teams that sync from the group, that of their backing groups' bindings). `expiresAt` makes the membership
- * temporary. Re-adding an expired member renews the membership.
+ * for teams that sync from the group, that of their backing groups' bindings), and iam:licenses:assign when license
+ * products are assigned to those groups. `expiresAt` makes the membership temporary. Re-adding an expired member renews
+ * the membership.
  */
 export async function addGroupMember(
   ctx: ServerContext,
@@ -88,6 +141,7 @@ export async function addGroupMember(
     subjectId: input.groupId,
   }))
     await ctx.grantingAuthority(tx, principal, input.tenantId, binding.authorityId);
+  await assertMayClaimLicenses(ctx, tx, principal, input.tenantId, input.groupId);
   const expiresAt = input.expiresAt !== undefined ? ctx.bindingExpiry(input.expiresAt) : undefined;
   const existing = (
     await tx.find<GroupMember>('groupMembers', {
@@ -133,6 +187,7 @@ export async function updateGroupMember(
     subjectId: input.groupId,
   }))
     await ctx.grantingAuthority(tx, principal, input.tenantId, binding.authorityId);
+  await assertMayClaimLicenses(ctx, tx, principal, input.tenantId, input.groupId);
   const member = (
     await tx.find<GroupMember>('groupMembers', {
       tenantId: input.tenantId,
@@ -152,7 +207,10 @@ export async function updateGroupMember(
   return updated;
 }
 
-/** Adds up to 100 identities atomically (cohort onboarding); one failure rejects the batch. */
+/**
+ * Adds up to 100 identities atomically (cohort onboarding); one failure rejects the batch. License seats of the
+ * group's products are reconciled once, after the batch (licenses.ts `batchGroupLicenses`).
+ */
 export async function addGroupMembers(
   ctx: ServerContext,
   tx: IamStore,
@@ -162,15 +220,17 @@ export async function addGroupMembers(
   const identityIds = [...new Set(strings(input.identityIds, 'identityIds'))];
   if (!identityIds.length) throw new IamError('INVALID_INPUT', 'Provide 1-100 identityIds');
   const members: GroupMember[] = [];
-  for (const identityId of identityIds)
-    members.push(
-      await addGroupMember(ctx, tx, principal, {
-        tenantId: input.tenantId,
-        groupId: input.groupId,
-        identityId,
-        ...(input.expiresAt !== undefined ? { expiresAt: input.expiresAt } : {}),
-      }),
-    );
+  await batchGroupLicenses(ctx, tx, async () => {
+    for (const identityId of identityIds)
+      members.push(
+        await addGroupMember(ctx, tx, principal, {
+          tenantId: input.tenantId,
+          groupId: input.groupId,
+          identityId,
+          ...(input.expiresAt !== undefined ? { expiresAt: input.expiresAt } : {}),
+        }),
+      );
+  });
   return members;
 }
 
@@ -278,6 +338,8 @@ export async function deleteGroup(
     await tx.delete('relationships', tuple.id);
   // App assignments to the group go with it (applications.ts).
   await releaseGroupApps(tx, group.tenantId, group.id);
+  // So do license assignments to it, releasing the seats they carried (licenses.ts).
+  await releaseGroupLicenses(ctx, tx, group.tenantId, group.id, principal);
   await tx.delete('groups', group.id);
 }
 

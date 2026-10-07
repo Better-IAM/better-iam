@@ -233,6 +233,12 @@ export class AccountAuth extends SessionAuth {
     return this.options.store.transaction(async (tx) => {
       const principal = await this.authenticate(credentials);
       this.requireRecent(principal);
+      // A guest's address is the one their invitation proved and the cross-tenant settings admitted (server guests.ts).
+      if (principal.identity.guest)
+        throw new IamError(
+          'INVALID_INPUT',
+          'A guest’s email address cannot change: ask the organization to invite the new address',
+        );
       const token = await this.challenge(
         tx,
         principal.identity,

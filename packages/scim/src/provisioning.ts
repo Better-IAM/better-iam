@@ -372,6 +372,7 @@ export function createProvisioning(config: ScimConfig) {
           owner: false,
           createdAt: Date.now(),
         };
+    const previousStatus = existing ? record.status : undefined;
     const emails = data.emails;
     validateEmails(emails);
     let name: ObjectValue | undefined;
@@ -476,6 +477,13 @@ export function createProvisioning(config: ScimConfig) {
       await tx.insert('identities', record);
     }
     if (record.status !== 'active' || addressChanged) await revokeSessions(tx, record.id);
+    // A deactivation or reactivation moves what follows the status (license seats) at once; new users hold nothing.
+    if (existing && record.status !== previousStatus && config.identityStatusChanged)
+      await config.identityStatusChanged(tx, {
+        tenantId: connection.tenantId,
+        connectionId: connection.id,
+        identityId: record.id,
+      });
     if (existing) await tx.put('scimUsers', link);
     else await tx.insert('scimUsers', link);
     await audit(
@@ -637,6 +645,13 @@ export function createProvisioning(config: ScimConfig) {
       await tx.put('scimGroups', group);
       await syncGroup(tx, connection, group);
     }
+    // Seats held through a direct assignment go with the deactivation too, not only those of the SCIM groups.
+    if (local.status === 'active' && config.identityStatusChanged)
+      await config.identityStatusChanged(tx, {
+        tenantId: connection.tenantId,
+        connectionId: connection.id,
+        identityId: local.id,
+      });
   }
   async function deleteGroup(tx: IamStore, connection: Connection, row: GroupLink): Promise<void> {
     row.members = [];
@@ -648,6 +663,13 @@ export function createProvisioning(config: ScimConfig) {
       scimConnectionId: connection.id,
     }))
       await tx.delete('bindings', binding.id);
+    // What the server gave the group (license assignments) must not outlive its record.
+    if (config.groupDeleted)
+      await config.groupDeleted(tx, {
+        tenantId: connection.tenantId,
+        connectionId: connection.id,
+        groupId: row.groupId,
+      });
     await tx.delete('groups', row.groupId);
   }
   return { audit, authenticate, syncGroup, saveUser, saveGroup, patch, deleteUser, deleteGroup };

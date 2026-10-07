@@ -7,6 +7,7 @@ import {
   type Tenant,
 } from '@better-iam/core';
 import type { ServerContext } from './context.js';
+import { decideOn } from './decisions.js';
 import type { GroupMember } from './models.js';
 import { id } from './utils.js';
 import type { ResolvedResource } from './options.js';
@@ -65,6 +66,19 @@ export interface InvariantResult {
 
 const maxSubjects = 500;
 
+/**
+ * Transactions whose running operation only takes access away under an action that can also widen it (revoking a
+ * clearance or debriefing a compartment shares `iam:clearances:adjudicate` with grants). Its "expect allow" invariants
+ * are not re-checked, so no invariant blocks taking access away for cause; "expect deny" ones still are. A mark lives
+ * for one operation only: `invariantSnapshot` clears it and `invariantVerify` consumes it.
+ */
+const narrowingOnly = new WeakSet<object>();
+
+/** Marks the running operation (inside `operation()`) as one that only narrows access; see `narrowingOnly`. */
+export function narrowsAccessOnly(tx: IamStore): void {
+  narrowingOnly.add(tx);
+}
+
 /** Operations that can change who may do what; enforced invariants are re-checked around them. */
 const accessChangingActions = new Set(
   [
@@ -119,6 +133,19 @@ const accessChangingActions = new Set(
     'features:manage',
     'features:override',
     'billing:manage',
+    // License seats (assignments, capacity, retirement) feed principal.licenses, which policies test.
+    'licenses:assign',
+    'licenses:manage',
+    // Converting a guest changes principal.guest, and the guest boundary bounds every guest's decisions (guests.ts).
+    'guests:manage',
+    'guests:settings',
+    // Security clearances widen what mandatory access control lets through: granting, updating, reading in and
+    // reinstating clearances, defining or changing the scheme, and declassifying. Suspending (`clearances:suspend`) and
+    // labeling only narrow access and stay out, so an "expect allow" invariant never blocks them; revoking and
+    // debriefing share the adjudicate action and mark themselves `narrowsAccessOnly` for the same effect.
+    'clearances:adjudicate',
+    'classifications:manage',
+    'classifications:declassify',
   ].map((action) => `iam:${action}`),
 );
 
@@ -204,8 +231,7 @@ export async function evaluateInvariants(
           tenant,
           invariant.action,
         );
-        const decision =
-          'fixed' in prepared ? prepared.fixed : prepared.evaluate(resource, invariant.action);
+        const decision = decideOn(prepared, resource, invariant.action);
         if (decision.allowed !== (invariant.expect === 'allow'))
           violations.push({
             identity: { id: identity.id, name: identity.email ?? identity.name },
@@ -335,6 +361,7 @@ export async function invariantSnapshot(
   tenantId: string,
   action: string,
 ): Promise<InvariantSnapshot | undefined> {
+  narrowingOnly.delete(tx);
   if (!accessChangingActions.has(action)) return undefined;
   const invariants = (await tx.find<AccessInvariant>('accessInvariants', { tenantId })).filter(
     (invariant) => invariant.mode === 'enforce',
@@ -364,11 +391,14 @@ export async function invariantVerify(
   tenantId: string,
   snapshot: InvariantSnapshot | undefined,
 ): Promise<void> {
+  const narrowing = narrowingOnly.delete(tx);
   if (!snapshot) return;
   const tenant = await ctx.tenant(tx, tenantId);
   for (const result of await evaluateInvariants(ctx, tx, tenant, snapshot.invariants, {
     unlimited: true,
   })) {
+    // Taking access away for cause is never blocked by an invariant that expects it to remain.
+    if (narrowing && result.invariant.expect === 'allow') continue;
     // Deleting an invariant's group or resource would otherwise switch enforcement off silently.
     if (result.error && !snapshot.unevaluable.has(result.invariant.id))
       throw new IamError(

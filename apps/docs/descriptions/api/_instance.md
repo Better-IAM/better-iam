@@ -14,8 +14,11 @@ run maintenance. This reference covers all of it: the `api` groups that manage o
 | `events` | `subscribe(patterns, handler)` for in-process audit subscribers, and `dispatch()` to run them (the same function as `dispatchAuditHooks`). |
 | `useProtocol`, `protocolHost` | Mount OAuth, SAML, and SCIM services, and the host callbacks those packages are built from. |
 | `initialize`, `bootstrap`, `recoverRoot`, `rotateSecrets`, `selfCheck` | Deployment operations: schema, the first administrator, break-glass recovery, secret rotation, and health findings. |
-| `purgeDeleted`, `sweepExpired`, `reconcilePackages`, `sendAccessDigest`, `sendExpiryReminders`, `closeOverdueCertifications`, `checkInvariants`, `archiveAudit`, `pruneAudit`, `dispatchAuditHooks`, `flushAccessUsage` | Scheduled jobs and shutdown work. See [Scheduled jobs](/docs/operations/jobs). |
+| `purgeDeleted`, `sweepExpired`, `reconcilePackages`, `sendAccessDigest`, `sendExpiryReminders`, `closeOverdueCertifications`, `closeOverdueTeamReviews`, `checkInvariants`, `archiveAudit`, `pruneAudit`, `dispatchAuditHooks`, `flushAccessUsage` | Scheduled jobs and shutdown work. See [Scheduled jobs](/docs/operations/jobs). |
 | `signals` | The Shared Signals receiver's server side: the poll job `signals.poll()` and `signals.receive(sourceId, set)` for custom transports. See [Shared Signals receiver](#shared-signals-receiver). |
+| `licenses` | License management's server side: the jobs `licenses.reconcile()` and `licenses.reclaim()`, and `licenses.features(identityId, tenantId, { trustedTenantId? })` (platform products unless you trust a tenant) and `licenses.products(...)` for application code. See [License jobs and helpers](#license-jobs-and-helpers). |
+| `guests` | Guest collaboration's server side: the jobs `guests.sweep()` and `guests.sendReviewReminders()`. See [Guest collaboration jobs](#guest-collaboration-jobs). |
+| `clearances` | Security clearances' server side (with the `clearances` option): the job `clearances.sendReminders()`. See [Security clearance jobs](#security-clearance-jobs). |
 | `assertionKey`, `assertionKeys` | The keys downstream services verify [assertions](/docs/reference/api/assertions#issue) with. |
 | `auth` | Low-level authentication primitives for trusted integrations, such as `dispatchOutbox()` and `withClient()`. |
 | `store` | The storage adapter you passed as `database`. |
@@ -67,7 +70,7 @@ app.all('/api/iam/*', (c) => iam.handler(c.req.raw));
 | In the request path | `authenticate`, `authorize`, `require`, `authorizeMany`, `listAccessible`, `callPlugin` |
 | Once at process start | `useProtocol`, `iam.events.subscribe` |
 | Once per deploy or installation | `initialize` (CLI `migrate`), `bootstrap`, `selfCheck` (CLI `doctor`) |
-| On a schedule | `dispatchAuditHooks`, `purgeDeleted`, `sweepExpired`, `reconcilePackages`, `sendAccessDigest`, `sendExpiryReminders`, `closeOverdueCertifications`, `checkInvariants`, `detectThreats`, `signals.poll`, `archiveAudit`, `pruneAudit` |
+| On a schedule | `dispatchAuditHooks`, `purgeDeleted`, `sweepExpired`, `reconcilePackages`, `sendAccessDigest`, `sendExpiryReminders`, `closeOverdueCertifications`, `closeOverdueTeamReviews`, `checkInvariants`, `detectThreats`, `signals.poll`, `licenses.reconcile`, `licenses.reclaim`, `guests.sweep`, `guests.sendReviewReminders`, `clearances.sendReminders`, `archiveAudit`, `pruneAudit` |
 | Rarely, by an operator | `recoverRoot`, `rotateSecrets`, `assertionKey`, `assertionKeys` |
 | At shutdown | `flushAccessUsage` |
 
@@ -104,6 +107,12 @@ boundaries, relationships, and the tenant tree), and there is no permission cach
   administrator behind it may do.
 - With the `accessUsage` option on, each allowed check counts as usage for
   [role mining](/docs/guides/governance/usage-and-mining).
+- With the `clearances` option on, a resource carrying a [classification label](/docs/reference/api/clearances) is
+  refused first, before any role or policy is read, unless every party of the session (the person, an agent key's
+  sponsor, each agent of a delegated session, the administrator behind "view as") holds a clearance that dominates it.
+  This applies to root administrators too, unless `clearances.appliesToRoot` is false. The refusal is reported as
+  `ACCESS_DENIED` like any other and audited with the metadata `{ mandatory: 'clearance' }`; `iam:*` actions are never
+  subject to labels.
 
 ```ts
 const decision = await iam.authorize({
@@ -163,6 +172,9 @@ the requested page (`limit` defaults to 100, `offset` to 0) in a stable order. A
 an impersonation session sees only what the administrator behind it could reach, and a caller from another
 organization gets an empty list. It only works for managed types, because application-resolved resources are not
 stored in IAM. Like `authorizeMany`, the list is advisory: check the action again when the person opens an item.
+With the `clearances` option, the type's classification labels are read once and every resource is checked against
+them as `authorize` would, so resources labeled above the caller's clearance are left out, root administrators'
+included unless `clearances.appliesToRoot` is false.
 
 ```ts
 const { resources, total } = await iam.listAccessible({
@@ -183,13 +195,20 @@ Returns which resources of one type the caller may perform an action on, as a fi
   Also served as [`filters.plan`](/docs/reference/api/filters#plan) over HTTP.
 - **Permission:** none to call. The plan is the request credential's.
 - **Audited as:** not audited.
-- **Errors:** `INVALID_INPUT` for an `iam:*` action or an internal type; plus the credential errors of
-  [`authorize`](#authorize).
+- **Errors:** `INVALID_INPUT` for an `iam:*` action or an internal type; `UNSUPPORTED_FILTER` when the plan cannot be
+  exact, including the security clearance cases below; plus the credential errors of [`authorize`](#authorize).
 
 Where `listAccessible` evaluates the resources IAM stores, a plan works for any type: the server partially evaluates
 the caller's grants, denies, boundaries, relationships and session limits and returns `always`, `never`, or
 `conditional` with a filter over `id` and the resource's attributes, with the same result `authorize` would give for
 each row. Compile it with `filterToSql`, `filterToPrisma`, `filterToMongo` or `filterMatches` from `@better-iam/core`.
+
+With the `clearances` option, every plan (a root administrator's too) is AND-ed with a filter over `id` that leaves
+out the resources labeled above the caller's clearance, which compiles to every target. A plan answers
+`UNSUPPORTED_FILTER` for an application type the scheme requires labels on, for any application type while a label in
+the tenant passes down to children, and when a statement conditions on a label's resource keys; labels your
+`resolveResource` asserts are not visible to plans, so check such rows with `authorize`
+([security clearances](/docs/reference/api/clearances)).
 
 ```ts
 import { filterToSql } from 'better-iam/core';
@@ -615,6 +634,30 @@ bindings are removed, and items nobody decided follow the campaign's `undecided`
 exists the campaign still closes, and every revocation is reported as `revocation-failed`. The result is
 `{ closed, skipped }`, where `skipped` counts open auto-closing campaigns that are not due yet.
 
+## closeOverdueTeamReviews
+
+Completes every open team membership review whose due date has passed and removes the people it decided to remove.
+
+- **When:** on a schedule, hourly or daily with the other jobs.
+- **Permission:** none. A deployment operation.
+- **Audited as:** `team:member:remove` (with `source: review` and the `reviewId`) for each person removed and
+  `team:review:complete` with the counts, by `deployment-operator`.
+- **Safe to repeat:** yes. Each review is re-read and completed in its own transaction, so a review someone completed
+  or cancelled meanwhile is left alone and none is completed twice.
+
+It looks at the open reviews past their `dueAt` (of every organization, or only `tenantId`) and skips those of
+organizations that are not active or of teams that no longer exist. Completing a review works as
+[`teams.completeReview`](/docs/reference/api/teams#completereview) does: people decided `remove` leave the team,
+people nobody decided on follow the review's `onUndecided`, and people who already left or whom team sync now manages
+are counted as `gone`. The birthright packages of the people removed are re-evaluated afterwards. A review that fails
+does not stop the others. The result is `{ completed, removed, failed }`, where `failed` lists the `reviewId` and
+`message` of each review that could not be completed.
+
+```ts
+const { completed, failed } = await iam.closeOverdueTeamReviews();
+if (failed.length) await notifyAdmins(failed);
+```
+
 ## checkInvariants
 
 Evaluates the access invariants of every active organization and records an audit event when one breaks or recovers.
@@ -840,4 +883,193 @@ The result is `{ eventId, status, duplicate, identityId? }`, where `eventId` is 
 ```ts
 const receipt = await iam.signals.receive(sourceId, compactSet);
 if (receipt.status === 'unmatched') console.warn('No person matched', receipt.eventId);
+```
+
+## License jobs and helpers
+
+`iam.licenses` is the server side of [license management](/docs/reference/api/licenses): two scheduler jobs that keep
+seats in line with time and activity, and two credential-free readers for application code. Products, pools,
+assignments, and seats are managed through the licenses group. Every seat change the jobs make is audited as
+`license:seat-activate`, `license:seat-waiting`, or `license:seat-release` by `deployment-operator`, and birthright
+package rules on `identity.licenses` are re-evaluated for the people whose seats changed.
+
+### licenses.reconcile
+
+Brings every active organization's seats in line with assignments, memberships, identity status, and pool terms.
+
+- **When:** on a schedule, hourly. The interval is how late a pool that starts or ends, or a membership or account
+  that expires, is reflected in seats.
+- **Permission:** none. A deployment operation.
+- **Audited as:** the seat changes, with reason `schedule`.
+- **Errors:** `NOT_FOUND` for an unknown `tenantId`. A tenant that fails does not throw: it is listed in
+  `failedTenants` and the others carry on.
+- **Safe to repeat:** yes. Reconciliation is idempotent, and each tenant with licenses is reconciled in its own
+  transaction; a second run over unchanged data changes nothing.
+
+Everything else already moves seats as it happens (assignments, pool changes, group membership, disabling, deletion),
+so this job catches what changes with time and repairs anything edited by hand. Until it runs nothing is granted past
+its time: decisions stop counting a seat held only through a lapsed membership, and an expired account holds nothing.
+Suspended tenants are skipped, and a retired product never gets seats back. The result is
+`{ tenants, activated, waiting, released, failedTenants }`, where `tenants` counts the tenants with licenses.
+
+```ts
+setInterval(() => void iam.licenses.reconcile().catch(reportError), 60 * 60 * 1000).unref();
+```
+
+### licenses.reclaim
+
+Removes the direct license assignments of people who have not used their account for the tenant's `reclaimAfterDays`.
+
+- **When:** on a schedule, daily.
+- **Permission:** none. A deployment operation; tenants opt in with
+  [`licenses.configure`](/docs/reference/api/licenses#configure).
+- **Audited as:** `license:reclaim` on the person for each removed assignment (metadata: `productId`, `productKey`,
+  `assignedAt`, `lastActivityAt`, `reclaimAfterDays`), then the seat changes with reason `reclaim`.
+- **Errors:** `INVALID_INPUT` for a malformed `tenantId`. A tenant that fails, including an unknown `tenantId`, does
+  not throw: it is listed in `failedTenants`.
+- **Safe to repeat:** yes. Each tenant runs in its own transaction, and a removed assignment is gone, so a second pass
+  finds nothing more.
+
+It visits the tenants with `reclaimAfterDays` set (or only `tenantId`). A person is inactive when their last sign-in
+(or, without one, their account's creation) and the last use of their own sessions and API keys are older than the
+period; "view as" sessions of administrators do not count. The job removes each direct assignment older than the period
+whose holder is inactive, and waiting people take the freed seats. Seats held through groups are never reclaimed
+(`licenses.usage` reports them as `reclaimableThroughGroups`). Each pass also stores the activity it saw on every seat
+(`lastActivityAt`). The result is `{ tenants, reclaimed, failedTenants }`, with the `tenantId`, `productId`,
+`productKey`, `identityId`, and `lastActivityAt` of every reclaimed assignment.
+
+```ts
+const { reclaimed } = await iam.licenses.reclaim();
+for (const item of reclaimed) console.info('Reclaimed', item.productKey, 'from', item.identityId);
+```
+
+### licenses.features
+
+Returns the feature keys a person's active seats unlock in a tenant, for server code without a credential.
+
+- **When:** in your own routes and jobs, wherever a feature depends on the person's license.
+- **Permission:** none. Trusted server code.
+- **Audited as:** not audited.
+- **Errors:** `NOT_FOUND` for an unknown tenant or `trustedTenantId`; `INVALID_INPUT` for a malformed `identityId`
+  or `trustedTenantId`.
+
+The result is the sorted union of the `featureKeys` of the products the person holds an active seat for, counting
+only products defined by the tenant you trust or a tenant above it: the root tenant (the platform's products) unless
+you pass `{ trustedTenantId }`. Any tenant can define a product of its own listing any feature key, so the default
+keeps a tenant from minting a paid feature for itself; pass an organization's id to also count the products it sells to
+its own projects. People who are not active, whose account expired, or who belong to another tenant get an empty list,
+and a seat held only through a lapsed membership does not count. Tenant feature flags are separate: combine the two
+when a flag rolls a feature out and the license entitles the person.
+
+```ts
+const features = await iam.licenses.features(identityId, tenantId);
+if ((await iam.features.isEnabled(tenantId, 'exports')) && features.includes('exports')) showExport();
+// Also count what Acme sells to its own projects:
+const acme = await iam.licenses.features(identityId, projectId, { trustedTenantId: acmeId });
+```
+
+### licenses.products
+
+Returns the keys of the products a person holds an active seat for in a tenant: exactly what policies see as `principal.licenses`.
+
+- **When:** in server code that needs the person's products rather than their feature keys.
+- **Permission:** none. Trusted server code.
+- **Audited as:** not audited.
+- **Errors:** as for `licenses.features`.
+
+The same people get an empty list as for `licenses.features` above. Retired products and waiting seats never appear.
+
+## Guest collaboration jobs
+
+`iam.guests` is the server side of [guest collaboration](/docs/reference/api/guests): two scheduler jobs that keep
+invitations, guest accounts, and sponsors in order. Guests, invitations, and cross-tenant access settings are managed
+through the guests group. Identity expiry itself is the retention worker's: [`purgeDeleted`](#purgedeleted) disables a
+guest whose access ended, and [`sweepExpired`](#sweepexpired) deletes settled invitations 90 days after they lapsed.
+
+### guests.sweep
+
+Marks lapsed guest invitations and ended guest accounts expired, and flags guests whose sponsor can no longer sponsor.
+
+- **When:** on a schedule, hourly, before `guests.sendReviewReminders` and an outbox run.
+- **Permission:** none. A deployment operation.
+- **Audited as:** `guest:expire` for each guest account it closes, `guest:sponsor-missing` for each guest it flags,
+  and `guest:settings` (with `partnersRemoved`) when it drops partner entries, all by `deployment-operator`.
+- **Errors:** `INVALID_INPUT` for a malformed `tenantId`.
+- **Safe to repeat:** yes. Each tenant with pending invitations, open guest accounts, or settings runs in its own
+  transaction, and every change is a state that a second run finds already made.
+
+For every such tenant (or only `tenantId`) it marks pending invitations past their lapse `expired`, closes the guest
+account of each guest whose access ended (and reopens one an administrator restored with a later end and a
+re-enabled identity), removes the accounts of deleted identities, and flags `sponsorMissing` on active guests whose
+sponsor is disabled, expired, deleted, or otherwise unable to sponsor. When the deployment sends email and the tenant
+is active, the tenant's active owners get one `guest-sponsor-missing` email per guest and loss; the flag clears once
+the sponsor can sponsor again or [`guests.setSponsor`](/docs/reference/api/guests#setsponsor) names a new one. It also
+drops partner entries that name purged tenants. The result is
+`{ invitationsExpired, accountsExpired, accountsRestored, sponsorsMissing, ownersNotified, partnersRemoved }`.
+
+### guests.sendReviewReminders
+
+Emails each sponsor about the guests whose review is due or whose access ends soon.
+
+- **When:** on a schedule, hourly, followed by an outbox run.
+- **Permission:** none. A deployment operation.
+- **Audited as:** `guest:review-reminder` on each guest reminded, by `deployment-operator`, with the sponsor, the
+  earliest date reminded, and the access end.
+- **Errors:** `DELIVERY_REQUIRED` when `authentication.sendEmail` is not configured; `INVALID_INPUT` for a
+  `withinDays` outside 1 to 90 or a malformed `tenantId`.
+- **Safe to repeat:** yes. A reminder mark per guest and date (`guest-review:{id}:{reviewDueAt}`,
+  `guest-end:{id}:{expiresAt}`) prevents repeats, and each tenant runs in its own transaction.
+
+It looks at the active guests of every active tenant (or only `tenantId`) and reminds the sponsor of each review date
+and each access end within `withinDays` (default 14) once, in one `guest-review` email per guest that covers whatever
+is due, so an unanswered review reminder never stands in for the warning that access is about to end. A renewal moves
+both dates, which brings fresh reminders when they come near again. Guests whose sponsor cannot sponsor or has no email
+address are skipped (the sweep reports them to the owners). The result is `{ sent, skipped: { inactive, quiet } }`,
+where each `sent` entry names the tenant, guest, sponsor, and `dueAt`.
+
+```ts
+setInterval(async () => {
+  await iam.guests.sweep();
+  await iam.guests.sendReviewReminders();
+  await iam.auth.dispatchOutbox();
+}, 60 * 60 * 1000).unref();
+```
+
+## Security clearance jobs
+
+`iam.clearances` is the server side of [security clearances](/docs/reference/api/clearances) (the `clearances`
+option). Schemes, clearances, and labels are managed through the clearances group, and decisions enforce labels by
+themselves: suspensions, expiries, interim policy, and NDA acceptance are evaluated on every decision, so no job has to
+run for them to take effect.
+
+### clearances.sendReminders
+
+Emails security officers about clearances whose reinvestigation is due or whose end comes up.
+
+- **When:** on a schedule, daily, followed by an outbox run.
+- **Permission:** none. A deployment operation.
+- **Audited as:** `clearance:reminder` on each person reminded, by `deployment-operator`, with the level id, the
+  earliest date reminded (`dueAt`), the `kinds` (`reinvestigation`, `interim-end`, `expiry`), and how many addresses
+  were emailed.
+- **Errors:** `FEATURE_DISABLED` (403) without the `clearances` option; `DELIVERY_REQUIRED` when
+  `authentication.sendEmail` is not configured; `INVALID_INPUT` for a `withinDays` outside 1 to 365 or a malformed
+  `tenantId`.
+- **Safe to repeat:** yes. A reminder mark per clearance and date (`clearance-reminder:{id}:{date}`) prevents repeats,
+  and each tenant runs in its own transaction.
+
+It looks at the active and interim clearances of every active tenant that holds any (or only those held in
+`tenantId`) and reminds once of each periodic reinvestigation that is due or overdue and each end, interim or final,
+within `withinDays` (default 60). One `clearance-reminder` email per clearance goes to every active owner of the tenant
+that defines the scheme (a project's clearances to the organization's owners) and to the scheme's `notify.emails`. The
+email names the person and the level, never compartments, and links to `links.clearances` (or `links.account`). A
+changed date is reminded again. People who are not active are skipped. The result is
+`{ sent, skipped: { inactive, noRecipients } }`, where each `sent` entry names the tenant, the person, `dueAt`, and how
+many addresses were emailed, `inactive` counts tenants that are not active (an unknown `tenantId` included), and
+`noRecipients` clearances with something due but nobody to tell.
+
+```ts
+setInterval(async () => {
+  await iam.clearances.sendReminders();
+  await iam.auth.dispatchOutbox();
+}, 24 * 60 * 60 * 1000).unref();
 ```

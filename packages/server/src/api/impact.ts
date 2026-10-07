@@ -8,6 +8,7 @@ import {
   type Tenant,
 } from '@better-iam/core';
 import type { ServerContext } from '../context.js';
+import { decideOn } from '../decisions.js';
 import type { ResolvedResource } from '../options.js';
 import type { ActionDefinition, Binding, GroupMember, Policy, Role } from '../models.js';
 import {
@@ -165,8 +166,7 @@ export function createImpactApi(ctx: ServerContext) {
       for (const resource of resources) {
         const set = new Set<string>();
         for (const action of actions) {
-          const decision =
-            'fixed' in prepared ? prepared.fixed : prepared.evaluate(resource, action);
+          const decision = decideOn(prepared, resource, action);
           if (decision.allowed) set.add(action);
         }
         byResource.set(`${resource.type}/${resource.id}`, set);

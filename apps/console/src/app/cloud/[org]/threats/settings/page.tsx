@@ -7,6 +7,7 @@ import { tryRead } from '@/lib/session';
 import {
   actionsSummary,
   durationLabel,
+  offeredResponseKinds,
   severityTone,
   subjectTypeLabels,
   triggerSummary,
@@ -14,12 +15,13 @@ import {
 
 const settingsResource = { type: 'iam', id: 'threats/settings' };
 const playbooksResource = { type: 'iam', id: 'threats/playbooks' };
+const clearancesResource = { type: 'iam', id: 'clearances' };
 
 export default async function ThreatSettings({ params }: { params: Promise<{ org: string }> }) {
   const { org } = await params;
   const page = await orgPage(org);
   const { iam, auth, tenantId, base, session } = page;
-  const [rules, settings, playbooks, members, allowed] = await Promise.all([
+  const [rules, settings, playbooks, members, allowed, clearances] = await Promise.all([
     tryRead(() => iam.api.threats.rules(auth, { tenantId })),
     tryRead(() => iam.api.threats.getSettings(auth, { tenantId })),
     tryRead(() => iam.api.threats.listPlaybooks(auth, { tenantId })),
@@ -28,9 +30,19 @@ export default async function ThreatSettings({ params }: { params: Promise<{ org
       { action: 'iam:threats:manage', resource: settingsResource },
       { action: 'iam:threats:manage', resource: playbooksResource },
     ]),
+    // Answers FEATURE_DISABLED unless the deployment enables security clearances.
+    tryRead(() => iam.api.clearances.templates(auth)),
   ]);
   const mayConfigure = allowed[key('iam:threats:manage', settingsResource)] === true;
   const mayManagePlaybooks = allowed[key('iam:threats:manage', playbooksResource)] === true;
+  // Playbooks that suspend clearances are written only by people who may suspend any clearance themselves.
+  const maySuspendClearances =
+    clearances !== undefined &&
+    mayManagePlaybooks &&
+    (await can(page, [{ action: 'iam:clearances:suspend', resource: clearancesResource }]))[
+      key('iam:clearances:suspend', clearancesResource)
+    ] === true;
+  const playbookKinds = offeredResponseKinds({ suspendClearances: maySuspendClearances });
   const ruleTitle = (ruleId: string) => rules?.find((rule) => rule.id === ruleId)?.title ?? ruleId;
   const ruleOptions = (rules ?? []).map((rule) => ({ id: rule.id, title: rule.title }));
   const person = (identityId: string) => {
@@ -141,7 +153,7 @@ export default async function ThreatSettings({ params }: { params: Promise<{ org
           </Card>
           <Card
             title="Playbooks"
-            description="When a new detection matches a playbook's trigger, its actions run in order under the threat-detection actor. Automatic actions never contain owners or root administrators, and stop after the containment limit per run."
+            description="When a new detection matches a playbook's trigger, its actions run in order under the threat-detection actor. Automatic actions never contain owners or root administrators (nor suspend their clearances), and stop after the containment limit per run."
             flush
           >
             {playbooks ? (
@@ -206,12 +218,17 @@ export default async function ThreatSettings({ params }: { params: Promise<{ org
                 {(playbooks ?? []).map((playbook) => (
                   <details key={playbook.id}>
                     <summary>Edit {playbook.name}</summary>
-                    <PlaybookForm tenantId={tenantId} rules={ruleOptions} playbook={playbook} />
+                    <PlaybookForm
+                      tenantId={tenantId}
+                      rules={ruleOptions}
+                      playbook={playbook}
+                      kinds={playbookKinds}
+                    />
                   </details>
                 ))}
                 <details>
                   <summary>New playbook</summary>
-                  <PlaybookForm tenantId={tenantId} rules={ruleOptions} />
+                  <PlaybookForm tenantId={tenantId} rules={ruleOptions} kinds={playbookKinds} />
                 </details>
               </div>
             )}

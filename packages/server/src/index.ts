@@ -31,6 +31,9 @@ import { createVcProtocol, createVcRuntime } from './api/verifiable-credentials.
 import { vcOptions, vcPlugins } from './vc.js';
 import { createLdapRuntime } from './ldap.js';
 import { createSignalsProtocol, createSignalsRuntime } from './signal-receiver.js';
+import { createLicensesRuntime } from './api/licenses.js';
+import { createGuestsRuntime } from './api/guests.js';
+import { createClearancesRuntime } from './api/clearances.js';
 import { billingServiceOf } from './billing-service.js';
 import { createLifecycle } from './lifecycle.js';
 import { createMetrics } from './metrics.js';
@@ -805,11 +808,14 @@ export type {
   RiskContributionView,
   RiskPage,
   SuspiciousActivityReport,
+  ThreatDetectionView,
+  ThreatIncidentView,
   ThreatPlaybookInput,
   ThreatRuleSettingInput,
   ThreatRuleView,
   ThreatSettingsInput,
   ThreatSettingsView,
+  ThreatSubjectView,
   ThreatSummary,
 } from './api/threats.js';
 // Device posture (devices.ts, api/devices.ts).
@@ -878,6 +884,132 @@ export type {
 } from './api/signals.js';
 export type { ResolvedSignalsConfig, SignalsOptions } from './options.js';
 export type { SecurityEventClaims, SignalEventType, SubjectIdentifier } from '@better-iam/core';
+// License management (licenses.ts, api/licenses.ts).
+export {
+  licenseCapacity,
+  licenseCollections,
+  licenseContextKey,
+  licenseKey,
+  liveLicensePool,
+  maxLicenseAssignmentsPerProduct,
+  maxLicenseFeatureKeys,
+  maxLicensePoolQuantity,
+  maxLicensePoolsPerProduct,
+  maxLicenseProductsPerTenant,
+} from './licenses.js';
+export type {
+  LicenseAssignment,
+  LicensePool,
+  LicensePoolSource,
+  LicenseProduct,
+  LicenseProductStatus,
+  LicenseSeat,
+  LicenseSeatChange,
+  LicenseSeatSources,
+  LicenseSeatStatus,
+  LicenseSettings,
+  LicenseSubjectType,
+} from './licenses.js';
+export type {
+  IamLicenses,
+  LicenseAssignManyResult,
+  LicenseAssignmentView,
+  LicenseAssignResult,
+  LicensePoolResult,
+  LicensePoolView,
+  LicenseProductRetireResult,
+  LicenseProductView,
+  LicenseReclaimResult,
+  LicenseReconcileResult,
+  LicenseSeatView,
+  LicenseSettingsView,
+  LicenseUsage,
+  LicenseUsageReport,
+  MyLicense,
+  MyLicenses,
+} from './api/licenses.js';
+// B2B guest collaboration (guests.ts, api/guests.ts).
+export {
+  defaultGuestSettings,
+  guestCollections,
+  guestLimits,
+  inboundRefusal,
+  outboundAllows,
+} from './guests.js';
+export type {
+  CrossTenantAccess,
+  CrossTenantPartner,
+  GuestAccount,
+  GuestAccountStatus,
+  GuestGrants,
+  GuestInvitation,
+  GuestInvitationStatus,
+  GuestOrigin,
+  GuestSettings,
+  InboundGuestSettings,
+  OutboundGuestSettings,
+} from './guests.js';
+export type {
+  GuestInvitationView,
+  GuestInviteInput,
+  GuestPage,
+  GuestReminderResult,
+  GuestRemoval,
+  GuestSettingsInput,
+  GuestSettingsView,
+  GuestSweepResult,
+  GuestView,
+  IamGuests,
+} from './api/guests.js';
+export type { GuestProfile } from '@better-iam/core';
+// Security clearances and mandatory access control (clearances.ts, api/clearances.ts).
+export {
+  attachLabel,
+  clearanceCollections,
+  clearanceLimits,
+  clearanceScope,
+  effectiveScheme,
+  labelKey,
+  labelsForType,
+} from './clearances.js';
+export type {
+  AdjudicationMode,
+  ClassificationScheme,
+  Clearance,
+  ClearanceReadIn,
+  ClearanceStatus,
+  EffectiveClearanceStatus,
+  MandatoryAccess,
+  ResourceLabel,
+} from './clearances.js';
+export type {
+  ClassificationSchemeInput,
+  ClassificationSchemeView,
+  ClassificationTemplateView,
+  ClearanceExplanation,
+  ClearanceGrantInput,
+  ClearancePage,
+  ClearancePartyView,
+  ClearanceReadInView,
+  ClearanceReminderResult,
+  ClearanceUpdateInput,
+  ClearanceView,
+  IamClearances,
+  MyClearance,
+  ResourceLabelPage,
+  ResourceLabelState,
+  ResourceLabelView,
+} from './api/clearances.js';
+export type { ClearanceOptions, ResolvedClearanceConfig } from './options.js';
+export type {
+  ClassificationLabel,
+  ClassificationLevel,
+  ClassificationSchemeDefinition,
+  ClassificationTemplateName,
+  ClearanceParty,
+  Compartment,
+  DominanceFailure,
+} from '@better-iam/core';
 
 /**
  * IAM-signed session JWTs (`sts.jwt`): the issuer, the public keys downstream services verify with, and an online,
@@ -1171,6 +1303,26 @@ export function betterIam(options: BetterIamOptions) {
      * Pushes arrive at `{signals.pushPath}/{sourceId}`; manage sources and read events through `api.signals`.
      */
     signals: createSignalsRuntime(ctx),
+    /**
+     * License management, server side: `features(identityId, tenantId, { trustedTenantId? })` (the feature keys a
+     * person's active seats unlock, counting platform products only unless a trusted tenant's own products should count
+     * too) and `products` (their product keys, as `principal.licenses`), and the scheduler jobs `reconcile` (hourly;
+     * pool terms, expired memberships and identities) and `reclaim` (daily; inactive direct assignments where
+     * `reclaimAfterDays` is set). Manage products, pools, assignments and seats through `api.licenses`.
+     */
+    licenses: createLicensesRuntime(ctx),
+    /**
+     * B2B guest collaboration, server side: the scheduler jobs `sendReviewReminders` (hourly; emails sponsors about
+     * reviews and access ends within 14 days) and `sweep` (hourly; lapsed invitations, ended guests, missing sponsors).
+     * Invite and manage guests and cross-tenant access settings through `api.guests`.
+     */
+    guests: createGuestsRuntime(ctx),
+    /**
+     * Security clearances (`clearances` option), server side: the scheduler job `sendReminders` (daily; emails the
+     * scheme's owners about reinvestigations due and clearances ending within 60 days). Define schemes, adjudicate
+     * clearances and label resources through `api.clearances`; decisions enforce labels by themselves.
+     */
+    clearances: createClearancesRuntime(ctx),
     protocolHost: federation.protocolHost,
     useProtocol: http.useProtocol,
     dispatchAuditHooks: ctx.events.dispatch,

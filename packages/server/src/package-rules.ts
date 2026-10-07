@@ -46,17 +46,22 @@ export interface RuleEnvironment {
   org?: {
     teams?: Pick<ReadonlySet<string>, 'has'>;
     departments?: Pick<ReadonlySet<string>, 'has'>;
+    /** Valid `identity.licenses` values: the keys of the license products visible to the tenant (licenses.ts). */
+    licenses?: Pick<ReadonlySet<string>, 'has'>;
   };
 }
 /** What `identity.teams` and `identity.departments` hold for one identity (see org-rules.ts). */
 export interface RuleOrgFacts {
   teams: readonly string[];
   departments: readonly string[];
+  /** `identity.licenses`: the keys of the license products the person holds an active seat for (licenses.ts). */
+  licenses?: readonly string[];
 }
 /** The rule keys that test the org structure, and what their values name. */
 export const orgRuleKeys = {
   'identity.teams': 'team',
   'identity.departments': 'department',
+  'identity.licenses': 'license',
 } as const;
 const isOrgRuleKey = (key: string): key is keyof typeof orgRuleKeys =>
   Object.hasOwn(orgRuleKeys, key);
@@ -131,6 +136,8 @@ export function ruleKeys(
     { key: 'identity.emailVerified', type: 'boolean', operators: withExists(boolOps) },
     { key: 'identity.managerId', type: 'string', operators: withExists(stringOps) },
     { key: 'identity.groups', type: 'array', operators: withExists(arrayOps) },
+    // Whether the person is a guest (guests.ts); a rule that never tests it does not match guests (see ruleMatch).
+    { key: 'identity.guest', type: 'boolean', operators: withExists(boolOps) },
     ...(options.org
       ? Object.keys(orgRuleKeys).map(
           (key): RuleKey => ({ key, type: 'array', operators: withExists(arrayOps) }),
@@ -226,7 +233,7 @@ export function parseAutoAssign(
             );
           throw new IamError(
             'INVALID_INPUT',
-            `${clausePath}: unknown key ${key}; use principal.id, principal.kind, principal.owner, identity.email, identity.emailDomain, identity.emailVerified, identity.managerId, identity.groups, ${env.org ? 'identity.teams, identity.departments, ' : ''}or principal.<declared attribute> (${declared.length ? declared.join(', ') : 'none declared'})`,
+            `${clausePath}: unknown key ${key}; use principal.id, principal.kind, principal.owner, identity.email, identity.emailDomain, identity.emailVerified, identity.managerId, identity.groups, identity.guest, ${env.org ? 'identity.teams, identity.departments, identity.licenses, ' : ''}or principal.<declared attribute> (${declared.length ? declared.join(', ') : 'none declared'})`,
           );
         }
         if (!known.operators.includes(operator as ConditionOperator))
@@ -271,7 +278,12 @@ export function parseAutoAssign(
           }
         if (isOrgRuleKey(key) && operator !== 'Exists') {
           const noun = orgRuleKeys[key];
-          const valid = noun === 'team' ? env.org?.teams : env.org?.departments;
+          const valid =
+            noun === 'team'
+              ? env.org?.teams
+              : noun === 'department'
+                ? env.org?.departments
+                : env.org?.licenses;
           for (const entry of values) {
             if (typeof entry !== 'string')
               throw new IamError('INVALID_INPUT', `${clausePath}: ${key} lists ${noun}s`);
@@ -379,7 +391,7 @@ export function ruleDocument(rule: AutoAssignRule | AutoAssignInput): PolicyDocu
  * The context a rule sees: the identity's declared attributes and fixed facts, and its group memberships that no
  * access package created (so rules never chain onto another package or keep themselves alive). No session,
  * request, or resource keys: a scheduler cannot replay them, and a preview must equal a reconcile. `org` supplies
- * `identity.teams` and `identity.departments` where the caller evaluates them.
+ * `identity.teams` and `identity.departments` where the caller evaluates them, and `identity.licenses` with them.
  */
 export function ruleContext(
   identity: Identity,
@@ -400,19 +412,36 @@ export function ruleContext(
   context['identity.emailVerified'] = identity.emailVerified;
   if (identity.managerId) context['identity.managerId'] = identity.managerId;
   context['identity.groups'] = [...new Set(directGroupIds)].sort();
+  context['identity.guest'] = identity.guest !== undefined;
   if (org) {
     context['identity.teams'] = [...new Set(org.teams)].sort();
     context['identity.departments'] = [...new Set(org.departments)].sort();
+    context['identity.licenses'] = [...new Set(org.licenses ?? [])].sort();
   }
   return context;
 }
 
-/** Evaluates a compiled rule for one identity; `matchedBy`/`excludedBy` name the clauses that held. */
+/** Whether any clause of a compiled rule tests `identity.guest`. */
+function testsGuest(document: PolicyDocument): boolean {
+  return document.statements.some((statement) =>
+    Object.values(statement.conditions ?? {}).some(
+      (entries) => entries !== undefined && Object.hasOwn(entries, 'identity.guest'),
+    ),
+  );
+}
+
+/**
+ * Evaluates a compiled rule for one identity; `matchedBy`/`excludedBy` name the clauses that held. Guests (guests.ts)
+ * match only rules that test `identity.guest` somewhere: a rule written for members (`principal.kind: user`) never
+ * reaches people from outside the organization.
+ */
 export function ruleMatch(
   document: PolicyDocument,
   identity: Identity,
   context: Record<string, unknown>,
 ): RuleMatch {
+  if (identity.guest !== undefined && !testsGuest(document))
+    return { matched: false, matchedBy: [], excludedBy: [] };
   const decision = evaluatePolicy({
     action: ruleAction,
     resource: `identity/${identity.id}`,
@@ -469,9 +498,23 @@ export function ruleWarnings(
       warnings.push(
         `${path} tests identity.groups for ${unbound.join(', ')}, ${unbound.length === 1 ? 'a group' : 'groups'} without role bindings whose members anyone holding iam:groups:update can change, so ${consequence}`,
       );
+    // Seats follow license assignments (licenses.ts) and, for a product assigned to a group, that group's members: the
+    // groups API asks for iam:licenses:assign there too, but a team's maintainers and directory sync change members.
+    if (operatorsOf(clause).some(([, entries]) => 'identity.licenses' in entries))
+      warnings.push(
+        `${path} tests identity.licenses, which anyone holding iam:licenses:assign can change, as can whoever manages the members of a group a product is assigned to without it (a team's maintainers, directory sync), so ${consequence}`,
+      );
   };
+  // Testing identity.guest anywhere lets guests match the whole rule (see ruleMatch), not only that clause.
+  const guestTested = [...rule.include, ...(rule.exclude ?? [])].some((clause) =>
+    operatorsOf(clause).some(([, entries]) => 'identity.guest' in entries),
+  );
   rule.include.forEach((clause, index) => {
     const tests = operatorsOf(clause);
+    if (guestTested && !tests.some(([, keys]) => 'identity.guest' in keys))
+      warnings.push(
+        `include[${index}] does not test identity.guest while the rule does elsewhere, so it also matches guests`,
+      );
     if (
       !tests.some(([operator, keys]) => operator.startsWith('String') && 'principal.kind' in keys)
     )

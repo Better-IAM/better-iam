@@ -67,6 +67,16 @@ export function orgAreas(base: string): NavArea[] {
     },
     area(base, 'directory', 'Directory', 'Who belongs to the organization, and how they sign in.', [
       page('members', 'Members', 'People who can sign in, and the invitations waiting for them.'),
+      page(
+        'guests',
+        'Guests',
+        'People from outside the organization, their sponsors, and when access ends.',
+      ),
+      page(
+        'guests/settings',
+        'Cross-tenant access',
+        'Which domains and organizations may join as guests, and for how long.',
+      ),
       page('teams', 'Teams', 'People grouped with maintainers, join requests, and team roles.'),
       page(
         'departments',
@@ -196,6 +206,16 @@ export function orgAreas(base: string): NavArea[] {
         'Shared Signals',
         'Security events from your identity providers: revoked sessions, compromised credentials, risk.',
       ),
+      page(
+        'clearances',
+        'Clearances',
+        'Security clearances: levels, compartments read in, suspensions, and reinvestigations due.',
+      ),
+      page(
+        'classification',
+        'Classification',
+        'The classification scheme, resource labels, and why someone may not read up.',
+      ),
     ]),
     area(base, 'ai', 'AI', 'AI agents, what they may do for people, and access to models.', [
       page('agents', 'Agents', 'Agent accounts with sponsors, ceilings, keys, and attested cards.'),
@@ -264,6 +284,7 @@ export function orgAreas(base: string): NavArea[] {
       [
         page('settings', 'Settings', 'Sign-in policy and organization details.'),
         page('billing', 'Billing', 'Spend, budgets, and statements.'),
+        page('licenses', 'Licenses', 'Seats of each product, who holds them, and who waits.'),
         page('audit', 'Audit log', 'Every sign-in, change, and denial, in a tamper-evident chain.'),
         page(
           'privacy',

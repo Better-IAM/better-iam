@@ -19,8 +19,8 @@ import {
   detectionStatusTone,
   identityHref,
   incidentStatusTone,
+  offeredResponseKinds,
   resolutionLabels,
-  responseKinds,
   responseLabels,
   riskTone,
   severityTone,
@@ -49,7 +49,7 @@ export default async function Incident({
   const incidentResource = { type: 'iam', id: `threats/incidents/${incident.id}` };
   const responsesResource = { type: 'iam', id: 'threats/responses' };
   const riskResource = identityId ? { type: 'iam', id: `threats/risk/${identityId}` } : undefined;
-  const [allowed, rules, members, playbooks, timeline] = await Promise.all([
+  const [allowed, rules, members, playbooks, timeline, clearances] = await Promise.all([
     can(page, [
       { action: 'iam:threats:manage', resource: incidentResource },
       { action: 'iam:threats:respond', resource: incidentResource },
@@ -59,17 +59,21 @@ export default async function Incident({
     tryRead(() => iam.api.threats.rules(auth, { tenantId })),
     tryRead(() => iam.api.identities.list(auth, { tenantId, limit: 1000 })),
     tryRead(() => iam.api.threats.listPlaybooks(auth, { tenantId })),
-    // What the identity did (and what was done to it) from a day before the first detection.
+    // What the identity did (and what was done to it) during the incident: from a day before the first detection
+    // until the incident was resolved (until now while it is open).
     identityId
       ? tryRead(() =>
           iam.api.threats.timeline(auth, {
             tenantId,
             identityId,
             since: Math.max(0, incident.firstDetectedAt - day),
+            ...(incident.resolvedAt !== undefined ? { until: incident.resolvedAt } : {}),
             limit: 200,
           }),
         )
       : Promise.resolve(undefined),
+    // Answers FEATURE_DISABLED unless the deployment enables security clearances.
+    identityId ? tryRead(() => iam.api.clearances.templates(auth)) : Promise.resolve(undefined),
   ]);
   const mayManage = allowed[key('iam:threats:manage', incidentResource)] === true;
   const mayRespond = allowed[key('iam:threats:respond', incidentResource)] === true;
@@ -92,11 +96,7 @@ export default async function Incident({
     ) : (
       <code className="small">{person(memberId)}</code>
     );
-  const subjectHrefValue = subjectHref(
-    base,
-    incident.subject,
-    incident.subject.type === 'identity' ? member(incident.subject.id)?.kind : undefined,
-  );
+  const subjectHrefValue = subjectHref(base, incident.subject);
   const subject = subjectHrefValue ? (
     <Link href={subjectHrefValue}>{subjectLabel(incident.subject)}</Link>
   ) : (
@@ -105,12 +105,26 @@ export default async function Incident({
   // Identity actions reach the incident's subject, or the identity behind it; blocking needs a network.
   const identityTarget = incident.subject.type === 'identity' || identityId !== undefined;
   const networkTarget = incident.subject.type === 'network' || incident.network !== undefined;
-  const kinds = responseKinds.filter((kind) =>
+  // Suspending a clearance also needs iam:clearances:suspend on the person's clearance.
+  const clearanceResource = identityId
+    ? { type: 'iam', id: `clearances/${identityId}` }
+    : undefined;
+  const maySuspendClearance =
+    clearances !== undefined &&
+    clearanceResource !== undefined &&
+    mayRespond &&
+    !resolved &&
+    (await can(page, [{ action: 'iam:clearances:suspend', resource: clearanceResource }]))[
+      key('iam:clearances:suspend', clearanceResource)
+    ] === true;
+  const kinds = offeredResponseKinds({ suspendClearances: maySuspendClearance }).filter((kind) =>
     kind === 'notify' ? true : kind === 'block-network' ? networkTarget : identityTarget,
   );
   const targetName = risk
     ? risk.name || risk.email || risk.identityId
     : subjectLabel(incident.subject);
+  const timelineEnd =
+    incident.resolvedAt !== undefined ? 'until the incident was resolved' : 'until now';
   return (
     <>
       <PageHeader
@@ -636,8 +650,8 @@ export default async function Incident({
             description={
               <>
                 What {targetName} did, and what was done to their account, from a day before the
-                first detection (newest first, at most 200 events). The full record is in the{' '}
-                <Link href={`${base}/audit`}>audit log</Link>.
+                first detection {timelineEnd} (newest first, at most 200 events). The full record is
+                in the <Link href={`${base}/audit`}>audit log</Link>.
               </>
             }
             flush
@@ -660,10 +674,9 @@ export default async function Incident({
                   <code key="r" className="small truncate">
                     {event.resourceId}
                   </code>,
-                  <StatusBadge
-                    key="o"
-                    status={event.outcome === 'allow' ? 'active' : 'disabled'}
-                  />,
+                  <Badge key="o" tone={event.outcome === 'allow' ? 'success' : 'danger'}>
+                    {event.outcome === 'allow' ? 'allowed' : 'denied'}
+                  </Badge>,
                   event.metadata ? (
                     <code key="m" className="small">
                       {JSON.stringify(event.metadata)}

@@ -84,6 +84,17 @@ export interface PlanInput {
   paths: PlanPath[];
   /** Relations held on resources, for `resource.relations` and `resource.parentRelations`. */
   relations?: PlanRelation[];
+  /**
+   * Mandatory access control (security clearances): the resources the principal's clearance lets them read at all,
+   * AND-ed with the whole plan whatever the policies allow. Absent when no classification scheme applies.
+   */
+  mandatory?: ResourceFilter;
+  /**
+   * Resource keys the server derives for each resource itself (such as `resource.classificationRank`) rather than
+   * reading them from the row: a statement that conditions on one cannot be planned and refuses with
+   * UNSUPPORTED_FILTER.
+   */
+  derivedResourceKeys?: readonly string[];
 }
 
 // --- filter constructors -------------------------------------------------------------------------
@@ -577,6 +588,7 @@ function statementFilter(planner: Planner, statement: PolicyStatement): Resource
   if (resource.kind === 'false' && !rowDependent) return falseFilter;
   const conditions: ResourceFilter[] = [resource];
   let idCondition = false;
+  let derivedKey: string | undefined;
   for (const [name, entries] of Object.entries(statement.conditions ?? {})) {
     const operator = name as ConditionOperator;
     for (const [conditionKey, expectedValue] of Object.entries(entries ?? {})) {
@@ -592,6 +604,11 @@ function statementFilter(planner: Planner, statement: PolicyStatement): Resource
       // The engine reads `resource.id` as an attribute named `id`, which a filter cannot tell from the resource's id.
       if (conditionKey === 'resource.id') {
         idCondition = true;
+        continue;
+      }
+      // A key the server derives per resource (a classification label's) is no column of the row.
+      if (input.derivedResourceKeys?.includes(conditionKey)) {
+        derivedKey ??= conditionKey;
         continue;
       }
       let filter: ResourceFilter;
@@ -623,6 +640,11 @@ function statementFilter(planner: Planner, statement: PolicyStatement): Resource
     throw new IamError(
       'UNSUPPORTED_FILTER',
       'A policy has a condition on resource.id, which names an attribute called id rather than the resource’s id (match ids with the statement’s resources); check the resources with authorize',
+    );
+  if (derivedKey !== undefined)
+    throw new IamError(
+      'UNSUPPORTED_FILTER',
+      `A policy has a condition on ${derivedKey}, which the server derives for each resource rather than reading from the row; check the resources with authorize`,
     );
   return andFilter(conditions);
 }
@@ -685,6 +707,8 @@ export function planResources(input: PlanInput): ResourcePlan {
     work: 0,
   };
   const filter = andFilter([
+    // Mandatory access control first: whatever the policies say, nothing above the principal's clearance.
+    ...(input.mandatory ? [input.mandatory] : []),
     notFilter(anyStatement(planner, [...input.denies, ...input.boundaries], 'deny')),
     everyBoundary(planner, input.boundaries),
     orFilter(

@@ -39,6 +39,12 @@ A plan is `{ kind, filter }`:
 - `never`: none (no grant applies, the tenant is inactive, the action is unknown);
 - `conditional`: those that pass `filter`.
 
+With [security clearances](security-clearances.md#listings-data-filters-and-reviews), every plan, an owner's and a root
+administrator's included, is AND-ed with a filter over `id` that leaves out the resources labeled above the caller's
+clearance, and planning refuses with `UNSUPPORTED_FILTER` where no filter can be exact (an application type the scheme
+requires labels on, any application type while a label in the tenant passes down to children, and conditions on a
+label's keys). Labels your resolver asserts are not visible to plans, so check those rows with `authorize`.
+
 For a role like this one:
 
 ```json

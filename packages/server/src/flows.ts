@@ -1,8 +1,17 @@
 import { timingSafeEqual } from 'node:crypto';
-import { IamError, type CredentialInput, type Identity, type Session } from '@better-iam/core';
+import {
+  IamError,
+  type CredentialInput,
+  type IamStore,
+  type Identity,
+  type Session,
+} from '@better-iam/core';
 import type { SessionResult, SignInResult } from '@better-iam/auth';
+import { assertMayClaimLicenses } from './api/groups.js';
 import { clientFromHeaders } from './client-info.js';
 import type { ServerContext } from './context.js';
+import { reconcileGroupLicenses } from './licenses.js';
+import { OperationDenied } from './operations.js';
 import { actsInOwnRight } from './session-kinds.js';
 import type {
   Binding,
@@ -88,6 +97,69 @@ export function trustPassesSourceAttributes(trust: Pick<Trust, 'passSourceAttrib
 export function trustRequiresMfa(trust: Pick<Trust, 'requireMfa'>): boolean {
   const value: unknown = trust.requireMfa;
   return value !== false;
+}
+
+/**
+ * A member invitation grants no more than its inviter could bind directly, now as when it was sent: the inviter must
+ * still be active and still hold iam:identities:create, iam:bindings:create on each role and iam:groups:update on each
+ * group (and iam:licenses:assign when a license product is assigned to one of the groups, then or since), and the
+ * authorities behind the invitation and each group's bindings must still be theirs. Demoting or disabling the inviter
+ * ends the invitations they sent. Throws INVITATION_INVALID otherwise. Acceptance checks it, and so does
+ * `identities.resendInvitation`, so only an invitation that can still be accepted goes out again.
+ */
+export async function assertMemberInvitationGrantable(
+  ctx: ServerContext,
+  tx: IamStore,
+  invitation: MemberInvitation,
+  tenantId: string,
+): Promise<void> {
+  const refused = (message = 'The inviter can no longer grant this access') =>
+    new IamError('INVITATION_INVALID', message);
+  if (
+    invitation.authorityId !== undefined &&
+    !(await ctx.authorityChain(tx, invitation.authorityId))
+  )
+    throw refused('Invitation authority revoked');
+  const inviter = await tx.get<Identity>('identities', invitation.inviterId);
+  if (!inviter || inviter.status !== 'active' || ctx.identityExpired(inviter))
+    throw refused('The inviter can no longer invite');
+  const asInviter = ctx.decisions.simulatedPrincipal(inviter, true);
+  const inviterMay = async (action: string, resourceId: string) =>
+    (
+      await ctx.decisions.decide(
+        tx,
+        asInviter,
+        { tenantId, action, resource: { type: 'iam', id: resourceId } },
+        true,
+      )
+    ).allowed;
+  const inviterHolds = (authorityId: string) =>
+    ctx.grantingAuthority(tx, asInviter, tenantId, authorityId).then(
+      () => true,
+      () => false,
+    );
+  const stillGrantable =
+    (await inviterMay('iam:identities:create', tenantId)) &&
+    (invitation.authorityId === undefined || (await inviterHolds(invitation.authorityId)));
+  if (!stillGrantable) throw refused();
+  for (const roleId of invitation.roleIds)
+    if (!(await inviterMay('iam:bindings:create', roleId))) throw refused();
+  for (const groupId of invitation.groupIds) {
+    if (!(await inviterMay('iam:groups:update', groupId))) throw refused();
+    for (const binding of await tx.find<Binding>('bindings', {
+      tenantId,
+      subjectType: 'group',
+      subjectId: groupId,
+    }))
+      if (!(await inviterHolds(binding.authorityId))) throw refused();
+  }
+  // Groups that carry license seats (then or since) need the inviter's iam:licenses:assign (api/groups.ts).
+  try {
+    await assertMayClaimLicenses(ctx, tx, asInviter, tenantId, invitation.groupIds);
+  } catch (error) {
+    if (!(error instanceof OperationDenied)) throw error;
+    throw refused();
+  }
 }
 
 /** The outcome of redeeming an invitation: the new identity plus either a session or an MFA challenge. */
@@ -243,52 +315,8 @@ export function createFlows(ctx: ServerContext): FlowService {
           invitation.expiresAt <= Date.now()
         )
           throw new IamError('INVITATION_INVALID', 'Invitation is invalid');
-        if (
-          invitation.authorityId !== undefined &&
-          !(await ctx.authorityChain(tx, invitation.authorityId))
-        )
-          throw new IamError('INVITATION_INVALID', 'Invitation authority revoked');
-        // An invitation grants no more than the inviter could bind directly, now as when it was sent: the inviter
-        // must still be active and still hold iam:identities:create, iam:bindings:create on each role and
-        // iam:groups:update on each group, and the authorities behind the invitation and each group's bindings must
-        // still be theirs. Demoting or disabling the inviter ends the invitations they sent.
-        const inviter = await tx.get<Identity>('identities', invitation.inviterId);
-        if (!inviter || inviter.status !== 'active' || ctx.identityExpired(inviter))
-          throw new IamError('INVITATION_INVALID', 'The inviter can no longer invite');
-        const asInviter = ctx.decisions.simulatedPrincipal(inviter, true);
-        const inviterMay = async (action: string, resourceId: string) =>
-          (
-            await ctx.decisions.decide(
-              tx,
-              asInviter,
-              { tenantId: realm.id, action, resource: { type: 'iam', id: resourceId } },
-              true,
-            )
-          ).allowed;
-        const inviterHolds = (authorityId: string) =>
-          ctx.grantingAuthority(tx, asInviter, realm.id, authorityId).then(
-            () => true,
-            () => false,
-          );
-        const stillGrantable =
-          (await inviterMay('iam:identities:create', realm.id)) &&
-          (invitation.authorityId === undefined || (await inviterHolds(invitation.authorityId)));
-        if (!stillGrantable)
-          throw new IamError('INVITATION_INVALID', 'The inviter can no longer grant this access');
-        for (const roleId of invitation.roleIds)
-          if (!(await inviterMay('iam:bindings:create', roleId)))
-            throw new IamError('INVITATION_INVALID', 'The inviter can no longer grant this access');
-        for (const groupId of invitation.groupIds) {
-          if (!(await inviterMay('iam:groups:update', groupId)))
-            throw new IamError('INVITATION_INVALID', 'The inviter can no longer grant this access');
-          for (const binding of await tx.find<Binding>('bindings', {
-            tenantId: realm.id,
-            subjectType: 'group',
-            subjectId: groupId,
-          }))
-            if (!(await inviterHolds(binding.authorityId)))
-              throw new IamError('INVITATION_INVALID', 'The inviter can no longer grant this access');
-        }
+        // The inviter must still be able to grant what the invitation grants.
+        await assertMemberInvitationGrantable(ctx, tx, invitation, realm.id);
         const name = input.name !== undefined ? text(input.name, 'name') : invitation.name;
         if (!name) throw new IamError('INVALID_INPUT', 'A name is required');
         const identity = await auth.createIdentity(tx, {
@@ -322,6 +350,15 @@ export function createFlows(ctx: ServerContext): FlowService {
             identityId: identity.id,
           });
         }
+        // License products assigned to those groups seat the new member at once (licenses.ts).
+        if (invitation.groupIds.length)
+          await reconcileGroupLicenses(
+            ctx,
+            tx,
+            realm.id,
+            invitation.groupIds,
+            invitation.inviterId,
+          );
         await sodAssertIdentity(ctx, tx, realm.id, identity.id);
         await tx.put('memberInvitations', { ...invitation, consumed: true });
         await ctx.events.recordAudit(tx, {

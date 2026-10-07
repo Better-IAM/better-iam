@@ -12,7 +12,8 @@ import {
 } from '@better-iam/core';
 import { internalResourceTypes, resourceTypeName } from '../catalog.js';
 import type { ServerContext } from '../context.js';
-import { impersonatingActor } from '../decisions.js';
+import { resourceServerKeys } from '../context-keys.js';
+import { impersonatingActor, isRootOverride } from '../decisions.js';
 import { text } from '../validation.js';
 
 /** A plan for one principal, action and resource type. */
@@ -45,7 +46,8 @@ function planTarget(input: { action: unknown; type: unknown }): { action: string
  * The plan for one principal. Mirrors `decisions.decide` for every resource of the type: a fixed decision (root
  * override, inactive tenant, another tenant's session, a revoked delegation) allows everything or nothing, an unknown
  * action nothing, and a delegation that holds the action for the person's confirmation nothing (the few resources
- * confirmed just now are left to `authorize`).
+ * confirmed just now are left to `authorize`). With security clearances, every plan (root's override too) is limited
+ * to the resources the principal's clearance lets them read.
  */
 async function principalPlan(
   ctx: ServerContext,
@@ -60,8 +62,18 @@ async function principalPlan(
   if ('fixed' in prepared) return fixedPlan(prepared.fixed.allowed);
   const inputs = prepared.inputs;
   if (!inputs) return fixedPlan(false);
+  // Mandatory access control (clearances.ts): the resources of the type the session may read at all, AND-ed with
+  // whatever the policies (or root's override) allow.
+  const mandatory = inputs.mandatory ? await inputs.mandatory.filter(type, action) : undefined;
+  if (isRootOverride(prepared))
+    return mandatory
+      ? intersectPlans(fixedPlan(true), { kind: 'conditional', filter: mandatory })
+      : fixedPlan(true);
   if (inputs.confirm?.(action, type, '\u0000plan') !== undefined) return fixedPlan(false);
   return planResources({
+    ...(mandatory ? { mandatory } : {}),
+    // A label's keys are derived per resource, not read from the row: conditions on them cannot be planned.
+    ...(ctx.config.clearances ? { derivedResourceKeys: [...resourceServerKeys.keys()] } : {}),
     action,
     resourceType: type,
     tenantId: realm.id,

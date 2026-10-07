@@ -59,6 +59,7 @@ Mount both paths under the IAM handler's path, and forward `PUT`, `PATCH`, and `
     mapAttributes: { type: '(user: ProvisionedUser) => Record<string, unknown> | undefined', description: 'Turns provisioned SCIM fields (title, department, cost center) into your declared identity attributes, so policies can use them. Return undefined to leave attributes untouched.' },
     mapManager: { type: 'boolean', description: "Sets each person's manager from the enterprise extension's manager field, so approvals route to the directory's reporting line.", default: 'true' },
     'store, authorize, authenticate, validateIdentityAttributes, syncRoleMappings': { type: 'host callbacks', description: 'Database access, permission checks for administration, attribute validation, and the trusted callback that applies group role mappings. Supplied by iam.protocolHost.', required: true },
+    'identityStatusChanged, groupDeleted': { type: 'host callbacks', description: "Trusted callbacks, run in the provisioning transaction: when the directory deactivates, reactivates or deletes a person, what follows their status (license seats) moves at once; when it deletes a group, what was given to the group (license assignments) goes with it. Supplied by iam.protocolHost." },
   }}
 />
 

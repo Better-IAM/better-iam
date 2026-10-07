@@ -83,7 +83,8 @@ function bounded(
  * - OAuth artifacts (codes, tokens, replay records; grants 31 days after expiry) and login states
  *   past expiry, and SAML request, relay-state, and assertion-replay records past expiry;
  * - delivered or abandoned outbox messages and abandoned Shared Signals deliveries older than the
- *   delivery retention, and audit hook rows once dispatched (the audit log keeps the events).
+ *   delivery retention, and audit hook rows once dispatched (the audit log keeps the events);
+ * - guest invitations no longer pending, 90 days after they lapsed (the audit log keeps them).
  *
  * `purgeDeleted` already removes expired challenges, rate-limit windows, network blocks, bindings,
  * memberships, and activations; invitations, access requests, usage records, and SCIM connections
@@ -163,6 +164,16 @@ function sweepTargets(
     expired('deviceEnrollments', appNow),
     // Received Shared Signals events 90 days after receipt (signal-receiver.ts); the audit trail keeps them.
     expired('signalEvents', appNow),
+    // License pools 400 days after their term ended (licenses.ts); live and open-ended pools carry no expiry.
+    expired('licensePools', appNow),
+    // Guest invitations 90 days after they lapsed, once redeemed, revoked or expired (guests.ts); a pending one waits
+    // for `iam.guests.sweep`, and the audit trail keeps every invitation.
+    {
+      collection: 'guestInvitations',
+      field: 'expiresAt',
+      cutoff: appNow - 90 * DAY,
+      keep: (record) => record.status === 'pending',
+    },
     { collection: 'outbox', field: 'deliveredAt', cutoff: appNow - retention },
     { collection: 'outbox', field: 'failedAt', cutoff: appNow - retention },
     { collection: 'ssfDeliveries', field: 'failedAt', cutoff: wallNow - retention },

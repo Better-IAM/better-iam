@@ -199,6 +199,8 @@ page first; the consent step then uses the session it creates.
   person in to that tenant first.
 - Consent cannot be granted while an administrator [impersonates](/docs/guides/authentication/impersonation) the
   member (`IMPERSONATION_RESTRICTED`).
+- A client's `prompt=login` needs a sign-in made after the authorization request started, and its `max_age` a sign-in
+  at most that many seconds old (`LOGIN_REQUIRED`, 401, otherwise). Sign the person in again, then submit.
 - `consent: false` finishes the interaction with `access_denied`, which tells the client the person declined.
 
 <Callout type="error" title="Never trust identity from the form">

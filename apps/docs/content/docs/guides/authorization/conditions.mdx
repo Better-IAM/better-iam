@@ -310,6 +310,9 @@ These describe who is calling and how they signed in.
 | `principal.budgetsExceeded` | list | Names of every spent budget covering the principal. Budget standings are cached for up to 30 seconds; an assumed role sees only the tenant's budgets. |
 | `principal.onboarding` | list | Names of the onboarding flows the person completed. See [Onboarding](/docs/guides/onboarding). |
 | `principal.pendingOnboarding` | number | How many required onboarding flows are still open. |
+| `principal.guest` | boolean | Whether the identity is a guest acting in the host tenant. False for members and assumed roles. See [Guests](/docs/guides/guests#policies-for-guests). |
+| `principal.guestSponsorId`, `principal.homeTenantId` | string, optional | For guests: their sponsor, and for guests whose email domain another tenant verified, that tenant. |
+| `principal.licenses` | list | Keys of the license products the principal holds an active seat for in the decision's tenant. Read only for decisions whose documents name it. See [Licenses](/docs/guides/licenses#policies). |
 | `principal.delegated` | boolean | Whether an AI agent is acting on the person's behalf. |
 | `principal.delegationChain` | list, optional | For work [handed on between agents](/docs/guides/ai-agents#handing-work-on-to-other-agents): the agents from the person's own delegate to the acting one. |
 | `principal.delegationId`, `principal.agentId`, `principal.agentSponsorId`, `principal.agentModel`, `principal.agentProvider` | string, optional | For AI agents: the delegation in use, the agent behind the credential (its own key or a delegated session), the person who sponsors it, and its model and provider. |

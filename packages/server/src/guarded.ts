@@ -8,7 +8,7 @@ import {
   type Tenant,
 } from '@better-iam/core';
 import type { ServerContext } from './context.js';
-import type { PreparedDecision } from './decisions.js';
+import { decideOn, isRootOverride, type PreparedDecision } from './decisions.js';
 import { useConfirmation } from './delegations.js';
 import { OperationDenied } from './operations.js';
 import { text } from './validation.js';
@@ -80,18 +80,11 @@ export function createGuard<Target extends GuardTarget>(
       prepared = await ctx.decisions.prepareDecision(tx, principal, tenant, action);
       cache?.set(action, prepared);
     }
-    const decision =
-      'fixed' in prepared
-        ? prepared.fixed
-        : prepared.evaluate(
-            {
-              tenantId: tenant.id,
-              type: 'iam',
-              id: target.resourceId,
-              attributes: target.attributes,
-            },
-            action,
-          );
+    const decision = decideOn(
+      prepared,
+      { tenantId: tenant.id, type: 'iam', id: target.resourceId, attributes: target.attributes },
+      action,
+    );
     if (
       decision.allowed ||
       !useFallback ||
@@ -270,8 +263,8 @@ export function createGuard<Target extends GuardTarget>(
         const items = (await load(tx, tenant))
           .filter(
             ({ target }) =>
-              'fixed' in prepared ||
-              prepared.evaluate(
+              decideOn(
+                prepared,
                 {
                   tenantId: tenant.id,
                   type: 'iam',
@@ -289,7 +282,7 @@ export function createGuard<Target extends GuardTarget>(
           tenant.id,
           resourceId,
           'allow',
-          'fixed' in prepared && prepared.fixed.reason === 'ROOT_OVERRIDE',
+          isRootOverride(prepared),
           { listed: items.length },
         );
         return { denied: false as const, items };

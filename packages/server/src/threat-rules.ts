@@ -206,6 +206,7 @@ const countingRules: readonly ThreatRuleId[] = [
   'directory-mass-change',
   'impersonation-burst',
   'denial-burst',
+  'classified-access-attempts',
   'recon-burst',
 ];
 
@@ -397,7 +398,8 @@ function chronological(events: readonly AuditEvent[]): AuditEvent[] {
 
 /**
  * Written by the service that owns the action, not an application `authorize()` call: those record only denials and
- * root overrides, under any action name the application passes and without metadata.
+ * root overrides, under any action name the application passes and without metadata (a clearance refusal carries only
+ * the server's `{ mandatory: 'clearance' }` marker, `mandatoryRefusal`).
  */
 function recorded(event: AuditEvent): boolean {
   return event.rootOverride !== true;
@@ -443,6 +445,25 @@ function viewing(events: readonly AuditEvent[]): {
   };
 }
 
+/**
+ * How a summary notes a burst an AI agent took part in (the actor is an agent, or its events were made in a delegated
+ * session), with `agent` (and the first `agentId` seen) metadata.
+ */
+function agentInvolvement(
+  who: Named,
+  events: readonly AuditEvent[],
+): { clause: string; metadata: Record<string, Json> } {
+  const agentId = events.find((event) => event.sessionContext?.agentId)?.sessionContext?.agentId;
+  const agent = who.identity?.kind === 'agent' || agentId !== undefined;
+  const clause =
+    who.identity?.kind === 'agent'
+      ? ' (an AI agent)'
+      : agentId !== undefined
+        ? ', acting through an AI agent,'
+        : '';
+  return { clause, metadata: { agent, ...(agentId !== undefined ? { agentId } : {}) } };
+}
+
 /** A failed sign-in the auth service recorded (`auth:signin:fail`), optionally of one reason. */
 function signInFailure(event: AuditEvent, reason?: string): boolean {
   const recordedReason = event.metadata?.reason;
@@ -453,6 +474,16 @@ function signInFailure(event: AuditEvent, reason?: string): boolean {
     typeof recordedReason === 'string' &&
     (reason === undefined || recordedReason === reason)
   );
+}
+
+/**
+ * A decision refused by mandatory access control (security clearances): a `deny` recorded with the server's
+ * `{ mandatory: 'clearance' }` marker, under whatever action the caller asked for. The marker says nothing about the
+ * label or which dimension of it the session failed.
+ */
+function mandatoryRefusal(event: AuditEvent): boolean {
+  const marker = event.metadata?.mandatory;
+  return event.outcome === 'deny' && typeof marker === 'string' && marker.length > 0;
 }
 
 /** A sign-in session the person started themselves (`auth:session:create` without an impersonating administrator). */
@@ -1319,28 +1350,49 @@ async function evaluateCounting(
     })) {
       const who = await identitySubject(run, burst.key);
       const actions = distinctValues(burst.events.map((event) => event.action));
-      const agentId = burst.events.find((event) => event.sessionContext?.agentId)?.sessionContext
-        ?.agentId;
-      const agent = who.identity?.kind === 'agent' || agentId !== undefined;
-      const through =
-        who.identity?.kind === 'agent'
-          ? ' (an AI agent)'
-          : agentId !== undefined
-            ? ', acting through an AI agent,'
-            : '';
+      const agent = agentInvolvement(who, burst.events);
       const viewed = viewing(burst.events);
       run.add({
         ruleId: 'denial-burst',
         severity: denial.severity,
         title: titled('denial-burst', who.label),
-        summary: `${who.label}${through} was denied ${plural(burst.peak, 'time')} within ${inWords(denial.windowMs)}, across ${plural(actions.length, 'action')}${viewed.clause}.`,
+        summary: `${who.label}${agent.clause} was denied ${plural(burst.peak, 'time')} within ${inWords(denial.windowMs)}, across ${plural(actions.length, 'action')}${viewed.clause}.`,
         ...who.target,
         dedupeKey: dedupeKey('denial-burst', burst.key, burst.anchor),
         occurredAt: burst.lastAt,
         evidence: evidenceOf(run, burst.events, { actions: true }),
-        metadata: burstMetadata(denial, burst, {
-          agent,
-          ...(agentId !== undefined ? { agentId } : {}),
+        metadata: burstMetadata(denial, burst, { ...agent.metadata, ...viewed.metadata }),
+      });
+    }
+
+  // Clearance refusals (mandatory access control) per responsible actor: someone reading up, or probing for what is
+  // classified. The refusals' marker carries no label, so neither does the detection: it counts the resources only.
+  const classified = tuned(settings, 'classified-access-attempts');
+  if (classified)
+    for (const burst of findBursts(ordered, fresh, historyFrom, classified, {
+      key: (event) =>
+        mandatoryRefusal(event) &&
+        !unauthenticatedRefusals.has(event.action) &&
+        identityActor(responsibleActor(event))
+          ? responsibleActor(event)
+          : undefined,
+    })) {
+      const who = await identitySubject(run, burst.key);
+      const resources = distinctValues(burst.events.map((event) => event.resourceId)).length;
+      const agent = agentInvolvement(who, burst.events);
+      const viewed = viewing(burst.events);
+      run.add({
+        ruleId: 'classified-access-attempts',
+        severity: classified.severity,
+        title: titled('classified-access-attempts', who.label),
+        summary: `${who.label}${agent.clause} was refused ${plural(burst.peak, 'time')} for want of a clearance within ${inWords(classified.windowMs)}, on ${plural(resources, 'classified resource')}${viewed.clause}.`,
+        ...who.target,
+        dedupeKey: dedupeKey('classified-access-attempts', burst.key, burst.anchor),
+        occurredAt: burst.lastAt,
+        evidence: evidenceOf(run, burst.events, { actions: true }),
+        metadata: burstMetadata(classified, burst, {
+          resources,
+          ...agent.metadata,
           ...viewed.metadata,
         }),
       });
@@ -1443,8 +1495,11 @@ async function actorOf(run: Run, actorId: string): Promise<{ label: string; iden
     : { label: clean(actorId) };
 }
 
-/** How summaries name an identity: name and email where it has both; its id when it is unknown. */
-function identityLabel(identity: Identity | undefined, identityId: string): string {
+/**
+ * How detections name an identity (subject names and summaries): name and email where it has both; its id when it is
+ * unknown. Detections the threats API records itself use it too.
+ */
+export function identityLabel(identity: Identity | undefined, identityId: string): string {
   if (!identity) return clean(identityId);
   const name = clean(identity.name ?? '').trim();
   const email = identity.email ? clean(identity.email) : '';

@@ -16,6 +16,12 @@ import {
 import { agentDecisionScope } from './agents.js';
 import { agreementContext } from './agreements.js';
 import { internalResourceTypes, managedResource, resolvedManaged } from './catalog.js';
+import {
+  attachLabel,
+  clearanceScope,
+  schemeForTenant,
+  type MandatoryAccess,
+} from './clearances.js';
 import { isServerOwnedKey, sessionTagName } from './context-keys.js';
 import type { ServerContext } from './context.js';
 import {
@@ -32,6 +38,8 @@ import { mentionedOrgKeys, teamContext } from './teams.js';
 import { billingServiceOf, mentionsSpend } from './billing-service.js';
 import { resolveSecretResource } from './vault.js';
 import { consentContext, mentionsConsents } from './privacy.js';
+import { licenseContext, mentionsLicenses } from './licenses.js';
+import { guestBoundary, guestContext } from './guests.js';
 import { resolveSshResource } from './ssh.js';
 import { resolveCredentialTypeResource } from './vc.js';
 import { mentionsRisk, riskContext } from './threats.js';
@@ -172,7 +180,89 @@ export type PreparedDecision =
       evaluate(resource: ResolvedResource, action?: string): Decision;
       /** What `evaluate` decides from, read-only, for query planning (core `planResources`). */
       inputs?: DecisionInputs;
+      /**
+       * The platform's root override under mandatory access control (security clearances): allowed everything
+       * (`ROOT_OVERRIDE`) except reading a labeled resource above root's own clearance. Test with `isRootOverride`.
+       */
+      rootOverride?: true;
     };
+
+/**
+ * Whether a prepared decision is the platform's root override: the fixed form, or the evaluator it becomes under
+ * security clearances. The one place that recognizes root; callers that treat root differently (usage, audit, SSH
+ * from outside the tenant) must use it, or root would slip past them under mandatory access control.
+ */
+export function isRootOverride(prepared: PreparedDecision): boolean {
+  return 'fixed' in prepared
+    ? prepared.fixed.reason === 'ROOT_OVERRIDE'
+    : prepared.rootOverride === true;
+}
+
+/** The decision a prepared decision makes on one resource, for the prepared action or `action`. */
+export function decideOn(
+  prepared: PreparedDecision,
+  resource: ResolvedResource,
+  action?: string,
+): Decision {
+  return 'fixed' in prepared ? prepared.fixed : prepared.evaluate(resource, action);
+}
+
+/**
+ * Classification labels (security clearances) for resources a module builds itself instead of through `resolve` (SSH
+ * logins and hosts, credential types): returns a function that gives each of `resources` its label exactly as
+ * `resolve` attaches it. The identity when clearances are off. A resource that was not passed in stays unlooked-up,
+ * which the mandatory check refuses.
+ */
+export async function moduleResourceLabels(
+  ctx: ServerContext,
+  tx: IamStore,
+  tenantId: string,
+  resources: readonly ResolvedResource[],
+): Promise<(resource: ResolvedResource) => ResolvedResource> {
+  if (!ctx.config.clearances || !resources.length) return (resource) => resource;
+  const scheme = (await schemeForTenant(tx, tenantId)) ?? null;
+  const labels = new Map<string, ResolvedResource['classification']>();
+  for (const resource of resources) {
+    const key = `${resource.type}/${resource.id}`;
+    if (resource.tenantId === tenantId && !labels.has(key))
+      labels.set(key, (await attachLabel(ctx, tx, tenantId, resource, { scheme })).classification);
+  }
+  return (resource) => {
+    const key = `${resource.type}/${resource.id}`;
+    return resource.tenantId === tenantId && labels.has(key)
+      ? { ...resource, classification: labels.get(key) }
+      : resource;
+  };
+}
+
+/**
+ * A resource's classification keys (`resourceServerKeys`) as the scheme applies its label: the level ID (absent when
+ * unlabeled), its rank (-1 unlabeled; absent for a level the scheme does not know), the compartment IDs, NOFORN, and
+ * the REL TO countries (empty when the label has none). Unlabeled without a scheme.
+ */
+function classificationKeys(
+  mandatory: MandatoryAccess | undefined,
+  resource: ResolvedResource,
+): Record<string, unknown> {
+  const label = mandatory?.label(resource);
+  const ids = (value: unknown) =>
+    Array.isArray(value) ? value.filter((item) => typeof item === 'string') : [];
+  return {
+    'resource.classification': typeof label?.level === 'string' ? label.level : undefined,
+    'resource.classificationRank': label ? mandatory!.rank(label) : -1,
+    'resource.compartments': ids(label?.compartments),
+    'resource.noforn': label?.noforn === true,
+    'resource.releasableTo': ids(label?.releasableTo),
+  };
+}
+
+/** Clearance keys when clearances are on but the tenant has no scheme: no clearance applies. */
+const unclearedKeys = (): Record<string, unknown> => ({
+  'principal.clearanceRank': -1,
+  'principal.clearanceStatus': 'none',
+  'principal.clearanceCompartments': [],
+  'principal.clearanceCitizenship': [],
+});
 /** The inputs of a prepared decision: everything but the resource. Treat as read-only. */
 export interface DecisionInputs {
   /** Principal, request and tenant context keys. */
@@ -187,6 +277,11 @@ export interface DecisionInputs {
   held: ReadonlyMap<string, ReadonlySet<string>>;
   /** A delegation's per-action confirmation gate, when the session has one. */
   confirm?: (action: string, resourceType: string, resourceId: string) => Decision | undefined;
+  /**
+   * Mandatory access control (security clearances): the session's clearance against the tenant's scheme, checked
+   * before anything else in `evaluate`. Absent when clearances are off or the tenant has no scheme.
+   */
+  mandatory?: MandatoryAccess;
 }
 export interface GrantSources {
   groupIds: Set<string>;
@@ -370,6 +465,66 @@ function sessionContextKeys(
 
 export function createDecisions(ctx: ServerContext): DecisionService {
   const { options, catalog } = ctx;
+  /** `resolve` without the classification label (see there). */
+  async function resolveUnlabeled(
+    tx: IamStore,
+    reference: ResourceRef,
+    internal: boolean,
+    action: string | undefined,
+  ): Promise<ResolvedResource> {
+    text(reference.type, 'resource type');
+    text(reference.id, 'resource id');
+    if (internal && internalResourceTypes.has(reference.type)) {
+      // Vault secrets (`iam/vault/secrets/{name}`) carry their tags and settings (vault.ts).
+      const secret = await resolveSecretResource(tx, reference);
+      if (secret) return secret;
+      // `iam/{type}/{id}` naming a registered managed resource carries that resource's owner, parent, and
+      // attributes, so administrative actions such as sharing can be conditioned on them and on relations.
+      const slash = reference.type === 'iam' ? reference.id.indexOf('/') : -1;
+      if (slash > 0) {
+        const record = await managedResource(
+          tx,
+          reference.tenantId,
+          reference.id.slice(0, slash),
+          reference.id.slice(slash + 1),
+        );
+        if (record) return { ...reference, attributes: resolvedManaged(record).attributes };
+      }
+      return reference;
+    }
+    // AI models (`inference` option) resolve from the inference catalog, inherited down the tenant tree.
+    const model = await resolveModelResource(ctx, tx, reference);
+    if (model) return model;
+    // SSH logins and hosts (`ssh` option): `ssh-login/{host}/{login}` and `ssh-host/{host}` carry the host's labels.
+    const ssh = await resolveSshResource(ctx, tx, reference);
+    if (ssh) return ssh;
+    // Credential types (`verifiableCredentials` option): `credential-type/{name}`.
+    const credentialType = await resolveCredentialTypeResource(ctx, tx, reference);
+    if (credentialType) return credentialType;
+    const definition = await catalog.resourceTypeDefinition(tx, reference.tenantId, reference.type);
+    if (
+      definition?.managed &&
+      !shadowsApplicationType(definition, reference.type, action, !!options.resolveResource)
+    ) {
+      const record = await managedResource(tx, reference.tenantId, reference.type, reference.id);
+      if (!record) throw new IamError('NOT_FOUND', 'Resource is not registered', 404);
+      return resolvedManaged(record);
+    }
+    if (!options.resolveResource)
+      throw new IamError(
+        'RESOURCE_RESOLVER_REQUIRED',
+        'Configure resolveResource for application resources',
+      );
+    const resolved = await options.resolveResource(reference);
+    if (
+      !resolved ||
+      resolved.tenantId !== reference.tenantId ||
+      resolved.id !== reference.id ||
+      resolved.type !== reference.type
+    )
+      throw new IamError('RESOURCE_MISMATCH', 'Resource ownership mismatch', 403);
+    return resolved;
+  }
   const service: DecisionService = {
     async roleGrants(tx, role, tenantId, ceilings, authorityId, seen = new Set<string>(), lapsed) {
       const paths: GrantPath[] = [];
@@ -534,66 +689,50 @@ export function createDecisions(ctx: ServerContext): DecisionService {
       return result;
     },
     async resolve(tx, reference, internal = false, action) {
-      text(reference.type, 'resource type');
-      text(reference.id, 'resource id');
-      if (internal && internalResourceTypes.has(reference.type)) {
-        // Vault secrets (`iam/vault/secrets/{name}`) carry their tags and settings (vault.ts).
-        const secret = await resolveSecretResource(tx, reference);
-        if (secret) return secret;
-        // `iam/{type}/{id}` naming a registered managed resource carries that resource's owner, parent, and
-        // attributes, so administrative actions such as sharing can be conditioned on them and on relations.
-        const slash = reference.type === 'iam' ? reference.id.indexOf('/') : -1;
-        if (slash > 0) {
-          const record = await managedResource(
-            tx,
-            reference.tenantId,
-            reference.id.slice(0, slash),
-            reference.id.slice(slash + 1),
-          );
-          if (record) return { ...reference, attributes: resolvedManaged(record).attributes };
-        }
-        return reference;
-      }
-      // AI models (`inference` option) resolve from the inference catalog, inherited down the tenant tree.
-      const model = await resolveModelResource(ctx, tx, reference);
-      if (model) return model;
-      // SSH logins and hosts (`ssh` option): `ssh-login/{host}/{login}` and `ssh-host/{host}` carry the host's labels.
-      const ssh = await resolveSshResource(ctx, tx, reference);
-      if (ssh) return ssh;
-      // Credential types (`verifiableCredentials` option): `credential-type/{name}`.
-      const credentialType = await resolveCredentialTypeResource(ctx, tx, reference);
-      if (credentialType) return credentialType;
-      const definition = await catalog.resourceTypeDefinition(
-        tx,
-        reference.tenantId,
-        reference.type,
-      );
-      if (
-        definition?.managed &&
-        !shadowsApplicationType(definition, reference.type, action, !!options.resolveResource)
-      ) {
-        const record = await managedResource(tx, reference.tenantId, reference.type, reference.id);
-        if (!record) throw new IamError('NOT_FOUND', 'Resource is not registered', 404);
-        return resolvedManaged(record);
-      }
-      if (!options.resolveResource)
-        throw new IamError(
-          'RESOURCE_RESOLVER_REQUIRED',
-          'Configure resolveResource for application resources',
-        );
-      const resolved = await options.resolveResource(reference);
-      if (
-        !resolved ||
-        resolved.tenantId !== reference.tenantId ||
-        resolved.id !== reference.id ||
-        resolved.type !== reference.type
-      )
-        throw new IamError('RESOURCE_MISMATCH', 'Resource ownership mismatch', 403);
-      return resolved;
+      const resolved = await resolveUnlabeled(tx, reference, internal, action);
+      // Security clearances: every resource but the platform's own carries its effective classification label (the
+      // IAM label joined with its managed parents' and a resolver's own, which can only raise it), attached at this
+      // one exit so no early return skips it. `null` means looked up and unlabeled. Only a platform resource resolved
+      // for an `iam:` action goes without (that action never reads it): reviews resolve without an action and then
+      // evaluate application actions too (`iam/{type}/{id}` naming a labeled resource), and plugin operations may use
+      // their own actions on platform resources.
+      return ctx.config.clearances &&
+        !(internal && internalResourceTypes.has(reference.type) && action?.startsWith('iam:'))
+        ? attachLabel(ctx, tx, reference.tenantId, resolved)
+        : resolved;
     },
     async prepareDecision(tx, principal, target, action) {
-      if (await ctx.rootPrincipal(tx, principal))
-        return { fixed: { allowed: true, reason: 'ROOT_OVERRIDE', matched: [] } };
+      const clearances = ctx.config.clearances;
+      if (await ctx.rootPrincipal(tx, principal)) {
+        const override: Decision = { allowed: true, reason: 'ROOT_OVERRIDE', matched: [] };
+        if (!clearances?.appliesToRoot) return { fixed: override };
+        // Root does not read up (security clearances): it keeps its override for everything else, but a labeled
+        // resource needs a clearance of root's own issued under the target's scheme. Keyed on the evaluated action,
+        // so `iam:` administration always passes.
+        const mandatory = await clearanceScope(
+          ctx,
+          tx,
+          principal,
+          target,
+          await ctx.ancestry(tx, target),
+          undefined,
+          ctx.now(),
+        );
+        if (!mandatory) return { fixed: override };
+        return {
+          rootOverride: true,
+          evaluate: (resource, evaluated = action) =>
+            mandatory.check(resource, evaluated) ?? override,
+          inputs: {
+            context: { ...mandatory.keys },
+            boundaries: [],
+            paths: [{ grants: [all], boundaries: [], authorityId: '' }],
+            denies: [],
+            held: new Map(),
+            mandatory,
+          },
+        };
+      }
       const chain = await ctx.ancestry(tx, target);
       if (chain.some((realm) => realm.status !== 'active'))
         return { fixed: { allowed: false, reason: 'TENANT_INACTIVE', matched: [] } };
@@ -623,15 +762,17 @@ export function createDecisions(ctx: ServerContext): DecisionService {
       for (const plugin of ctx.plugins)
         if (plugin.resolveContext) Object.assign(base, await plugin.resolveContext(principal));
       // Keys only the server may set are removed, including the optional ones it leaves absent, so an
-      // application or plugin value can never stand in for them (the bare `principal.sessionTags` too).
+      // application or plugin value can never stand in for them (the bare `principal.sessionTags` too). The clearance
+      // and classification keys are the server's only while clearances are on.
       for (const key of Object.keys(base))
-        if (isServerOwnedKey(key) || key === 'principal.sessionTags') delete base[key];
+        if (isServerOwnedKey(key, !!clearances) || key === 'principal.sessionTags')
+          delete base[key];
       // A trust may keep the source identity's attributes out of its role sessions (new cross-tenant trusts do).
       // The flag is read fail-closed, as at assumption: only `true` or a legacy trust without it passes them, and a
       // role session whose trust cannot be read passes none.
       if (principal.session.kind !== 'role' || (trust ? trustPassesSourceAttributes(trust) : false))
         for (const [key, value] of Object.entries(principal.identity.attributes ?? {}))
-          if (!isServerOwnedKey(`principal.${key}`) && key !== 'sessionTags')
+          if (!isServerOwnedKey(`principal.${key}`, !!clearances) && key !== 'sessionTags')
             base[`principal.${key}`] = value;
       // Ownership and root status describe the account in its own tenant. An assumed role carries
       // only the role's grants, so a source account's flags must not satisfy the target's conditions.
@@ -656,6 +797,8 @@ export function createDecisions(ctx: ServerContext): DecisionService {
           : {}),
         'principal.groups': [...sources.groupIds].sort(),
         'principal.roles': roleIds,
+        // B2B guests (guests.ts): `principal.guest` always, the sponsor and home tenant when set; never for assumed roles.
+        ...guestContext(principal.identity, ownTenant),
         // Terms of use the person accepted (names) and required ones still owed; nothing for assumed roles.
         // A session token keeps its person's agreements, so it cannot escape a pendingAgreements condition.
         ...(ownTenant
@@ -677,6 +820,13 @@ export function createDecisions(ctx: ServerContext): DecisionService {
       if (!agentScope)
         return { fixed: { allowed: false, reason: 'DELEGATION_REVOKED', matched: [] } };
       Object.assign(base, agentScope.keys);
+      // Mandatory access control (security clearances, clearances.ts): every party of the session (the person, the
+      // acting agent and its sponsor, each agent of a hand-off) must dominate a labeled resource's label. Read whenever
+      // clearances are on, never lazily: the check applies whatever the documents say. Undefined without a scheme.
+      const mandatory = clearances
+        ? await clearanceScope(ctx, tx, principal, target, chain, agentScope, ctx.now())
+        : undefined;
+      if (clearances) Object.assign(base, mandatory ? mandatory.keys : unclearedKeys());
       const boundaries = chain.flatMap((realm) => (realm.boundary ? [realm.boundary] : []));
       boundaries.push(...agentScope.boundaries);
       // Hand-offs (delegations.ts): the key issuers behind the sessions that handed the work on bound it too.
@@ -693,6 +843,10 @@ export function createDecisions(ctx: ServerContext): DecisionService {
         })
       )[0];
       if (principalBoundary) boundaries.push(principalBoundary.document);
+      // A guest stays within the tenant's guest ceiling (`crossTenantAccess.guestBoundary`, guests.ts).
+      const guestCeiling =
+        ownTenant && principal.identity.guest ? await guestBoundary(tx, target.id) : undefined;
+      if (guestCeiling) boundaries.push(guestCeiling);
       if (principal.session.policy) boundaries.push(principal.session.policy);
       // A session token also stays within its source credential's own policy (such as API-key scopes).
       if (principal.session.sourcePolicy) boundaries.push(principal.session.sourcePolicy);
@@ -816,6 +970,20 @@ export function createDecisions(ctx: ServerContext): DecisionService {
             ? await consentContext(tx, target.id, principal.identity, ctx.now())
             : { 'principal.consents': [] },
         );
+      // License management (licenses.ts): `principal.licenses`, the keys of the products the person holds an active seat
+      // for, read only when a document names it; nothing for assumed roles. Simulated principals see the real seats.
+      if (
+        mentionsLicenses([
+          ...boundaries,
+          ...paths.flatMap((path) => [...path.grants, ...path.boundaries]),
+        ])
+      )
+        Object.assign(
+          base,
+          ownTenant
+            ? await licenseContext(tx, target.id, principal.identity.id, ctx.now())
+            : { 'principal.licenses': [] },
+        );
       // Threat detection (threats.ts): `principal.riskLevel` and `principal.riskScore`, read only when a document names
       // them. Risk follows the person (an assumed role keeps it, a delegated session takes the higher of person and
       // agent); simulated principals always get `none`.
@@ -862,6 +1030,11 @@ export function createDecisions(ctx: ServerContext): DecisionService {
           : [];
       return {
         evaluate(resource, evaluated = action) {
+          // Mandatory access control first, keyed on the evaluated action (`iam:` administration is never subject):
+          // no grant, relationship, ownership or confirmation opens a resource above the session's clearance, and a
+          // refusal uses nothing up.
+          const refused = mandatory?.check(resource, evaluated);
+          if (refused) return refused;
           const attributes = resource.attributes ?? {};
           const context = {
             ...base,
@@ -875,6 +1048,8 @@ export function createDecisions(ctx: ServerContext): DecisionService {
               attributes.parentType as string | undefined,
               attributes.parentId,
             ),
+            // The classification label's keys, after the attributes so an attribute can never stand in for them.
+            ...(clearances ? classificationKeys(mandatory, resource) : {}),
           };
           const evaluation = {
             action: evaluated,
@@ -900,7 +1075,15 @@ export function createDecisions(ctx: ServerContext): DecisionService {
           return { allowed: false, reason: 'NO_APPLICABLE_GRANT', matched: [] };
         },
         // Read-only inputs for query planning (core plan.ts), which mirrors `evaluate` over whole resource types.
-        inputs: { context: base, boundaries, paths, denies, held, confirm: agentScope.confirm },
+        inputs: {
+          context: base,
+          boundaries,
+          paths,
+          denies,
+          held,
+          confirm: agentScope.confirm,
+          ...(mandatory ? { mandatory } : {}),
+        },
       };
     },
     async decide(tx, principal, request, internalResource = false) {
@@ -918,15 +1101,19 @@ export function createDecisions(ctx: ServerContext): DecisionService {
         internalResource || action.startsWith('iam:'),
         action,
       );
-      const evaluated = (ready: PreparedDecision) =>
-        'fixed' in ready ? ready.fixed : ready.evaluate(resource);
+      const evaluated = (ready: PreparedDecision) => decideOn(ready, resource);
       const decision = evaluated(prepared);
       // "View as" never exceeds the administrator behind it: every check, including the ones an operation makes
       // on the side (may this role be granted, may this group be changed), must pass for both of them.
       const actor = decision.allowed ? await impersonatingActor(tx, principal) : undefined;
-      if (!actor || evaluated(await service.prepareDecision(tx, actor, target, action)).allowed)
-        return decision;
-      return { allowed: false, reason: 'IMPERSONATOR_DENIED', matched: [] };
+      if (!actor) return decision;
+      const own = evaluated(await service.prepareDecision(tx, actor, target, action));
+      if (own.allowed) return decision;
+      // The administrator's own clearance refusal stays one, so it is audited with the mandatory marker and threat
+      // detection (classified-access-attempts) holds the administrator responsible for reading up through a member.
+      return own.reason === 'CLEARANCE_REQUIRED'
+        ? own
+        : { allowed: false, reason: 'IMPERSONATOR_DENIED', matched: [] };
     },
     simulatedPrincipal(identity, mfa = false) {
       const at = ctx.now();

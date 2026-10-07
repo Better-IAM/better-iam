@@ -25,8 +25,10 @@ API response ever sees it. Your invitation page reads the token from the link an
   [`revokeInvitation`](#revokeinvitation) cancels it. Accepted, revoked, and expired invitations fail with
   `INVITATION_INVALID`.
 - **Authority.** Roles and groups are checked when you invite and applied when the person accepts, as bindings
-  under the <Term id="authority">grant authority</Term> you held at invite time. That authority is re-validated at
-  acceptance: if it was revoked in the meantime, the invitation can no longer be accepted.
+  under the <Term id="authority">grant authority</Term> you held at invite time. That authority, and your right to
+  grant each role and fill each group (including `iam:licenses:assign` for a group licensed in the meantime), is
+  re-validated at acceptance and when the invitation is resent: if you lost it, the invitation can no longer be
+  accepted.
 - **Delivery.** Invitations need an email delivery callback (`authentication.sendEmail`); without one,
   `invite` and `resendInvitation` fail with `DELIVERY_REQUIRED`.
 - **Limits.** The plan's member limit is checked at acceptance, not when you invite, so an invitation can fail with
@@ -65,8 +67,10 @@ and groups, and signs them in.
 - **Permission:** None: public. The token from the invitation email is the proof.
 - **Audited as:** `identity:invitation:accept`, with the new member as the actor and the inviter, roles, and groups
   in the metadata.
-- **Errors:** `INVITATION_INVALID` when the token is unknown, already used, revoked, or expired, or the inviter's
-  grant authority was revoked; `TENANT_UNAVAILABLE` when the tenant or one of its ancestors is not active;
+- **Errors:** `INVITATION_INVALID` when the token is unknown, already used, revoked, or expired, or the inviter can
+  no longer grant what the invitation grants (they are no longer active, their grant authority was revoked, they lost
+  one of the permissions `invite` needed, or one of the groups was given a license product since and they lack
+  `iam:licenses:assign`); `TENANT_UNAVAILABLE` when the tenant or one of its ancestors is not active;
   `INVALID_INPUT` when neither the call nor the invitation gives a name; `IDENTITY_EXISTS` when an account with that
   email was created in the meantime; `LIMIT_EXCEEDED` at the tenant's member limit; `WEAK_PASSWORD` or
   `BREACHED_PASSWORD` when the password fails the password rules; `NOT_FOUND` when one of the invitation's roles or
@@ -125,7 +129,8 @@ Creates up to 100 people in one transaction, each with optional attributes, role
 
 - **Permission:** `iam:identities:create` on the tenant. With roles, also `iam:bindings:create` on each role and an
   active grant authority; with groups, `iam:groups:update` on each group and authority over each of its role
-  bindings.
+  bindings, and `iam:licenses:assign` when a license product is assigned to one of the groups or to a team it syncs
+  into.
 - **Audited as:** `iam:identities:create`.
 - **Errors:** `INVALID_INPUT` for an empty list, more than 100 entries, or an undeclared or mistyped attribute;
   `ACCESS_DENIED` without the right to grant one of the roles or fill one of the groups; `PROTECTED_RESOURCE` for
@@ -236,7 +241,8 @@ Invites a person to the tenant by email, with roles and groups they receive when
 
 - **Permission:** `iam:identities:create` on the tenant. With roles, also `iam:bindings:create` on each role and an
   active grant authority; with groups, `iam:groups:update` on each group and authority over each of its role
-  bindings.
+  bindings, and `iam:licenses:assign` when a license product is assigned to one of the groups or to a team it syncs
+  into (checked again at acceptance).
 - **Audited as:** `iam:identities:create`.
 - **Errors:** `DELIVERY_REQUIRED` without an email delivery callback; `IDENTITY_EXISTS` when the email already
   belongs to an identity in this tenant; `PROTECTED_RESOURCE` for the Owner role; `ACCESS_DENIED` without the
@@ -406,10 +412,15 @@ Sends a member invitation again with a new token and a fresh lifetime; the earli
 - **Permission:** `iam:identities:update` on the invitation.
 - **Audited as:** `iam:identities:update`.
 - **Errors:** `CONFLICT` when the invitation was already accepted or revoked; `DELIVERY_REQUIRED` without an email
-  delivery callback; `NOT_FOUND` when the invitation is not in this tenant.
+  delivery callback; `NOT_FOUND` when the invitation is not in this tenant; `INVITATION_INVALID` when acceptance
+  would refuse it because its original inviter can no longer grant what it grants (see
+  [`acceptInvitation`](#acceptinvitation)).
 
 Use it when the first email expired, was lost, or went to spam: expired invitations can be resent. The new email
-names you as the inviter, while the invitation keeps its original inviter, roles, groups, and grant authority.
+names you as the inviter, while the invitation keeps its original inviter, roles, groups, and grant authority, so
+the original inviter is checked again first and only an invitation that can still be accepted goes out. When it
+cannot (the inviter left, lost a permission, or one of the groups was licensed since), revoke it and
+[`invite`](#invite) the person again yourself.
 
 ## revokeInvitation
 

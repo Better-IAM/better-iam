@@ -1,6 +1,6 @@
 ---
 title: Error codes
-description: "What each of the 182 Better IAM error codes means, why it happens, and how to handle it, grouped by HTTP status."
+description: "What each of the 183 Better IAM error codes means, why it happens, and how to handle it, grouped by HTTP status."
 icon: OctagonAlert
 ---
 
@@ -79,6 +79,26 @@ export function nextStep(error: unknown): NextStep {
 }
 ```
 
+## CLEARANCE_REQUIRED
+
+A decision reason, not a thrown error: the resource carries a classification label that the session's security
+clearance does not dominate.
+
+With the `clearances` option, the first step of every decision on an application action (anything but `iam:*`) checks
+the resource's label against every party of the session: the person, an agent key's sponsor, each agent of a
+delegated session, and the administrator behind "view as". When one of them lacks the level, a compartment, or the
+citizenship the label needs, or the label is missing on a type that requires one or is invalid, the decision is
+`{ allowed: false, reason: 'CLEARANCE_REQUIRED' }` whatever roles and policies say, root administrators included
+unless `clearances.appliesToRoot` is false. `authorize`, `authorizeMany`, and the HTTP routes report it as
+`ACCESS_DENIED` and `require` throws `ACCESS_DENIED`; the reason itself shows only in reviews such as
+[`policies.simulate`](/docs/reference/api/policies#simulate), access invariants, and `effectiveActions`. The denial is
+audited with the metadata `{ mandatory: 'clearance' }` and never says which dimension failed. No access request,
+package, or step-up lifts it, so [`accessPaths.find`](/docs/reference/api/access-paths#find) offers no path.
+
+**How to fix:** a security officer grants or raises the person's clearance and reads them into the compartments the
+label needs, or declassifies the resource. Officers see the failing dimension with
+[`clearances.explain`](/docs/reference/api/clearances#explain).
+
 ## INVALID_ARGUMENT
 
 A `better-iam` command received a flag it does not accept, a missing value, or a value out of range.
@@ -124,7 +144,7 @@ The request itself is the problem: an input failed validation, or the operation 
 | [`BREACHED_PASSWORD`](#breached_password) | The new password appears in a known data breach. |
 | [`CONFIG_DRIFT`](#config_drift) | `config-plan --fail-on-drift` found differences between the tenant and the configuration file. |
 | [`CONFIG_EXISTS`](#config_exists) | `better-iam init` found an existing configuration file and left it untouched. |
-| [`CONFIG_WARNINGS`](#config_warnings) | … unresolved reference(s) |
+| [`CONFIG_WARNINGS`](#config_warnings) | `config-validate --strict` found names in the configuration file that the file itself does not define. |
 | [`CONFIRMATION_INVALID`](#confirmation_invalid) | The link that confirms a public data-subject request is wrong, already used, or expired. |
 | [`CREDENTIAL_CHAINING_DISABLED`](#credential_chaining_disabled) | A session token cannot be minted from a credential that is itself temporary. |
 | [`DELIVERY_REQUIRED`](#delivery_required) | The operation sends email, but the deployment has no email delivery callback. |
@@ -145,7 +165,7 @@ The request itself is the problem: an input failed validation, or the operation 
 | [`INVALID_RECORD`](#invalid_record) | A record written to storage is not plain JSON or breaks a storage limit. |
 | [`INVALID_REQUEST`](#invalid_request) | A policy evaluation input or an HTTP request target could not be understood. |
 | [`INVALID_RESOURCE_TYPE`](#invalid_resource_type) | The resource type is unknown, reserved, or cannot be used this way. |
-| [`INVALID_SPONSOR`](#invalid_sponsor) | The AI agent's sponsor is missing or is not an active person of the agent's tenant. |
+| [`INVALID_SPONSOR`](#invalid_sponsor) | The sponsor of an AI agent or a guest is missing or is not an active person of the tenant. |
 | [`INVALID_TICKET`](#invalid_ticket) | The inference ticket given to `inference.record` is unknown, already used, expired, or its caller no longer exists. |
 | [`INVARIANTS_BROKEN`](#invariants_broken) | `check-invariants --fail-on-broken` found invariants that are broken or cannot be evaluated. |
 | [`INVITATION_INVALID`](#invitation_invalid) | The invitation link is invalid, expired, already used, or revoked. |
@@ -269,6 +289,14 @@ Example messages:
 
 ### CONFIG_WARNINGS
 
+`config-validate --strict` found names in the configuration file that the file itself does not define.
+
+The command prints its findings first; the message counts the unresolved references. Without `--strict` they are only
+warnings, because the names may already exist in the tenant. Planning or applying the file fails when they do not.
+
+**How to fix:** define the missing roles, groups, or other records in the file, correct the names, or drop `--strict`
+when they are meant to exist in the tenant already ([`config-validate`](/docs/reference/cli#config-validate)).
+
 <small>HTTP `400` · thrown by `@better-iam/cli`</small>
 
 Example messages:
@@ -326,11 +354,11 @@ reminders (`certifications.remind`), the access digest, and expiry reminders enq
 Example messages:
 
 - Reminders require an email delivery callback
+- Clearance reminders require an email delivery callback
+- Guest invitations require an email delivery callback
+- Guest review reminders require an email delivery callback
 - Member invitations require an email delivery callback
 - Public requests need an email delivery callback
-- Public requests need an email delivery callback to confirm addresses
-- Organization invitations require an email delivery callback
-- The access digest requires an email delivery callback
 
 ### DOCTOR_FINDINGS
 
@@ -638,15 +666,20 @@ Example messages:
 
 ### INVALID_SPONSOR
 
-The AI agent's sponsor is missing or is not an active person of the agent's tenant.
+The sponsor of an AI agent or a guest is missing or is not an active person of the tenant.
 
 Every agent needs a sponsor, an active and unexpired person of the same tenant who answers for it. `agents.create`
 makes the caller the sponsor only when the caller is a person in their own session, so an API key or a temporary
 credential must name one with `sponsorId`. `agents.create` and `agents.update` refuse a sponsor who is a service
 account or another agent, disabled, deleted, expired, or in another tenant.
 
-**How to fix:** pass the `sponsorId` of an active member of the agent's tenant
-([`agents.create`](/docs/reference/api/agents#create)).
+Guests need one too, and a guest cannot sponsor another guest. [`guests.invite`](/docs/reference/api/guests#invite)
+makes the caller the sponsor only when the caller is a person of the organization in their own session or API key, so
+a root administrator or a service account names one with `sponsorId`. `guests.setSponsor` and
+`guests.resendInvitation` refuse a sponsor who can no longer sponsor guests the same way.
+
+**How to fix:** pass the `sponsorId` of an active member of the tenant who is not a guest
+([`agents.create`](/docs/reference/api/agents#create), [`guests.invite`](/docs/reference/api/guests#invite)).
 
 <small>HTTP `400` · thrown by `@better-iam/server`</small>
 
@@ -654,6 +687,8 @@ Example messages:
 
 - An agent sponsor must be an active person of the same tenant
 - Name the person accountable for the agent (sponsorId)
+- Name a sponsor (sponsorId): only an active member of the organization who is not a guest can sponsor guests
+- A guest’s sponsor must be an active member of the organization who is not a guest
 
 ### INVALID_TICKET
 
@@ -693,19 +728,22 @@ The invitation link is invalid, expired, already used, or revoked.
 
 `tenants.acceptInvitation` and `identities.acceptInvitation` refuse a token that matches no open invitation, an
 organization that is no longer pending, and an invitation whose inviter's grant authority was revoked after it was
-sent.
+sent. [`guests.redeem`](/docs/reference/api/guests#redeem) also refuses a guest invitation whose inviter is inactive
+or can no longer grant what it grants, or whose sponsor can no longer sponsor guests, and
+`guests.resendInvitation` refuses to send such an invitation again.
 
-**How to fix:** ask an administrator to send a new invitation with `tenants.resendInvitation` or
-`identities.resendInvitation`.
+**How to fix:** ask an administrator to send a new invitation with `tenants.resendInvitation`,
+`identities.resendInvitation`, or `guests.resendInvitation`. When a guest invitation's inviter lost their rights,
+revoke it and have someone who holds them invite the person again with `guests.invite`.
 
 <small>HTTP `400` · thrown by `@better-iam/server`</small>
 
 Example messages:
 
 - Invitation is invalid
+- The sponsor can no longer sponsor guests
+- …: revoke this invitation and invite the person again
 - Invitation authority revoked
-- The inviter can no longer invite
-- The inviter can no longer grant this access
 
 ### LINKING_DISABLED
 
@@ -1010,19 +1048,26 @@ A query plan's filter uses a condition the chosen target cannot express.
 [`iam.planResources`](/docs/reference/api#planresources) returns a filter with the policy engine's full
 semantics; `filterToSql` has no equivalent for IP address and array conditions, and `filterToPrisma` and
 `filterToMongo` lack some of dates, IP addresses, and wildcard patterns that are not a prefix, suffix or substring.
-Compiling refuses rather than returning a filter that would include or leave out the wrong rows.
+Compiling refuses rather than returning a filter that would include or leave out the wrong rows. Planning itself
+refuses with this code when no filter can be exact, for example with [security clearances](/docs/reference/api/clearances):
+for an application type the scheme requires labels on, for any application type while a label in the tenant passes
+down to children, and for a statement that conditions on a classification label's resource keys
+(`resource.classificationRank` and the like).
 
 **How to fix:** fetch candidate rows with a coarser query and keep those that pass `filterMatches(plan.filter, row)`,
 which supports every filter exactly, or check each row with `authorize`
 ([filters](/docs/reference/api/filters)).
 
-<small>HTTP `400` · thrown by `@better-iam/core`</small>
+<small>HTTP `400` · thrown by `@better-iam/core`, `@better-iam/server`</small>
 
 Example messages:
 
 - … conditions cannot be expressed in …; filter these resources with filterMatches or authorize
 - These policies are too complex to plan as a filter; check the resources with authorize
 - A policy compares a value with …, one of the resource’s own attributes, which a filter cannot express; check the resources with authorize
+- A policy has a condition on …, which the server derives for each resource rather than reading from the row; check the resources with authorize
+- Resources of this type must carry a classification label, which a filter cannot check for application resources; check them with authorize
+- Classification labels pass down to application resources through the parents their resolver reports, which a filter cannot check; check them with authorize
 
 ### VERIFIED_EMAIL_REQUIRED
 
@@ -1094,7 +1139,7 @@ Better IAM could not establish who is calling, or the proof it was given is no l
 | [`INVALID_MFA`](#invalid_mfa) | The authenticator code or recovery code is wrong, expired, or already used. |
 | [`INVALID_PASSKEY`](#invalid_passkey) | The passkey response could not be verified or does not belong to this account. |
 | [`INVALID_TOKEN`](#invalid_token) | The OAuth access token, or its DPoP proof, is missing, invalid, or expired. |
-| [`LOGIN_REQUIRED`](#login_required) | The application asked for a fresh sign-in: sign in again, then continue. |
+| [`LOGIN_REQUIRED`](#login_required) | The OAuth client asked for a fresh sign-in, and the person's session signed in too long ago. |
 | [`OAUTH_PROFILE`](#oauth_profile) | The identity provider's answer did not identify the person. |
 | [`SAML_INVALID`](#saml_invalid) | The SAML response could not be accepted. |
 | [`SESSION_EXPIRING`](#session_expiring) | The session asking for an SSH certificate ends within a minute. |
@@ -1256,6 +1301,16 @@ Example messages:
 
 ### LOGIN_REQUIRED
 
+The OAuth client asked for a fresh sign-in, and the person's session signed in too long ago.
+
+The OAuth provider's `completeInteraction` honors the client's `prompt=login` (sign in again now) and `max_age` (a
+sign-in at most this many seconds old). With `prompt=login` the session must have signed in after the authorization
+request started; with `max_age` its sign-in must be younger than the limit. Otherwise consent is not recorded and the
+call answers 401.
+
+**How to fix:** send the person through sign-in again on the interaction page, then submit the consent step with the
+new session ([OAuth provider](/docs/federation/oauth-provider#build-the-interaction-pages)).
+
 <small>HTTP `401` · thrown by `@better-iam/oauth`</small>
 
 Example messages:
@@ -1374,6 +1429,7 @@ The caller is known, but this action is not allowed for them: no role or policy 
 | [`FEATURE_DISABLED`](#feature_disabled) | The feature this call needs is turned off or not configured on this deployment or for this organization. |
 | [`FORBIDDEN`](#forbidden) | Self-registration was attempted in the root tenant, where only administrators create accounts. |
 | [`GRANT_AUTHORITY_REQUIRED`](#grant_authority_required) | The caller has permission for the action but holds no active grant authority to issue access under. |
+| [`GUEST_NOT_ALLOWED`](#guest_not_allowed) | The organization's cross-tenant access settings, or those of the person's own organization, do not admit this person as a guest. |
 | [`HOST_MISMATCH`](#host_mismatch) | The request arrived on one organization's sign-in address but names or authenticates as another organization. |
 | [`IMPERSONATION_RESTRICTED`](#impersonation_restricted) | The operation is not available while an administrator is impersonating a member. |
 | [`INSUFFICIENT_SCOPE`](#insufficient_scope) | The OAuth access token is valid but lacks a scope the resource requires. |
@@ -1546,8 +1602,9 @@ Examples: self-registration without `signUpEnabled`, password sign-in or recover
 `sendEmail`, a passwordless channel or passkeys that are not configured, passkey sign-in for an account without a
 passkey, emailed MFA codes the sign-in does not offer, a delivery kind without its callback, impersonation in a tenant
 whose policy does not set `allowImpersonation`, session JWTs without `sts.jwt`, custom hostnames without
-`hosts.customHostnames`, passkeys on a custom hostname outside the passkey domain (the RP ID), and the `inference`
-API group and `iam.inference` without the `inference` option.
+`hosts.customHostnames`, passkeys on a custom hostname outside the passkey domain (the RP ID), the `inference`
+API group and `iam.inference` without the `inference` option, and the `clearances` API group and
+`iam.clearances.sendReminders` without the `clearances` option.
 
 **How to fix:** enable the option in your [configuration](/docs/operations/deployment/configuration) or the tenant's
 [authentication policy](/docs/guides/authentication/tenant-policy), or hide the feature in your UI while it is off.
@@ -1595,6 +1652,30 @@ issued under. A non-root administrator needs one that is not revoked and whose d
 Example messages:
 
 - An active delegated grant authority is required
+
+### GUEST_NOT_ALLOWED
+
+The organization's cross-tenant access settings, or those of the person's own organization, do not admit this person
+as a guest.
+
+[`guests.invite`](/docs/reference/api/guests#invite), `guests.resendInvitation`, and `guests.redeem` check who may
+join as a guest. The host refuses an address at a blocked domain, outside its allowed domains, from an organization it
+lists as a refused partner, or any guest while `allowGuests` is off. When another organization verified the address's
+domain, that organization's outbound settings must allow its people to join the host too; its refusal only says that
+the person's organization does not allow it. An address at one of the host's own verified domains is refused as well,
+because that person is a member. Either side may change its settings after an invitation is sent, so redemption can
+fail for an invitation that was admitted.
+
+**How to fix:** for the host's own domain, invite the person as a member with `identities.invite`. Otherwise an
+administrator of the host adjusts its inbound settings with [`guests.configure`](/docs/reference/api/guests#configure),
+or the person's organization lists the host as an outbound partner.
+
+<small>HTTP `403` · thrown by `@better-iam/server`</small>
+
+Example messages:
+
+- … is a verified domain of this organization: invite the person as a member
+- The person’s organization does not allow its members to join this organization as guests
 
 ### HOST_MISMATCH
 
@@ -2801,7 +2882,9 @@ The record is still referenced by other records, so it cannot be deleted or chan
 
 Examples: a role that other roles inherit or packages include, a policy still attached to a role, a group that
 packages grant or that approves requests, a resource type with registered resources, relationships, or child types, a
-resource with child resources, a package that is still assigned, and an action still used by policies and roles.
+resource with child resources, a package that is still assigned, an action still used by policies and roles, and a
+classification scheme change that would remove or re-rank a level a clearance or label uses, remove a compartment in
+use, or make a label invalid ([`clearances.updateScheme`](/docs/reference/api/clearances#updatescheme)).
 
 **How to fix:** remove or repoint the references the message names, then retry.
 
@@ -2814,7 +2897,7 @@ Example messages:
 - Delete registered resources first
 - Delete relationships first
 - Other resource types use this type as their parent
-- Move or delete the departments below it first: …
+- A level that clearances or labels use cannot be removed or re-ranked
 
 ### SAME_DATABASE
 
@@ -2994,6 +3077,7 @@ have not seen.
 Example messages:
 
 - The agreement changed; review the current version before accepting
+- The scheme changed; reload it first
 - Policy version changed
 - The purpose changed; review the current version before deciding
 
@@ -3145,9 +3229,9 @@ Example messages:
 - Unknown credential token type
 - limit must be between 1 and 1000
 - Only active people with an email can reset a password
+- A guest’s email address cannot change: ask the organization to invite the new address
 - limit must be a positive integer
 - name must not be empty
-- A passkey authentication response is required
 
 ### PAYLOAD_TOO_LARGE
 
@@ -3439,7 +3523,7 @@ Example messages:
 | [`OAUTH_DISCOVERY`](#oauth_discovery) | The Microsoft Entra ID metadata for a sign-in connection could not be fetched or is not trustworthy. |
 | [`ROTATION_FAILED`](#rotation_failed) | A vault secret's rotator failed to apply the new value. |
 | [`WEBHOOK_REJECTED`](#webhook_rejected) | A webhook endpoint answered a delivery with a non-success HTTP status. |
-| [`WEBHOOK_UNREACHABLE`](#webhook_unreachable) | — |
+| [`WEBHOOK_UNREACHABLE`](#webhook_unreachable) | A webhook delivery could not connect to the endpoint, or the endpoint did not answer in time. |
 
 ### ENGINE_FAILED
 
@@ -3505,6 +3589,15 @@ Example messages:
 - Webhook endpoint responded with status …
 
 ### WEBHOOK_UNREACHABLE
+
+A webhook delivery could not connect to the endpoint, or the endpoint did not answer in time.
+
+Like `WEBHOOK_REJECTED`, it is recorded as the delivery's last error in the outbox and retried with growing delays. Every
+connection failure gets the same message (refused, unresolvable, or a private or reserved address the guarded transport
+refuses), so the delivery history cannot be used to map networks or ports; only a timeout says so.
+
+**How to fix:** check that the URL resolves to a public address and the endpoint answers within the webhook timeout,
+then use `webhooks.redeliver` ([retries](/docs/guides/events/webhooks#retries)).
 
 <small>HTTP `502` · thrown by `@better-iam/server`</small>
 

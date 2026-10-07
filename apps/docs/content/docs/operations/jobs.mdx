@@ -28,7 +28,13 @@ from a system scheduler. Both do the same work.
 | Owners' access digest | [`iam.sendAccessDigest()`](/docs/reference/api#sendaccessdigest) | [`digest`](/docs/reference/cli#digest) | Daily, then `outbox` |
 | Expiry reminders | [`iam.sendExpiryReminders()`](/docs/reference/api#sendexpiryreminders) | [`remind`](/docs/reference/cli#remind) | Daily, beside `digest` |
 | Auto-closing certifications | [`iam.closeOverdueCertifications()`](/docs/reference/api#closeoverduecertifications) | [`close-certifications`](/docs/reference/cli#close-certifications) | Hourly or daily |
+| Overdue team membership reviews | [`iam.closeOverdueTeamReviews()`](/docs/reference/api#closeoverdueteamreviews) | None | Hourly or daily |
 | Invariant monitoring | [`iam.checkInvariants()`](/docs/reference/api#checkinvariants) | [`monitor-invariants`](/docs/reference/cli#monitor-invariants) | Hourly, and after configuration changes |
+| Threat detection | [`iam.detectThreats()`](/docs/reference/api#detectthreats) | [`detect-threats`](/docs/reference/cli#detect-threats) | Every minute, then `outbox` |
+| Shared Signals poll sources | [`iam.signals.poll()`](/docs/reference/api#signalspoll) | None | Every minute, when an organization has a poll source |
+| License seats | [`iam.licenses.reconcile()`](/docs/reference/api#licensesreconcile), [`iam.licenses.reclaim()`](/docs/reference/api#licensesreclaim) | None | Reconcile hourly, reclaim daily |
+| Guest invitations, accounts, and reviews | [`iam.guests.sweep()`](/docs/reference/api#guestssweep), then [`iam.guests.sendReviewReminders()`](/docs/reference/api#guestssendreviewreminders) | None | Hourly, then `outbox` |
+| Security clearance reminders | [`iam.clearances.sendReminders()`](/docs/reference/api#clearancessendreminders) | None | Daily, then `outbox` |
 | Continuous audit archiving | [`iam.archiveAudit()`](/docs/reference/api#archiveaudit) | [`audit-archive`](/docs/reference/cli#audit-archive) | Every few minutes |
 | Audit retention | [`iam.pruneAudit()`](/docs/reference/api#pruneaudit) | [`audit-prune`](/docs/reference/cli#audit-prune) | Per your retention policy, after archiving |
 | Access usage flush | [`iam.flushAccessUsage()`](/docs/reference/api#flushaccessusage) | None | Automatic; call it before shutdown |

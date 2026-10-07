@@ -16,6 +16,7 @@ import {
   type Department,
   type DepartmentMember,
 } from './departments.js';
+import { reconcileGroupLicenses } from './licenses.js';
 import type { Binding } from './models.js';
 import { mapRuleValues, type AutoAssignInput, type RuleEnvironment } from './package-rules.js';
 import type { ConfigChange } from './sync.js';
@@ -863,6 +864,18 @@ export async function applyOrg(
           // The document lists manual memberships: a temporary or synced member it names becomes a permanent manual one.
           if (member.role === role && member.expiresAt === undefined && member.source !== 'sync')
             continue;
+          // Keeping someone for good, or appointing a maintainer, of a licensed team needs iam:licenses:assign.
+          if (
+            member.expiresAt !== undefined ||
+            member.source === 'sync' ||
+            (role === 'maintainer' && member.role !== 'maintainer')
+          )
+            await teams.assertMayClaimTeamLicenses(
+              tx,
+              principal,
+              tenantId,
+              teamChain(all, team.id),
+            );
           const { expiresAt: _temporary, source: _synced, ...rest } = member;
           await tx.put<TeamMember>(teamCollections.members, { ...rest, role });
           await syncTeamGroups(tx, tenantId, [team.id], now);
@@ -884,6 +897,14 @@ export async function applyOrg(
         }
         for (const [identityId, role] of wanted)
           await teams.putMember(mutation, { identityId, role }, 'config');
+        // License seats of the team's chain follow its members in this transaction, as with groups (licenses.ts).
+        await reconcileGroupLicenses(
+          ctx,
+          tx,
+          tenantId,
+          teamChain(all, team.id).map((item) => item.groupId),
+          principal,
+        );
       }
       const roles =
         desired!.roles !== undefined && (change.action === 'create' || fields.includes('roles'));

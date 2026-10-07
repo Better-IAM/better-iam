@@ -9,7 +9,7 @@ import {
   type Tenant,
 } from '@better-iam/core';
 import type { ServerContext } from '../context.js';
-import { documentDenyStatements } from '../decisions.js';
+import { decideOn, documentDenyStatements } from '../decisions.js';
 import { assertDeniesKept, reliedOnByOthers } from './roles.js';
 import {
   enabledFeatureKeys,
@@ -253,10 +253,28 @@ export function createPoliciesApi(ctx: ServerContext) {
               // Threat detection keys as for a person nothing was detected about (threats.ts).
               'principal.riskLevel': 'none',
               'principal.riskScore': 0,
+              // No license seats (licenses.ts), as for a person nothing was assigned to.
+              'principal.licenses': [],
+              // A member rather than a guest (guests.ts).
+              'principal.guest': false,
               // Device posture keys as for a request without a verified device (devices.ts).
               'request.deviceAssurance': 'none',
               'request.deviceManaged': false,
               'request.deviceCompliant': false,
+              // With security clearances (clearances.ts): an uncleared person and an unlabeled resource. A document
+              // test never applies mandatory access control itself.
+              ...(ctx.config.clearances
+                ? {
+                    'principal.clearanceRank': -1,
+                    'principal.clearanceStatus': 'none',
+                    'principal.clearanceCompartments': [],
+                    'principal.clearanceCitizenship': [],
+                    'resource.classificationRank': -1,
+                    'resource.compartments': [],
+                    'resource.noforn': false,
+                    'resource.releasableTo': [],
+                  }
+                : {}),
               'request.time': now,
               // The tenant's feature flags as they are now, read only when the document names them.
               ...(mentionsFeatures([input.document])
@@ -334,7 +352,8 @@ export function createPoliciesApi(ctx: ServerContext) {
       ),
     /**
      * Access review: every active identity of the tenant that could perform `action` on `resource`, with the reason.
-     * Root administrators are not listed because their override applies everywhere. Advisory, like `simulate`.
+     * Root administrators are not listed: their override applies everywhere (except, with security clearances, to
+     * labeled resources above their own clearance). Advisory, like `simulate`.
      */
     whoCan: (
       credential: CredentialInput,
@@ -379,7 +398,7 @@ export function createPoliciesApi(ctx: ServerContext) {
           for (const identity of identities) {
             const principal = ctx.decisions.simulatedPrincipal(identity, input.assumeMfa === true);
             const prepared = await ctx.decisions.prepareDecision(tx, principal, tenant, action);
-            const decision = 'fixed' in prepared ? prepared.fixed : prepared.evaluate(resource);
+            const decision = decideOn(prepared, resource);
             if (decision.allowed)
               matches.push({
                 identityId: identity.id,
@@ -452,8 +471,7 @@ export function createPoliciesApi(ctx: ServerContext) {
             candidates[0] ?? '*',
           );
           const results = candidates.map((action) => {
-            const decision =
-              'fixed' in prepared ? prepared.fixed : prepared.evaluate(resource, action);
+            const decision = decideOn(prepared, resource, action);
             return { action, allowed: decision.allowed, reason: decision.reason };
           });
           return {

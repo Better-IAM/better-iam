@@ -7,8 +7,14 @@ import {
   type Tenant,
 } from '@better-iam/core';
 import { resolvedManaged } from './catalog.js';
+import { labelsForType } from './clearances.js';
 import type { ServerContext } from './context.js';
-import { impersonatingActor, shadowsApplicationType } from './decisions.js';
+import {
+  decideOn,
+  impersonatingActor,
+  isRootOverride,
+  shadowsApplicationType,
+} from './decisions.js';
 import { useConfirmation } from './delegations.js';
 import type { ResourceRecord } from './models.js';
 import { sodSnapshot, sodVerify } from './sod.js';
@@ -18,6 +24,7 @@ import type {
   AuthorizationCheck,
   AuthorizationRequest,
   BatchAuthorizationRequest,
+  ResolvedResource,
 } from './options.js';
 import { integer, object, text } from './validation.js';
 
@@ -105,7 +112,8 @@ export function createOperations(ctx: ServerContext): OperationService {
   /**
    * Records a refused decision. A principal of another tenant is refused before anything of the target is read, and
    * so is its record: it goes to the caller's own tenant, naming the target, so an outsider can neither write into
-   * another tenant's audit chain nor set off its webhooks with names of their choosing.
+   * another tenant's audit chain nor set off its webhooks with names of their choosing. A clearance refusal (mandatory
+   * access control) is marked `{ mandatory: 'clearance' }` for detection, and says nothing about the label.
    */
   function auditRefusal(
     tx: IamStore,
@@ -126,7 +134,11 @@ export function createOperations(ctx: ServerContext): OperationService {
           false,
           { targetTenantId: tenantId },
         )
-      : ctx.events.audit(tx, principal, action, tenantId, resourceId, 'deny');
+      : decision.reason === 'CLEARANCE_REQUIRED'
+        ? ctx.events.audit(tx, principal, action, tenantId, resourceId, 'deny', false, {
+            mandatory: 'clearance',
+          })
+        : ctx.events.audit(tx, principal, action, tenantId, resourceId, 'deny');
   }
   /**
    * Runs an operation's transaction. A mutation that refuses with `OperationDenied` is rolled back like any failure;
@@ -332,9 +344,18 @@ export function createOperations(ctx: ServerContext): OperationService {
         // An impersonation session lists only what the administrator behind it could reach too.
         const actor = await impersonator(tx, current);
         const own = actor && (await ctx.decisions.prepareDecision(tx, actor, target, action));
+        // Security clearances: every registration's effective label (its own joined with its managed parents'),
+        // read once for the type and carried as the server-owned `classification` (null: unlabeled), as `resolve`
+        // attaches it for one resource.
+        const labels = ctx.config.clearances
+          ? await labelsForType(tx, target.id, definition.name)
+          : undefined;
+        const resolved = (item: ResourceRecord): ResolvedResource =>
+          labels
+            ? { ...resolvedManaged(item), classification: labels.get(item.resourceId) ?? null }
+            : resolvedManaged(item);
         const allows = (evaluator: typeof prepared, item: ResourceRecord) =>
-          ('fixed' in evaluator ? evaluator.fixed : evaluator.evaluate(resolvedManaged(item)))
-            .allowed;
+          decideOn(evaluator, resolved(item)).allowed;
         const records = (
           await tx.find<ResourceRecord>('resources', { tenantId: target.id, type: definition.name })
         ).sort(byResourceKey);
@@ -342,11 +363,7 @@ export function createOperations(ctx: ServerContext): OperationService {
           (item) => allows(prepared, item) && (!own || allows(own, item)),
         );
         // Listing what one may act on is using the action (not for root overrides or impersonation).
-        if (
-          accessible.length &&
-          !current.session.impersonatorId &&
-          !('fixed' in prepared && prepared.fixed.reason === 'ROOT_OVERRIDE')
-        )
+        if (accessible.length && !current.session.impersonatorId && !isRootOverride(prepared))
           ctx.usage.record(target.id, current.identity.id, action);
         return { resources: accessible.slice(offset, offset + limit), total: accessible.length };
       });
