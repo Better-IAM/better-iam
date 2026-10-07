@@ -661,7 +661,7 @@ describe('clearances API', () => {
         inheritToChildren: false,
       }),
     ).rejects.toMatchObject({ code: 'ACCESS_DENIED' });
-    // Deleting and registering again (elsewhere) cannot declassify.
+    // Deleting and registering again (elsewhere) cannot declassify: what it inherited joins its own label.
     await api.label(f.ownerCredential, {
       tenantId,
       type: 'doc',
@@ -673,7 +673,7 @@ describe('clearances API', () => {
     expect(await read('doc', 'plans')).toBe(false);
     expect(
       (await api.getLabel(f.ownerCredential, { tenantId, type: 'doc', id: 'plans' })).label,
-    ).toMatchObject({ label: { level: 'C' } });
+    ).toMatchObject({ label: { level: 'S' } });
   });
 
   it('caps guests, suspends, reinstates and revokes', async () => {

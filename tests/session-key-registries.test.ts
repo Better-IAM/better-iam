@@ -4,6 +4,7 @@ import { sqliteAdapter } from '@better-iam/adapter-sqlite';
 import { betterIam } from '@better-iam/server';
 import { builtInActions, reservedPrincipalKeys } from '../packages/server/src/catalog.js';
 import {
+  clearanceServerKeys,
   optionalPrincipalServerKeys,
   principalServerKeys,
   reservedSessionPrincipalNames,
@@ -55,9 +56,16 @@ describe('policy lint', () => {
       IpAddress: { 'request.sourceIp': '203.0.113.0/24' },
     };
     expect(lintPolicy(doc(allow(conditions)))).toEqual({ valid: true, warnings: [] });
-    // Every registry key is known to the linter.
+    // Every registry key is known to the linter (the clearance keys when the deployment enables clearances).
     for (const key of principalServerKeys.keys())
-      expect(only('unknown-context-key', doc(allow({ Exists: { [key]: true } }))), key).toEqual([]);
+      expect(
+        only(
+          'unknown-context-key',
+          doc(allow({ Exists: { [key]: true } })),
+          clearanceServerKeys.has(key) ? { clearances: true } : undefined,
+        ),
+        key,
+      ).toEqual([]);
   });
 
   it('treats only valid session tag names as known', () => {

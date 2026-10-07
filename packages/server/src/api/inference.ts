@@ -8,7 +8,7 @@ import {
   type StoredRecord,
 } from '@better-iam/core';
 import type { ServerContext } from '../context.js';
-import { decideOn } from '../decisions.js';
+import { decideOn, preparedLabeling } from '../decisions.js';
 import {
   createInferenceGateway,
   type GatewayRuntime,
@@ -259,15 +259,19 @@ async function invocableModels(
 ): Promise<PublicModel[]> {
   const tenant = await ctx.tenant(tx, tenantId);
   const prepared = await ctx.decisions.prepareDecision(tx, principal, tenant, inferenceAction);
+  // Security clearances: label every model under the scheme the prepared decision already read.
+  const labeling = preparedLabeling(prepared);
   const result: PublicModel[] = [];
   for (const { model, provider } of await visibleModels(ctx, tx, tenantId)) {
     const view = publicModel(model, provider, tenantId);
     if (!view.enabled) continue;
-    const resource = await ctx.decisions.resolve(tx, {
-      tenantId,
-      type: inferenceResourceType,
-      id: model.name,
-    });
+    const resource = await ctx.decisions.resolve(
+      tx,
+      { tenantId, type: inferenceResourceType, id: model.name },
+      false,
+      undefined,
+      labeling,
+    );
     const decision = decideOn(prepared, resource);
     if (decision.allowed) result.push(view);
   }

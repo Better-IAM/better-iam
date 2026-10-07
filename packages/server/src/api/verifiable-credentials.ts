@@ -9,6 +9,7 @@ import {
 } from '@better-iam/core';
 import type { ServerContext } from '../context.js';
 import { grantDeadline } from '../grant-deadline.js';
+import { OperationDenied } from '../operations.js';
 import type { ProtocolMount } from '../options.js';
 import { SdJwtError } from '../sd-jwt.js';
 import { hash, id } from '../utils.js';
@@ -18,6 +19,7 @@ import {
   assertVc,
   createIssuerKey,
   createNonce,
+  holderCleared,
   holderFromProof,
   issueCredential,
   issuerJwks,
@@ -518,6 +520,9 @@ export function createVerifiableCredentialsApi(ctx: ServerContext) {
         const identity = await ctx.activeIdentity(tx, text(input.identityId, 'identityId'), tenant.id);
         if (identity.status !== 'active' || ctx.identityExpired(identity))
           throw new IamError('IDENTITY_INACTIVE', 'Credentials are issued to active members only', 409);
+        // Security clearances: whoever offers it, the holder must be cleared for the type's classification label.
+        if (!(await holderCleared(ctx, tx, tenant, identity, type.name, principal.session.mfa)))
+          throw new OperationDenied('The holder is not cleared for this credential type');
         return makeOffer(tx, tenant, type, identity, principal, options, false, withTxCode);
       });
     },
@@ -1031,7 +1036,10 @@ export function createVcProtocol(ctx: ServerContext): ProtocolMount {
         if ((type.requireMfa && identity.kind === 'user' && !offer.mfa) || !(await mayRequest(ctx, tx, principal, tenant, type)))
           return refuse(403, 'access_denied', 'The holder may no longer receive this credential', 'access-changed');
         deadline = await grantDeadline(ctx, tx, principal, tenantId, Infinity, 'vc:request');
-      }
+      } else if (!(await holderCleared(ctx, tx, tenant, identity, type.name, offer.mfa)))
+        // An administrator's offer needs no `vc:request`, but the holder must still be cleared for the type's
+        // classification label now (security clearances).
+        return refuse(403, 'access_denied', 'The holder may no longer receive this credential', 'access-changed');
       let holder: { jwk: import('jose').JWK; thumbprint: string };
       try {
         holder = await holderFromProof(ctx, tx, tenantId, proof);

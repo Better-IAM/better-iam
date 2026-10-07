@@ -87,11 +87,13 @@ scan. It is for the caller (`vc:request`, like `request`) or, with `identityId`,
 expires after the deployment's `offerLifetimeMs`. A token request without the PIN does not count as a guess; five wrong
 PINs end the offer. For self-service offers, policy and MFA are decided again when the wallet redeems the offer, and
 the credential ends with the grants that allow it. An administrator's offer records them as the credential's
-`issuedBy`.
+`issuedBy`. With [security clearances](/docs/guides/security-clearances), the holder of an administrator's offer must
+dominate the credential type's classification label when it is offered, when it is redeemed, and in every sweep.
 
 - **Audited as:** `vc:offer:create`; refused redemptions (wrong PIN, lockout, access changed) as a denied
   `vc:offer:redeem`.
-- **Errors:** as `request`; `IDENTITY_INACTIVE` for someone who is not an active member.
+- **Errors:** as `request`; `IDENTITY_INACTIVE` for someone who is not an active member; `ACCESS_DENIED` (audited) for
+  an administrator's offer to someone not cleared for the type's label.
 
 ## mine
 

@@ -11,6 +11,7 @@ import {
   resolvedManaged,
   type CatalogResourceType,
 } from '../catalog.js';
+import { keepInheritedLabel } from '../clearances.js';
 import type { ServerContext } from '../context.js';
 import { decideOn, impersonatingActor } from '../decisions.js';
 import type { ResourceRecord } from '../models.js';
@@ -290,7 +291,7 @@ export function createResourcesApi(ctx: ServerContext) {
         input.tenantId,
         'iam:resources:delete',
         resourceKey(input),
-        async ({ tx }) => {
+        async ({ tx, principal }) => {
           const record = await managedResource(tx, input.tenantId, input.type, input.id);
           if (!record) throw new IamError('NOT_FOUND', 'Resource is not registered', 404);
           if (
@@ -309,6 +310,8 @@ export function createResourcesApi(ctx: ServerContext) {
             resourceId: record.resourceId,
           }))
             await tx.delete('relationships', tuple.id);
+          // Security clearances: what it inherits stays its label, so registering it again elsewhere cannot declassify.
+          await keepInheritedLabel(ctx, tx, principal, record);
           await tx.delete('resources', record.id);
           return { deleted: true };
         },

@@ -7,6 +7,7 @@ import {
   type PolicyStatement,
 } from '@better-iam/core';
 import {
+  clearanceServerKeys,
   optionalPrincipalServerKeys,
   optionalResourceServerKeys,
   principalServerKeys,
@@ -34,9 +35,9 @@ export interface PolicyLintContext {
   /** Keys the application supplies through resolveContext. */
   contextKeys?: string[];
   /**
-   * The deployment enables security clearances (`options.clearances`): `resource.classification`,
-   * `resource.classificationRank`, `resource.compartments`, `resource.noforn` and `resource.releasableTo` are then the
-   * server's. Without it they are ordinary resource attributes.
+   * The deployment enables security clearances (`options.clearances`): the `principal.clearance*` keys and
+   * `resource.classification`, `resource.classificationRank`, `resource.compartments`, `resource.noforn` and
+   * `resource.releasableTo` are then the server's. Without it they are ordinary context keys and resource attributes.
    */
   clearances?: boolean;
 }
@@ -128,9 +129,12 @@ const variablesOf = (value: Scalar): string[] =>
 const compare = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 
 function keyInfo(key: string, context: PolicyLintContext): KeyInfo {
-  // A classification label's keys are the server's only with security clearances (`context.clearances`).
+  // The clearance and classification keys are the server's only with security clearances (`context.clearances`);
+  // without it they are ordinary keys the application may supply.
   const server =
-    serverKeys.get(key) ?? (context.clearances ? resourceServerKeys.get(key) : undefined);
+    !context.clearances && clearanceServerKeys.has(key)
+      ? undefined
+      : (serverKeys.get(key) ?? (context.clearances ? resourceServerKeys.get(key) : undefined));
   if (server) return { known: true, optional: optionalServerKeys.has(key), type: server };
   // Session tags: a valid tag name is an optional server string; an invalid one can never be set.
   if (key.startsWith(sessionTagPrefix))

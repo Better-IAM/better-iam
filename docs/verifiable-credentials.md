@@ -234,8 +234,11 @@ status list with two bits per entry (0 valid, 1 revoked, 2 suspended), so verifi
 
 The scheduler job `iam.verifiableCredentials.sweep()` (hourly) revokes the credentials of people who are no longer
 active members (reason `identity-inactive`). It also re-decides `vc:request` for self-service credentials, with the MFA
-state of the session that obtained them, and revokes those no longer allowed (`access-changed`). A suspended
-organization's credentials already fail verification, so the sweep leaves them for its reinstatement.
+state of the session that obtained them, and revokes those no longer allowed (`access-changed`). With
+[security clearances](security-clearances.md), it also revokes any credential, an administrator's included, whose
+holder no longer dominates the type's classification label (`access-changed`); an administrator's offer needs that
+too when it is made and when the wallet redeems it. A suspended organization's credentials already fail verification,
+so the sweep leaves them for its reinstatement.
 
 ## Issuer keys
 

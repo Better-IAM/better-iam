@@ -19,7 +19,7 @@ import {
 } from '@better-iam/core';
 import { agentDecisionScope } from '../agents.js';
 import { acceptanceCurrent, type Agreement, type AgreementAcceptance } from '../agreements.js';
-import { reservedResourceTypes } from '../catalog.js';
+import { reservedResourceTypes, resourceTypeName } from '../catalog.js';
 import {
   applicableLabel,
   assertClearances,
@@ -245,7 +245,10 @@ export interface ResourceLabelState {
   type: string;
   id: string;
   label: ResourceLabelView | null;
-  /** The join of the labels its managed ancestors pass down (`inheritToChildren`). */
+  /**
+   * The join of the labels its managed ancestors pass down (`inheritToChildren`), the labels of the same model in the
+   * tenants above, and, for an SSH login, its host's label.
+   */
   inherited: ClassificationLabel | null;
 }
 
@@ -342,9 +345,18 @@ function citizenshipList(value: unknown): string[] {
   return [...countries].sort();
 }
 
-/** A resource type that can carry a label: any type but the platform's own. */
+/**
+ * A resource type that can carry a label: a resource type name (lowercase letters, digits and `-`, as every declared,
+ * registered and built-in type is) other than the platform's own. Never a `/`, so the `{type}/{id}` key of a label and
+ * its `classifications/labels/{type}/{id}` resource name each belong to exactly one resource.
+ */
 function labelType(value: unknown): string {
   const type = text(value, 'type');
+  if (!resourceTypeName.test(type))
+    throw new IamError(
+      'INVALID_INPUT',
+      'type must be a resource type name: a lowercase letter, then up to 63 lowercase letters, digits or "-"',
+    );
   if (reservedResourceTypes.has(type))
     throw new IamError('INVALID_INPUT', 'Platform resource types cannot be labeled');
   return type;
@@ -912,8 +924,9 @@ export function createClearancesApi(ctx: ServerContext) {
       ),
     /**
      * Changes the scheme this tenant defines (an inherited one is changed where it is defined: CONFLICT). New levels go
-     * above every remaining level; a level or compartment that a live clearance or a label uses cannot be removed or
-     * re-ranked, and every label must stay valid (RESOURCE_IN_USE). Settings change freely. `version` (optional) must
+     * above every remaining level; no level is ever re-ranked (one removed earlier comes back only at its former rank),
+     * a level or compartment that a live clearance or a label uses cannot be removed, and every label must stay valid
+     * (RESOURCE_IN_USE). Settings change freely. `version` (optional) must
      * match the stored one. Requires iam:classifications:manage and a recent sign-in; audited as
      * `classification:scheme-update`.
      */
@@ -966,11 +979,18 @@ export function createClearancesApi(ctx: ServerContext) {
               ).filter((field) => input[field] !== undefined),
             ];
             const now = ctx.now();
-            const { defaultLabel: _defaultLabel, notify: _notify, ...kept } = scheme;
+            const retiredLevels = retiredLevelsAfter(scheme, definition);
+            const {
+              defaultLabel: _defaultLabel,
+              notify: _notify,
+              retiredLevels: _retired,
+              ...kept
+            } = scheme;
             const next = await tx.put<ClassificationScheme>(clearanceCollections.schemes, {
               ...kept,
               definition,
               ...settings,
+              ...(retiredLevels.length ? { retiredLevels } : {}),
               updatedAt: now,
               updatedBy: principal.identity.id,
               version: scheme.version + 1,
@@ -1732,14 +1752,14 @@ export function createClearancesApi(ctx: ServerContext) {
               false,
             );
             const reference = { tenantId: tenant.id, type, id: resourceId };
-            let resolved: ResolvedResource = reference;
+            let labeled: ResolvedResource;
             try {
-              resolved = await ctx.decisions.resolve(tx, reference, false);
+              labeled = await ctx.decisions.resolve(tx, reference, false, undefined, { scheme });
             } catch (error) {
               // An unregistered or unresolvable resource still has its IAM-held label (labels outlive resources).
               if (!(error instanceof IamError)) throw error;
+              labeled = await attachLabel(ctx, tx, tenant.id, reference, { scheme });
             }
-            const labeled = await attachLabel(ctx, tx, tenant.id, resolved, { scheme });
             const label = applicableLabel(scheme, labeled);
             const views = states.map(partyView);
             if (label === undefined)
@@ -1838,8 +1858,10 @@ export function createClearancesApi(ctx: ServerContext) {
       ),
     /**
      * Lowers, changes or (with `label: null`) removes a resource's label. The caller's own clearance must dominate the
-     * current label (nobody declassifies what they could not read). Requires iam:classifications:declassify and a
-     * recent sign-in; audited as `classification:declassify` with the reason.
+     * current label as the scheme in force reads it (nobody declassifies what they could not read), also for a label
+     * written under another scheme; only a label naming a level, compartment or caveat the scheme does not define may be
+     * repaired without. Requires iam:classifications:declassify and a recent sign-in; audited as
+     * `classification:declassify` with the reason.
      */
     declassify: (
       credential: CredentialInput,
@@ -1870,7 +1892,10 @@ export function createClearancesApi(ctx: ServerContext) {
             const existing = await storedLabel(tx, tenant.id, type, resourceId);
             if (!existing) throw new IamError('NOT_FOUND', 'This resource has no label', 404);
             const acting = await officer(tx, principal, tenant, scheme, undefined);
-            // A label the scheme no longer reads (broken) may be repaired; a valid one only by someone who could read it.
+            // Nobody declassifies what they could not read, as the scheme in force reads the label, even one written under
+            // another scheme (it refuses everyone until replaced, but its level still means what it says here). Only a
+            // label naming what this scheme does not define, which no clearance can dominate, may be repaired by anyone
+            // holding the permission.
             if (
               isValidClassificationLabel(existing.label, scheme.definition) &&
               partiesFail(
@@ -2010,9 +2035,31 @@ export function createClearancesApi(ctx: ServerContext) {
 }
 
 /**
- * Refuses a definition change that would reinterpret what is in use: new levels must rank above every level kept; a
- * level a live clearance or a label uses must keep its id and rank; a compartment in use must stay; every label must
- * remain valid.
+ * The levels a scheme has ever removed, with their last rank, once `next` replaces its definition (`retiredLevels`):
+ * those removed now join the ones removed before, and any that `next` brings back (at that rank) leave. Sorted by id.
+ */
+function retiredLevelsAfter(
+  scheme: ClassificationScheme,
+  next: ClassificationSchemeDefinition,
+): Array<{ id: string; rank: number }> {
+  const retired = new Map((scheme.retiredLevels ?? []).map((level) => [level.id, level.rank]));
+  for (const level of scheme.definition.levels) retired.set(level.id, level.rank);
+  for (const level of next.levels) retired.delete(level.id);
+  if (retired.size > clearanceLimits.maxRetiredLevels)
+    throw new IamError(
+      'INVALID_INPUT',
+      `A scheme removes at most ${clearanceLimits.maxRetiredLevels} distinct levels over its life`,
+    );
+  return [...retired]
+    .map(([levelId, rank]) => ({ id: levelId, rank }))
+    .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+}
+
+/**
+ * Refuses a definition change that would reinterpret what may be in use: new levels must rank above every level kept;
+ * every level keeps its rank, and one removed earlier comes back only at its former rank (IAM cannot see every use: an
+ * application's resolver asserts labels by level id, and a default label may name any level); a level a live
+ * clearance or a label uses cannot be removed; a compartment in use must stay; every label must remain valid.
  */
 async function assertDefinitionChange(
   tx: IamStore,
@@ -2026,6 +2073,16 @@ async function assertDefinitionChange(
   for (const level of next.levels)
     if (!before.has(level.id) && level.rank <= keptTop)
       throw new IamError('INVALID_INPUT', 'New levels go above every existing level');
+  const retired = new Map((scheme.retiredLevels ?? []).map((level) => [level.id, level.rank]));
+  for (const level of next.levels) {
+    const former = before.get(level.id)?.rank ?? retired.get(level.id);
+    if (former !== undefined && former !== level.rank)
+      throw new IamError(
+        'RESOURCE_IN_USE',
+        'Levels keep their rank: labels, including those your application asserts, may use any level',
+        409,
+      );
+  }
   const records = (
     await tx.find<Clearance>(clearanceCollections.clearances, { schemeTenantId: scheme.tenantId })
   ).filter(
@@ -2038,16 +2095,13 @@ async function assertDefinitionChange(
     ...records.map((record) => record.level),
     ...labels.map((item) => item.label.level),
   ]);
-  for (const levelId of levels) {
-    const was = before.get(levelId);
-    const now = after.get(levelId);
-    if (was && (!now || now.rank !== was.rank))
+  for (const levelId of levels)
+    if (before.has(levelId) && !after.has(levelId))
       throw new IamError(
         'RESOURCE_IN_USE',
-        'A level that clearances or labels use cannot be removed or re-ranked',
+        'A level that clearances or labels use cannot be removed',
         409,
       );
-  }
   const compartments = new Set(next.compartments.map((compartment) => compartment.id));
   const used = new Set([
     ...records.flatMap((record) => (record.readIns ?? []).map((item) => item.compartmentId)),

@@ -3469,7 +3469,7 @@
      "resource",
      "known?"
     ],
-    "doc": "Attaches a resource's effective classification label as the server-owned `classification` field (never an\nattribute): its IAM label, joined with the labels inherited from managed parents (at most 16 levels) and with the\n`classification` the application's resolver returned, which can therefore only raise it. An asserted label that is\nnot valid for the scheme makes the result invalid, so every party is refused. `null` means looked up and unlabeled.\nWithout a scheme in force the resource is returned unchanged. Platform-internal resources carry a label only as\n`iam/{type}/{id}`, labeled as the resource it names. Pass `known.scheme` when the caller already resolved the scheme\n(`null` for none) to save the ancestry reads.",
+    "doc": "Attaches a resource's effective classification label as the server-owned `classification` field (never an\nattribute): its IAM label, joined with the labels inherited from managed parents (at most 16 levels) and with the\n`classification` the application's resolver returned, which can therefore only raise it. An asserted label that is\nnot valid for the scheme makes the result invalid, so every party is refused. `null` means looked up and unlabeled.\nWithout a scheme to enforce the resource is returned unchanged. Platform-internal resources carry a label only as\n`iam/{type}/{id}`, labeled as the resource it names. Pass `known.scheme` when the caller already resolved the scheme\n(`null` for none) to save the ancestry reads, and for an alias `known.named`: the named resource as the application\nresolves it (`resolve` passes it for application actions), whose own `classification` and reported parent count\ntoo, or `null` when its resolver failed, which refuses every party (fail closed).",
     "deprecated": false
    },
    {
@@ -3561,9 +3561,10 @@
      "target",
      "chain",
      "agentScope",
-     "now"
+     "now",
+     "root?"
     ],
-    "doc": "The mandatory part of a decision for one session in `target`: undefined when no scheme is in force there (nothing to\nenforce) or the principal is a root administrator and `clearances.appliesToRoot` is false. Otherwise the session's\nparties (see `sessionParties`) with their clearances at `now`, their policy keys, and the check every party must pass\non labeled resources. Called by `prepareDecision` after the tenant checks and the agent scope; `chain` is the\ntarget's ancestry from itself to the root.",
+    "doc": "The mandatory part of a decision for one session in `target`: undefined when there is no scheme to enforce there\n(`enforcedScheme`: none in force and no label left over from one) or the principal is a root administrator and\n`clearances.appliesToRoot` is false. Otherwise the session's parties (see `sessionParties`) with their clearances at\n`now`, their policy keys, and the check every party must pass on labeled resources. Called by `prepareDecision`\nafter the tenant checks and the agent scope; `chain` is the target's ancestry from itself to the root, and `root`\nwhether the principal is a root administrator when the caller already knows (read otherwise).",
     "deprecated": false
    },
    {
@@ -3927,7 +3928,7 @@
      "tenantId",
      "type"
     ],
-    "doc": "The effective IAM-held labels of every labeled resource of one type in a tenant, by resource id, for listings: own\nlabels joined with what registered resources inherit from their managed parents. Labels an application resolver\nasserts are not included (decisions still apply them). Empty when no scheme is in force.",
+    "doc": "The effective IAM-held labels of every labeled resource of one type in a tenant, by resource id, for listings: own\nlabels joined with what registered resources inherit from their managed parents. Labels an application resolver\nasserts are not included (decisions still apply them). Empty when there is no scheme to enforce; where labels\noutlived their scheme (`enforcedScheme`), each one is invalid and refuses everyone.",
     "deprecated": false
    },
    {

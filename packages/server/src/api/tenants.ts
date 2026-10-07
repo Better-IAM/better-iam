@@ -15,6 +15,7 @@ import {
 } from '@better-iam/core';
 import { encryptSecret, type TrustedDevice } from '@better-iam/auth';
 import { tenantAccessPolicy } from '../access-policy.js';
+import { assertSchemeKept } from '../clearances.js';
 import { slug, type ServerContext } from '../context.js';
 import type { GrantAuthority, OwnerInvitation, TenantAlias } from '../models.js';
 import { assertNoTenantLegalHold } from '../privacy.js';
@@ -583,6 +584,8 @@ export function createTenantsApi(ctx: ServerContext) {
           if ((await ctx.ancestry(tx, parent)).length + height > maxDepth)
             throw new IamError('MAX_DEPTH', 'Maximum tenant depth reached');
           await ctx.grantingAuthority(tx, principal, parent.id, input.authorityId);
+          // Security clearances: never out from under the scheme its labels and clearances were written under.
+          await assertSchemeKept(ctx, tx, target, parent, subtree);
           const result = await tx.put('tenants', { ...target, parentId: parent.id });
           await ctx.events.audit(
             tx,

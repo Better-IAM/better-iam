@@ -118,8 +118,9 @@ Lowers, changes, or removes a resource's label, with a reason.
   `null` to remove it) or `reason`, or for a label the scheme cannot read; `IMPERSONATION_RESTRICTED`;
   `RECENT_AUTH_REQUIRED`.
 
-Nobody declassifies what they could not read. A label the scheme in force can no longer read (written under another
-scheme) may be replaced by anyone with the permission. `inheritToChildren: false` stops a label passing down.
+Nobody declassifies what they could not read, as the scheme in force reads the label, even one written under another
+scheme. Only a label naming a level, compartment, or caveat the scheme in force does not define, which no clearance can
+dominate, may be repaired by anyone with the permission. `inheritToChildren: false` stops a label passing down.
 
 <ApiShape id="clearances.declassify" http />
 
@@ -245,7 +246,8 @@ Returns a resource's own IAM label and what it inherits from its managed parents
 - **Errors:** `NOT_FOUND` when no scheme applies; `INVALID_INPUT` for a platform type.
 
 `label` is null when the resource has none of its own, and `inherited` is the join of the labels its managed ancestors
-pass down. A label your resolver returns is applied by decisions but is not shown here; use [`explain`](#explain) for
+pass down, the labels of the same model in the tenants above, and, for an SSH login, its host's label. A label your
+resolver returns is applied by decisions but is not shown here; use [`explain`](#explain) for
 the label a decision applies.
 
 <ApiShape id="clearances.getLabel" http />
@@ -331,11 +333,13 @@ Labels a resource or raises its label; lowering any part of a label is a declass
 - **Errors:** `ACCESS_DENIED` (audited) when the new label does not cover the current one in every dimension, would
   turn inheritance off, or replaces a label written under another scheme (use [`declassify`](#declassify));
   `INVALID_INPUT` for a label the scheme cannot read (unknown level or compartment, a caveat the scheme does not use, a
-  malformed country) or a platform type; `NOT_FOUND` when no scheme applies; `IMPERSONATION_RESTRICTED`.
+  malformed country), a platform type, or a `type` that is not a resource type name (a lowercase letter, then
+  lowercase letters, digits, or `-`); `NOT_FOUND` when no scheme applies; `IMPERSONATION_RESTRICTED`.
 
 The resource need not exist yet, and the label outlives it, so deleting and recreating a resource never declassifies
-it. With `inheritToChildren: true` the label also applies to every managed descendant. Labeling the same label again
-changes nothing and records no `classification:label` event.
+it; a registered resource deleted while it inherits a label keeps that label as its own. With
+`inheritToChildren: true` the label also applies to every managed descendant. Labeling the same label again changes
+nothing and records no `classification:label` event.
 
 ```ts
 await iam.api.clearances.label(credential, {
@@ -640,9 +644,11 @@ Changes the scheme the tenant defines: its settings, or its definition within ru
   new version and, for a new definition, the level, compartment, and owner country ids.
 - **Errors:** `NOT_FOUND` when no scheme applies; `CONFLICT` (409) when an ancestor defines the scheme in force;
   `VERSION_CONFLICT` (409) when `version` is not the stored one; `RESOURCE_IN_USE` (409) when the new definition
-  removes or re-ranks a level that a live clearance or a label uses, removes a compartment in use, or would make a
-  label invalid; `INVALID_INPUT` for a `template`, new levels that do not rank above every kept level, a definition or
-  setting that does not validate, or a kept `defaultLabel` the new definition cannot read; `RECENT_AUTH_REQUIRED`.
+  re-ranks any level (labels your resolver asserts or a `defaultLabel` may use any level, so none is ever re-ranked,
+  and one removed earlier comes back only at the rank it had), removes a level that a live clearance or a label uses,
+  removes a compartment in use, or would make a label invalid; `INVALID_INPUT` for a `template`, new levels that do not
+  rank above every kept level, a definition or setting that does not validate, or a kept `defaultLabel` the new
+  definition cannot read; `RECENT_AUTH_REQUIRED`.
 
 Only the fields you pass change; `null` clears `defaultLabel` and `notify`. Settings such as `requireLabels`,
 `guestCeiling`, and `interimAllowed` take effect on the next decision. Adding an owner country widens who reads NOFORN

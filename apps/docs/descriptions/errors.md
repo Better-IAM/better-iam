@@ -1499,9 +1499,12 @@ The record is still referenced by other records, so it cannot be deleted or chan
 
 Examples: a role that other roles inherit or packages include, a policy still attached to a role, a group that
 packages grant or that approves requests, a resource type with registered resources, relationships, or child types, a
-resource with child resources, a package that is still assigned, an action still used by policies and roles, and a
-classification scheme change that would remove or re-rank a level a clearance or label uses, remove a compartment in
-use, or make a label invalid ([`clearances.updateScheme`](/docs/reference/api/clearances#updatescheme)).
+resource with child resources, a package that is still assigned, an action still used by policies and roles, a
+classification scheme change that would re-rank a level (or bring a removed one back at another rank), remove a level
+or compartment a clearance or label uses, or make a label invalid
+([`clearances.updateScheme`](/docs/reference/api/clearances#updatescheme)), moving a tenant that holds
+classification labels or live clearances out from under its scheme (`tenants.reparent`), and deleting a resource
+whose inherited classification label the scheme in force cannot read (`resources.delete`).
 
 **How to fix:** remove or repoint the references the message names, then retry.
 

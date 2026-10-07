@@ -1,5 +1,5 @@
 {
- "generatedAt": "2026-10-07T14:17:07.450Z",
+ "generatedAt": "2026-10-07T15:33:30.556Z",
  "basePath": "/api/iam",
  "groups": [
   {
@@ -12563,7 +12563,7 @@
       }
      ],
      "async": true,
-     "result": "{\n  status: 'pending' | 'approved' | 'revoked';\n  active: boolean;\n  controlKey: string;\n  subject: string;\n  reason: string;\n  expiresAt: number;\n  createdBy: string;\n  createdAt: number;\n  approvedBy?: string;\n  approvedAt?: number;\n  revokedBy?: string;\n  revokedAt?: number;\n  id: string;\n  tenantId: string;\n  uniqueKey?: string;\n}[]",
+     "result": "{\n  status: 'pending' | 'revoked' | 'approved';\n  active: boolean;\n  controlKey: string;\n  subject: string;\n  reason: string;\n  expiresAt: number;\n  createdBy: string;\n  createdAt: number;\n  approvedBy?: string;\n  approvedAt?: number;\n  revokedBy?: string;\n  revokedAt?: number;\n  id: string;\n  tenantId: string;\n  uniqueKey?: string;\n}[]",
      "resultSchema": {
       "type": "array",
       "items": {
@@ -39872,7 +39872,7 @@
       }
      ],
      "async": true,
-     "result": "{\n  deletedAt?: number;\n  status: 'active' | 'suspended' | 'deleted';\n  name: string;\n  type: string;\n  parentId: string | null;\n  slug?: string;\n  region?: string;\n  boundary?: PolicyDocument;\n  authPolicy?: TenantAuthPolicy;\n  accessPolicy?: TenantAccessPolicy;\n  limits?: TenantLimits;\n  createdAt: number;\n  id: string;\n  tenantId: string;\n  uniqueKey?: string;\n}",
+     "result": "{\n  deletedAt?: number;\n  status: 'suspended' | 'deleted' | 'active';\n  name: string;\n  type: string;\n  parentId: string | null;\n  slug?: string;\n  region?: string;\n  boundary?: PolicyDocument;\n  authPolicy?: TenantAuthPolicy;\n  accessPolicy?: TenantAccessPolicy;\n  limits?: TenantLimits;\n  createdAt: number;\n  id: string;\n  tenantId: string;\n  uniqueKey?: string;\n}",
      "resultSchema": {
       "type": "object",
       "properties": {
@@ -54380,7 +54380,7 @@
        "$ref": "#/components/schemas/ClassificationLabel"
       }
      ],
-     "description": "The join of the labels its managed ancestors pass down (`inheritToChildren`)."
+     "description": "The join of the labels its managed ancestors pass down (`inheritToChildren`), the labels of the same model in the\ntenants above, and, for an SSH login, its host's label."
     }
    },
    "required": [

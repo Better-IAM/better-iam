@@ -68,9 +68,10 @@ Enforced:
   blind "write up"; Better IAM does not.)
 - **Every party.** Agents acting for a person, the sponsor behind an agent's key, and the administrator behind a
   "view as" session must each dominate the label ([parties](#whose-clearance-counts)).
-- **Fail closed.** An unknown level, compartment, or caveat, a label written under another scheme, a malformed label
-  from your resolver, a resource whose label could not be looked up, and an unlabeled resource of a type the scheme
-  requires a label on (without a `defaultLabel`) all refuse every party.
+- **Fail closed.** An unknown level, compartment, or caveat, a label written under another scheme, a label left in a
+  tenant that no scheme applies to any more, a malformed label from your resolver (or a resolver that fails for the
+  resource an `iam/{type}/{id}` alias names), a resource whose label could not be looked up, and an unlabeled resource
+  of a type the scheme requires a label on (without a `defaultLabel`) all refuse every party.
 - **At decision time.** Status, expiry, interim policy, the guest ceiling, and NDA acceptance are evaluated on every
   decision. No worker has to run for a suspension, an expiry, or a lapsed NDA to take effect.
 
@@ -87,8 +88,10 @@ Not enforced in this version:
   registration attributes.
 - **Integrity models** such as Biba, and labels on people's data in IAM itself.
 - **Artifacts issued earlier.** A suspension or a new label takes effect on the next decision. SSH certificates are
-  re-checked by the SSH sweep (`iam.ssh.sweep()`, every few minutes), but verifiable credentials, assertions, and
-  delegation tokens issued before stay valid until they expire or are revoked.
+  re-checked by the SSH sweep (`iam.ssh.sweep()`, every few minutes) and verifiable credentials by the credential
+  sweep (`iam.verifiableCredentials.sweep()`, hourly), which revokes those whose holder no longer dominates the type's
+  label; until a sweep runs they stay valid, and assertions and delegation tokens issued before stay valid until they
+  expire or are revoked.
 
 ## Permissions
 
@@ -119,6 +122,13 @@ A tenant (normally an organization) defines one scheme, and it applies to the te
 scheme in force for a tenant is the one defined **closest to the root** of its ancestry, so a project can neither
 redefine nor re-rank its organization's levels, and a scheme defined at the platform (root) tenant applies everywhere.
 Defining a scheme where the tenant, an ancestor, or a tenant below it already defines one is a `CONFLICT`.
+
+Labels and clearances stay under the scheme they were written under. Moving a tenant (`tenants.reparent`) so that
+another scheme, or none, would apply to it is refused with `RESOURCE_IN_USE` while it or any tenant below it holds a
+label or a live (interim, active, or suspended) clearance: declassify and revoke them first. Moves that keep the scheme
+in force (within an organization's subtree, or anywhere under a platform-wide scheme) are not affected. Should a label
+ever be left in a tenant that no scheme applies to (data restored from elsewhere, say), it refuses everyone, root
+included, rather than being ignored.
 
 ### Templates
 
@@ -178,7 +188,7 @@ Validation messages name positions (`levels[2].rank`), never submitted names.
 
 | Setting          | Meaning                                                                                                                                                                                                                           |
 | ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `requireLabels`  | Resource types (up to 100) whose unlabeled resources are refused for everyone. `*` covers every application type, but not the built-in `model`, `ssh-host`, `ssh-login`, and `credential-type` types, which you can list by name. |
+| `requireLabels`  | Resource types (up to 100) whose unlabeled resources are refused for everyone. `*` covers every application type, but not the built-in `model`, `model-tool`, `ssh-host`, `ssh-login`, and `credential-type` types, which you can list by name. |
 | `defaultLabel`   | Applied to unlabeled resources of the required types instead of refusing them. `null` removes it.                                                                                                                                 |
 | `guestCeiling`   | The highest level a [guest's](guests.md) clearance counts at. `null` (the default): guests hold no clearance.                                                                                                                     |
 | `interimAllowed` | Whether interim clearances count at decision time (default `false`). Turning it off stops every interim clearance from counting at once.                                                                                          |
@@ -192,8 +202,11 @@ Validation messages name positions (`levels[2].rank`), never submitted names.
 is reinterpreted:
 
 - new levels must rank above every level kept (`INVALID_INPUT`);
-- a level that a live (interim, active, or suspended) clearance or a label uses cannot be removed or re-ranked, a
-  compartment in use cannot be removed, and every label must stay valid, so a caveat that labels use cannot be dropped
+- no level is ever re-ranked, whether or not IAM sees it in use (your resolver asserts labels by level id, and a
+  `defaultLabel` may name any level), and a level removed earlier comes back only at the rank it had
+  (`RESOURCE_IN_USE`);
+- a level that a live (interim, active, or suspended) clearance or a label uses cannot be removed, a compartment in use
+  cannot be removed, and every label must stay valid, so a caveat that labels use cannot be dropped
   (`RESOURCE_IN_USE`);
 - the `defaultLabel` must stay valid under the new definition, or be replaced or removed in the same call
   (`INVALID_INPUT`).
@@ -340,9 +353,14 @@ Labels live in IAM (`resourceLabels`), never in resource attributes, and have th
 - `declassify` (`iam:classifications:declassify`, a recent sign-in, and a `reason`) lowers, changes, or (with
   `label: null`) removes a label. The caller's own clearance must dominate the current label: nobody declassifies what
   they could not read.
-- Labels outlive their resources: deleting a resource and registering it again does not declassify it.
-- Platform types (`iam`, `tenant`, `identity`, `session`, `role`, `oauth-client`, `scim`, `saml`, `ssf`) cannot be
-  labeled.
+- Labels outlive their resources: deleting a resource and registering it again does not declassify it. A registered
+  resource that inherits a label from its managed parents keeps it when it is deleted: what it inherited joins its own
+  label (audited as `classification:label` with `reason: 'resource-deleted'`), so registering it again under another
+  parent changes nothing. Deleting is refused (`RESOURCE_IN_USE`) while what it inherits cannot be read under the
+  scheme in force.
+- The type is a resource type name (a lowercase letter, then lowercase letters, digits, or `-`); platform types
+  (`iam`, `tenant`, `identity`, `session`, `role`, `oauth-client`, `scim`, `saml`, `ssf`) cannot be labeled. Ids may
+  hold `/`.
 
 `getLabel` returns a resource's own label and what it inherits; `listLabels` lists the tenant's labels by type and level.
 
@@ -354,7 +372,11 @@ The label a decision applies is the **join** of:
 2. every label marked `inheritToChildren` on its managed parents and their ancestors, through the registration's parent
    and the parent its attributes report (`parentType` / `parentId`), up to 16 levels (deeper or cyclic chains refuse
    everyone);
-3. the `classification` your `resolveResource` returns for it, validated against the scheme.
+3. for built-in resources served from elsewhere: a model's labels in every tenant above (a project uses its
+   organization's models, so a label written where the model is defined applies in the project too), and an SSH
+   login's host label (a label on `ssh-host/{host}` applies to every login of the host, whatever its
+   `inheritToChildren`, including logins added later);
+4. the `classification` your `resolveResource` returns for it, validated against the scheme.
 
 The join takes the higher level, the union of compartments, NOFORN when either has it, and the intersection of
 `releasableTo` lists. It never lowers anything, so your resolver can **raise** a label (for example from a marking in
@@ -374,16 +396,24 @@ resolveResource: async (reference) => {
 
 An unlabeled resource of a type in `requireLabels` gets the scheme's `defaultLabel`, or is refused for everyone. An
 application action on the platform alias `iam/{type}/{id}` gets the answer the named resource gets, so the alias never
-reads lower; `iam:` actions on it are administration and are never subject. Plugin endpoints with their own (non-`iam:`)
-action on a record they name are decided the same way: under `requireLabels: ['*']` such an endpoint refuses everyone
-until the record it names is labeled, as `authorize` does.
+reads lower: its label includes what your `resolveResource` returns for `{type}/{id}` itself (its `classification` and
+the parent it reports), and a resolver that fails for it refuses every party. `iam:` actions on it are administration
+and are never subject. Plugin endpoints with their own (non-`iam:`) action on a record they name are decided the same
+way: under `requireLabels: ['*']` such an endpoint refuses everyone until the record it names is labeled, as
+`authorize` does.
 
 SSH hosts (`ssh-host`, id the host name) and logins (`ssh-login`, id `{host}/{login}`), credential types
 (`credential-type`), and models (`model`) can be labeled like any resource; certificates, credential offers, and model
-calls are then decided against the label.
+calls are then decided against the label. Label a host to protect every login to it; label a model in the tenant that
+defines it to protect it wherever it is inherited. A credential an administrator offers someone (`iam:vc:issue`) needs
+no `vc:request`, but its holder must still dominate the type's label: when the offer is made (an audited
+`ACCESS_DENIED` otherwise), when the wallet redeems it, and in every credential sweep, which revokes it
+(`access-changed`) once the holder no longer does.
 
 A label written under another scheme (a tenant moved below an ancestor that defines its own) refuses everyone until it
-is replaced with `declassify`, which anyone with the permission may do for such a broken label.
+is replaced with `declassify`. Nobody declassifies what they could not read, so that still needs a clearance that
+dominates the label as the scheme in force reads it; only a label naming a level, compartment, or caveat the scheme
+in force does not define, which no clearance can dominate, may be repaired by anyone with the permission.
 
 ## How decisions apply clearances
 
@@ -476,7 +506,8 @@ below it, or unlabeled ones (`resource.classificationRank` is -1 for those).
   labels, `id in [...]` for the registered resources they can. Both compile to every target (`filterToSql`,
   `filterToPrisma`, `filterToMongo`, `filterMatches`). A plan answers `UNSUPPORTED_FILTER` when it cannot be exact: for
   an application (unmanaged) type the scheme requires labels on, for any application type while a label in the tenant
-  is passed down to children (the parents your resolver reports are invisible to a filter), and when a statement that
+  is passed down to children (the parents your resolver reports are invisible to a filter), for SSH logins while a host
+  is labeled, and when a statement that
   could apply to the planned action conditions on a label's keys (`resource.classification`,
   `resource.classificationRank`, `resource.compartments`, `resource.noforn`, `resource.releasableTo`), which the server
   derives per resource rather than reading from the row. Check those resources with `authorize`.
@@ -580,6 +611,7 @@ only for what `authorizeMany` allows, and compartment names reach only holders o
 | Citizenship per clearance            | 10 countries                                      |
 | Extra reminder recipients            | 20                                                |
 | Label inheritance                    | 16 levels of managed parents (fail closed beyond) |
+| Levels removed over a scheme's life  | 500 (each remembered with its rank)               |
 | Reminder window                      | 60 days by default, 1 to 365                      |
 | Dates (`expiresAt`, reinvestigation) | within twenty years                               |
 | Reasons                              | 512 characters                                    |

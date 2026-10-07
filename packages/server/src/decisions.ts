@@ -20,6 +20,7 @@ import {
   attachLabel,
   clearanceScope,
   schemeForTenant,
+  type ClassificationScheme,
   type MandatoryAccess,
 } from './clearances.js';
 import { isServerOwnedKey, sessionTagName } from './context-keys.js';
@@ -208,6 +209,19 @@ export function decideOn(
 }
 
 /**
+ * What `resolve` may take as known (`known`) from a decision prepared in the same tenant: the scheme its mandatory
+ * check enforces (`null`: none), so labels are attached without reading the tenant's ancestry and schemes again.
+ * Undefined for a fixed decision, which says nothing about it.
+ */
+export function preparedLabeling(
+  prepared: PreparedDecision,
+): { scheme: ClassificationScheme | null } | undefined {
+  return 'fixed' in prepared || !prepared.inputs
+    ? undefined
+    : { scheme: prepared.inputs.mandatory?.scheme ?? null };
+}
+
+/**
  * Classification labels (security clearances) for resources a module builds itself instead of through `resolve` (SSH
  * logins and hosts, credential types): returns a function that gives each of `resources` its label exactly as
  * `resolve` attaches it. The identity when clearances are off. A resource that was not passed in stays unlooked-up,
@@ -344,13 +358,16 @@ export interface DecisionService {
   ): Promise<EffectiveBinding[]>;
   /**
    * Loads a resource's trusted attributes from the registry or the application resolver. With `action`, a type only a
-   * tenant registered answers from its registry for that type's own actions alone (see shadowsApplicationType).
+   * tenant registered answers from its registry for that type's own actions alone (see shadowsApplicationType). With
+   * security clearances, `known` (`preparedLabeling` of a decision prepared in the same tenant) saves reading the
+   * scheme again.
    */
   resolve(
     tx: IamStore,
     reference: ResourceRef,
     internal?: boolean,
     action?: string,
+    known?: { scheme: ClassificationScheme | null },
   ): Promise<ResolvedResource>;
   /**
    * Loads everything a decision needs except the resource: root override, tenant state, boundaries, and grant paths.
@@ -525,6 +542,39 @@ export function createDecisions(ctx: ServerContext): DecisionService {
       throw new IamError('RESOURCE_MISMATCH', 'Resource ownership mismatch', 403);
     return resolved;
   }
+  /**
+   * Security clearances: the resource an `iam/{type}/{id}` alias names, as `resolve` answers for it when it is
+   * decided directly, so an application action on the alias sees the label the application's resolver asserts and the
+   * parent it reports, and never reads lower than the resource. Undefined when the alias names nothing beyond IAM's own
+   * records (a platform type, a type IAM registers, or no resolver configured); null when resolving it fails, which
+   * the label then refuses (fail closed).
+   */
+  async function namedResource(
+    tx: IamStore,
+    reference: ResourceRef,
+    action: string | undefined,
+  ): Promise<ResolvedResource | null | undefined> {
+    const slash = reference.type === 'iam' ? reference.id.indexOf('/') : -1;
+    if (slash <= 0) return undefined;
+    const named = {
+      tenantId: reference.tenantId,
+      type: reference.id.slice(0, slash),
+      id: reference.id.slice(slash + 1),
+    };
+    if (!named.id || internalResourceTypes.has(named.type)) return undefined;
+    const definition = await catalog.resourceTypeDefinition(tx, named.tenantId, named.type);
+    if (
+      definition?.managed &&
+      !shadowsApplicationType(definition, named.type, action, !!options.resolveResource)
+    )
+      return undefined;
+    try {
+      return await resolveUnlabeled(tx, named, false, action);
+    } catch (error) {
+      if (!(error instanceof IamError)) throw error;
+      return error.code === 'RESOURCE_RESOLVER_REQUIRED' ? undefined : null;
+    }
+  }
   const service: DecisionService = {
     async roleGrants(tx, role, tenantId, ceilings, authorityId, seen = new Set<string>(), lapsed) {
       const paths: GrantPath[] = [];
@@ -688,7 +738,7 @@ export function createDecisions(ctx: ServerContext): DecisionService {
       }
       return result;
     },
-    async resolve(tx, reference, internal = false, action) {
+    async resolve(tx, reference, internal = false, action, known) {
       const resolved = await resolveUnlabeled(tx, reference, internal, action);
       // Security clearances: every resource but the platform's own carries its effective classification label (the
       // IAM label joined with its managed parents' and a resolver's own, which can only raise it), attached at this
@@ -696,10 +746,24 @@ export function createDecisions(ctx: ServerContext): DecisionService {
       // for an `iam:` action goes without (that action never reads it): reviews resolve without an action and then
       // evaluate application actions too (`iam/{type}/{id}` naming a labeled resource), and plugin operations may use
       // their own actions on platform resources.
-      return ctx.config.clearances &&
-        !(internal && internalResourceTypes.has(reference.type) && action?.startsWith('iam:'))
-        ? attachLabel(ctx, tx, reference.tenantId, resolved)
-        : resolved;
+      if (
+        !ctx.config.clearances ||
+        (internal && internalResourceTypes.has(reference.type) && action?.startsWith('iam:'))
+      )
+        return resolved;
+      const scheme = known
+        ? known.scheme
+        : ((await schemeForTenant(tx, reference.tenantId)) ?? null);
+      if (!scheme) return resolved;
+      // For anything but administration, `iam/{type}/{id}` also carries what the application answers for the resource
+      // it names, so the alias never reads lower than the resource itself.
+      const named = action?.startsWith('iam:')
+        ? undefined
+        : await namedResource(tx, reference, action);
+      return attachLabel(ctx, tx, reference.tenantId, resolved, {
+        scheme,
+        ...(named !== undefined ? { named } : {}),
+      });
     },
     async prepareDecision(tx, principal, target, action) {
       const clearances = ctx.config.clearances;
@@ -717,6 +781,7 @@ export function createDecisions(ctx: ServerContext): DecisionService {
           await ctx.ancestry(tx, target),
           undefined,
           ctx.now(),
+          true,
         );
         if (!mandatory) return { fixed: override };
         return {
@@ -824,7 +889,7 @@ export function createDecisions(ctx: ServerContext): DecisionService {
       // acting agent and its sponsor, each agent of a hand-off) must dominate a labeled resource's label. Read whenever
       // clearances are on, never lazily: the check applies whatever the documents say. Undefined without a scheme.
       const mandatory = clearances
-        ? await clearanceScope(ctx, tx, principal, target, chain, agentScope, ctx.now())
+        ? await clearanceScope(ctx, tx, principal, target, chain, agentScope, ctx.now(), false)
         : undefined;
       if (clearances) Object.assign(base, mandatory ? mandatory.keys : unclearedKeys());
       const boundaries = chain.flatMap((realm) => (realm.boundary ? [realm.boundary] : []));
@@ -1100,6 +1165,7 @@ export function createDecisions(ctx: ServerContext): DecisionService {
         { tenantId: target.id, type: request.resource.type, id: request.resource.id },
         internalResource || action.startsWith('iam:'),
         action,
+        preparedLabeling(prepared),
       );
       const evaluated = (ready: PreparedDecision) => decideOn(ready, resource);
       const decision = evaluated(prepared);

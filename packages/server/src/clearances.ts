@@ -27,7 +27,7 @@ import { internalResourceTypes, managedResource, resolvedManaged } from './catal
 import type { ServerContext } from './context.js';
 import type { ResourceRecord } from './models.js';
 import type { ResolvedResource } from './options.js';
-import { hash } from './utils.js';
+import { hash, id } from './utils.js';
 
 /**
  * Security clearances and mandatory access control (the `clearances` option). A tenant (normally an organization)
@@ -58,6 +58,8 @@ export const clearanceLimits = {
   maxNotifyEmails: 20,
   /** How far up managed parents a label is inherited from. */
   maxInheritanceDepth: 16,
+  /** Distinct levels a scheme may remove over its life (each is remembered with its rank). */
+  maxRetiredLevels: 500,
   /** Default window of `sendReminders`, in days. */
   reminderDays: 60,
 } as const;
@@ -65,13 +67,39 @@ export const clearanceLimits = {
 const dayMs = 86_400_000;
 const schemeKey = 'scheme';
 
-/** Resource types the built-in modules resolve themselves; `requireLabels: ['*']` (all application types) skips them. */
+/**
+ * Resource types the built-in modules resolve themselves (models and the provider tools they run, SSH logins and
+ * hosts, credential types); `requireLabels: ['*']` (all application types) skips them.
+ */
 const moduleResourceTypes: ReadonlySet<string> = new Set([
   'model',
+  'model-tool',
   'ssh-login',
   'ssh-host',
   'credential-type',
 ]);
+
+/**
+ * Resource types one record of which serves a whole subtree: an inference model resolves up the tenant tree, so a
+ * project uses its organization's models. A label of such a resource written in any tenant of the deciding tenant's
+ * ancestry applies to it as well (where the model is defined, which officers there can label, and every tenant on the
+ * way down), joined like any other.
+ */
+const treeResourceTypes: ReadonlySet<string> = new Set(['model']);
+
+/** The type of the resource each of these is part of, named by the first segment of their ids (`containerOf`). */
+const containerTypes: ReadonlyMap<string, string> = new Map([['ssh-login', 'ssh-host']]);
+
+/**
+ * The resource another one is part of, whose own label it always carries (whatever its `inheritToChildren`): an SSH
+ * login (`ssh-login/{host}/{login}`) is access to its host, so a label on `ssh-host/{host}` applies to every login of
+ * the host, those added later included.
+ */
+function containerOf(type: string, resourceId: string): { type: string; id: string } | undefined {
+  const container = containerTypes.get(type);
+  const slash = container ? resourceId.indexOf('/') : -1;
+  return container && slash > 0 ? { type: container, id: resourceId.slice(0, slash) } : undefined;
+}
 
 /** How officers may adjudicate: only within their own clearance, or any level the scheme defines. */
 export type AdjudicationMode = 'within-own' | 'unrestricted';
@@ -92,6 +120,11 @@ export interface ClassificationScheme extends StoredRecord {
   adjudication: AdjudicationMode;
   /** Extra recipients of `iam.clearances.sendReminders` besides the defining tenant's owners. */
   notify?: { emails: string[] };
+  /**
+   * Levels removed from the definition, with the rank they had: one comes back only at that rank, so labels your
+   * application asserts with its id (which IAM cannot see) are never re-ranked by removing and re-adding it.
+   */
+  retiredLevels?: Array<{ id: string; rank: number }>;
   createdAt: number;
   createdBy: string;
   updatedAt: number;
@@ -175,6 +208,11 @@ export interface ResourceLabel extends StoredRecord {
  * once per prepared decision by `clearanceScope`.
  */
 export interface MandatoryAccess {
+  /**
+   * The scheme the check enforces in the tenant (see `schemeForTenant`), so `resolve` attaches labels under it without
+   * reading it again. Treat as read-only.
+   */
+  readonly scheme: ClassificationScheme;
   /** `principal.clearance*` keys: the lowest rank of the parties, the shared compartments and citizenship. */
   keys: Record<string, unknown>;
   /**
@@ -266,12 +304,59 @@ async function tenantChain(tx: IamStore, tenantId: string): Promise<{ id: string
   return chain;
 }
 
-/** The scheme in force for a tenant, reading its ancestry from the store. */
+/**
+ * The defining tenant of the stand-in scheme `enforcedScheme` uses where labels outlived the scheme they were written
+ * under: no label or clearance names it, and its definition has no level, so every label it reads is invalid.
+ */
+const lapsedSchemeTenantId = '!no-scheme-in-force';
+
+/** The stand-in scheme of a tenant that holds labels while no scheme is in force: every label refuses everyone. */
+function lapsedScheme(): ClassificationScheme {
+  return {
+    id: lapsedSchemeTenantId,
+    tenantId: lapsedSchemeTenantId,
+    uniqueKey: schemeKey,
+    name: '',
+    definition: { levels: [], compartments: [], ownerCountries: [], caveats: [] },
+    requireLabels: [],
+    guestCeiling: null,
+    interimAllowed: false,
+    adjudication: 'within-own',
+    createdAt: 0,
+    createdBy: '',
+    updatedAt: 0,
+    updatedBy: '',
+    version: 0,
+  };
+}
+
+/**
+ * The scheme decisions enforce in a tenant, given its ancestry (`[tenant, parent, ..., root]`): the scheme in force
+ * (`effectiveScheme`), or, when none is but the tenant still holds labels (written under a scheme that no longer
+ * applies to it), a stand-in under which each of those labels refuses every party, root included: a label is never
+ * dropped because its scheme went away. Undefined when there is nothing to enforce.
+ */
+export async function enforcedScheme(
+  tx: IamStore,
+  tenantId: string,
+  chain: readonly Pick<Tenant, 'id'>[],
+): Promise<ClassificationScheme | undefined> {
+  const scheme = await effectiveScheme(tx, chain);
+  if (scheme) return scheme;
+  const held = await tx.find<ResourceLabel>(
+    clearanceCollections.labels,
+    { tenantId },
+    { limit: 1 },
+  );
+  return held.some((item) => item.tenantId === tenantId) ? lapsedScheme() : undefined;
+}
+
+/** The scheme decisions enforce in a tenant (`enforcedScheme`), reading its ancestry from the store. */
 export async function schemeForTenant(
   tx: IamStore,
   tenantId: string,
 ): Promise<ClassificationScheme | undefined> {
-  return effectiveScheme(tx, await tenantChain(tx, tenantId));
+  return enforcedScheme(tx, tenantId, await tenantChain(tx, tenantId));
 }
 
 /** A level of the scheme by id. */
@@ -438,22 +523,58 @@ async function inheritedAt(
 }
 
 /**
- * The effective IAM-held label of one resource under `scheme`: its own label joined with what it inherits from its
- * managed parents and from the parent its attributes report (`attributes.parentType` / `attributes.parentId`, see
- * `parentsOf`). Undefined when unlabeled.
+ * What a resource carries besides its own label and its managed parents' labels: the labels of the same resource in
+ * the tenants above the deciding one, for types one record of which serves a subtree (`treeResourceTypes`), and the
+ * own label of the resource it is part of (`containerOf`). Undefined when there is none.
+ */
+async function carriedLabel(
+  tx: IamStore,
+  tenantId: string,
+  scheme: ClassificationScheme,
+  type: string,
+  resourceId: string,
+): Promise<ClassificationLabel | undefined> {
+  let label: ClassificationLabel | undefined;
+  if (treeResourceTypes.has(type))
+    for (const realm of (await tenantChain(tx, tenantId)).slice(1)) {
+      const above = await storedLabel(tx, realm.id, type, resourceId);
+      if (above) label = joinLabels(label, storedSchemeLabel(above, scheme), scheme.definition);
+    }
+  const container = containerOf(type, resourceId);
+  if (container) {
+    const held = await storedLabel(tx, tenantId, container.type, container.id);
+    if (held) label = joinLabels(label, storedSchemeLabel(held, scheme), scheme.definition);
+  }
+  return label;
+}
+
+/**
+ * The effective IAM-held label of one resource under `scheme`: its own label joined with what it carries
+ * (`carriedLabel`) and what it inherits from its managed parents and from the parent its attributes report
+ * (`attributes.parentType` / `attributes.parentId`, see `parentsOf`), and from the parent `also` reports (what the
+ * application resolves for the resource an `iam/{type}/{id}` alias names). Undefined when unlabeled.
  */
 async function iamLabel(
   tx: IamStore,
   tenantId: string,
   scheme: ClassificationScheme,
   resource: { type: string; id: string; attributes?: Record<string, unknown> },
+  also?: Record<string, unknown>,
 ): Promise<ClassificationLabel | undefined> {
   const { definition } = scheme;
   const own = await storedLabel(tx, tenantId, resource.type, resource.id);
   const record = await managedResource(tx, tenantId, resource.type, resource.id);
   const memo = new Map<string, InheritedChain>();
   let label = own ? storedSchemeLabel(own, scheme) : undefined;
-  for (const parent of parentsOf(record, resource.attributes))
+  label = joinLabels(
+    label,
+    await carriedLabel(tx, tenantId, scheme, resource.type, resource.id),
+    definition,
+  );
+  const parents = parentsOf(record, resource.attributes);
+  for (const parent of also ? parentsOf(record, also) : [])
+    if (!parents.some((known) => refKey(known) === refKey(parent))) parents.push(parent);
+  for (const parent of parents)
     label = joinLabels(
       label,
       await inheritedAt(tx, tenantId, scheme, parent, refKey(resource), memo),
@@ -467,16 +588,18 @@ async function iamLabel(
  * attribute): its IAM label, joined with the labels inherited from managed parents (at most 16 levels) and with the
  * `classification` the application's resolver returned, which can therefore only raise it. An asserted label that is
  * not valid for the scheme makes the result invalid, so every party is refused. `null` means looked up and unlabeled.
- * Without a scheme in force the resource is returned unchanged. Platform-internal resources carry a label only as
+ * Without a scheme to enforce the resource is returned unchanged. Platform-internal resources carry a label only as
  * `iam/{type}/{id}`, labeled as the resource it names. Pass `known.scheme` when the caller already resolved the scheme
- * (`null` for none) to save the ancestry reads.
+ * (`null` for none) to save the ancestry reads, and for an alias `known.named`: the named resource as the application
+ * resolves it (`resolve` passes it for application actions), whose own `classification` and reported parent count
+ * too, or `null` when its resolver failed, which refuses every party (fail closed).
  */
 export async function attachLabel(
   ctx: ServerContext,
   tx: IamStore,
   tenantId: string,
   resource: ResolvedResource,
-  known?: { scheme: ClassificationScheme | null },
+  known?: { scheme: ClassificationScheme | null; named?: ResolvedResource | null },
 ): Promise<ResolvedResource> {
   const scheme =
     known !== undefined ? (known.scheme ?? undefined) : await schemeForTenant(tx, tenantId);
@@ -484,7 +607,8 @@ export async function attachLabel(
   // `iam/{type}/{id}` is labeled as the resource it names, with what was resolved for this name (the parent its
   // attributes report, a resolver's own label) joined in like for the resource itself, so the alias never reads lower.
   let labeled: { type: string; id: string; attributes?: Record<string, unknown> } = resource;
-  if (internalResourceTypes.has(resource.type)) {
+  const alias = internalResourceTypes.has(resource.type);
+  if (alias) {
     const slash = resource.type === 'iam' ? resource.id.indexOf('/') : -1;
     if (slash <= 0) return resource;
     labeled = {
@@ -494,17 +618,26 @@ export async function attachLabel(
     };
     if (!labeled.id || internalResourceTypes.has(labeled.type)) return resource;
   }
+  const named = alias ? known?.named : undefined;
   const asserted = resource.classification;
-  let label = await iamLabel(tx, tenantId, scheme, labeled);
+  let label = await iamLabel(tx, tenantId, scheme, labeled, named?.attributes);
   if (asserted !== undefined && asserted !== null)
     label = joinLabels(label, schemeLabel(asserted, scheme.definition), scheme.definition);
+  if (named === null) label = invalidLabel;
+  else if (named?.classification !== undefined && named.classification !== null)
+    label = joinLabels(
+      label,
+      schemeLabel(named.classification, scheme.definition),
+      scheme.definition,
+    );
   return { ...resource, classification: label ?? null };
 }
 
 /**
- * What a registered resource inherits from its managed ancestors under `scheme` (the join of their labels marked
- * `inheritToChildren`, through the parents `parentsOf` names for the registration), without its own label; undefined
- * when it inherits nothing.
+ * What a resource inherits under `scheme`, without its own label: the join of the labels marked `inheritToChildren` of
+ * its managed ancestors (through the parents `parentsOf` names for its registration) and what it carries
+ * (`carriedLabel`: the same model's labels in the tenants above, an SSH login's host label); undefined when it inherits
+ * nothing.
  */
 export async function inheritedLabel(
   tx: IamStore,
@@ -515,7 +648,7 @@ export async function inheritedLabel(
 ): Promise<ClassificationLabel | undefined> {
   const record = await managedResource(tx, tenantId, type, resourceId);
   const memo = new Map<string, InheritedChain>();
-  let label: ClassificationLabel | undefined;
+  let label = await carriedLabel(tx, tenantId, scheme, type, resourceId);
   for (const parent of parentsOf(record, record ? resolvedManaged(record).attributes : undefined))
     label = joinLabels(
       label,
@@ -540,6 +673,22 @@ async function typeLabels(
   }))
     if (stored.tenantId === tenantId && stored.type === type)
       result.set(stored.resourceId, storedSchemeLabel(stored, scheme));
+  // Types one record of which serves a subtree carry the labels written above too (see `carriedLabel`).
+  if (treeResourceTypes.has(type))
+    for (const realm of (await tenantChain(tx, tenantId)).slice(1))
+      for (const stored of await tx.find<ResourceLabel>(clearanceCollections.labels, {
+        tenantId: realm.id,
+        type,
+      }))
+        if (stored.tenantId === realm.id && stored.type === type)
+          result.set(
+            stored.resourceId,
+            joinLabels(
+              result.get(stored.resourceId),
+              storedSchemeLabel(stored, scheme),
+              definition,
+            )!,
+          );
   const memo = new Map<string, InheritedChain>();
   for (const record of await tx.find<ResourceRecord>('resources', { tenantId, type })) {
     if (record.type !== type) continue;
@@ -566,7 +715,8 @@ async function typeLabels(
 /**
  * The effective IAM-held labels of every labeled resource of one type in a tenant, by resource id, for listings: own
  * labels joined with what registered resources inherit from their managed parents. Labels an application resolver
- * asserts are not included (decisions still apply them). Empty when no scheme is in force.
+ * asserts are not included (decisions still apply them). Empty when there is no scheme to enforce; where labels
+ * outlived their scheme (`enforcedScheme`), each one is invalid and refuses everyone.
  */
 export async function labelsForType(
   tx: IamStore,
@@ -843,11 +993,12 @@ export function partiesFail(
 }
 
 /**
- * The mandatory part of a decision for one session in `target`: undefined when no scheme is in force there (nothing to
- * enforce) or the principal is a root administrator and `clearances.appliesToRoot` is false. Otherwise the session's
- * parties (see `sessionParties`) with their clearances at `now`, their policy keys, and the check every party must pass
- * on labeled resources. Called by `prepareDecision` after the tenant checks and the agent scope; `chain` is the
- * target's ancestry from itself to the root.
+ * The mandatory part of a decision for one session in `target`: undefined when there is no scheme to enforce there
+ * (`enforcedScheme`: none in force and no label left over from one) or the principal is a root administrator and
+ * `clearances.appliesToRoot` is false. Otherwise the session's parties (see `sessionParties`) with their clearances at
+ * `now`, their policy keys, and the check every party must pass on labeled resources. Called by `prepareDecision`
+ * after the tenant checks and the agent scope; `chain` is the target's ancestry from itself to the root, and `root`
+ * whether the principal is a root administrator when the caller already knows (read otherwise).
  */
 export async function clearanceScope(
   ctx: ServerContext,
@@ -857,18 +1008,20 @@ export async function clearanceScope(
   chain: Tenant[],
   agentScope: AgentDecisionScope | undefined,
   now: number,
+  root?: boolean,
 ): Promise<MandatoryAccess | undefined> {
   if (!ctx.options.clearances) return undefined;
-  const scheme = await effectiveScheme(tx, chain.length ? chain : [target]);
+  const scheme = await enforcedScheme(tx, target.id, chain.length ? chain : [target]);
   if (!scheme) return undefined;
-  const root = await ctx.rootPrincipal(tx, principal);
-  if (root && ctx.options.clearances.appliesToRoot === false) return undefined;
-  const states = await sessionParties(tx, principal, target, agentScope, scheme, now, root);
+  const isRoot = root ?? (await ctx.rootPrincipal(tx, principal));
+  if (isRoot && ctx.options.clearances.appliesToRoot === false) return undefined;
+  const states = await sessionParties(tx, principal, target, agentScope, scheme, now, isRoot);
   const parties = states.map((state) => state.party);
   const { definition } = scheme;
   const passes = (label: ClassificationLabel) =>
     partiesFail(parties, label, definition) === undefined;
   return {
+    scheme,
     keys: clearanceKeys(states),
     label(resource) {
       const label = applicableLabel(scheme, resource);
@@ -920,6 +1073,23 @@ export async function clearanceScope(
           'UNSUPPORTED_FILTER',
           'Classification labels pass down to application resources through the parents their resolver reports, which a filter cannot check; check them with authorize',
         );
+      // Resources part of another carry its label (`containerOf`: an SSH host's label on its logins), which a filter by
+      // id cannot follow: while any of those is labeled, the type is not planned (fail closed).
+      const container = containerTypes.get(type);
+      if (
+        container &&
+        (
+          await tx.find<ResourceLabel>(
+            clearanceCollections.labels,
+            { tenantId: target.id, type: container },
+            { limit: 1 },
+          )
+        ).length
+      )
+        throw new IamError(
+          'UNSUPPORTED_FILTER',
+          'These resources carry the classification labels of the resources they are part of, which a filter cannot check; check them with authorize',
+        );
       const labels = await typeLabels(tx, target.id, scheme, type);
       if (required) {
         const allowed = new Set<string>();
@@ -945,11 +1115,152 @@ export async function clearanceScope(
   };
 }
 
+/**
+ * Whether the mandatory check alone lets `principal` (every party of its session) at `resource` in `tenant` for
+ * `action`, whatever roles and policies say: for what is decided on someone's behalf rather than by their own
+ * decision, such as an administrator's credential offer to them. The resource is labeled here as `resolve` would label
+ * it. True without the option or a scheme to enforce, and for `iam:` actions.
+ */
+export async function clearedFor(
+  ctx: ServerContext,
+  tx: IamStore,
+  principal: AuthenticatedPrincipal,
+  tenant: Tenant,
+  resource: ResolvedResource,
+  action: string,
+): Promise<boolean> {
+  if (!ctx.options.clearances) return true;
+  const mandatory = await clearanceScope(
+    ctx,
+    tx,
+    principal,
+    tenant,
+    await ctx.ancestry(tx, tenant),
+    undefined,
+    ctx.now(),
+  );
+  if (!mandatory) return true;
+  const labeled = await attachLabel(ctx, tx, tenant.id, resource, { scheme: mandatory.scheme });
+  return mandatory.check(labeled, action) === undefined;
+}
+
 // --- lifecycle -------------------------------------------------------------------------------------
 
 /** Whether a clearance already ended: revoked for cause or terminated. Such a record keeps why it ended. */
 const ended = (record: Pick<Clearance, 'status'>) =>
   record.status === 'terminated' || record.status === 'revoked';
+
+/**
+ * Before a registration is deleted (`resources.delete`): what it inherits from its managed parents becomes part of its
+ * own label (joined with any it has), because labels outlive resources but the parent link does not, so deleting it and
+ * registering it again under another parent cannot declassify it. Audited as `classification:label` with
+ * `reason: 'resource-deleted'`. Refuses (RESOURCE_IN_USE) while what it inherits cannot be read under the scheme in
+ * force: repair that label first. Does nothing (and reads nothing) without the option, and nothing without a scheme
+ * to enforce or a label to inherit.
+ */
+export async function keepInheritedLabel(
+  ctx: ServerContext,
+  tx: IamStore,
+  principal: AuthenticatedPrincipal,
+  record: ResourceRecord,
+): Promise<void> {
+  if (!ctx.options.clearances) return;
+  const { tenantId, type, resourceId } = record;
+  const scheme = await schemeForTenant(tx, tenantId);
+  if (!scheme) return;
+  const { definition } = scheme;
+  const inherited = await inheritedLabel(tx, tenantId, scheme, type, resourceId);
+  if (!inherited) return;
+  if (!isValidClassificationLabel(inherited, definition))
+    throw new IamError(
+      'RESOURCE_IN_USE',
+      'This resource inherits a classification label the scheme in force cannot read; repair that label before deleting it',
+      409,
+    );
+  const existing = await storedLabel(tx, tenantId, type, resourceId);
+  // An own label the scheme cannot read already refuses everyone, and outlives the resource as it is.
+  if (existing && !storedLabelValid(existing, scheme)) return;
+  const own = existing ? validateLabel(existing.label, definition) : undefined;
+  const label = joinLabels(own, validateLabel(inherited, definition), definition)!;
+  if (own && JSON.stringify(own) === JSON.stringify(label)) return;
+  const now = ctx.now();
+  const next: ResourceLabel = {
+    id: existing?.id ?? id(),
+    tenantId,
+    uniqueKey: labelKey(type, resourceId),
+    type,
+    resourceId,
+    label,
+    inheritToChildren: existing?.inheritToChildren ?? false,
+    schemeTenantId: scheme.tenantId,
+    labeledBy: principal.identity.id,
+    labeledAt: now,
+    version: (existing?.version ?? 0) + 1,
+  };
+  if (existing) await tx.put<ResourceLabel>(clearanceCollections.labels, next);
+  else await tx.insert<ResourceLabel>(clearanceCollections.labels, next);
+  await ctx.events.audit(
+    tx,
+    principal,
+    'classification:label',
+    tenantId,
+    next.uniqueKey,
+    'allow',
+    false,
+    {
+      type,
+      level: label.level,
+      ...(label.compartments?.length ? { compartments: [...label.compartments] } : {}),
+      ...(label.noforn ? { noforn: true } : {}),
+      ...(label.releasableTo ? { releasableTo: [...label.releasableTo] } : {}),
+      inheritToChildren: next.inheritToChildren,
+      ...(existing ? { previousLevel: existing.label.level } : {}),
+      reason: 'resource-deleted',
+    },
+  );
+}
+
+/**
+ * Refuses moving `tenant` below `parent` (`tenants.reparent`) when the move changes the scheme in force for it and
+ * `subtree` (the tenant and its descendants) holds classification labels or live (interim, active, or suspended)
+ * clearances: they were written under the scheme in force now, and under another one they would stop counting, or with
+ * none in force no longer protect anything. Declassify and revoke them first, or keep the tenant under its scheme.
+ * Does nothing (and reads nothing) without the option.
+ */
+export async function assertSchemeKept(
+  ctx: ServerContext,
+  tx: IamStore,
+  tenant: Tenant,
+  parent: Tenant,
+  subtree: Iterable<string>,
+): Promise<void> {
+  if (!ctx.options.clearances) return;
+  // Only the ancestry above the moved tenant changes: a scheme its subtree defines stays in force unless the new
+  // ancestry brings one closer to the root.
+  const before = await effectiveScheme(tx, (await ctx.ancestry(tx, tenant)).slice(1));
+  const after = await effectiveScheme(tx, await ctx.ancestry(tx, parent));
+  if (before?.tenantId === after?.tenantId) return;
+  for (const tenantId of subtree) {
+    const labels = await tx.find<ResourceLabel>(
+      clearanceCollections.labels,
+      { tenantId },
+      { limit: 1 },
+    );
+    const live = (await tx.find<Clearance>(clearanceCollections.clearances, { tenantId })).some(
+      (record) =>
+        record.tenantId === tenantId &&
+        (record.status === 'active' ||
+          record.status === 'interim' ||
+          record.status === 'suspended'),
+    );
+    if (labels.some((item) => item.tenantId === tenantId) || live)
+      throw new IamError(
+        'RESOURCE_IN_USE',
+        'Moving this tenant changes the classification scheme in force for it while it holds classification labels or clearances; declassify and revoke them first',
+        409,
+      );
+  }
+}
 
 /**
  * Offboarding (`identities.offboard`): ends the leaver's clearance as `terminated`, debriefing every compartment

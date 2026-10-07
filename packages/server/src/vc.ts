@@ -20,6 +20,7 @@ import {
   type Tenant,
 } from '@better-iam/core';
 import { calculateJwkThumbprint, exportJWK, type JWK } from 'jose';
+import { clearedFor } from './clearances.js';
 import type { ServerContext } from './context.js';
 import { decideOn, isRootOverride, moduleResourceLabels } from './decisions.js';
 import { departmentOf } from './departments.js';
@@ -394,6 +395,30 @@ export async function mayRequest(
   const resource = typeResource(type);
   const labeled = await moduleResourceLabels(ctx, tx, tenant.id, [resource]);
   return decideOn(prepared, labeled(resource), vcRequestAction).allowed;
+}
+
+/**
+ * Whether a person (an agent with its sponsor) is cleared for the classification label of credential type `typeName`
+ * (security clearances), whatever roles and policies say: what an administrator offers or issues still needs the
+ * holder to dominate the type's label, at the offer, at redemption, and in the sweep. Self-service credentials are
+ * decided through `mayRequest`, which applies the label itself. True without clearances.
+ */
+export async function holderCleared(
+  ctx: ServerContext,
+  tx: IamStore,
+  tenant: Tenant,
+  identity: Identity,
+  typeName: string,
+  mfa = false,
+): Promise<boolean> {
+  return clearedFor(
+    ctx,
+    tx,
+    ctx.decisions.simulatedPrincipal(identity, mfa),
+    tenant,
+    { tenantId: tenant.id, type: credentialTypeResource, id: typeName },
+    vcRequestAction,
+  );
 }
 
 const claimName = /^[a-zA-Z_][a-zA-Z0-9_]{0,63}$/;
@@ -852,8 +877,9 @@ export interface VcSweepResult {
 }
 
 /**
- * Revokes valid credentials whose holder is no longer an active member, and self-service ones whose holder may no
- * longer request them (`vc:request` decided again, with the MFA state of the issuing session). A scheduler job; each
+ * Revokes valid credentials whose holder is no longer an active member, self-service ones whose holder may no longer
+ * request them (`vc:request` decided again, with the MFA state of the issuing session), and, with security clearances,
+ * any other whose holder no longer dominates the type's classification label (`holderCleared`). A scheduler job; each
  * tenant in its own transaction.
  */
 export async function sweepCredentials(ctx: ServerContext, input: { tenantId?: string } = {}): Promise<VcSweepResult> {
@@ -891,6 +917,11 @@ export async function sweepCredentials(ctx: ServerContext, input: { tenantId?: s
             !!type && (!type.requireMfa || record.mfa === true) && (await mayRequest(ctx, tx, principal, tenant, type));
           const suspended = (await ctx.ancestry(tx, tenant)).some((item) => item.status !== 'active');
           if (!allowed && !suspended) reason = 'access-changed';
+        } else if (!(await holderCleared(ctx, tx, tenant, identity, record.typeName, record.mfa === true))) {
+          // An administrator's credential needs no `vc:request`, but its holder must still be cleared for the type's
+          // classification label (security clearances).
+          const suspended = (await ctx.ancestry(tx, tenant)).some((item) => item.status !== 'active');
+          if (!suspended) reason = 'access-changed';
         }
         if (!reason) continue;
         await writeStatus(ctx, tx, record, 'revoked');

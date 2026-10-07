@@ -343,7 +343,9 @@ Moves a tenant, with its whole subtree, under a different parent.
 - **Errors:** `INVALID_TRANSITION` for the root tenant, a pending tenant, or a deleted one; `INVALID_INPUT` when it
   is already under that parent; `TENANT_INACTIVE` when the new parent or one of its ancestors is not active;
   `INVALID_HIERARCHY` when the type is not allowed under the new parent, or the new parent is inside the tenant's
-  own subtree; `MAX_DEPTH` when the moved subtree would end up too deep; `NOT_FOUND` for an unknown parent.
+  own subtree; `MAX_DEPTH` when the moved subtree would end up too deep; `NOT_FOUND` for an unknown parent;
+  `RESOURCE_IN_USE` (with [security clearances](/docs/guides/security-clearances)) when the move would change the
+  classification scheme in force for a subtree that holds classification labels or live clearances.
 
 Use it when a customer reorganizes, for example to move a project to another organization. Delegation chains are
 not rewritten: grants inside the moved tenant keep the grant authorities they were issued under. Boundaries of the
@@ -715,7 +717,7 @@ iam.api.tenants.setStatus(
   input: { tenantId: string; status: 'active' | 'suspended' | 'deleted' },
 ): Promise<{
   deletedAt?: number;
-  status: 'active' | 'suspended' | 'deleted';
+  status: 'suspended' | 'deleted' | 'active';
   name: string;
   type: string;
   parentId: string | null;

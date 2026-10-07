@@ -8,6 +8,24 @@ icon: RotateCcwClock
 
 # Changelog
 
+## 0.3.1 (2026-10-07)
+
+Security fixes for security clearances (only deployments that set the `clearances` option are affected; nothing else changes). An adversarial review of 0.3.0 found ways for labels to stop applying: moving a tenant to a parent without a scheme switched enforcement off for its labels (now refused, and labels without a scheme in force refuse everyone), deleting a managed resource and registering it again under another parent dropped the label it inherited (now kept), and labels on AI models in an organization did not reach its projects. SSH host labels now reach logins, verifiable-credential offers check the holder's clearance, scheme edits can no longer re-rank a level, and label types are validated. Upgrade if you enabled clearances.
+
+- Security clearances: labels no longer slip away from what they protect (only with the `clearances` option).
+  - `tenants.reparent` refuses (`RESOURCE_IN_USE`) a move that would change the classification scheme in force for a subtree holding labels or live (interim, active, suspended) clearances; before, moving a project below an organization without a scheme dropped every label in it, so root and members could read up. A label left in a tenant no scheme applies to now refuses everyone, root included, instead of being ignored.
+  - `resources.delete` keeps what a registration inherited from its managed parents as its own label (audited as `classification:label` with `reason: 'resource-deleted'`), so deleting it and registering it again under another parent no longer declassifies it; deleting is refused while that inherited label cannot be read under the scheme in force.
+  - An administrator's verifiable credential offer (`iam:vc:issue`) needs the holder to dominate the credential type's label when it is offered (audited `ACCESS_DENIED`), when the wallet redeems it, and in every `verifiableCredentials.sweep()`, which now revokes any credential (`access-changed`) whose holder no longer does, not only self-service ones.
+  - A label on `ssh-host/{host}` applies to every login of the host (`ssh-login/{host}/{login}`, those added later included), whatever its `inheritToChildren`, so certificates, `myAccess` and the SSH sweep follow it; plans for `ssh-login` answer `UNSUPPORTED_FILTER` while a host is labeled.
+  - Labels on `model/{name}` in any tenant above the deciding one apply too, so a model labeled where it is defined is refused in the projects that inherit it (inference calls, `listMine`, plans).
+  - An application action on `iam/{type}/{id}` (plugin endpoints included) also applies what `resolveResource` answers for `{type}/{id}` itself, its `classification` and the parent it reports, and refuses when that resolver fails, so the alias never reads lower.
+  - Label types must be resource type names (no `/`, `INVALID_INPUT` otherwise), so `{type}/{id}` keys can no longer collide and block labeling a resource whose id holds a slash.
+  - `updateScheme` never re-ranks a level, in use or not (labels your resolver asserts and a `defaultLabel` may use any), and a removed level comes back only at its former rank (`RESOURCE_IN_USE`); the scheme remembers removed levels (at most 500).
+  - `requireLabels: ['*']` no longer covers the built-in `model-tool` type, which refused every `inference:use-tool` decision.
+  - Policy lint treats the `principal.clearance*` keys as server keys only when the deployment enables clearances, as before the option existed.
+  - Decisions read the scheme once: `resolve` takes the scheme the prepared decision already loaded (`preparedLabeling`), and the root check is not repeated.
+  - Docs: `declassify` of a label written under another scheme still needs a clearance that dominates it as the scheme in force reads it; only a label naming what the scheme does not define may be repaired by anyone with the permission.
+
 ## 0.3.0 (2026-10-07)
 
 Third release: 24 packages. Three new access-governance domains: B2B guest collaboration (outside people invited with a sponsor, an end date and cross-tenant admission rules), license management (products, seat pools, assignments, seniority and waiting lists, and `principal.licenses` / `identity.licenses` for policies and birthright packages), and security clearances with mandatory access control (classification schemes, adjudicated clearances and compartment read-ins, IAM-held resource labels, and a "no read up" check on every decision path, off unless the new `clearances` option is set). Threat detection gains list filters and a classified-access rule, and installing `better-iam` no longer installs every framework. Breaking: `guest`, `guestSponsorId`, `homeTenantId` and `licenses` are reserved principal names; with `clearances` enabled, more names are reserved and root administrators no longer read up on labeled resources.

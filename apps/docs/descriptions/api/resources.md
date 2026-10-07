@@ -43,11 +43,14 @@ Removes a registered resource and every relationship tuple on it.
 - **Permission:** `iam:resources:delete` on `iam/{type}/{id}`.
 - **Audited as:** `iam:resources:delete`, on `{type}/{id}`.
 - **Errors:** `NOT_FOUND` when the resource is not registered; `RESOURCE_IN_USE` when registered child resources
-  still point at it; `INVARIANT_VIOLATION` when an enforced
+  still point at it, or (with [security clearances](/docs/guides/security-clearances)) while the classification label
+  it inherits cannot be read under the scheme in force; `INVARIANT_VIOLATION` when an enforced
   [access invariant](/docs/guides/governance/change-safety) would newly fail.
 
 Delete children first: a parent cannot be removed while resources registered under it exist. Once deleted, any
-decision about the resource sees no attributes, owner, or relations.
+decision about the resource sees no attributes, owner, or relations. Classification labels stay: a label the resource
+inherited from its parents becomes part of its own (audited as `classification:label`), so registering it again under
+another parent cannot declassify it.
 
 ## get
 
