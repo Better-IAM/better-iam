@@ -1,8 +1,9 @@
 # The Better IAM documentation site (apps/docs), built from the repository root: the site imports the
 # workspace packages and type-checks its code samples against their build output, so the whole
-# workspace is installed and built first. Railway uses this through /railway.json.
+# workspace is installed and built first. It sits at the repository root because Railway builds a root
+# `Dockerfile` on its own: config files (/railway.json) are deprecated there and new services ignore them.
 #
-#   docker build -f apps/docs/Dockerfile -t better-iam-docs .
+#   docker build -t better-iam-docs .
 #   docker run -p 3000:3000 better-iam-docs
 FROM node:24-bookworm-slim
 

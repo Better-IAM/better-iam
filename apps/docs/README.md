@@ -46,11 +46,14 @@ No hues and no radial gradients: states are told apart by weight (solid ink, out
 
 ## Deploying
 
-The package is private: `pnpm publish -r` skips it. [`Dockerfile`](Dockerfile) builds the site from the repository
-root (install, `pnpm build` for the workspace packages, then `next build`) and runs `next start` on `$PORT`.
+The package is private: `pnpm publish -r` skips it. The repository root's [`Dockerfile`](../../Dockerfile) builds the
+site (install, `pnpm build` for the workspace packages, then `next build`) and runs `next start` on `$PORT`.
 
-On Railway, create a service from this repository with no root directory: `/railway.json` selects that Dockerfile,
-checks `/` as the health check, and redeploys only when the docs, the packages, or the workspace manifests change.
+On Railway, create a service from this repository with no root directory. Railway builds a root `Dockerfile` without
+any configuration (its build log shows "Using detected Dockerfile"). `/railway.json` adds the `/` health check and
+redeploys only when the docs, the packages, or the workspace manifests change, but Railway has deprecated config
+files: new services ignore them and existing ones stop reading them on 2026-12-01, so set the health check, restart
+policy, and watch paths in the service settings as well.
 Generate a public domain; it becomes the site's canonical URL (sitemap, `llms.txt`, social cards) on the next
 deploy. Optional service variables, read at build time:
 
