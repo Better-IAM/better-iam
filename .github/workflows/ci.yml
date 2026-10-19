@@ -57,18 +57,128 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
       - run: pnpm test:postgres
-  # Publishes to npm after every green push to main whose package version is not on npm yet.
-  # Bump the version with `node scripts/release-version.mjs X.Y.Z` to cut a release.
-  publish:
-    needs: [test, postgres]
+  rust:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - run: cargo test --workspace --locked
+  rust-postgres:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: better-iam-ci
+          POSTGRES_DB: better_iam_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready --health-interval 5s
+          --health-timeout 5s --health-retries 10
+    env:
+      BETTER_IAM_POSTGRES_URL: postgres://postgres:better-iam-ci@localhost:5432/better_iam_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --workspace --locked postgres -- --test-threads=1
+  go:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: go
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go/go.mod
+          cache-dependency-path: go/go.sum
+      - run: test -z "$(gofmt -l .)"
+        shell: bash
+      - run: go vet ./...
+      - run: go test ./...
+  go-postgres:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: better-iam-ci
+          POSTGRES_DB: better_iam_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready --health-interval 5s
+          --health-timeout 5s --health-retries 10
+    env:
+      BETTER_IAM_POSTGRES_URL: postgres://postgres:better-iam-ci@localhost:5432/better_iam_test
+    defaults:
+      run:
+        working-directory: go
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go/go.mod
+          cache-dependency-path: go/go.sum
+      - run: go test -p 1 -run Postgres ./...
+  # Releases run after every green push to main whose version is not published yet. npm, crates.io, and the Go
+  # module share one version: bump it with `node scripts/release-version.mjs X.Y.Z`.
+  release-plan:
+    needs: [test, postgres, rust, rust-postgres, go, go-postgres]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.plan.outputs.version }}
+      tag: ${{ steps.plan.outputs.tag }}
+      npm: ${{ steps.plan.outputs.npm }}
+      crates: ${{ steps.plan.outputs.crates }}
+      go: ${{ steps.plan.outputs.go }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: plan
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          version=$(node -p "require('./packages/better-iam/package.json').version")
+          cargo_version=$(awk '/^\[workspace.package\]/{s=1;next} /^\[/{s=0} s && /^version = /{gsub(/"/,"",$3); print $3}' Cargo.toml)
+          go_version=$(sed -n 's/^const Version = "\(.*\)"/\1/p' go/version.go)
+          if [ "$cargo_version" != "$version" ] || [ "$go_version" != "$version" ]; then
+            echo "::error::Versions differ: npm $version, Cargo $cargo_version, Go $go_version. Run scripts/release-version.mjs."
+            exit 1
+          fi
+          if [[ "$version" == *-* ]]; then tag=next; else tag=latest; fi
+          npm=false; crates=false; go=false
+          if [ -z "$NPM_TOKEN" ]; then echo "::warning::NPM_TOKEN secret is not set; skipping npm publish."
+          elif ! npm view "better-iam@$version" version >/dev/null 2>&1; then npm=true; fi
+          status=$(curl -s -o /dev/null -w '%{http_code}' -A 'better-iam-release (https://github.com/Better-IAM/better-iam)' "https://crates.io/api/v1/crates/better-iam/$version")
+          if [ "$status" = 404 ]; then crates=true; fi
+          if ! git rev-parse -q --verify "refs/tags/go/v$version" >/dev/null; then go=true; fi
+          {
+            echo "version=$version"; echo "tag=$tag"; echo "npm=$npm"; echo "crates=$crates"; echo "go=$go"
+          } >> "$GITHUB_OUTPUT"
+  publish-npm:
+    needs: release-plan
+    if: needs.release-plan.outputs.npm == 'true'
     runs-on: ubuntu-latest
     environment: npm
     concurrency:
-      group: publish
+      group: publish-npm
       cancel-in-progress: false
     permissions:
-      contents: write # tag + GitHub release
+      contents: read
       id-token: write # npm provenance
     steps:
       - uses: actions/checkout@v4
@@ -80,43 +190,118 @@ jobs:
           node-version: 24
           cache: pnpm
           registry-url: https://registry.npmjs.org
-      - name: Decide whether to publish
-        id: version
-        env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: |
-          version=$(node -p "require('./packages/better-iam/package.json').version")
-          if [[ "$version" == *-* ]]; then tag=next; else tag=latest; fi
-          if [ -z "$NPM_TOKEN" ]; then
-            echo "::warning::NPM_TOKEN secret is not set; skipping npm publish."
-            publish=false
-          elif npm view "better-iam@$version" version >/dev/null 2>&1; then
-            echo "better-iam@$version is already on npm; nothing to publish."
-            publish=false
-          else
-            publish=true
-          fi
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
-          echo "publish=$publish" >> "$GITHUB_OUTPUT"
-      - if: steps.version.outputs.publish == 'true'
-        run: pnpm install --frozen-lockfile
-      - if: steps.version.outputs.publish == 'true'
-        run: pnpm build
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
       - name: Publish to npm
-        if: steps.version.outputs.publish == 'true'
         # pnpm skips packages whose version is already published, so a rerun finishes a partial release.
-        run: pnpm publish -r --access public --provenance --no-git-checks --tag ${{ steps.version.outputs.tag }}
+        run: pnpm publish -r --access public --provenance --no-git-checks --tag ${{ needs.release-plan.outputs.tag }}
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           NPM_CONFIG_PROVENANCE: 'true'
+  publish-crates:
+    needs: release-plan
+    if: needs.release-plan.outputs.crates == 'true'
+    runs-on: ubuntu-latest
+    environment: crates-io
+    concurrency:
+      group: publish-crates
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write # crates.io trusted publishing
+    timeout-minutes: 360 # crates.io rate-limits brand-new crates; the first release waits between them
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # Trusted publishing (GitHub OIDC) works once each crate exists and is configured for it on crates.io; the
+      # CARGO_REGISTRY_TOKEN secret covers the first release.
+      - id: auth
+        continue-on-error: true
+        uses: rust-lang/crates-io-auth-action@v1
+      - name: Publish to crates.io
+        # Skips versions already on crates.io, so a rerun finishes a partial release.
+        run: node scripts/publish-crates.mjs
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token || secrets.CARGO_REGISTRY_TOKEN }}
+  publish-go:
+    needs: release-plan
+    if: needs.release-plan.outputs.go == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # go/vX.Y.Z tag
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go/go.mod
+      # The module lives in go/, so its version tags are go/vX.Y.Z; vX.Y.Z stays the repository release tag.
+      - name: Tag the Go module and index it on proxy.golang.org
+        env:
+          VERSION: ${{ needs.release-plan.outputs.version }}
+        run: |
+          git tag "go/v$VERSION" "$GITHUB_SHA"
+          git push origin "go/v$VERSION"
+          for i in $(seq 1 30); do
+            if GOPROXY=https://proxy.golang.org GOFLAGS=-mod=mod go list -m "github.com/Better-IAM/better-iam/go@v$VERSION"; then exit 0; fi
+            sleep 10
+          done
+          echo "::warning::proxy.golang.org has not indexed go/v$VERSION yet; it will on first use."
+  binaries:
+    needs: release-plan
+    if: needs.release-plan.outputs.npm == 'true' || needs.release-plan.outputs.crates == 'true' || needs.release-plan.outputs.go == 'true'
+    strategy:
+      matrix:
+        include:
+          - { os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
+          - { os: ubuntu-24.04-arm, target: aarch64-unknown-linux-gnu }
+          - { os: macos-latest, target: aarch64-apple-darwin }
+          - { os: macos-13, target: x86_64-apple-darwin }
+          - { os: windows-latest, target: x86_64-pc-windows-msvc }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go/go.mod
+          cache-dependency-path: go/go.sum
+      - name: Build the Rust and Go CLIs
+        shell: bash
+        env:
+          VERSION: ${{ needs.release-plan.outputs.version }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          cargo build --release --locked -p better-iam-cli
+          ext=""; if [[ "$TARGET" == *windows* ]]; then ext=".exe"; fi
+          mkdir -p dist
+          cp "target/release/better-iam$ext" "dist/better-iam-rs-$VERSION-$TARGET$ext"
+          (cd go && go build -trimpath -ldflags "-s -w" -o "../dist/better-iam-go-$VERSION-$TARGET$ext" ./cmd/better-iam)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: binaries-${{ matrix.target }}
+          path: dist/*
+  github-release:
+    needs: [release-plan, publish-npm, publish-crates, publish-go, binaries]
+    # Runs when every publish job either succeeded or had nothing to publish.
+    if: ${{ !cancelled() && needs.release-plan.result == 'success' && !contains(needs.*.result, 'failure') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # tag + GitHub release
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: binaries-*
+          path: dist
+          merge-multiple: true
       - name: Tag and create GitHub release
-        if: steps.version.outputs.publish == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ steps.version.outputs.version }}
+          VERSION: ${{ needs.release-plan.outputs.version }}
         run: |
           if gh release view "v$VERSION" >/dev/null 2>&1; then exit 0; fi
           prerelease=""
           if [[ "$VERSION" == *-* ]]; then prerelease="--prerelease"; fi
-          gh release create "v$VERSION" --target "$GITHUB_SHA" --title "v$VERSION" --generate-notes $prerelease
+          gh release create "v$VERSION" --target "$GITHUB_SHA" --title "v$VERSION" --generate-notes $prerelease dist/*
