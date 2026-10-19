@@ -1,0 +1,23 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.3.1"
+edition = "2024"
+rust-version = "1.88"
+license = "Apache-2.0"
+repository = "https://github.com/Better-IAM/better-iam"
+homepage = "https://github.com/Better-IAM/better-iam"
+authors = ["Better IAM contributors"]
+
+# Internal crates are listed here with both `path` and `version` so `cargo publish --workspace` resolves them;
+# `scripts/release-version.mjs` keeps these versions in lockstep with the workspace version.
+[workspace.dependencies]
+
+[profile.dev.package."*"]
+opt-level = 1
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
