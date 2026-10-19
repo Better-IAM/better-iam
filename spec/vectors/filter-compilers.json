@@ -1,0 +1,7367 @@
+{
+  "description": "Filter compilers for plans: filterToSql for sqlite (\"?\" placeholders, GLOB) and postgres (\"$n\" placeholders after `offset`, LIKE ... ESCAPE '\\'), filterToPrisma, filterToMongo, describeFilter, and filterMatches against sample records. The column mapping in every SQL case is field => `\"${field}\"` except fields named missing* (no column: INVALID_INPUT). Unsupported atoms throw UNSUPPORTED_FILTER.",
+  "source": "packages/core/src/filter-compilers.ts#filterToSql,filterToPrisma,filterToMongo,describeFilter,filterMatches",
+  "cases": [
+    {
+      "name": "sqlite true",
+      "input": {
+        "filter": {
+          "kind": "true"
+        },
+        "dialect": "sqlite"
+      },
+      "output": {
+        "sql": "1 = 1",
+        "params": []
+      }
+    },
+    {
+      "name": "postgres true",
+      "input": {
+        "filter": {
+          "kind": "true"
+        },
+        "dialect": "postgres"
+      },
+      "output": {
+        "sql": "TRUE",
+        "params": []
+      }
+    },
+    {
+      "name": "prisma true",
+      "input": {
+        "filter": {
+          "kind": "true"
+        }
+      },
+      "output": {}
+    },
+    {
+      "name": "mongo true",
+      "input": {
+        "filter": {
+          "kind": "true"
+        }
+      },
+      "output": {}
+    },
+    {
+      "name": "describe true",
+      "input": {
+        "filter": {
+          "kind": "true"
+        }
+      },
+      "output": "true"
+    },
+    {
+      "name": "sqlite false",
+      "input": {
+        "filter": {
+          "kind": "false"
+        },
+        "dialect": "sqlite"
+      },
+      "output": {
+        "sql": "1 = 0",
+        "params": []
+      }
+    },
+    {
+      "name": "postgres false",
+      "input": {
+        "filter": {
+          "kind": "false"
+        },
+        "dialect": "postgres"
+      },
+      "output": {
+        "sql": "FALSE",
+        "params": []
+      }
+    },
+    {
+      "name": "prisma false",
+      "input": {
+        "filter": {
+          "kind": "false"
+        }
+      },
+      "output": {
+        "id": {
+          "in": []
+        }
+      }
+    },
+    {
+      "name": "mongo false",
+      "input": {
+        "filter": {
+          "kind": "false"
+        }
+      },
+      "output": {
+        "id": {
+          "$in": []
+        }
+      }
+    },
+    {
+      "name": "describe false",
+      "input": {
+        "filter": {
+          "kind": "false"
+        }
+      },
+      "output": "false"
+    },
+    {
+      "name": "sqlite exists",
+      "input": {
+        "filter": {
+          "kind": "exists",
+          "field": "owner"
+        },
+        "dialect": "sqlite"
+      },
+      "output": {
+        "sql": "(\"owner\" IS NOT NULL)",
+        "params": []
+      }
+    },
+    {
+      "name": "postgres exists",
+      "input": {
+        "filter": {
+          "kind": "exists",
+          "field": "owner"
+        },
+        "dialect": "postgres"
+      },
+      "output": {
+        "sql": "(\"owner\" IS NOT NULL)",
+        "params": []
+      }
+    },
+    {
+      "name": "prisma exists",
+      "input": {
+        "filter": {
+          "kind": "exists",
+          "field": "owner"
+        }
+      },
+      "output": {
+        "owner": {
+          "not": null
+        }
+      }
+    },
+    {
+      "name": "mongo exists",
+      "input": {
+        "filter": {
+          "kind": "exists",
+          "field": "owner"
+        }
+      },
+      "output": {
+        "owner": {
+          "$exists": true,
+          "$ne": null
+        }
+      }
+    },
+    {
+      "name": "describe exists",
+      "input": {
+        "filter": {
+          "kind": "exists",
+          "field": "owner"
+        }
+      },
+      "output": "owner exists"
+    },
+    {
+      "name": "sqlite type string",
+      "input": {
+        "filter": {
+          "kind": "type",
+          "field": "owner",
+          "type": "string"
+        },
+        "dialect": "sqlite"
+      },
+      "output": {
+        "sql": "(\"owner\" IS NOT NULL)",
+        "params": []
+      }
+    },
+    {
+      "name": "postgres type string",
+      "input": {
+        "filter": {
+          "kind": "type",
+          "field": "owner",
+          "type": "string"
+        },
+        "dialect": "postgres"
+      },
+      "output": {
+        "sql": "(\"owner\" IS NOT NULL)",
+        "params": []
+      }
+    },
+    {
+      "name": "prisma type string",
+      "input": {
+        "filter": {
+          "kind": "type",
+          "field": "owner",
+          "type": "string"
+        }
+      },
+      "output": {
+        "owner": {
+          "not": null
+        }
+      }
+    },
+    {
+      "name": "mongo type string",
+      "input": {
+        "filter": {
+          "kind": "type",
+          "field": "owner",
+          "type": "string"
+        }
+      },
+      "output": {
+        "owner": {
+          "$type": "string"
+        }
+      }
+    },
+    {
+      "name": "describe type string",
+      "input": {
+        "filter": {
+          "kind": "type",
+          "field": "owner",
+          "type": "string"
+        }
+      },
+      "output": "owner is string"
+    },
+    {
+      "name": "sqlite type ip",
+      "input": {
+        "filter": {
+          "kind": "type",
+          "field": "origin",
+          "type": "ip"
+        },
+        "dialect": "sqlite"
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "UNSUPPORTED_FILTER",
+          "status": 400,
+          "message": "IP address conditions cannot be expressed in SQL; filter these resources with filterMatches or authorize"
+        }
+      }
+    },
+    {
+      "name": "postgres type ip",
+      "input": {
+        "filter": {
+          "kind": "type",
+          "field": "origin",
+          "type": "ip"
+        },
+        "dialect": "postgres"
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "UNSUPPORTED_FILTER",
+          "status": 400,
+          "message": "IP address conditions cannot be expressed in SQL; filter these resources with filterMatches or authorize"
+        }
+      }
+    },
+    {
+      "name": "prisma type ip",
+      "input": {
+        "filter": {
+          "kind": "type",
+          "field": "origin",
+          "type": "ip"
+        }
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "UNSUPPORTED_FILTER",
+          "status": 400,
+          "message": "IP address conditions cannot be expressed in Prisma; filter these resources with filterMatches or authorize"
+        }
+      }
+    },
+    {
+      "name": "mongo type ip",
+      "input": {
+        "filter": {
+          "kind": "type",
+          "field": "origin",
+          "type": "ip"
+        }
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "UNSUPPORTED_FILTER",
+          "status": 400,
+          "message": "IP address conditions cannot be expressed in MongoDB; filter these resources with filterMatches or authorize"
+        }
+      }
+    },
+    {
+      "name": "describe type ip",
+      "input": {
+        "filter": {
+          "kind": "type",
+          "field": "origin",
+          "type": "ip"
+        }
+      },
+      "output": "origin is ip"
+    },
+    {
+      "name": "sqlite equals one",
+      "input": {
+        "filter": {
+          "kind": "equals",
+          "field": "id",
+          "values": [
+            "d1"
+          ]
+        },
+        "dialect": "sqlite"
+      },
+      "output": {
+        "sql": "(\"id\" IS NOT NULL AND \"id\" IN (?))",
+        "params": [
+          "d1"
+        ]
+      }
+    },
+    {
+      "name": "postgres equals one",
+      "input": {
+        "filter": {
+          "kind": "equals",
+          "field": "id",
+          "values": [
+            "d1"
+          ]
+        },
+        "dialect": "postgres"
+      },
+      "output": {
+        "sql": "(\"id\" IS NOT NULL AND \"id\" IN ($1))",
+        "params": [
+          "d1"
+        ]
+      }
+    },
+    {
+      "name": "prisma equals one",
+      "input": {
+        "filter": {
+          "kind": "equals",
+          "field": "id",
+          "values": [
+            "d1"
+          ]
+        }
+      },
+      "output": {
+        "AND": [
+          {
+            "id": {
+              "not": null
+            }
+          },
+          {
+            "id": {
+              "in": [
+                "d1"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "mongo equals one",
+      "input": {
+        "filter": {
+          "kind": "equals",
+          "field": "id",
+          "values": [
+            "d1"
+          ]
+        }
+      },
+      "output": {
+        "id": {
+          "$in": [
+            "d1"
+          ]
+        }
+      }
+    },
+    {
+      "name": "describe equals one",
+      "input": {
+        "filter": {
+          "kind": "equals",
+          "field": "id",
+          "values": [
+            "d1"
+          ]
+        }
+      },
+      "output": "id = \"d1\""
+    },
+    {
+      "name": "sqlite equals many mixed",
+      "input": {
+        "filter": {
+          "kind": "equals",
+          "field": "level",
+          "values": [
+            1,
+            "one",
+            true
+          ]
+        },
+        "dialect": "sqlite"
+      },
+      "output": {
+        "sql": "(\"level\" IS NOT NULL AND \"level\" IN (?, ?, ?))",
+        "params": [
+          1,
+          "one",
+          1
+        ]
+      }
+    },
+    {
+      "name": "postgres equals many mixed",
+      "input": {
+        "filter": {
+          "kind": "equals",
+          "field": "level",
+          "values": [
+            1,
+            "one",
+            true
+          ]
+        },
+        "dialect": "postgres"
+      },
+      "output": {
+        "sql": "(\"level\" IS NOT NULL AND \"level\" IN ($1, $2, $3))",
+        "params": [
+          1,
+          "one",
+          true
+        ]
+      }
+    },
+    {
+      "name": "prisma equals many mixed",
+      "input": {
+        "filter": {
+          "kind": "equals",
+          "field": "level",
+          "values": [
+            1,
+            "one",
+            true
+          ]
+        }
+      },
+      "output": {
+        "AND": [
+          {
+            "level": {
+              "not": null
+            }
+          },
+          {
+            "level": {
+              "in": [
+                1,
+                "one",
+                true
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "mongo equals many mixed",
+      "input": {
+        "filter": {
+          "kind": "equals",
+          "field": "level",
+          "values": [
+            1,
+            "one",
+            true
+          ]
+        }
+      },
+      "output": {
+        "level": {
+          "$in": [
+            1,
+            "one",
+            true
+          ]
+        }
+      }
+    },
+    {
+      "name": "describe equals many mixed",
+      "input": {
+        "filter": {
+          "kind": "equals",
+          "field": "level",
+          "values": [
+            1,
+            "one",
+            true
+          ]
+        }
+      },
+      "output": "level in [1, \"one\", true]"
+    },
+    {
+      "name": "sqlite equals ignore case",
+      "input": {
+        "filter": {
+          "kind": "equals",
+          "field": "team",
+          "values": [
+            "Eng",
+            "OPS",
+            3
+          ],
+          "ignoreCase": true
+        },
+        "dialect": "sqlite"
+      },
+      "output": {
+        "sql": "(\"team\" IS NOT NULL AND LOWER(\"team\") IN (?, ?, ?))",
+        "params": [
+          "eng",
+          "ops",
+          3
+        ]
+      }
+    },
+    {
+      "name": "postgres equals ignore case",
+      "input": {
+        "filter": {
+          "kind": "equals",
+          "field": "team",
+          "values": [
+            "Eng",
+            "OPS",
+            3
+          ],
+          "ignoreCase": true
+        },
+        "dialect": "postgres"
+      },
+      "output": {
+        "sql": "(\"team\" IS NOT NULL AND LOWER(\"team\") IN ($1, $2, $3))",
+        "params": [
+          "eng",
+          "ops",
+          3
+        ]
+      }
+    },
+    {
+      "name": "prisma equals ignore case",
+      "input": {
+        "filter": {
+          "kind": "equals",
+          "field": "team",
+          "values": [
+            "Eng",
+            "OPS",
+            3
+          ],
+          "ignoreCase": true
+        }
+      },
+      "output": {
+        "AND": [
+          {
+            "team": {
+              "not": null
+            }
+          },
+          {
+            "OR": [
+              {
+                "team": {
+                  "equals": "Eng",
+                  "mode": "insensitive"
+                }
+              },
+              {
+                "team": {
+                  "equals": "OPS",
+                  "mode": "insensitive"
+                }
+              },
+              {
+                "team": {
+                  "equals": 3,
+                  "mode": "insensitive"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "mongo equals ignore case",
+      "input": {
+        "filter": {
+          "kind": "equals",
+          "field": "team",
+          "values": [
+            "Eng",
+            "OPS",
+            3
+          ],
+          "ignoreCase": true
+        }
+      },
+      "output": {
+        "team": {
+          "$in": [
+            {},
+            {},
+            3
+          ]
+        }
+      }
+    },
+    {
+      "name": "describe equals ignore case",
+      "input": {
+        "filter": {
+          "kind": "equals",
+          "field": "team",
+          "values": [
+            "Eng",
+            "OPS",
+            3
+          ],
+          "ignoreCase": true
+        }
+      },
+      "output": "team in [\"Eng\", \"OPS\", 3] (any case)"
+    },
+    {
+      "name": "sqlite compare lt",
+      "input": {
+        "filter": {
+          "kind": "compare",
+          "field": "size",
+          "operator": "lt",
+          "value": 100
+        },
+        "dialect": "sqlite"
+      },
+      "output": {
+        "sql": "(\"size\" IS NOT NULL AND \"size\" < ?)",
+        "params": [
+          100
+        ]
+      }
+    },
+    {
+      "name": "postgres compare lt",
+      "input": {
+        "filter": {
+          "kind": "compare",
+          "field": "size",
+          "operator": "lt",
+          "value": 100
+        },
+        "dialect": "postgres"
+      },
+      "output": {
+        "sql": "(\"size\" IS NOT NULL AND \"size\" < $1)",
+        "params": [
+          100
+        ]
+      }
+    },
+    {
+      "name": "prisma compare lt",
+      "input": {
+        "filter": {
+          "kind": "compare",
+          "field": "size",
+          "operator": "lt",
+          "value": 100
+        }
+      },
+      "output": {
+        "AND": [
+          {
+            "size": {
+              "not": null
+            }
+          },
+          {
+            "size": {
+              "lt": 100
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "mongo compare lt",
+      "input": {
+        "filter": {
+          "kind": "compare",
+          "field": "size",
+          "operator": "lt",
+          "value": 100
+        }
+      },
+      "output": {
+        "size": {
+          "$lt": 100
+        }
+      }
+    },
+    {
+      "name": "describe compare lt",
+      "input": {
+        "filter": {
+          "kind": "compare",
+          "field": "size",
+          "operator": "lt",
+          "value": 100
+        }
+      },
+      "output": "size < 100"
+    },
+    {
+      "name": "sqlite compare ge",
+      "input": {
+        "filter": {
+          "kind": "compare",
+          "field": "size",
+          "operator": "ge",
+          "value": 1.5
+        },
+        "dialect": "sqlite"
+      },
+      "output": {
+        "sql": "(\"size\" IS NOT NULL AND \"size\" >= ?)",
+        "params": [
+          1.5
+        ]
+      }
+    },
+    {
+      "name": "postgres compare ge",
+      "input": {
+        "filter": {
+          "kind": "compare",
+          "field": "size",
+          "operator": "ge",
+          "value": 1.5
+        },
+        "dialect": "postgres"
+      },
+      "output": {
+        "sql": "(\"size\" IS NOT NULL AND \"size\" >= $1)",
+        "params": [
+          1.5
+        ]
+      }
+    },
+    {
+      "name": "prisma compare ge",
+      "input": {
+        "filter": {
+          "kind": "compare",
+          "field": "size",
+          "operator": "ge",
+          "value": 1.5
+        }
+      },
+      "output": {
+        "AND": [
+          {
+            "size": {
+              "not": null
+            }
+          },
+          {
+            "size": {
+              "gte": 1.5
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "mongo compare ge",
+      "input": {
+        "filter": {
+          "kind": "compare",
+          "field": "size",
+          "operator": "ge",
+          "value": 1.5
+        }
+      },
+      "output": {
+        "size": {
+          "$gte": 1.5
+        }
+      }
+    },
+    {
+      "name": "describe compare ge",
+      "input": {
+        "filter": {
+          "kind": "compare",
+          "field": "size",
+          "operator": "ge",
+          "value": 1.5
+        }
+      },
+      "output": "size >= 1.5"
+    },
+    {
+      "name": "sqlite like prefix",
+      "input": {
+        "filter": {
+          "kind": "like",
+          "field": "title",
+          "pattern": "Q1-*"
+        },
+        "dialect": "sqlite"
+      },
+      "output": {
+        "sql": "(\"title\" IS NOT NULL AND \"title\" GLOB ?)",
+        "params": [
+          "Q1-*"
+        ]
+      }
+    },
+    {
+      "name": "postgres like prefix",
+      "input": {
+        "filter": {
+          "kind": "like",
+          "field": "title",
+          "pattern": "Q1-*"
+        },
+        "dialect": "postgres"
+      },
+      "output": {
+        "sql": "(\"title\" IS NOT NULL AND \"title\" LIKE $1 ESCAPE '\\')",
+        "params": [
+          "Q1-%"
+        ]
+      }
+    },
+    {
+      "name": "prisma like prefix",
+      "input": {
+        "filter": {
+          "kind": "like",
+          "field": "title",
+          "pattern": "Q1-*"
+        }
+      },
+      "output": {
+        "AND": [
+          {
+            "title": {
+              "not": null
+            }
+          },
+          {
+            "title": {
+              "startsWith": "Q1-"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "mongo like prefix",
+      "input": {
+        "filter": {
+          "kind": "like",
+          "field": "title",
+          "pattern": "Q1-*"
+        }
+      },
+      "output": {
+        "title": {
+          "$regex": "^Q1-[\\s\\S]*$",
+          "$options": "u"
+        }
+      }
+    },
+    {
+      "name": "describe like prefix",
+      "input": {
+        "filter": {
+          "kind": "like",
+          "field": "title",
+          "pattern": "Q1-*"
+        }
+      },
+      "output": "title like \"Q1-*\""
+    },
+    {
+      "name": "sqlite like suffix",
+      "input": {
+        "filter": {
+          "kind": "like",
+          "field": "title",
+          "pattern": "*-draft"
+        },
+        "dialect": "sqlite"
+      },
+      "output": {
+        "sql": "(\"title\" IS NOT NULL AND \"title\" GLOB ?)",
+        "params": [
+          "*-draft"
+        ]
+      }
+    },
+    {
+      "name": "postgres like suffix",
+      "input": {
+        "filter": {
+          "kind": "like",
+          "field": "title",
+          "pattern": "*-draft"
+        },
+        "dialect": "postgres"
+      },
+      "output": {
+        "sql": "(\"title\" IS NOT NULL AND \"title\" LIKE $1 ESCAPE '\\')",
+        "params": [
+          "%-draft"
+        ]
+      }
+    },
+    {
+      "name": "prisma like suffix",
+      "input": {
+        "filter": {
+          "kind": "like",
+          "field": "title",
+          "pattern": "*-draft"
+        }
+      },
+      "output": {
+        "AND": [
+          {
+            "title": {
+              "not": null
+            }
+          },
+          {
+            "title": {
+              "endsWith": "-draft"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "mongo like suffix",
+      "input": {
+        "filter": {
+          "kind": "like",
+          "field": "title",
+          "pattern": "*-draft"
+        }
+      },
+      "output": {
+        "title": {
+          "$regex": "^[\\s\\S]*-draft$",
+          "$options": "u"
+        }
+      }
+    },
+    {
+      "name": "describe like suffix",
+      "input": {
+        "filter": {
+          "kind": "like",
+          "field": "title",
+          "pattern": "*-draft"
+        }
+      },
+      "output": "title like \"*-draft\""
+    },
+    {
+      "name": "sqlite like contains",
+      "input": {
+        "filter": {
+          "kind": "like",
+          "field": "title",
+          "pattern": "*plan*"
+        },
+        "dialect": "sqlite"
+      },
+      "output": {
+        "sql": "(\"title\" IS NOT NULL AND \"title\" GLOB ?)",
+        "params": [
+          "*plan*"
+        ]
+      }
+    },
+    {
+      "name": "postgres like contains",
+      "input": {
+        "filter": {
+          "kind": "like",
+          "field": "title",
+          "pattern": "*plan*"
+        },
+        "dialect": "postgres"
+      },
+      "output": {
+        "sql": "(\"title\" IS NOT NULL AND \"title\" LIKE $1 ESCAPE '\\')",
+        "params": [
+          "%plan%"
+        ]
+      }
+    },
+    {
+      "name": "prisma like contains",
+      "input": {
+        "filter": {
+          "kind": "like",
+          "field": "title",
+          "pattern": "*plan*"
+        }
+      },
+      "output": {
+        "AND": [
+          {
+            "title": {
+              "not": null
+            }
+          },
+          {
+            "title": {
+              "contains": "plan"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "mongo like contains",
+      "input": {
+        "filter": {
+          "kind": "like",
+          "field": "title",
+          "pattern": "*plan*"
+        }
+      },
+      "output": {
+        "title": {
+          "$regex": "^[\\s\\S]*plan[\\s\\S]*$",
+          "$options": "u"
+        }
+      }
+    },
+    {
+      "name": "describe like contains",
+      "input": {
+        "filter": {
+          "kind": "like",
+          "field": "title",
+          "pattern": "*plan*"
+        }
+      },
+      "output": "title like \"*plan*\""
+    },
+    {
+      "name": "sqlite like complex",
+      "input": {
+        "filter": {
+          "kind": "like",
+          "field": "title",
+          "pattern": "a?b*c"
+        },
+        "dialect": "sqlite"
+      },
+      "output": {
+        "sql": "(\"title\" IS NOT NULL AND \"title\" GLOB ?)",
+        "params": [
+          "a?b*c"
+        ]
+      }
+    },
+    {
+      "name": "postgres like complex",
+      "input": {
+        "filter": {
+          "kind": "like",
+          "field": "title",
+          "pattern": "a?b*c"
+        },
+        "dialect": "postgres"
+      },
+      "output": {
+        "sql": "(\"title\" IS NOT NULL AND \"title\" LIKE $1 ESCAPE '\\')",
+        "params": [
+          "a_b%c"
+        ]
+      }
+    },
+    {
+      "name": "prisma like complex",
+      "input": {
+        "filter": {
+          "kind": "like",
+          "field": "title",
+          "pattern": "a?b*c"
+        }
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "UNSUPPORTED_FILTER",
+          "status": 400,
+          "message": "This wildcard conditions cannot be expressed in Prisma; filter these resources with filterMatches or authorize"
+        }
+      }
+    },
+    {
+      "name": "mongo like complex",
+      "input": {
+        "filter": {
+          "kind": "like",
+          "field": "title",
+          "pattern": "a?b*c"
+        }
+      },
+      "output": {
+        "title": {
+          "$regex": "^a[\\s\\S]b[\\s\\S]*c$",
+          "$options": "u"
+        }
+      }
+    },
+    {
+      "name": "describe like complex",
+      "input": {
+        "filter": {
+          "kind": "like",
+          "field": "title",
+          "pattern": "a?b*c"
+        }
+      },
+      "output": "title like \"a?b*c\""
+    },
+    {
+      "name": "sqlite like escapes",
+      "input": {
+        "filter": {
+          "kind": "like",
+          "field": "title",
+          "pattern": "100%_\\*[x]\\?"
+        },
+        "dialect": "sqlite"
+      },
+      "output": {
+        "sql": "(\"title\" IS NOT NULL AND \"title\" GLOB ?)",
+        "params": [
+          "100%_[*][[]x][?]"
+        ]
+      }
+    },
+    {
+      "name": "postgres like escapes",
+      "input": {
+        "filter": {
+          "kind": "like",
+          "field": "title",
+          "pattern": "100%_\\*[x]\\?"
+        },
+        "dialect": "postgres"
+      },
+      "output": {
+        "sql": "(\"title\" IS NOT NULL AND \"title\" LIKE $1 ESCAPE '\\')",
+        "params": [
+          "100\\%\\_*[x]?"
+        ]
+      }
+    },
+    {
+      "name": "prisma like escapes",
+      "input": {
+        "filter": {
+          "kind": "like",
+          "field": "title",
+          "pattern": "100%_\\*[x]\\?"
+        }
+      },
+      "output": {
+        "AND": [
+          {
+            "title": {
+              "not": null
+            }
+          },
+          {
+            "title": {
+              "equals": "100%_*[x]?"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "mongo like escapes",
+      "input": {
+        "filter": {
+          "kind": "like",
+          "field": "title",
+          "pattern": "100%_\\*[x]\\?"
+        }
+      },
+      "output": {
+        "title": {
+          "$regex": "^100%_\\*\\[x\\]\\?$",
+          "$options": "u"
+        }
+      }
+    },
+    {
+      "name": "describe like escapes",
+      "input": {
+        "filter": {
+          "kind": "like",
+          "field": "title",
+          "pattern": "100%_\\*[x]\\?"
+        }
+      },
+      "output": "title like \"100%_\\\\*[x]\\\\?\""
+    },
+    {
+      "name": "sqlite like ignore case",
+      "input": {
+        "filter": {
+          "kind": "like",
+          "field": "title",
+          "pattern": "Q?-*",
+          "ignoreCase": true
+        },
+        "dialect": "sqlite"
+      },
+      "output": {
+        "sql": "(\"title\" IS NOT NULL AND LOWER(\"title\") GLOB ?)",
+        "params": [
+          "q?-*"
+        ]
+      }
+    },
+    {
+      "name": "postgres like ignore case",
+      "input": {
+        "filter": {
+          "kind": "like",
+          "field": "title",
+          "pattern": "Q?-*",
+          "ignoreCase": true
+        },
+        "dialect": "postgres"
+      },
+      "output": {
+        "sql": "(\"title\" IS NOT NULL AND LOWER(\"title\") LIKE $1 ESCAPE '\\')",
+        "params": [
+          "q_-%"
+        ]
+      }
+    },
+    {
+      "name": "prisma like ignore case",
+      "input": {
+        "filter": {
+          "kind": "like",
+          "field": "title",
+          "pattern": "Q?-*",
+          "ignoreCase": true
+        }
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "UNSUPPORTED_FILTER",
+          "status": 400,
+          "message": "This wildcard conditions cannot be expressed in Prisma; filter these resources with filterMatches or authorize"
+        }
+      }
+    },
+    {
+      "name": "mongo like ignore case",
+      "input": {
+        "filter": {
+          "kind": "like",
+          "field": "title",
+          "pattern": "Q?-*",
+          "ignoreCase": true
+        }
+      },
+      "output": {
+        "title": {
+          "$regex": "^q[\\s\\S]-[\\s\\S]*$",
+          "$options": "iu"
+        }
+      }
+    },
+    {
+      "name": "describe like ignore case",
+      "input": {
+        "filter": {
+          "kind": "like",
+          "field": "title",
+          "pattern": "Q?-*",
+          "ignoreCase": true
+        }
+      },
+      "output": "title like \"Q?-*\" (any case)"
+    },
+    {
+      "name": "sqlite date before",
+      "input": {
+        "filter": {
+          "kind": "date",
+          "field": "publishedAt",
+          "operator": "before",
+          "value": "2026-01-01T00:00:00Z"
+        },
+        "dialect": "sqlite"
+      },
+      "output": {
+        "sql": "(\"publishedAt\" IS NOT NULL AND julianday(\"publishedAt\") < julianday(?))",
+        "params": [
+          "2026-01-01T00:00:00Z"
+        ]
+      }
+    },
+    {
+      "name": "postgres date before",
+      "input": {
+        "filter": {
+          "kind": "date",
+          "field": "publishedAt",
+          "operator": "before",
+          "value": "2026-01-01T00:00:00Z"
+        },
+        "dialect": "postgres"
+      },
+      "output": {
+        "sql": "(\"publishedAt\" IS NOT NULL AND (\"publishedAt\")::timestamptz < $1::timestamptz)",
+        "params": [
+          "2026-01-01T00:00:00Z"
+        ]
+      }
+    },
+    {
+      "name": "prisma date before",
+      "input": {
+        "filter": {
+          "kind": "date",
+          "field": "publishedAt",
+          "operator": "before",
+          "value": "2026-01-01T00:00:00Z"
+        }
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "UNSUPPORTED_FILTER",
+          "status": 400,
+          "message": "Date conditions cannot be expressed in Prisma; filter these resources with filterMatches or authorize"
+        }
+      }
+    },
+    {
+      "name": "mongo date before",
+      "input": {
+        "filter": {
+          "kind": "date",
+          "field": "publishedAt",
+          "operator": "before",
+          "value": "2026-01-01T00:00:00Z"
+        }
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "UNSUPPORTED_FILTER",
+          "status": 400,
+          "message": "Date conditions cannot be expressed in MongoDB; filter these resources with filterMatches or authorize"
+        }
+      }
+    },
+    {
+      "name": "describe date before",
+      "input": {
+        "filter": {
+          "kind": "date",
+          "field": "publishedAt",
+          "operator": "before",
+          "value": "2026-01-01T00:00:00Z"
+        }
+      },
+      "output": "publishedAt before 2026-01-01T00:00:00Z"
+    },
+    {
+      "name": "sqlite ip",
+      "input": {
+        "filter": {
+          "kind": "ip",
+          "field": "origin",
+          "network": "10.0.0.0/8"
+        },
+        "dialect": "sqlite"
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "UNSUPPORTED_FILTER",
+          "status": 400,
+          "message": "IP address conditions cannot be expressed in SQL; filter these resources with filterMatches or authorize"
+        }
+      }
+    },
+    {
+      "name": "postgres ip",
+      "input": {
+        "filter": {
+          "kind": "ip",
+          "field": "origin",
+          "network": "10.0.0.0/8"
+        },
+        "dialect": "postgres"
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "UNSUPPORTED_FILTER",
+          "status": 400,
+          "message": "IP address conditions cannot be expressed in SQL; filter these resources with filterMatches or authorize"
+        }
+      }
+    },
+    {
+      "name": "prisma ip",
+      "input": {
+        "filter": {
+          "kind": "ip",
+          "field": "origin",
+          "network": "10.0.0.0/8"
+        }
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "UNSUPPORTED_FILTER",
+          "status": 400,
+          "message": "IP address conditions cannot be expressed in Prisma; filter these resources with filterMatches or authorize"
+        }
+      }
+    },
+    {
+      "name": "mongo ip",
+      "input": {
+        "filter": {
+          "kind": "ip",
+          "field": "origin",
+          "network": "10.0.0.0/8"
+        }
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "UNSUPPORTED_FILTER",
+          "status": 400,
+          "message": "IP address conditions cannot be expressed in MongoDB; filter these resources with filterMatches or authorize"
+        }
+      }
+    },
+    {
+      "name": "describe ip",
+      "input": {
+        "filter": {
+          "kind": "ip",
+          "field": "origin",
+          "network": "10.0.0.0/8"
+        }
+      },
+      "output": "origin in 10.0.0.0/8"
+    },
+    {
+      "name": "sqlite contains",
+      "input": {
+        "filter": {
+          "kind": "contains",
+          "field": "tags",
+          "value": "public"
+        },
+        "dialect": "sqlite"
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "UNSUPPORTED_FILTER",
+          "status": 400,
+          "message": "Array conditions cannot be expressed in SQL; filter these resources with filterMatches or authorize"
+        }
+      }
+    },
+    {
+      "name": "postgres contains",
+      "input": {
+        "filter": {
+          "kind": "contains",
+          "field": "tags",
+          "value": "public"
+        },
+        "dialect": "postgres"
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "UNSUPPORTED_FILTER",
+          "status": 400,
+          "message": "Array conditions cannot be expressed in SQL; filter these resources with filterMatches or authorize"
+        }
+      }
+    },
+    {
+      "name": "prisma contains",
+      "input": {
+        "filter": {
+          "kind": "contains",
+          "field": "tags",
+          "value": "public"
+        }
+      },
+      "output": {
+        "tags": {
+          "has": "public"
+        }
+      }
+    },
+    {
+      "name": "mongo contains",
+      "input": {
+        "filter": {
+          "kind": "contains",
+          "field": "tags",
+          "value": "public"
+        }
+      },
+      "output": {
+        "tags": {
+          "$elemMatch": {
+            "$eq": "public"
+          }
+        }
+      }
+    },
+    {
+      "name": "describe contains",
+      "input": {
+        "filter": {
+          "kind": "contains",
+          "field": "tags",
+          "value": "public"
+        }
+      },
+      "output": "tags contains \"public\""
+    },
+    {
+      "name": "sqlite and or not",
+      "input": {
+        "filter": {
+          "kind": "and",
+          "filters": [
+            {
+              "kind": "or",
+              "filters": [
+                {
+                  "kind": "equals",
+                  "field": "owner",
+                  "values": [
+                    "idn_01"
+                  ]
+                },
+                {
+                  "kind": "compare",
+                  "field": "size",
+                  "operator": "gt",
+                  "value": 0
+                }
+              ]
+            },
+            {
+              "kind": "not",
+              "filter": {
+                "kind": "equals",
+                "field": "status",
+                "values": [
+                  "archived"
+                ]
+              }
+            }
+          ]
+        },
+        "dialect": "sqlite"
+      },
+      "output": {
+        "sql": "(((\"owner\" IS NOT NULL AND \"owner\" IN (?)) OR (\"size\" IS NOT NULL AND \"size\" > ?)) AND (NOT (\"status\" IS NOT NULL AND \"status\" IN (?))))",
+        "params": [
+          "idn_01",
+          0,
+          "archived"
+        ]
+      }
+    },
+    {
+      "name": "postgres and or not",
+      "input": {
+        "filter": {
+          "kind": "and",
+          "filters": [
+            {
+              "kind": "or",
+              "filters": [
+                {
+                  "kind": "equals",
+                  "field": "owner",
+                  "values": [
+                    "idn_01"
+                  ]
+                },
+                {
+                  "kind": "compare",
+                  "field": "size",
+                  "operator": "gt",
+                  "value": 0
+                }
+              ]
+            },
+            {
+              "kind": "not",
+              "filter": {
+                "kind": "equals",
+                "field": "status",
+                "values": [
+                  "archived"
+                ]
+              }
+            }
+          ]
+        },
+        "dialect": "postgres"
+      },
+      "output": {
+        "sql": "(((\"owner\" IS NOT NULL AND \"owner\" IN ($1)) OR (\"size\" IS NOT NULL AND \"size\" > $2)) AND (NOT (\"status\" IS NOT NULL AND \"status\" IN ($3))))",
+        "params": [
+          "idn_01",
+          0,
+          "archived"
+        ]
+      }
+    },
+    {
+      "name": "prisma and or not",
+      "input": {
+        "filter": {
+          "kind": "and",
+          "filters": [
+            {
+              "kind": "or",
+              "filters": [
+                {
+                  "kind": "equals",
+                  "field": "owner",
+                  "values": [
+                    "idn_01"
+                  ]
+                },
+                {
+                  "kind": "compare",
+                  "field": "size",
+                  "operator": "gt",
+                  "value": 0
+                }
+              ]
+            },
+            {
+              "kind": "not",
+              "filter": {
+                "kind": "equals",
+                "field": "status",
+                "values": [
+                  "archived"
+                ]
+              }
+            }
+          ]
+        }
+      },
+      "output": {
+        "AND": [
+          {
+            "OR": [
+              {
+                "AND": [
+                  {
+                    "owner": {
+                      "not": null
+                    }
+                  },
+                  {
+                    "owner": {
+                      "in": [
+                        "idn_01"
+                      ]
+                    }
+                  }
+                ]
+              },
+              {
+                "AND": [
+                  {
+                    "size": {
+                      "not": null
+                    }
+                  },
+                  {
+                    "size": {
+                      "gt": 0
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "NOT": {
+              "AND": [
+                {
+                  "status": {
+                    "not": null
+                  }
+                },
+                {
+                  "status": {
+                    "in": [
+                      "archived"
+                    ]
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "mongo and or not",
+      "input": {
+        "filter": {
+          "kind": "and",
+          "filters": [
+            {
+              "kind": "or",
+              "filters": [
+                {
+                  "kind": "equals",
+                  "field": "owner",
+                  "values": [
+                    "idn_01"
+                  ]
+                },
+                {
+                  "kind": "compare",
+                  "field": "size",
+                  "operator": "gt",
+                  "value": 0
+                }
+              ]
+            },
+            {
+              "kind": "not",
+              "filter": {
+                "kind": "equals",
+                "field": "status",
+                "values": [
+                  "archived"
+                ]
+              }
+            }
+          ]
+        }
+      },
+      "output": {
+        "$and": [
+          {
+            "$or": [
+              {
+                "owner": {
+                  "$in": [
+                    "idn_01"
+                  ]
+                }
+              },
+              {
+                "size": {
+                  "$gt": 0
+                }
+              }
+            ]
+          },
+          {
+            "$nor": [
+              {
+                "status": {
+                  "$in": [
+                    "archived"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "describe and or not",
+      "input": {
+        "filter": {
+          "kind": "and",
+          "filters": [
+            {
+              "kind": "or",
+              "filters": [
+                {
+                  "kind": "equals",
+                  "field": "owner",
+                  "values": [
+                    "idn_01"
+                  ]
+                },
+                {
+                  "kind": "compare",
+                  "field": "size",
+                  "operator": "gt",
+                  "value": 0
+                }
+              ]
+            },
+            {
+              "kind": "not",
+              "filter": {
+                "kind": "equals",
+                "field": "status",
+                "values": [
+                  "archived"
+                ]
+              }
+            }
+          ]
+        }
+      },
+      "output": "(owner = \"idn_01\" or size > 0) and not (status = \"archived\")"
+    },
+    {
+      "name": "sqlite missing column",
+      "input": {
+        "filter": {
+          "kind": "equals",
+          "field": "missingField",
+          "values": [
+            "x"
+          ]
+        },
+        "dialect": "sqlite"
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "INVALID_INPUT",
+          "status": 400,
+          "message": "The plan filters on missingField, which has no column"
+        }
+      }
+    },
+    {
+      "name": "postgres missing column",
+      "input": {
+        "filter": {
+          "kind": "equals",
+          "field": "missingField",
+          "values": [
+            "x"
+          ]
+        },
+        "dialect": "postgres"
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "INVALID_INPUT",
+          "status": 400,
+          "message": "The plan filters on missingField, which has no column"
+        }
+      }
+    },
+    {
+      "name": "prisma missing column",
+      "input": {
+        "filter": {
+          "kind": "equals",
+          "field": "missingField",
+          "values": [
+            "x"
+          ]
+        }
+      },
+      "output": {
+        "AND": [
+          {
+            "missingField": {
+              "not": null
+            }
+          },
+          {
+            "missingField": {
+              "in": [
+                "x"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "mongo missing column",
+      "input": {
+        "filter": {
+          "kind": "equals",
+          "field": "missingField",
+          "values": [
+            "x"
+          ]
+        }
+      },
+      "output": {
+        "missingField": {
+          "$in": [
+            "x"
+          ]
+        }
+      }
+    },
+    {
+      "name": "describe missing column",
+      "input": {
+        "filter": {
+          "kind": "equals",
+          "field": "missingField",
+          "values": [
+            "x"
+          ]
+        }
+      },
+      "output": "missingField = \"x\""
+    },
+    {
+      "name": "sqlite plan output 1",
+      "input": {
+        "filter": {
+          "kind": "equals",
+          "field": "id",
+          "values": [
+            "1",
+            "2"
+          ]
+        },
+        "dialect": "sqlite"
+      },
+      "output": {
+        "sql": "(\"id\" IS NOT NULL AND \"id\" IN (?, ?))",
+        "params": [
+          "1",
+          "2"
+        ]
+      }
+    },
+    {
+      "name": "postgres plan output 1",
+      "input": {
+        "filter": {
+          "kind": "equals",
+          "field": "id",
+          "values": [
+            "1",
+            "2"
+          ]
+        },
+        "dialect": "postgres"
+      },
+      "output": {
+        "sql": "(\"id\" IS NOT NULL AND \"id\" IN ($1, $2))",
+        "params": [
+          "1",
+          "2"
+        ]
+      }
+    },
+    {
+      "name": "prisma plan output 1",
+      "input": {
+        "filter": {
+          "kind": "equals",
+          "field": "id",
+          "values": [
+            "1",
+            "2"
+          ]
+        }
+      },
+      "output": {
+        "AND": [
+          {
+            "id": {
+              "not": null
+            }
+          },
+          {
+            "id": {
+              "in": [
+                "1",
+                "2"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "mongo plan output 1",
+      "input": {
+        "filter": {
+          "kind": "equals",
+          "field": "id",
+          "values": [
+            "1",
+            "2"
+          ]
+        }
+      },
+      "output": {
+        "id": {
+          "$in": [
+            "1",
+            "2"
+          ]
+        }
+      }
+    },
+    {
+      "name": "describe plan output 1",
+      "input": {
+        "filter": {
+          "kind": "equals",
+          "field": "id",
+          "values": [
+            "1",
+            "2"
+          ]
+        }
+      },
+      "output": "id in [\"1\", \"2\"]"
+    },
+    {
+      "name": "sqlite plan output 2",
+      "input": {
+        "filter": {
+          "kind": "like",
+          "field": "id",
+          "pattern": "report-*"
+        },
+        "dialect": "sqlite"
+      },
+      "output": {
+        "sql": "(\"id\" IS NOT NULL AND \"id\" GLOB ?)",
+        "params": [
+          "report-*"
+        ]
+      }
+    },
+    {
+      "name": "postgres plan output 2",
+      "input": {
+        "filter": {
+          "kind": "like",
+          "field": "id",
+          "pattern": "report-*"
+        },
+        "dialect": "postgres"
+      },
+      "output": {
+        "sql": "(\"id\" IS NOT NULL AND \"id\" LIKE $1 ESCAPE '\\')",
+        "params": [
+          "report-%"
+        ]
+      }
+    },
+    {
+      "name": "prisma plan output 2",
+      "input": {
+        "filter": {
+          "kind": "like",
+          "field": "id",
+          "pattern": "report-*"
+        }
+      },
+      "output": {
+        "AND": [
+          {
+            "id": {
+              "not": null
+            }
+          },
+          {
+            "id": {
+              "startsWith": "report-"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "mongo plan output 2",
+      "input": {
+        "filter": {
+          "kind": "like",
+          "field": "id",
+          "pattern": "report-*"
+        }
+      },
+      "output": {
+        "id": {
+          "$regex": "^report-[\\s\\S]*$",
+          "$options": "u"
+        }
+      }
+    },
+    {
+      "name": "describe plan output 2",
+      "input": {
+        "filter": {
+          "kind": "like",
+          "field": "id",
+          "pattern": "report-*"
+        }
+      },
+      "output": "id like \"report-*\""
+    },
+    {
+      "name": "sqlite plan output 3",
+      "input": {
+        "filter": {
+          "kind": "like",
+          "field": "id",
+          "pattern": "idn_01-*"
+        },
+        "dialect": "sqlite"
+      },
+      "output": {
+        "sql": "(\"id\" IS NOT NULL AND \"id\" GLOB ?)",
+        "params": [
+          "idn_01-*"
+        ]
+      }
+    },
+    {
+      "name": "postgres plan output 3",
+      "input": {
+        "filter": {
+          "kind": "like",
+          "field": "id",
+          "pattern": "idn_01-*"
+        },
+        "dialect": "postgres"
+      },
+      "output": {
+        "sql": "(\"id\" IS NOT NULL AND \"id\" LIKE $1 ESCAPE '\\')",
+        "params": [
+          "idn\\_01-%"
+        ]
+      }
+    },
+    {
+      "name": "prisma plan output 3",
+      "input": {
+        "filter": {
+          "kind": "like",
+          "field": "id",
+          "pattern": "idn_01-*"
+        }
+      },
+      "output": {
+        "AND": [
+          {
+            "id": {
+              "not": null
+            }
+          },
+          {
+            "id": {
+              "startsWith": "idn_01-"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "mongo plan output 3",
+      "input": {
+        "filter": {
+          "kind": "like",
+          "field": "id",
+          "pattern": "idn_01-*"
+        }
+      },
+      "output": {
+        "id": {
+          "$regex": "^idn_01-[\\s\\S]*$",
+          "$options": "u"
+        }
+      }
+    },
+    {
+      "name": "describe plan output 3",
+      "input": {
+        "filter": {
+          "kind": "like",
+          "field": "id",
+          "pattern": "idn_01-*"
+        }
+      },
+      "output": "id like \"idn_01-*\""
+    },
+    {
+      "name": "sqlite plan output 4",
+      "input": {
+        "filter": {
+          "kind": "equals",
+          "field": "owner",
+          "values": [
+            "idn_01"
+          ]
+        },
+        "dialect": "sqlite"
+      },
+      "output": {
+        "sql": "(\"owner\" IS NOT NULL AND \"owner\" IN (?))",
+        "params": [
+          "idn_01"
+        ]
+      }
+    },
+    {
+      "name": "postgres plan output 4",
+      "input": {
+        "filter": {
+          "kind": "equals",
+          "field": "owner",
+          "values": [
+            "idn_01"
+          ]
+        },
+        "dialect": "postgres"
+      },
+      "output": {
+        "sql": "(\"owner\" IS NOT NULL AND \"owner\" IN ($1))",
+        "params": [
+          "idn_01"
+        ]
+      }
+    },
+    {
+      "name": "prisma plan output 4",
+      "input": {
+        "filter": {
+          "kind": "equals",
+          "field": "owner",
+          "values": [
+            "idn_01"
+          ]
+        }
+      },
+      "output": {
+        "AND": [
+          {
+            "owner": {
+              "not": null
+            }
+          },
+          {
+            "owner": {
+              "in": [
+                "idn_01"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "mongo plan output 4",
+      "input": {
+        "filter": {
+          "kind": "equals",
+          "field": "owner",
+          "values": [
+            "idn_01"
+          ]
+        }
+      },
+      "output": {
+        "owner": {
+          "$in": [
+            "idn_01"
+          ]
+        }
+      }
+    },
+    {
+      "name": "describe plan output 4",
+      "input": {
+        "filter": {
+          "kind": "equals",
+          "field": "owner",
+          "values": [
+            "idn_01"
+          ]
+        }
+      },
+      "output": "owner = \"idn_01\""
+    },
+    {
+      "name": "sqlite plan output 5",
+      "input": {
+        "filter": {
+          "kind": "compare",
+          "field": "size",
+          "operator": "lt",
+          "value": 100
+        },
+        "dialect": "sqlite"
+      },
+      "output": {
+        "sql": "(\"size\" IS NOT NULL AND \"size\" < ?)",
+        "params": [
+          100
+        ]
+      }
+    },
+    {
+      "name": "postgres plan output 5",
+      "input": {
+        "filter": {
+          "kind": "compare",
+          "field": "size",
+          "operator": "lt",
+          "value": 100
+        },
+        "dialect": "postgres"
+      },
+      "output": {
+        "sql": "(\"size\" IS NOT NULL AND \"size\" < $1)",
+        "params": [
+          100
+        ]
+      }
+    },
+    {
+      "name": "prisma plan output 5",
+      "input": {
+        "filter": {
+          "kind": "compare",
+          "field": "size",
+          "operator": "lt",
+          "value": 100
+        }
+      },
+      "output": {
+        "AND": [
+          {
+            "size": {
+              "not": null
+            }
+          },
+          {
+            "size": {
+              "lt": 100
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "mongo plan output 5",
+      "input": {
+        "filter": {
+          "kind": "compare",
+          "field": "size",
+          "operator": "lt",
+          "value": 100
+        }
+      },
+      "output": {
+        "size": {
+          "$lt": 100
+        }
+      }
+    },
+    {
+      "name": "describe plan output 5",
+      "input": {
+        "filter": {
+          "kind": "compare",
+          "field": "size",
+          "operator": "lt",
+          "value": 100
+        }
+      },
+      "output": "size < 100"
+    },
+    {
+      "name": "sqlite plan output 6",
+      "input": {
+        "filter": {
+          "kind": "like",
+          "field": "title",
+          "pattern": "q?-*",
+          "ignoreCase": true
+        },
+        "dialect": "sqlite"
+      },
+      "output": {
+        "sql": "(\"title\" IS NOT NULL AND LOWER(\"title\") GLOB ?)",
+        "params": [
+          "q?-*"
+        ]
+      }
+    },
+    {
+      "name": "postgres plan output 6",
+      "input": {
+        "filter": {
+          "kind": "like",
+          "field": "title",
+          "pattern": "q?-*",
+          "ignoreCase": true
+        },
+        "dialect": "postgres"
+      },
+      "output": {
+        "sql": "(\"title\" IS NOT NULL AND LOWER(\"title\") LIKE $1 ESCAPE '\\')",
+        "params": [
+          "q_-%"
+        ]
+      }
+    },
+    {
+      "name": "prisma plan output 6",
+      "input": {
+        "filter": {
+          "kind": "like",
+          "field": "title",
+          "pattern": "q?-*",
+          "ignoreCase": true
+        }
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "UNSUPPORTED_FILTER",
+          "status": 400,
+          "message": "This wildcard conditions cannot be expressed in Prisma; filter these resources with filterMatches or authorize"
+        }
+      }
+    },
+    {
+      "name": "mongo plan output 6",
+      "input": {
+        "filter": {
+          "kind": "like",
+          "field": "title",
+          "pattern": "q?-*",
+          "ignoreCase": true
+        }
+      },
+      "output": {
+        "title": {
+          "$regex": "^q[\\s\\S]-[\\s\\S]*$",
+          "$options": "iu"
+        }
+      }
+    },
+    {
+      "name": "describe plan output 6",
+      "input": {
+        "filter": {
+          "kind": "like",
+          "field": "title",
+          "pattern": "q?-*",
+          "ignoreCase": true
+        }
+      },
+      "output": "title like \"q?-*\" (any case)"
+    },
+    {
+      "name": "sqlite plan output 7",
+      "input": {
+        "filter": {
+          "kind": "and",
+          "filters": [
+            {
+              "kind": "type",
+              "field": "status",
+              "type": "string"
+            },
+            {
+              "kind": "not",
+              "filter": {
+                "kind": "equals",
+                "field": "status",
+                "values": [
+                  "archived",
+                  "deleted"
+                ]
+              }
+            }
+          ]
+        },
+        "dialect": "sqlite"
+      },
+      "output": {
+        "sql": "((\"status\" IS NOT NULL) AND (NOT (\"status\" IS NOT NULL AND \"status\" IN (?, ?))))",
+        "params": [
+          "archived",
+          "deleted"
+        ]
+      }
+    },
+    {
+      "name": "postgres plan output 7",
+      "input": {
+        "filter": {
+          "kind": "and",
+          "filters": [
+            {
+              "kind": "type",
+              "field": "status",
+              "type": "string"
+            },
+            {
+              "kind": "not",
+              "filter": {
+                "kind": "equals",
+                "field": "status",
+                "values": [
+                  "archived",
+                  "deleted"
+                ]
+              }
+            }
+          ]
+        },
+        "dialect": "postgres"
+      },
+      "output": {
+        "sql": "((\"status\" IS NOT NULL) AND (NOT (\"status\" IS NOT NULL AND \"status\" IN ($1, $2))))",
+        "params": [
+          "archived",
+          "deleted"
+        ]
+      }
+    },
+    {
+      "name": "prisma plan output 7",
+      "input": {
+        "filter": {
+          "kind": "and",
+          "filters": [
+            {
+              "kind": "type",
+              "field": "status",
+              "type": "string"
+            },
+            {
+              "kind": "not",
+              "filter": {
+                "kind": "equals",
+                "field": "status",
+                "values": [
+                  "archived",
+                  "deleted"
+                ]
+              }
+            }
+          ]
+        }
+      },
+      "output": {
+        "AND": [
+          {
+            "status": {
+              "not": null
+            }
+          },
+          {
+            "NOT": {
+              "AND": [
+                {
+                  "status": {
+                    "not": null
+                  }
+                },
+                {
+                  "status": {
+                    "in": [
+                      "archived",
+                      "deleted"
+                    ]
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "mongo plan output 7",
+      "input": {
+        "filter": {
+          "kind": "and",
+          "filters": [
+            {
+              "kind": "type",
+              "field": "status",
+              "type": "string"
+            },
+            {
+              "kind": "not",
+              "filter": {
+                "kind": "equals",
+                "field": "status",
+                "values": [
+                  "archived",
+                  "deleted"
+                ]
+              }
+            }
+          ]
+        }
+      },
+      "output": {
+        "$and": [
+          {
+            "status": {
+              "$type": "string"
+            }
+          },
+          {
+            "$nor": [
+              {
+                "status": {
+                  "$in": [
+                    "archived",
+                    "deleted"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "describe plan output 7",
+      "input": {
+        "filter": {
+          "kind": "and",
+          "filters": [
+            {
+              "kind": "type",
+              "field": "status",
+              "type": "string"
+            },
+            {
+              "kind": "not",
+              "filter": {
+                "kind": "equals",
+                "field": "status",
+                "values": [
+                  "archived",
+                  "deleted"
+                ]
+              }
+            }
+          ]
+        }
+      },
+      "output": "status is string and not (status in [\"archived\", \"deleted\"])"
+    },
+    {
+      "name": "sqlite plan output 8",
+      "input": {
+        "filter": {
+          "kind": "date",
+          "field": "publishedAt",
+          "operator": "after",
+          "value": "2025-01-01T00:00:00Z"
+        },
+        "dialect": "sqlite"
+      },
+      "output": {
+        "sql": "(\"publishedAt\" IS NOT NULL AND julianday(\"publishedAt\") > julianday(?))",
+        "params": [
+          "2025-01-01T00:00:00Z"
+        ]
+      }
+    },
+    {
+      "name": "postgres plan output 8",
+      "input": {
+        "filter": {
+          "kind": "date",
+          "field": "publishedAt",
+          "operator": "after",
+          "value": "2025-01-01T00:00:00Z"
+        },
+        "dialect": "postgres"
+      },
+      "output": {
+        "sql": "(\"publishedAt\" IS NOT NULL AND (\"publishedAt\")::timestamptz > $1::timestamptz)",
+        "params": [
+          "2025-01-01T00:00:00Z"
+        ]
+      }
+    },
+    {
+      "name": "prisma plan output 8",
+      "input": {
+        "filter": {
+          "kind": "date",
+          "field": "publishedAt",
+          "operator": "after",
+          "value": "2025-01-01T00:00:00Z"
+        }
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "UNSUPPORTED_FILTER",
+          "status": 400,
+          "message": "Date conditions cannot be expressed in Prisma; filter these resources with filterMatches or authorize"
+        }
+      }
+    },
+    {
+      "name": "mongo plan output 8",
+      "input": {
+        "filter": {
+          "kind": "date",
+          "field": "publishedAt",
+          "operator": "after",
+          "value": "2025-01-01T00:00:00Z"
+        }
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "UNSUPPORTED_FILTER",
+          "status": 400,
+          "message": "Date conditions cannot be expressed in MongoDB; filter these resources with filterMatches or authorize"
+        }
+      }
+    },
+    {
+      "name": "describe plan output 8",
+      "input": {
+        "filter": {
+          "kind": "date",
+          "field": "publishedAt",
+          "operator": "after",
+          "value": "2025-01-01T00:00:00Z"
+        }
+      },
+      "output": "publishedAt after 2025-01-01T00:00:00Z"
+    },
+    {
+      "name": "sqlite plan output 9",
+      "input": {
+        "filter": {
+          "kind": "ip",
+          "field": "origin",
+          "network": "10.0.0.0/8"
+        },
+        "dialect": "sqlite"
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "UNSUPPORTED_FILTER",
+          "status": 400,
+          "message": "IP address conditions cannot be expressed in SQL; filter these resources with filterMatches or authorize"
+        }
+      }
+    },
+    {
+      "name": "postgres plan output 9",
+      "input": {
+        "filter": {
+          "kind": "ip",
+          "field": "origin",
+          "network": "10.0.0.0/8"
+        },
+        "dialect": "postgres"
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "UNSUPPORTED_FILTER",
+          "status": 400,
+          "message": "IP address conditions cannot be expressed in SQL; filter these resources with filterMatches or authorize"
+        }
+      }
+    },
+    {
+      "name": "prisma plan output 9",
+      "input": {
+        "filter": {
+          "kind": "ip",
+          "field": "origin",
+          "network": "10.0.0.0/8"
+        }
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "UNSUPPORTED_FILTER",
+          "status": 400,
+          "message": "IP address conditions cannot be expressed in Prisma; filter these resources with filterMatches or authorize"
+        }
+      }
+    },
+    {
+      "name": "mongo plan output 9",
+      "input": {
+        "filter": {
+          "kind": "ip",
+          "field": "origin",
+          "network": "10.0.0.0/8"
+        }
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "UNSUPPORTED_FILTER",
+          "status": 400,
+          "message": "IP address conditions cannot be expressed in MongoDB; filter these resources with filterMatches or authorize"
+        }
+      }
+    },
+    {
+      "name": "describe plan output 9",
+      "input": {
+        "filter": {
+          "kind": "ip",
+          "field": "origin",
+          "network": "10.0.0.0/8"
+        }
+      },
+      "output": "origin in 10.0.0.0/8"
+    },
+    {
+      "name": "sqlite plan output 10",
+      "input": {
+        "filter": {
+          "kind": "contains",
+          "field": "tags",
+          "value": "public"
+        },
+        "dialect": "sqlite"
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "UNSUPPORTED_FILTER",
+          "status": 400,
+          "message": "Array conditions cannot be expressed in SQL; filter these resources with filterMatches or authorize"
+        }
+      }
+    },
+    {
+      "name": "postgres plan output 10",
+      "input": {
+        "filter": {
+          "kind": "contains",
+          "field": "tags",
+          "value": "public"
+        },
+        "dialect": "postgres"
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "UNSUPPORTED_FILTER",
+          "status": 400,
+          "message": "Array conditions cannot be expressed in SQL; filter these resources with filterMatches or authorize"
+        }
+      }
+    },
+    {
+      "name": "prisma plan output 10",
+      "input": {
+        "filter": {
+          "kind": "contains",
+          "field": "tags",
+          "value": "public"
+        }
+      },
+      "output": {
+        "tags": {
+          "has": "public"
+        }
+      }
+    },
+    {
+      "name": "mongo plan output 10",
+      "input": {
+        "filter": {
+          "kind": "contains",
+          "field": "tags",
+          "value": "public"
+        }
+      },
+      "output": {
+        "tags": {
+          "$elemMatch": {
+            "$eq": "public"
+          }
+        }
+      }
+    },
+    {
+      "name": "describe plan output 10",
+      "input": {
+        "filter": {
+          "kind": "contains",
+          "field": "tags",
+          "value": "public"
+        }
+      },
+      "output": "tags contains \"public\""
+    },
+    {
+      "name": "sqlite plan output 11",
+      "input": {
+        "filter": {
+          "kind": "not",
+          "filter": {
+            "kind": "exists",
+            "field": "owner"
+          }
+        },
+        "dialect": "sqlite"
+      },
+      "output": {
+        "sql": "(NOT (\"owner\" IS NOT NULL))",
+        "params": []
+      }
+    },
+    {
+      "name": "postgres plan output 11",
+      "input": {
+        "filter": {
+          "kind": "not",
+          "filter": {
+            "kind": "exists",
+            "field": "owner"
+          }
+        },
+        "dialect": "postgres"
+      },
+      "output": {
+        "sql": "(NOT (\"owner\" IS NOT NULL))",
+        "params": []
+      }
+    },
+    {
+      "name": "prisma plan output 11",
+      "input": {
+        "filter": {
+          "kind": "not",
+          "filter": {
+            "kind": "exists",
+            "field": "owner"
+          }
+        }
+      },
+      "output": {
+        "NOT": {
+          "owner": {
+            "not": null
+          }
+        }
+      }
+    },
+    {
+      "name": "mongo plan output 11",
+      "input": {
+        "filter": {
+          "kind": "not",
+          "filter": {
+            "kind": "exists",
+            "field": "owner"
+          }
+        }
+      },
+      "output": {
+        "$nor": [
+          {
+            "owner": {
+              "$exists": true,
+              "$ne": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "describe plan output 11",
+      "input": {
+        "filter": {
+          "kind": "not",
+          "filter": {
+            "kind": "exists",
+            "field": "owner"
+          }
+        }
+      },
+      "output": "not (owner exists)"
+    },
+    {
+      "name": "sqlite plan output 12",
+      "input": {
+        "filter": {
+          "kind": "equals",
+          "field": "public",
+          "values": [
+            true
+          ]
+        },
+        "dialect": "sqlite"
+      },
+      "output": {
+        "sql": "(\"public\" IS NOT NULL AND \"public\" IN (?))",
+        "params": [
+          1
+        ]
+      }
+    },
+    {
+      "name": "postgres plan output 12",
+      "input": {
+        "filter": {
+          "kind": "equals",
+          "field": "public",
+          "values": [
+            true
+          ]
+        },
+        "dialect": "postgres"
+      },
+      "output": {
+        "sql": "(\"public\" IS NOT NULL AND \"public\" IN ($1))",
+        "params": [
+          true
+        ]
+      }
+    },
+    {
+      "name": "prisma plan output 12",
+      "input": {
+        "filter": {
+          "kind": "equals",
+          "field": "public",
+          "values": [
+            true
+          ]
+        }
+      },
+      "output": {
+        "AND": [
+          {
+            "public": {
+              "not": null
+            }
+          },
+          {
+            "public": {
+              "in": [
+                true
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "mongo plan output 12",
+      "input": {
+        "filter": {
+          "kind": "equals",
+          "field": "public",
+          "values": [
+            true
+          ]
+        }
+      },
+      "output": {
+        "public": {
+          "$in": [
+            true
+          ]
+        }
+      }
+    },
+    {
+      "name": "describe plan output 12",
+      "input": {
+        "filter": {
+          "kind": "equals",
+          "field": "public",
+          "values": [
+            true
+          ]
+        }
+      },
+      "output": "public = true"
+    },
+    {
+      "name": "sqlite plan output 13",
+      "input": {
+        "filter": {
+          "kind": "not",
+          "filter": {
+            "kind": "like",
+            "field": "id",
+            "pattern": "secret-*"
+          }
+        },
+        "dialect": "sqlite"
+      },
+      "output": {
+        "sql": "(NOT (\"id\" IS NOT NULL AND \"id\" GLOB ?))",
+        "params": [
+          "secret-*"
+        ]
+      }
+    },
+    {
+      "name": "postgres plan output 13",
+      "input": {
+        "filter": {
+          "kind": "not",
+          "filter": {
+            "kind": "like",
+            "field": "id",
+            "pattern": "secret-*"
+          }
+        },
+        "dialect": "postgres"
+      },
+      "output": {
+        "sql": "(NOT (\"id\" IS NOT NULL AND \"id\" LIKE $1 ESCAPE '\\'))",
+        "params": [
+          "secret-%"
+        ]
+      }
+    },
+    {
+      "name": "prisma plan output 13",
+      "input": {
+        "filter": {
+          "kind": "not",
+          "filter": {
+            "kind": "like",
+            "field": "id",
+            "pattern": "secret-*"
+          }
+        }
+      },
+      "output": {
+        "NOT": {
+          "AND": [
+            {
+              "id": {
+                "not": null
+              }
+            },
+            {
+              "id": {
+                "startsWith": "secret-"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "mongo plan output 13",
+      "input": {
+        "filter": {
+          "kind": "not",
+          "filter": {
+            "kind": "like",
+            "field": "id",
+            "pattern": "secret-*"
+          }
+        }
+      },
+      "output": {
+        "$nor": [
+          {
+            "id": {
+              "$regex": "^secret-[\\s\\S]*$",
+              "$options": "u"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "describe plan output 13",
+      "input": {
+        "filter": {
+          "kind": "not",
+          "filter": {
+            "kind": "like",
+            "field": "id",
+            "pattern": "secret-*"
+          }
+        }
+      },
+      "output": "not (id like \"secret-*\")"
+    },
+    {
+      "name": "sqlite plan output 14",
+      "input": {
+        "filter": {
+          "kind": "not",
+          "filter": {
+            "kind": "equals",
+            "field": "classification",
+            "values": [
+              "secret"
+            ]
+          }
+        },
+        "dialect": "sqlite"
+      },
+      "output": {
+        "sql": "(NOT (\"classification\" IS NOT NULL AND \"classification\" IN (?)))",
+        "params": [
+          "secret"
+        ]
+      }
+    },
+    {
+      "name": "postgres plan output 14",
+      "input": {
+        "filter": {
+          "kind": "not",
+          "filter": {
+            "kind": "equals",
+            "field": "classification",
+            "values": [
+              "secret"
+            ]
+          }
+        },
+        "dialect": "postgres"
+      },
+      "output": {
+        "sql": "(NOT (\"classification\" IS NOT NULL AND \"classification\" IN ($1)))",
+        "params": [
+          "secret"
+        ]
+      }
+    },
+    {
+      "name": "prisma plan output 14",
+      "input": {
+        "filter": {
+          "kind": "not",
+          "filter": {
+            "kind": "equals",
+            "field": "classification",
+            "values": [
+              "secret"
+            ]
+          }
+        }
+      },
+      "output": {
+        "NOT": {
+          "AND": [
+            {
+              "classification": {
+                "not": null
+              }
+            },
+            {
+              "classification": {
+                "in": [
+                  "secret"
+                ]
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "mongo plan output 14",
+      "input": {
+        "filter": {
+          "kind": "not",
+          "filter": {
+            "kind": "equals",
+            "field": "classification",
+            "values": [
+              "secret"
+            ]
+          }
+        }
+      },
+      "output": {
+        "$nor": [
+          {
+            "classification": {
+              "$in": [
+                "secret"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "describe plan output 14",
+      "input": {
+        "filter": {
+          "kind": "not",
+          "filter": {
+            "kind": "equals",
+            "field": "classification",
+            "values": [
+              "secret"
+            ]
+          }
+        }
+      },
+      "output": "not (classification = \"secret\")"
+    },
+    {
+      "name": "sqlite plan output 15",
+      "input": {
+        "filter": {
+          "kind": "like",
+          "field": "id",
+          "pattern": "public-*"
+        },
+        "dialect": "sqlite"
+      },
+      "output": {
+        "sql": "(\"id\" IS NOT NULL AND \"id\" GLOB ?)",
+        "params": [
+          "public-*"
+        ]
+      }
+    },
+    {
+      "name": "postgres plan output 15",
+      "input": {
+        "filter": {
+          "kind": "like",
+          "field": "id",
+          "pattern": "public-*"
+        },
+        "dialect": "postgres"
+      },
+      "output": {
+        "sql": "(\"id\" IS NOT NULL AND \"id\" LIKE $1 ESCAPE '\\')",
+        "params": [
+          "public-%"
+        ]
+      }
+    },
+    {
+      "name": "prisma plan output 15",
+      "input": {
+        "filter": {
+          "kind": "like",
+          "field": "id",
+          "pattern": "public-*"
+        }
+      },
+      "output": {
+        "AND": [
+          {
+            "id": {
+              "not": null
+            }
+          },
+          {
+            "id": {
+              "startsWith": "public-"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "mongo plan output 15",
+      "input": {
+        "filter": {
+          "kind": "like",
+          "field": "id",
+          "pattern": "public-*"
+        }
+      },
+      "output": {
+        "id": {
+          "$regex": "^public-[\\s\\S]*$",
+          "$options": "u"
+        }
+      }
+    },
+    {
+      "name": "describe plan output 15",
+      "input": {
+        "filter": {
+          "kind": "like",
+          "field": "id",
+          "pattern": "public-*"
+        }
+      },
+      "output": "id like \"public-*\""
+    },
+    {
+      "name": "sqlite plan output 16",
+      "input": {
+        "filter": {
+          "kind": "equals",
+          "field": "id",
+          "values": [
+            "1"
+          ]
+        },
+        "dialect": "sqlite"
+      },
+      "output": {
+        "sql": "(\"id\" IS NOT NULL AND \"id\" IN (?))",
+        "params": [
+          "1"
+        ]
+      }
+    },
+    {
+      "name": "postgres plan output 16",
+      "input": {
+        "filter": {
+          "kind": "equals",
+          "field": "id",
+          "values": [
+            "1"
+          ]
+        },
+        "dialect": "postgres"
+      },
+      "output": {
+        "sql": "(\"id\" IS NOT NULL AND \"id\" IN ($1))",
+        "params": [
+          "1"
+        ]
+      }
+    },
+    {
+      "name": "prisma plan output 16",
+      "input": {
+        "filter": {
+          "kind": "equals",
+          "field": "id",
+          "values": [
+            "1"
+          ]
+        }
+      },
+      "output": {
+        "AND": [
+          {
+            "id": {
+              "not": null
+            }
+          },
+          {
+            "id": {
+              "in": [
+                "1"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "mongo plan output 16",
+      "input": {
+        "filter": {
+          "kind": "equals",
+          "field": "id",
+          "values": [
+            "1"
+          ]
+        }
+      },
+      "output": {
+        "id": {
+          "$in": [
+            "1"
+          ]
+        }
+      }
+    },
+    {
+      "name": "describe plan output 16",
+      "input": {
+        "filter": {
+          "kind": "equals",
+          "field": "id",
+          "values": [
+            "1"
+          ]
+        }
+      },
+      "output": "id = \"1\""
+    },
+    {
+      "name": "sqlite plan output 17",
+      "input": {
+        "filter": {
+          "kind": "equals",
+          "field": "id",
+          "values": [
+            "1",
+            "2"
+          ]
+        },
+        "dialect": "sqlite"
+      },
+      "output": {
+        "sql": "(\"id\" IS NOT NULL AND \"id\" IN (?, ?))",
+        "params": [
+          "1",
+          "2"
+        ]
+      }
+    },
+    {
+      "name": "postgres plan output 17",
+      "input": {
+        "filter": {
+          "kind": "equals",
+          "field": "id",
+          "values": [
+            "1",
+            "2"
+          ]
+        },
+        "dialect": "postgres"
+      },
+      "output": {
+        "sql": "(\"id\" IS NOT NULL AND \"id\" IN ($1, $2))",
+        "params": [
+          "1",
+          "2"
+        ]
+      }
+    },
+    {
+      "name": "prisma plan output 17",
+      "input": {
+        "filter": {
+          "kind": "equals",
+          "field": "id",
+          "values": [
+            "1",
+            "2"
+          ]
+        }
+      },
+      "output": {
+        "AND": [
+          {
+            "id": {
+              "not": null
+            }
+          },
+          {
+            "id": {
+              "in": [
+                "1",
+                "2"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "mongo plan output 17",
+      "input": {
+        "filter": {
+          "kind": "equals",
+          "field": "id",
+          "values": [
+            "1",
+            "2"
+          ]
+        }
+      },
+      "output": {
+        "id": {
+          "$in": [
+            "1",
+            "2"
+          ]
+        }
+      }
+    },
+    {
+      "name": "describe plan output 17",
+      "input": {
+        "filter": {
+          "kind": "equals",
+          "field": "id",
+          "values": [
+            "1",
+            "2"
+          ]
+        }
+      },
+      "output": "id in [\"1\", \"2\"]"
+    },
+    {
+      "name": "sqlite plan output 18",
+      "input": {
+        "filter": {
+          "kind": "equals",
+          "field": "id",
+          "values": [
+            "d1"
+          ]
+        },
+        "dialect": "sqlite"
+      },
+      "output": {
+        "sql": "(\"id\" IS NOT NULL AND \"id\" IN (?))",
+        "params": [
+          "d1"
+        ]
+      }
+    },
+    {
+      "name": "postgres plan output 18",
+      "input": {
+        "filter": {
+          "kind": "equals",
+          "field": "id",
+          "values": [
+            "d1"
+          ]
+        },
+        "dialect": "postgres"
+      },
+      "output": {
+        "sql": "(\"id\" IS NOT NULL AND \"id\" IN ($1))",
+        "params": [
+          "d1"
+        ]
+      }
+    },
+    {
+      "name": "prisma plan output 18",
+      "input": {
+        "filter": {
+          "kind": "equals",
+          "field": "id",
+          "values": [
+            "d1"
+          ]
+        }
+      },
+      "output": {
+        "AND": [
+          {
+            "id": {
+              "not": null
+            }
+          },
+          {
+            "id": {
+              "in": [
+                "d1"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "mongo plan output 18",
+      "input": {
+        "filter": {
+          "kind": "equals",
+          "field": "id",
+          "values": [
+            "d1"
+          ]
+        }
+      },
+      "output": {
+        "id": {
+          "$in": [
+            "d1"
+          ]
+        }
+      }
+    },
+    {
+      "name": "describe plan output 18",
+      "input": {
+        "filter": {
+          "kind": "equals",
+          "field": "id",
+          "values": [
+            "d1"
+          ]
+        }
+      },
+      "output": "id = \"d1\""
+    },
+    {
+      "name": "sqlite plan output 19",
+      "input": {
+        "filter": {
+          "kind": "and",
+          "filters": [
+            {
+              "kind": "equals",
+              "field": "parentType",
+              "values": [
+                "folder"
+              ]
+            },
+            {
+              "kind": "equals",
+              "field": "parentId",
+              "values": [
+                "f1"
+              ]
+            }
+          ]
+        },
+        "dialect": "sqlite"
+      },
+      "output": {
+        "sql": "((\"parentType\" IS NOT NULL AND \"parentType\" IN (?)) AND (\"parentId\" IS NOT NULL AND \"parentId\" IN (?)))",
+        "params": [
+          "folder",
+          "f1"
+        ]
+      }
+    },
+    {
+      "name": "postgres plan output 19",
+      "input": {
+        "filter": {
+          "kind": "and",
+          "filters": [
+            {
+              "kind": "equals",
+              "field": "parentType",
+              "values": [
+                "folder"
+              ]
+            },
+            {
+              "kind": "equals",
+              "field": "parentId",
+              "values": [
+                "f1"
+              ]
+            }
+          ]
+        },
+        "dialect": "postgres"
+      },
+      "output": {
+        "sql": "((\"parentType\" IS NOT NULL AND \"parentType\" IN ($1)) AND (\"parentId\" IS NOT NULL AND \"parentId\" IN ($2)))",
+        "params": [
+          "folder",
+          "f1"
+        ]
+      }
+    },
+    {
+      "name": "prisma plan output 19",
+      "input": {
+        "filter": {
+          "kind": "and",
+          "filters": [
+            {
+              "kind": "equals",
+              "field": "parentType",
+              "values": [
+                "folder"
+              ]
+            },
+            {
+              "kind": "equals",
+              "field": "parentId",
+              "values": [
+                "f1"
+              ]
+            }
+          ]
+        }
+      },
+      "output": {
+        "AND": [
+          {
+            "AND": [
+              {
+                "parentType": {
+                  "not": null
+                }
+              },
+              {
+                "parentType": {
+                  "in": [
+                    "folder"
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "AND": [
+              {
+                "parentId": {
+                  "not": null
+                }
+              },
+              {
+                "parentId": {
+                  "in": [
+                    "f1"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "mongo plan output 19",
+      "input": {
+        "filter": {
+          "kind": "and",
+          "filters": [
+            {
+              "kind": "equals",
+              "field": "parentType",
+              "values": [
+                "folder"
+              ]
+            },
+            {
+              "kind": "equals",
+              "field": "parentId",
+              "values": [
+                "f1"
+              ]
+            }
+          ]
+        }
+      },
+      "output": {
+        "$and": [
+          {
+            "parentType": {
+              "$in": [
+                "folder"
+              ]
+            }
+          },
+          {
+            "parentId": {
+              "$in": [
+                "f1"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "describe plan output 19",
+      "input": {
+        "filter": {
+          "kind": "and",
+          "filters": [
+            {
+              "kind": "equals",
+              "field": "parentType",
+              "values": [
+                "folder"
+              ]
+            },
+            {
+              "kind": "equals",
+              "field": "parentId",
+              "values": [
+                "f1"
+              ]
+            }
+          ]
+        }
+      },
+      "output": "parentType = \"folder\" and parentId = \"f1\""
+    },
+    {
+      "name": "sqlite plan output 20",
+      "input": {
+        "filter": {
+          "kind": "compare",
+          "field": "classificationRank",
+          "operator": "le",
+          "value": 2
+        },
+        "dialect": "sqlite"
+      },
+      "output": {
+        "sql": "(\"classificationRank\" IS NOT NULL AND \"classificationRank\" <= ?)",
+        "params": [
+          2
+        ]
+      }
+    },
+    {
+      "name": "postgres plan output 20",
+      "input": {
+        "filter": {
+          "kind": "compare",
+          "field": "classificationRank",
+          "operator": "le",
+          "value": 2
+        },
+        "dialect": "postgres"
+      },
+      "output": {
+        "sql": "(\"classificationRank\" IS NOT NULL AND \"classificationRank\" <= $1)",
+        "params": [
+          2
+        ]
+      }
+    },
+    {
+      "name": "prisma plan output 20",
+      "input": {
+        "filter": {
+          "kind": "compare",
+          "field": "classificationRank",
+          "operator": "le",
+          "value": 2
+        }
+      },
+      "output": {
+        "AND": [
+          {
+            "classificationRank": {
+              "not": null
+            }
+          },
+          {
+            "classificationRank": {
+              "lte": 2
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "mongo plan output 20",
+      "input": {
+        "filter": {
+          "kind": "compare",
+          "field": "classificationRank",
+          "operator": "le",
+          "value": 2
+        }
+      },
+      "output": {
+        "classificationRank": {
+          "$lte": 2
+        }
+      }
+    },
+    {
+      "name": "describe plan output 20",
+      "input": {
+        "filter": {
+          "kind": "compare",
+          "field": "classificationRank",
+          "operator": "le",
+          "value": 2
+        }
+      },
+      "output": "classificationRank <= 2"
+    },
+    {
+      "name": "postgres with offset",
+      "input": {
+        "filter": {
+          "kind": "equals",
+          "field": "team",
+          "values": [
+            "Eng",
+            "OPS",
+            3
+          ],
+          "ignoreCase": true
+        },
+        "dialect": "postgres",
+        "offset": 2
+      },
+      "output": {
+        "sql": "(\"team\" IS NOT NULL AND LOWER(\"team\") IN ($3, $4, $5))",
+        "params": [
+          "eng",
+          "ops",
+          3
+        ]
+      }
+    },
+    {
+      "name": "prisma with field mapping",
+      "input": {
+        "filter": {
+          "kind": "and",
+          "filters": [
+            {
+              "kind": "or",
+              "filters": [
+                {
+                  "kind": "equals",
+                  "field": "owner",
+                  "values": [
+                    "idn_01"
+                  ]
+                },
+                {
+                  "kind": "compare",
+                  "field": "size",
+                  "operator": "gt",
+                  "value": 0
+                }
+              ]
+            },
+            {
+              "kind": "not",
+              "filter": {
+                "kind": "equals",
+                "field": "status",
+                "values": [
+                  "archived"
+                ]
+              }
+            }
+          ]
+        }
+      },
+      "output": {
+        "AND": [
+          {
+            "OR": [
+              {
+                "AND": [
+                  {
+                    "attr_owner": {
+                      "not": null
+                    }
+                  },
+                  {
+                    "attr_owner": {
+                      "in": [
+                        "idn_01"
+                      ]
+                    }
+                  }
+                ]
+              },
+              {
+                "AND": [
+                  {
+                    "attr_size": {
+                      "not": null
+                    }
+                  },
+                  {
+                    "attr_size": {
+                      "gt": 0
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "NOT": {
+              "AND": [
+                {
+                  "attr_status": {
+                    "not": null
+                  }
+                },
+                {
+                  "attr_status": {
+                    "in": [
+                      "archived"
+                    ]
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "mongo with field mapping",
+      "input": {
+        "filter": {
+          "kind": "and",
+          "filters": [
+            {
+              "kind": "or",
+              "filters": [
+                {
+                  "kind": "equals",
+                  "field": "owner",
+                  "values": [
+                    "idn_01"
+                  ]
+                },
+                {
+                  "kind": "compare",
+                  "field": "size",
+                  "operator": "gt",
+                  "value": 0
+                }
+              ]
+            },
+            {
+              "kind": "not",
+              "filter": {
+                "kind": "equals",
+                "field": "status",
+                "values": [
+                  "archived"
+                ]
+              }
+            }
+          ]
+        }
+      },
+      "output": {
+        "$and": [
+          {
+            "$or": [
+              {
+                "owner": {
+                  "$in": [
+                    "idn_01"
+                  ]
+                }
+              },
+              {
+                "size": {
+                  "$gt": 0
+                }
+              }
+            ]
+          },
+          {
+            "$nor": [
+              {
+                "status": {
+                  "$in": [
+                    "archived"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "matches true d1",
+      "input": {
+        "filter": {
+          "kind": "true"
+        },
+        "record": {
+          "id": "d1",
+          "owner": "idn_01",
+          "size": 10,
+          "title": "Q1-plan",
+          "team": "eng",
+          "tags": [
+            "public"
+          ],
+          "publishedAt": "2025-06-01T00:00:00Z",
+          "origin": "10.1.2.3",
+          "status": "live",
+          "level": 1
+        }
+      },
+      "output": true
+    },
+    {
+      "name": "matches true d2",
+      "input": {
+        "filter": {
+          "kind": "true"
+        },
+        "record": {
+          "id": "d2",
+          "owner": "idn_02",
+          "size": 500,
+          "title": "q2-Draft",
+          "team": "OPS",
+          "tags": [],
+          "publishedAt": "2026-06-01T00:00:00Z",
+          "origin": "192.168.0.1",
+          "status": "archived",
+          "level": "one"
+        }
+      },
+      "output": true
+    },
+    {
+      "name": "matches true d3",
+      "input": {
+        "filter": {
+          "kind": "true"
+        },
+        "record": {
+          "id": "d3",
+          "size": "10",
+          "title": 100,
+          "tags": "public",
+          "publishedAt": "not a date",
+          "origin": "nope",
+          "level": true
+        }
+      },
+      "output": true
+    },
+    {
+      "name": "matches false d1",
+      "input": {
+        "filter": {
+          "kind": "false"
+        },
+        "record": {
+          "id": "d1",
+          "owner": "idn_01",
+          "size": 10,
+          "title": "Q1-plan",
+          "team": "eng",
+          "tags": [
+            "public"
+          ],
+          "publishedAt": "2025-06-01T00:00:00Z",
+          "origin": "10.1.2.3",
+          "status": "live",
+          "level": 1
+        }
+      },
+      "output": false
+    },
+    {
+      "name": "matches false d2",
+      "input": {
+        "filter": {
+          "kind": "false"
+        },
+        "record": {
+          "id": "d2",
+          "owner": "idn_02",
+          "size": 500,
+          "title": "q2-Draft",
+          "team": "OPS",
+          "tags": [],
+          "publishedAt": "2026-06-01T00:00:00Z",
+          "origin": "192.168.0.1",
+          "status": "archived",
+          "level": "one"
+        }
+      },
+      "output": false
+    },
+    {
+      "name": "matches false d3",
+      "input": {
+        "filter": {
+          "kind": "false"
+        },
+        "record": {
+          "id": "d3",
+          "size": "10",
+          "title": 100,
+          "tags": "public",
+          "publishedAt": "not a date",
+          "origin": "nope",
+          "level": true
+        }
+      },
+      "output": false
+    },
+    {
+      "name": "matches exists d1",
+      "input": {
+        "filter": {
+          "kind": "exists",
+          "field": "owner"
+        },
+        "record": {
+          "id": "d1",
+          "owner": "idn_01",
+          "size": 10,
+          "title": "Q1-plan",
+          "team": "eng",
+          "tags": [
+            "public"
+          ],
+          "publishedAt": "2025-06-01T00:00:00Z",
+          "origin": "10.1.2.3",
+          "status": "live",
+          "level": 1
+        }
+      },
+      "output": true
+    },
+    {
+      "name": "matches exists d2",
+      "input": {
+        "filter": {
+          "kind": "exists",
+          "field": "owner"
+        },
+        "record": {
+          "id": "d2",
+          "owner": "idn_02",
+          "size": 500,
+          "title": "q2-Draft",
+          "team": "OPS",
+          "tags": [],
+          "publishedAt": "2026-06-01T00:00:00Z",
+          "origin": "192.168.0.1",
+          "status": "archived",
+          "level": "one"
+        }
+      },
+      "output": true
+    },
+    {
+      "name": "matches exists d3",
+      "input": {
+        "filter": {
+          "kind": "exists",
+          "field": "owner"
+        },
+        "record": {
+          "id": "d3",
+          "size": "10",
+          "title": 100,
+          "tags": "public",
+          "publishedAt": "not a date",
+          "origin": "nope",
+          "level": true
+        }
+      },
+      "output": false
+    },
+    {
+      "name": "matches type string d1",
+      "input": {
+        "filter": {
+          "kind": "type",
+          "field": "owner",
+          "type": "string"
+        },
+        "record": {
+          "id": "d1",
+          "owner": "idn_01",
+          "size": 10,
+          "title": "Q1-plan",
+          "team": "eng",
+          "tags": [
+            "public"
+          ],
+          "publishedAt": "2025-06-01T00:00:00Z",
+          "origin": "10.1.2.3",
+          "status": "live",
+          "level": 1
+        }
+      },
+      "output": true
+    },
+    {
+      "name": "matches type string d2",
+      "input": {
+        "filter": {
+          "kind": "type",
+          "field": "owner",
+          "type": "string"
+        },
+        "record": {
+          "id": "d2",
+          "owner": "idn_02",
+          "size": 500,
+          "title": "q2-Draft",
+          "team": "OPS",
+          "tags": [],
+          "publishedAt": "2026-06-01T00:00:00Z",
+          "origin": "192.168.0.1",
+          "status": "archived",
+          "level": "one"
+        }
+      },
+      "output": true
+    },
+    {
+      "name": "matches type string d3",
+      "input": {
+        "filter": {
+          "kind": "type",
+          "field": "owner",
+          "type": "string"
+        },
+        "record": {
+          "id": "d3",
+          "size": "10",
+          "title": 100,
+          "tags": "public",
+          "publishedAt": "not a date",
+          "origin": "nope",
+          "level": true
+        }
+      },
+      "output": false
+    },
+    {
+      "name": "matches type ip d1",
+      "input": {
+        "filter": {
+          "kind": "type",
+          "field": "origin",
+          "type": "ip"
+        },
+        "record": {
+          "id": "d1",
+          "owner": "idn_01",
+          "size": 10,
+          "title": "Q1-plan",
+          "team": "eng",
+          "tags": [
+            "public"
+          ],
+          "publishedAt": "2025-06-01T00:00:00Z",
+          "origin": "10.1.2.3",
+          "status": "live",
+          "level": 1
+        }
+      },
+      "output": true
+    },
+    {
+      "name": "matches type ip d2",
+      "input": {
+        "filter": {
+          "kind": "type",
+          "field": "origin",
+          "type": "ip"
+        },
+        "record": {
+          "id": "d2",
+          "owner": "idn_02",
+          "size": 500,
+          "title": "q2-Draft",
+          "team": "OPS",
+          "tags": [],
+          "publishedAt": "2026-06-01T00:00:00Z",
+          "origin": "192.168.0.1",
+          "status": "archived",
+          "level": "one"
+        }
+      },
+      "output": true
+    },
+    {
+      "name": "matches type ip d3",
+      "input": {
+        "filter": {
+          "kind": "type",
+          "field": "origin",
+          "type": "ip"
+        },
+        "record": {
+          "id": "d3",
+          "size": "10",
+          "title": 100,
+          "tags": "public",
+          "publishedAt": "not a date",
+          "origin": "nope",
+          "level": true
+        }
+      },
+      "output": false
+    },
+    {
+      "name": "matches equals one d1",
+      "input": {
+        "filter": {
+          "kind": "equals",
+          "field": "id",
+          "values": [
+            "d1"
+          ]
+        },
+        "record": {
+          "id": "d1",
+          "owner": "idn_01",
+          "size": 10,
+          "title": "Q1-plan",
+          "team": "eng",
+          "tags": [
+            "public"
+          ],
+          "publishedAt": "2025-06-01T00:00:00Z",
+          "origin": "10.1.2.3",
+          "status": "live",
+          "level": 1
+        }
+      },
+      "output": true
+    },
+    {
+      "name": "matches equals one d2",
+      "input": {
+        "filter": {
+          "kind": "equals",
+          "field": "id",
+          "values": [
+            "d1"
+          ]
+        },
+        "record": {
+          "id": "d2",
+          "owner": "idn_02",
+          "size": 500,
+          "title": "q2-Draft",
+          "team": "OPS",
+          "tags": [],
+          "publishedAt": "2026-06-01T00:00:00Z",
+          "origin": "192.168.0.1",
+          "status": "archived",
+          "level": "one"
+        }
+      },
+      "output": false
+    },
+    {
+      "name": "matches equals one d3",
+      "input": {
+        "filter": {
+          "kind": "equals",
+          "field": "id",
+          "values": [
+            "d1"
+          ]
+        },
+        "record": {
+          "id": "d3",
+          "size": "10",
+          "title": 100,
+          "tags": "public",
+          "publishedAt": "not a date",
+          "origin": "nope",
+          "level": true
+        }
+      },
+      "output": false
+    },
+    {
+      "name": "matches equals many mixed d1",
+      "input": {
+        "filter": {
+          "kind": "equals",
+          "field": "level",
+          "values": [
+            1,
+            "one",
+            true
+          ]
+        },
+        "record": {
+          "id": "d1",
+          "owner": "idn_01",
+          "size": 10,
+          "title": "Q1-plan",
+          "team": "eng",
+          "tags": [
+            "public"
+          ],
+          "publishedAt": "2025-06-01T00:00:00Z",
+          "origin": "10.1.2.3",
+          "status": "live",
+          "level": 1
+        }
+      },
+      "output": true
+    },
+    {
+      "name": "matches equals many mixed d2",
+      "input": {
+        "filter": {
+          "kind": "equals",
+          "field": "level",
+          "values": [
+            1,
+            "one",
+            true
+          ]
+        },
+        "record": {
+          "id": "d2",
+          "owner": "idn_02",
+          "size": 500,
+          "title": "q2-Draft",
+          "team": "OPS",
+          "tags": [],
+          "publishedAt": "2026-06-01T00:00:00Z",
+          "origin": "192.168.0.1",
+          "status": "archived",
+          "level": "one"
+        }
+      },
+      "output": true
+    },
+    {
+      "name": "matches equals many mixed d3",
+      "input": {
+        "filter": {
+          "kind": "equals",
+          "field": "level",
+          "values": [
+            1,
+            "one",
+            true
+          ]
+        },
+        "record": {
+          "id": "d3",
+          "size": "10",
+          "title": 100,
+          "tags": "public",
+          "publishedAt": "not a date",
+          "origin": "nope",
+          "level": true
+        }
+      },
+      "output": true
+    },
+    {
+      "name": "matches equals ignore case d1",
+      "input": {
+        "filter": {
+          "kind": "equals",
+          "field": "team",
+          "values": [
+            "Eng",
+            "OPS",
+            3
+          ],
+          "ignoreCase": true
+        },
+        "record": {
+          "id": "d1",
+          "owner": "idn_01",
+          "size": 10,
+          "title": "Q1-plan",
+          "team": "eng",
+          "tags": [
+            "public"
+          ],
+          "publishedAt": "2025-06-01T00:00:00Z",
+          "origin": "10.1.2.3",
+          "status": "live",
+          "level": 1
+        }
+      },
+      "output": true
+    },
+    {
+      "name": "matches equals ignore case d2",
+      "input": {
+        "filter": {
+          "kind": "equals",
+          "field": "team",
+          "values": [
+            "Eng",
+            "OPS",
+            3
+          ],
+          "ignoreCase": true
+        },
+        "record": {
+          "id": "d2",
+          "owner": "idn_02",
+          "size": 500,
+          "title": "q2-Draft",
+          "team": "OPS",
+          "tags": [],
+          "publishedAt": "2026-06-01T00:00:00Z",
+          "origin": "192.168.0.1",
+          "status": "archived",
+          "level": "one"
+        }
+      },
+      "output": true
+    },
+    {
+      "name": "matches equals ignore case d3",
+      "input": {
+        "filter": {
+          "kind": "equals",
+          "field": "team",
+          "values": [
+            "Eng",
+            "OPS",
+            3
+          ],
+          "ignoreCase": true
+        },
+        "record": {
+          "id": "d3",
+          "size": "10",
+          "title": 100,
+          "tags": "public",
+          "publishedAt": "not a date",
+          "origin": "nope",
+          "level": true
+        }
+      },
+      "output": false
+    },
+    {
+      "name": "matches compare lt d1",
+      "input": {
+        "filter": {
+          "kind": "compare",
+          "field": "size",
+          "operator": "lt",
+          "value": 100
+        },
+        "record": {
+          "id": "d1",
+          "owner": "idn_01",
+          "size": 10,
+          "title": "Q1-plan",
+          "team": "eng",
+          "tags": [
+            "public"
+          ],
+          "publishedAt": "2025-06-01T00:00:00Z",
+          "origin": "10.1.2.3",
+          "status": "live",
+          "level": 1
+        }
+      },
+      "output": true
+    },
+    {
+      "name": "matches compare lt d2",
+      "input": {
+        "filter": {
+          "kind": "compare",
+          "field": "size",
+          "operator": "lt",
+          "value": 100
+        },
+        "record": {
+          "id": "d2",
+          "owner": "idn_02",
+          "size": 500,
+          "title": "q2-Draft",
+          "team": "OPS",
+          "tags": [],
+          "publishedAt": "2026-06-01T00:00:00Z",
+          "origin": "192.168.0.1",
+          "status": "archived",
+          "level": "one"
+        }
+      },
+      "output": false
+    },
+    {
+      "name": "matches compare lt d3",
+      "input": {
+        "filter": {
+          "kind": "compare",
+          "field": "size",
+          "operator": "lt",
+          "value": 100
+        },
+        "record": {
+          "id": "d3",
+          "size": "10",
+          "title": 100,
+          "tags": "public",
+          "publishedAt": "not a date",
+          "origin": "nope",
+          "level": true
+        }
+      },
+      "output": false
+    },
+    {
+      "name": "matches compare ge d1",
+      "input": {
+        "filter": {
+          "kind": "compare",
+          "field": "size",
+          "operator": "ge",
+          "value": 1.5
+        },
+        "record": {
+          "id": "d1",
+          "owner": "idn_01",
+          "size": 10,
+          "title": "Q1-plan",
+          "team": "eng",
+          "tags": [
+            "public"
+          ],
+          "publishedAt": "2025-06-01T00:00:00Z",
+          "origin": "10.1.2.3",
+          "status": "live",
+          "level": 1
+        }
+      },
+      "output": true
+    },
+    {
+      "name": "matches compare ge d2",
+      "input": {
+        "filter": {
+          "kind": "compare",
+          "field": "size",
+          "operator": "ge",
+          "value": 1.5
+        },
+        "record": {
+          "id": "d2",
+          "owner": "idn_02",
+          "size": 500,
+          "title": "q2-Draft",
+          "team": "OPS",
+          "tags": [],
+          "publishedAt": "2026-06-01T00:00:00Z",
+          "origin": "192.168.0.1",
+          "status": "archived",
+          "level": "one"
+        }
+      },
+      "output": true
+    },
+    {
+      "name": "matches compare ge d3",
+      "input": {
+        "filter": {
+          "kind": "compare",
+          "field": "size",
+          "operator": "ge",
+          "value": 1.5
+        },
+        "record": {
+          "id": "d3",
+          "size": "10",
+          "title": 100,
+          "tags": "public",
+          "publishedAt": "not a date",
+          "origin": "nope",
+          "level": true
+        }
+      },
+      "output": false
+    },
+    {
+      "name": "matches like prefix d1",
+      "input": {
+        "filter": {
+          "kind": "like",
+          "field": "title",
+          "pattern": "Q1-*"
+        },
+        "record": {
+          "id": "d1",
+          "owner": "idn_01",
+          "size": 10,
+          "title": "Q1-plan",
+          "team": "eng",
+          "tags": [
+            "public"
+          ],
+          "publishedAt": "2025-06-01T00:00:00Z",
+          "origin": "10.1.2.3",
+          "status": "live",
+          "level": 1
+        }
+      },
+      "output": true
+    },
+    {
+      "name": "matches like prefix d2",
+      "input": {
+        "filter": {
+          "kind": "like",
+          "field": "title",
+          "pattern": "Q1-*"
+        },
+        "record": {
+          "id": "d2",
+          "owner": "idn_02",
+          "size": 500,
+          "title": "q2-Draft",
+          "team": "OPS",
+          "tags": [],
+          "publishedAt": "2026-06-01T00:00:00Z",
+          "origin": "192.168.0.1",
+          "status": "archived",
+          "level": "one"
+        }
+      },
+      "output": false
+    },
+    {
+      "name": "matches like prefix d3",
+      "input": {
+        "filter": {
+          "kind": "like",
+          "field": "title",
+          "pattern": "Q1-*"
+        },
+        "record": {
+          "id": "d3",
+          "size": "10",
+          "title": 100,
+          "tags": "public",
+          "publishedAt": "not a date",
+          "origin": "nope",
+          "level": true
+        }
+      },
+      "output": false
+    },
+    {
+      "name": "matches like suffix d1",
+      "input": {
+        "filter": {
+          "kind": "like",
+          "field": "title",
+          "pattern": "*-draft"
+        },
+        "record": {
+          "id": "d1",
+          "owner": "idn_01",
+          "size": 10,
+          "title": "Q1-plan",
+          "team": "eng",
+          "tags": [
+            "public"
+          ],
+          "publishedAt": "2025-06-01T00:00:00Z",
+          "origin": "10.1.2.3",
+          "status": "live",
+          "level": 1
+        }
+      },
+      "output": false
+    },
+    {
+      "name": "matches like suffix d2",
+      "input": {
+        "filter": {
+          "kind": "like",
+          "field": "title",
+          "pattern": "*-draft"
+        },
+        "record": {
+          "id": "d2",
+          "owner": "idn_02",
+          "size": 500,
+          "title": "q2-Draft",
+          "team": "OPS",
+          "tags": [],
+          "publishedAt": "2026-06-01T00:00:00Z",
+          "origin": "192.168.0.1",
+          "status": "archived",
+          "level": "one"
+        }
+      },
+      "output": false
+    },
+    {
+      "name": "matches like suffix d3",
+      "input": {
+        "filter": {
+          "kind": "like",
+          "field": "title",
+          "pattern": "*-draft"
+        },
+        "record": {
+          "id": "d3",
+          "size": "10",
+          "title": 100,
+          "tags": "public",
+          "publishedAt": "not a date",
+          "origin": "nope",
+          "level": true
+        }
+      },
+      "output": false
+    },
+    {
+      "name": "matches like contains d1",
+      "input": {
+        "filter": {
+          "kind": "like",
+          "field": "title",
+          "pattern": "*plan*"
+        },
+        "record": {
+          "id": "d1",
+          "owner": "idn_01",
+          "size": 10,
+          "title": "Q1-plan",
+          "team": "eng",
+          "tags": [
+            "public"
+          ],
+          "publishedAt": "2025-06-01T00:00:00Z",
+          "origin": "10.1.2.3",
+          "status": "live",
+          "level": 1
+        }
+      },
+      "output": true
+    },
+    {
+      "name": "matches like contains d2",
+      "input": {
+        "filter": {
+          "kind": "like",
+          "field": "title",
+          "pattern": "*plan*"
+        },
+        "record": {
+          "id": "d2",
+          "owner": "idn_02",
+          "size": 500,
+          "title": "q2-Draft",
+          "team": "OPS",
+          "tags": [],
+          "publishedAt": "2026-06-01T00:00:00Z",
+          "origin": "192.168.0.1",
+          "status": "archived",
+          "level": "one"
+        }
+      },
+      "output": false
+    },
+    {
+      "name": "matches like contains d3",
+      "input": {
+        "filter": {
+          "kind": "like",
+          "field": "title",
+          "pattern": "*plan*"
+        },
+        "record": {
+          "id": "d3",
+          "size": "10",
+          "title": 100,
+          "tags": "public",
+          "publishedAt": "not a date",
+          "origin": "nope",
+          "level": true
+        }
+      },
+      "output": false
+    },
+    {
+      "name": "matches like complex d1",
+      "input": {
+        "filter": {
+          "kind": "like",
+          "field": "title",
+          "pattern": "a?b*c"
+        },
+        "record": {
+          "id": "d1",
+          "owner": "idn_01",
+          "size": 10,
+          "title": "Q1-plan",
+          "team": "eng",
+          "tags": [
+            "public"
+          ],
+          "publishedAt": "2025-06-01T00:00:00Z",
+          "origin": "10.1.2.3",
+          "status": "live",
+          "level": 1
+        }
+      },
+      "output": false
+    },
+    {
+      "name": "matches like complex d2",
+      "input": {
+        "filter": {
+          "kind": "like",
+          "field": "title",
+          "pattern": "a?b*c"
+        },
+        "record": {
+          "id": "d2",
+          "owner": "idn_02",
+          "size": 500,
+          "title": "q2-Draft",
+          "team": "OPS",
+          "tags": [],
+          "publishedAt": "2026-06-01T00:00:00Z",
+          "origin": "192.168.0.1",
+          "status": "archived",
+          "level": "one"
+        }
+      },
+      "output": false
+    },
+    {
+      "name": "matches like complex d3",
+      "input": {
+        "filter": {
+          "kind": "like",
+          "field": "title",
+          "pattern": "a?b*c"
+        },
+        "record": {
+          "id": "d3",
+          "size": "10",
+          "title": 100,
+          "tags": "public",
+          "publishedAt": "not a date",
+          "origin": "nope",
+          "level": true
+        }
+      },
+      "output": false
+    },
+    {
+      "name": "matches like escapes d1",
+      "input": {
+        "filter": {
+          "kind": "like",
+          "field": "title",
+          "pattern": "100%_\\*[x]\\?"
+        },
+        "record": {
+          "id": "d1",
+          "owner": "idn_01",
+          "size": 10,
+          "title": "Q1-plan",
+          "team": "eng",
+          "tags": [
+            "public"
+          ],
+          "publishedAt": "2025-06-01T00:00:00Z",
+          "origin": "10.1.2.3",
+          "status": "live",
+          "level": 1
+        }
+      },
+      "output": false
+    },
+    {
+      "name": "matches like escapes d2",
+      "input": {
+        "filter": {
+          "kind": "like",
+          "field": "title",
+          "pattern": "100%_\\*[x]\\?"
+        },
+        "record": {
+          "id": "d2",
+          "owner": "idn_02",
+          "size": 500,
+          "title": "q2-Draft",
+          "team": "OPS",
+          "tags": [],
+          "publishedAt": "2026-06-01T00:00:00Z",
+          "origin": "192.168.0.1",
+          "status": "archived",
+          "level": "one"
+        }
+      },
+      "output": false
+    },
+    {
+      "name": "matches like escapes d3",
+      "input": {
+        "filter": {
+          "kind": "like",
+          "field": "title",
+          "pattern": "100%_\\*[x]\\?"
+        },
+        "record": {
+          "id": "d3",
+          "size": "10",
+          "title": 100,
+          "tags": "public",
+          "publishedAt": "not a date",
+          "origin": "nope",
+          "level": true
+        }
+      },
+      "output": false
+    },
+    {
+      "name": "matches like ignore case d1",
+      "input": {
+        "filter": {
+          "kind": "like",
+          "field": "title",
+          "pattern": "Q?-*",
+          "ignoreCase": true
+        },
+        "record": {
+          "id": "d1",
+          "owner": "idn_01",
+          "size": 10,
+          "title": "Q1-plan",
+          "team": "eng",
+          "tags": [
+            "public"
+          ],
+          "publishedAt": "2025-06-01T00:00:00Z",
+          "origin": "10.1.2.3",
+          "status": "live",
+          "level": 1
+        }
+      },
+      "output": true
+    },
+    {
+      "name": "matches like ignore case d2",
+      "input": {
+        "filter": {
+          "kind": "like",
+          "field": "title",
+          "pattern": "Q?-*",
+          "ignoreCase": true
+        },
+        "record": {
+          "id": "d2",
+          "owner": "idn_02",
+          "size": 500,
+          "title": "q2-Draft",
+          "team": "OPS",
+          "tags": [],
+          "publishedAt": "2026-06-01T00:00:00Z",
+          "origin": "192.168.0.1",
+          "status": "archived",
+          "level": "one"
+        }
+      },
+      "output": true
+    },
+    {
+      "name": "matches like ignore case d3",
+      "input": {
+        "filter": {
+          "kind": "like",
+          "field": "title",
+          "pattern": "Q?-*",
+          "ignoreCase": true
+        },
+        "record": {
+          "id": "d3",
+          "size": "10",
+          "title": 100,
+          "tags": "public",
+          "publishedAt": "not a date",
+          "origin": "nope",
+          "level": true
+        }
+      },
+      "output": false
+    },
+    {
+      "name": "matches date before d1",
+      "input": {
+        "filter": {
+          "kind": "date",
+          "field": "publishedAt",
+          "operator": "before",
+          "value": "2026-01-01T00:00:00Z"
+        },
+        "record": {
+          "id": "d1",
+          "owner": "idn_01",
+          "size": 10,
+          "title": "Q1-plan",
+          "team": "eng",
+          "tags": [
+            "public"
+          ],
+          "publishedAt": "2025-06-01T00:00:00Z",
+          "origin": "10.1.2.3",
+          "status": "live",
+          "level": 1
+        }
+      },
+      "output": true
+    },
+    {
+      "name": "matches date before d2",
+      "input": {
+        "filter": {
+          "kind": "date",
+          "field": "publishedAt",
+          "operator": "before",
+          "value": "2026-01-01T00:00:00Z"
+        },
+        "record": {
+          "id": "d2",
+          "owner": "idn_02",
+          "size": 500,
+          "title": "q2-Draft",
+          "team": "OPS",
+          "tags": [],
+          "publishedAt": "2026-06-01T00:00:00Z",
+          "origin": "192.168.0.1",
+          "status": "archived",
+          "level": "one"
+        }
+      },
+      "output": false
+    },
+    {
+      "name": "matches date before d3",
+      "input": {
+        "filter": {
+          "kind": "date",
+          "field": "publishedAt",
+          "operator": "before",
+          "value": "2026-01-01T00:00:00Z"
+        },
+        "record": {
+          "id": "d3",
+          "size": "10",
+          "title": 100,
+          "tags": "public",
+          "publishedAt": "not a date",
+          "origin": "nope",
+          "level": true
+        }
+      },
+      "output": false
+    },
+    {
+      "name": "matches ip d1",
+      "input": {
+        "filter": {
+          "kind": "ip",
+          "field": "origin",
+          "network": "10.0.0.0/8"
+        },
+        "record": {
+          "id": "d1",
+          "owner": "idn_01",
+          "size": 10,
+          "title": "Q1-plan",
+          "team": "eng",
+          "tags": [
+            "public"
+          ],
+          "publishedAt": "2025-06-01T00:00:00Z",
+          "origin": "10.1.2.3",
+          "status": "live",
+          "level": 1
+        }
+      },
+      "output": true
+    },
+    {
+      "name": "matches ip d2",
+      "input": {
+        "filter": {
+          "kind": "ip",
+          "field": "origin",
+          "network": "10.0.0.0/8"
+        },
+        "record": {
+          "id": "d2",
+          "owner": "idn_02",
+          "size": 500,
+          "title": "q2-Draft",
+          "team": "OPS",
+          "tags": [],
+          "publishedAt": "2026-06-01T00:00:00Z",
+          "origin": "192.168.0.1",
+          "status": "archived",
+          "level": "one"
+        }
+      },
+      "output": false
+    },
+    {
+      "name": "matches ip d3",
+      "input": {
+        "filter": {
+          "kind": "ip",
+          "field": "origin",
+          "network": "10.0.0.0/8"
+        },
+        "record": {
+          "id": "d3",
+          "size": "10",
+          "title": 100,
+          "tags": "public",
+          "publishedAt": "not a date",
+          "origin": "nope",
+          "level": true
+        }
+      },
+      "output": false
+    },
+    {
+      "name": "matches contains d1",
+      "input": {
+        "filter": {
+          "kind": "contains",
+          "field": "tags",
+          "value": "public"
+        },
+        "record": {
+          "id": "d1",
+          "owner": "idn_01",
+          "size": 10,
+          "title": "Q1-plan",
+          "team": "eng",
+          "tags": [
+            "public"
+          ],
+          "publishedAt": "2025-06-01T00:00:00Z",
+          "origin": "10.1.2.3",
+          "status": "live",
+          "level": 1
+        }
+      },
+      "output": true
+    },
+    {
+      "name": "matches contains d2",
+      "input": {
+        "filter": {
+          "kind": "contains",
+          "field": "tags",
+          "value": "public"
+        },
+        "record": {
+          "id": "d2",
+          "owner": "idn_02",
+          "size": 500,
+          "title": "q2-Draft",
+          "team": "OPS",
+          "tags": [],
+          "publishedAt": "2026-06-01T00:00:00Z",
+          "origin": "192.168.0.1",
+          "status": "archived",
+          "level": "one"
+        }
+      },
+      "output": false
+    },
+    {
+      "name": "matches contains d3",
+      "input": {
+        "filter": {
+          "kind": "contains",
+          "field": "tags",
+          "value": "public"
+        },
+        "record": {
+          "id": "d3",
+          "size": "10",
+          "title": 100,
+          "tags": "public",
+          "publishedAt": "not a date",
+          "origin": "nope",
+          "level": true
+        }
+      },
+      "output": false
+    },
+    {
+      "name": "matches and or not d1",
+      "input": {
+        "filter": {
+          "kind": "and",
+          "filters": [
+            {
+              "kind": "or",
+              "filters": [
+                {
+                  "kind": "equals",
+                  "field": "owner",
+                  "values": [
+                    "idn_01"
+                  ]
+                },
+                {
+                  "kind": "compare",
+                  "field": "size",
+                  "operator": "gt",
+                  "value": 0
+                }
+              ]
+            },
+            {
+              "kind": "not",
+              "filter": {
+                "kind": "equals",
+                "field": "status",
+                "values": [
+                  "archived"
+                ]
+              }
+            }
+          ]
+        },
+        "record": {
+          "id": "d1",
+          "owner": "idn_01",
+          "size": 10,
+          "title": "Q1-plan",
+          "team": "eng",
+          "tags": [
+            "public"
+          ],
+          "publishedAt": "2025-06-01T00:00:00Z",
+          "origin": "10.1.2.3",
+          "status": "live",
+          "level": 1
+        }
+      },
+      "output": true
+    },
+    {
+      "name": "matches and or not d2",
+      "input": {
+        "filter": {
+          "kind": "and",
+          "filters": [
+            {
+              "kind": "or",
+              "filters": [
+                {
+                  "kind": "equals",
+                  "field": "owner",
+                  "values": [
+                    "idn_01"
+                  ]
+                },
+                {
+                  "kind": "compare",
+                  "field": "size",
+                  "operator": "gt",
+                  "value": 0
+                }
+              ]
+            },
+            {
+              "kind": "not",
+              "filter": {
+                "kind": "equals",
+                "field": "status",
+                "values": [
+                  "archived"
+                ]
+              }
+            }
+          ]
+        },
+        "record": {
+          "id": "d2",
+          "owner": "idn_02",
+          "size": 500,
+          "title": "q2-Draft",
+          "team": "OPS",
+          "tags": [],
+          "publishedAt": "2026-06-01T00:00:00Z",
+          "origin": "192.168.0.1",
+          "status": "archived",
+          "level": "one"
+        }
+      },
+      "output": false
+    },
+    {
+      "name": "matches and or not d3",
+      "input": {
+        "filter": {
+          "kind": "and",
+          "filters": [
+            {
+              "kind": "or",
+              "filters": [
+                {
+                  "kind": "equals",
+                  "field": "owner",
+                  "values": [
+                    "idn_01"
+                  ]
+                },
+                {
+                  "kind": "compare",
+                  "field": "size",
+                  "operator": "gt",
+                  "value": 0
+                }
+              ]
+            },
+            {
+              "kind": "not",
+              "filter": {
+                "kind": "equals",
+                "field": "status",
+                "values": [
+                  "archived"
+                ]
+              }
+            }
+          ]
+        },
+        "record": {
+          "id": "d3",
+          "size": "10",
+          "title": 100,
+          "tags": "public",
+          "publishedAt": "not a date",
+          "origin": "nope",
+          "level": true
+        }
+      },
+      "output": false
+    },
+    {
+      "name": "matches missing column d1",
+      "input": {
+        "filter": {
+          "kind": "equals",
+          "field": "missingField",
+          "values": [
+            "x"
+          ]
+        },
+        "record": {
+          "id": "d1",
+          "owner": "idn_01",
+          "size": 10,
+          "title": "Q1-plan",
+          "team": "eng",
+          "tags": [
+            "public"
+          ],
+          "publishedAt": "2025-06-01T00:00:00Z",
+          "origin": "10.1.2.3",
+          "status": "live",
+          "level": 1
+        }
+      },
+      "output": false
+    },
+    {
+      "name": "matches missing column d2",
+      "input": {
+        "filter": {
+          "kind": "equals",
+          "field": "missingField",
+          "values": [
+            "x"
+          ]
+        },
+        "record": {
+          "id": "d2",
+          "owner": "idn_02",
+          "size": 500,
+          "title": "q2-Draft",
+          "team": "OPS",
+          "tags": [],
+          "publishedAt": "2026-06-01T00:00:00Z",
+          "origin": "192.168.0.1",
+          "status": "archived",
+          "level": "one"
+        }
+      },
+      "output": false
+    },
+    {
+      "name": "matches missing column d3",
+      "input": {
+        "filter": {
+          "kind": "equals",
+          "field": "missingField",
+          "values": [
+            "x"
+          ]
+        },
+        "record": {
+          "id": "d3",
+          "size": "10",
+          "title": 100,
+          "tags": "public",
+          "publishedAt": "not a date",
+          "origin": "nope",
+          "level": true
+        }
+      },
+      "output": false
+    },
+    {
+      "name": "matches plan output 1 d1",
+      "input": {
+        "filter": {
+          "kind": "equals",
+          "field": "id",
+          "values": [
+            "1",
+            "2"
+          ]
+        },
+        "record": {
+          "id": "d1",
+          "owner": "idn_01",
+          "size": 10,
+          "title": "Q1-plan",
+          "team": "eng",
+          "tags": [
+            "public"
+          ],
+          "publishedAt": "2025-06-01T00:00:00Z",
+          "origin": "10.1.2.3",
+          "status": "live",
+          "level": 1
+        }
+      },
+      "output": false
+    },
+    {
+      "name": "matches plan output 1 d2",
+      "input": {
+        "filter": {
+          "kind": "equals",
+          "field": "id",
+          "values": [
+            "1",
+            "2"
+          ]
+        },
+        "record": {
+          "id": "d2",
+          "owner": "idn_02",
+          "size": 500,
+          "title": "q2-Draft",
+          "team": "OPS",
+          "tags": [],
+          "publishedAt": "2026-06-01T00:00:00Z",
+          "origin": "192.168.0.1",
+          "status": "archived",
+          "level": "one"
+        }
+      },
+      "output": false
+    },
+    {
+      "name": "matches plan output 1 d3",
+      "input": {
+        "filter": {
+          "kind": "equals",
+          "field": "id",
+          "values": [
+            "1",
+            "2"
+          ]
+        },
+        "record": {
+          "id": "d3",
+          "size": "10",
+          "title": 100,
+          "tags": "public",
+          "publishedAt": "not a date",
+          "origin": "nope",
+          "level": true
+        }
+      },
+      "output": false
+    },
+    {
+      "name": "matches plan output 2 d1",
+      "input": {
+        "filter": {
+          "kind": "like",
+          "field": "id",
+          "pattern": "report-*"
+        },
+        "record": {
+          "id": "d1",
+          "owner": "idn_01",
+          "size": 10,
+          "title": "Q1-plan",
+          "team": "eng",
+          "tags": [
+            "public"
+          ],
+          "publishedAt": "2025-06-01T00:00:00Z",
+          "origin": "10.1.2.3",
+          "status": "live",
+          "level": 1
+        }
+      },
+      "output": false
+    },
+    {
+      "name": "matches plan output 2 d2",
+      "input": {
+        "filter": {
+          "kind": "like",
+          "field": "id",
+          "pattern": "report-*"
+        },
+        "record": {
+          "id": "d2",
+          "owner": "idn_02",
+          "size": 500,
+          "title": "q2-Draft",
+          "team": "OPS",
+          "tags": [],
+          "publishedAt": "2026-06-01T00:00:00Z",
+          "origin": "192.168.0.1",
+          "status": "archived",
+          "level": "one"
+        }
+      },
+      "output": false
+    },
+    {
+      "name": "matches plan output 2 d3",
+      "input": {
+        "filter": {
+          "kind": "like",
+          "field": "id",
+          "pattern": "report-*"
+        },
+        "record": {
+          "id": "d3",
+          "size": "10",
+          "title": 100,
+          "tags": "public",
+          "publishedAt": "not a date",
+          "origin": "nope",
+          "level": true
+        }
+      },
+      "output": false
+    },
+    {
+      "name": "matches plan output 3 d1",
+      "input": {
+        "filter": {
+          "kind": "like",
+          "field": "id",
+          "pattern": "idn_01-*"
+        },
+        "record": {
+          "id": "d1",
+          "owner": "idn_01",
+          "size": 10,
+          "title": "Q1-plan",
+          "team": "eng",
+          "tags": [
+            "public"
+          ],
+          "publishedAt": "2025-06-01T00:00:00Z",
+          "origin": "10.1.2.3",
+          "status": "live",
+          "level": 1
+        }
+      },
+      "output": false
+    },
+    {
+      "name": "matches plan output 3 d2",
+      "input": {
+        "filter": {
+          "kind": "like",
+          "field": "id",
+          "pattern": "idn_01-*"
+        },
+        "record": {
+          "id": "d2",
+          "owner": "idn_02",
+          "size": 500,
+          "title": "q2-Draft",
+          "team": "OPS",
+          "tags": [],
+          "publishedAt": "2026-06-01T00:00:00Z",
+          "origin": "192.168.0.1",
+          "status": "archived",
+          "level": "one"
+        }
+      },
+      "output": false
+    },
+    {
+      "name": "matches plan output 3 d3",
+      "input": {
+        "filter": {
+          "kind": "like",
+          "field": "id",
+          "pattern": "idn_01-*"
+        },
+        "record": {
+          "id": "d3",
+          "size": "10",
+          "title": 100,
+          "tags": "public",
+          "publishedAt": "not a date",
+          "origin": "nope",
+          "level": true
+        }
+      },
+      "output": false
+    },
+    {
+      "name": "matches plan output 4 d1",
+      "input": {
+        "filter": {
+          "kind": "equals",
+          "field": "owner",
+          "values": [
+            "idn_01"
+          ]
+        },
+        "record": {
+          "id": "d1",
+          "owner": "idn_01",
+          "size": 10,
+          "title": "Q1-plan",
+          "team": "eng",
+          "tags": [
+            "public"
+          ],
+          "publishedAt": "2025-06-01T00:00:00Z",
+          "origin": "10.1.2.3",
+          "status": "live",
+          "level": 1
+        }
+      },
+      "output": true
+    },
+    {
+      "name": "matches plan output 4 d2",
+      "input": {
+        "filter": {
+          "kind": "equals",
+          "field": "owner",
+          "values": [
+            "idn_01"
+          ]
+        },
+        "record": {
+          "id": "d2",
+          "owner": "idn_02",
+          "size": 500,
+          "title": "q2-Draft",
+          "team": "OPS",
+          "tags": [],
+          "publishedAt": "2026-06-01T00:00:00Z",
+          "origin": "192.168.0.1",
+          "status": "archived",
+          "level": "one"
+        }
+      },
+      "output": false
+    },
+    {
+      "name": "matches plan output 4 d3",
+      "input": {
+        "filter": {
+          "kind": "equals",
+          "field": "owner",
+          "values": [
+            "idn_01"
+          ]
+        },
+        "record": {
+          "id": "d3",
+          "size": "10",
+          "title": 100,
+          "tags": "public",
+          "publishedAt": "not a date",
+          "origin": "nope",
+          "level": true
+        }
+      },
+      "output": false
+    },
+    {
+      "name": "matches plan output 5 d1",
+      "input": {
+        "filter": {
+          "kind": "compare",
+          "field": "size",
+          "operator": "lt",
+          "value": 100
+        },
+        "record": {
+          "id": "d1",
+          "owner": "idn_01",
+          "size": 10,
+          "title": "Q1-plan",
+          "team": "eng",
+          "tags": [
+            "public"
+          ],
+          "publishedAt": "2025-06-01T00:00:00Z",
+          "origin": "10.1.2.3",
+          "status": "live",
+          "level": 1
+        }
+      },
+      "output": true
+    },
+    {
+      "name": "matches plan output 5 d2",
+      "input": {
+        "filter": {
+          "kind": "compare",
+          "field": "size",
+          "operator": "lt",
+          "value": 100
+        },
+        "record": {
+          "id": "d2",
+          "owner": "idn_02",
+          "size": 500,
+          "title": "q2-Draft",
+          "team": "OPS",
+          "tags": [],
+          "publishedAt": "2026-06-01T00:00:00Z",
+          "origin": "192.168.0.1",
+          "status": "archived",
+          "level": "one"
+        }
+      },
+      "output": false
+    },
+    {
+      "name": "matches plan output 5 d3",
+      "input": {
+        "filter": {
+          "kind": "compare",
+          "field": "size",
+          "operator": "lt",
+          "value": 100
+        },
+        "record": {
+          "id": "d3",
+          "size": "10",
+          "title": 100,
+          "tags": "public",
+          "publishedAt": "not a date",
+          "origin": "nope",
+          "level": true
+        }
+      },
+      "output": false
+    },
+    {
+      "name": "matches plan output 6 d1",
+      "input": {
+        "filter": {
+          "kind": "like",
+          "field": "title",
+          "pattern": "q?-*",
+          "ignoreCase": true
+        },
+        "record": {
+          "id": "d1",
+          "owner": "idn_01",
+          "size": 10,
+          "title": "Q1-plan",
+          "team": "eng",
+          "tags": [
+            "public"
+          ],
+          "publishedAt": "2025-06-01T00:00:00Z",
+          "origin": "10.1.2.3",
+          "status": "live",
+          "level": 1
+        }
+      },
+      "output": true
+    },
+    {
+      "name": "matches plan output 6 d2",
+      "input": {
+        "filter": {
+          "kind": "like",
+          "field": "title",
+          "pattern": "q?-*",
+          "ignoreCase": true
+        },
+        "record": {
+          "id": "d2",
+          "owner": "idn_02",
+          "size": 500,
+          "title": "q2-Draft",
+          "team": "OPS",
+          "tags": [],
+          "publishedAt": "2026-06-01T00:00:00Z",
+          "origin": "192.168.0.1",
+          "status": "archived",
+          "level": "one"
+        }
+      },
+      "output": true
+    },
+    {
+      "name": "matches plan output 6 d3",
+      "input": {
+        "filter": {
+          "kind": "like",
+          "field": "title",
+          "pattern": "q?-*",
+          "ignoreCase": true
+        },
+        "record": {
+          "id": "d3",
+          "size": "10",
+          "title": 100,
+          "tags": "public",
+          "publishedAt": "not a date",
+          "origin": "nope",
+          "level": true
+        }
+      },
+      "output": false
+    },
+    {
+      "name": "matches plan output 7 d1",
+      "input": {
+        "filter": {
+          "kind": "and",
+          "filters": [
+            {
+              "kind": "type",
+              "field": "status",
+              "type": "string"
+            },
+            {
+              "kind": "not",
+              "filter": {
+                "kind": "equals",
+                "field": "status",
+                "values": [
+                  "archived",
+                  "deleted"
+                ]
+              }
+            }
+          ]
+        },
+        "record": {
+          "id": "d1",
+          "owner": "idn_01",
+          "size": 10,
+          "title": "Q1-plan",
+          "team": "eng",
+          "tags": [
+            "public"
+          ],
+          "publishedAt": "2025-06-01T00:00:00Z",
+          "origin": "10.1.2.3",
+          "status": "live",
+          "level": 1
+        }
+      },
+      "output": true
+    },
+    {
+      "name": "matches plan output 7 d2",
+      "input": {
+        "filter": {
+          "kind": "and",
+          "filters": [
+            {
+              "kind": "type",
+              "field": "status",
+              "type": "string"
+            },
+            {
+              "kind": "not",
+              "filter": {
+                "kind": "equals",
+                "field": "status",
+                "values": [
+                  "archived",
+                  "deleted"
+                ]
+              }
+            }
+          ]
+        },
+        "record": {
+          "id": "d2",
+          "owner": "idn_02",
+          "size": 500,
+          "title": "q2-Draft",
+          "team": "OPS",
+          "tags": [],
+          "publishedAt": "2026-06-01T00:00:00Z",
+          "origin": "192.168.0.1",
+          "status": "archived",
+          "level": "one"
+        }
+      },
+      "output": false
+    },
+    {
+      "name": "matches plan output 7 d3",
+      "input": {
+        "filter": {
+          "kind": "and",
+          "filters": [
+            {
+              "kind": "type",
+              "field": "status",
+              "type": "string"
+            },
+            {
+              "kind": "not",
+              "filter": {
+                "kind": "equals",
+                "field": "status",
+                "values": [
+                  "archived",
+                  "deleted"
+                ]
+              }
+            }
+          ]
+        },
+        "record": {
+          "id": "d3",
+          "size": "10",
+          "title": 100,
+          "tags": "public",
+          "publishedAt": "not a date",
+          "origin": "nope",
+          "level": true
+        }
+      },
+      "output": false
+    },
+    {
+      "name": "matches plan output 8 d1",
+      "input": {
+        "filter": {
+          "kind": "date",
+          "field": "publishedAt",
+          "operator": "after",
+          "value": "2025-01-01T00:00:00Z"
+        },
+        "record": {
+          "id": "d1",
+          "owner": "idn_01",
+          "size": 10,
+          "title": "Q1-plan",
+          "team": "eng",
+          "tags": [
+            "public"
+          ],
+          "publishedAt": "2025-06-01T00:00:00Z",
+          "origin": "10.1.2.3",
+          "status": "live",
+          "level": 1
+        }
+      },
+      "output": true
+    },
+    {
+      "name": "matches plan output 8 d2",
+      "input": {
+        "filter": {
+          "kind": "date",
+          "field": "publishedAt",
+          "operator": "after",
+          "value": "2025-01-01T00:00:00Z"
+        },
+        "record": {
+          "id": "d2",
+          "owner": "idn_02",
+          "size": 500,
+          "title": "q2-Draft",
+          "team": "OPS",
+          "tags": [],
+          "publishedAt": "2026-06-01T00:00:00Z",
+          "origin": "192.168.0.1",
+          "status": "archived",
+          "level": "one"
+        }
+      },
+      "output": true
+    },
+    {
+      "name": "matches plan output 8 d3",
+      "input": {
+        "filter": {
+          "kind": "date",
+          "field": "publishedAt",
+          "operator": "after",
+          "value": "2025-01-01T00:00:00Z"
+        },
+        "record": {
+          "id": "d3",
+          "size": "10",
+          "title": 100,
+          "tags": "public",
+          "publishedAt": "not a date",
+          "origin": "nope",
+          "level": true
+        }
+      },
+      "output": false
+    },
+    {
+      "name": "matches plan output 9 d1",
+      "input": {
+        "filter": {
+          "kind": "ip",
+          "field": "origin",
+          "network": "10.0.0.0/8"
+        },
+        "record": {
+          "id": "d1",
+          "owner": "idn_01",
+          "size": 10,
+          "title": "Q1-plan",
+          "team": "eng",
+          "tags": [
+            "public"
+          ],
+          "publishedAt": "2025-06-01T00:00:00Z",
+          "origin": "10.1.2.3",
+          "status": "live",
+          "level": 1
+        }
+      },
+      "output": true
+    },
+    {
+      "name": "matches plan output 9 d2",
+      "input": {
+        "filter": {
+          "kind": "ip",
+          "field": "origin",
+          "network": "10.0.0.0/8"
+        },
+        "record": {
+          "id": "d2",
+          "owner": "idn_02",
+          "size": 500,
+          "title": "q2-Draft",
+          "team": "OPS",
+          "tags": [],
+          "publishedAt": "2026-06-01T00:00:00Z",
+          "origin": "192.168.0.1",
+          "status": "archived",
+          "level": "one"
+        }
+      },
+      "output": false
+    },
+    {
+      "name": "matches plan output 9 d3",
+      "input": {
+        "filter": {
+          "kind": "ip",
+          "field": "origin",
+          "network": "10.0.0.0/8"
+        },
+        "record": {
+          "id": "d3",
+          "size": "10",
+          "title": 100,
+          "tags": "public",
+          "publishedAt": "not a date",
+          "origin": "nope",
+          "level": true
+        }
+      },
+      "output": false
+    },
+    {
+      "name": "matches plan output 10 d1",
+      "input": {
+        "filter": {
+          "kind": "contains",
+          "field": "tags",
+          "value": "public"
+        },
+        "record": {
+          "id": "d1",
+          "owner": "idn_01",
+          "size": 10,
+          "title": "Q1-plan",
+          "team": "eng",
+          "tags": [
+            "public"
+          ],
+          "publishedAt": "2025-06-01T00:00:00Z",
+          "origin": "10.1.2.3",
+          "status": "live",
+          "level": 1
+        }
+      },
+      "output": true
+    },
+    {
+      "name": "matches plan output 10 d2",
+      "input": {
+        "filter": {
+          "kind": "contains",
+          "field": "tags",
+          "value": "public"
+        },
+        "record": {
+          "id": "d2",
+          "owner": "idn_02",
+          "size": 500,
+          "title": "q2-Draft",
+          "team": "OPS",
+          "tags": [],
+          "publishedAt": "2026-06-01T00:00:00Z",
+          "origin": "192.168.0.1",
+          "status": "archived",
+          "level": "one"
+        }
+      },
+      "output": false
+    },
+    {
+      "name": "matches plan output 10 d3",
+      "input": {
+        "filter": {
+          "kind": "contains",
+          "field": "tags",
+          "value": "public"
+        },
+        "record": {
+          "id": "d3",
+          "size": "10",
+          "title": 100,
+          "tags": "public",
+          "publishedAt": "not a date",
+          "origin": "nope",
+          "level": true
+        }
+      },
+      "output": false
+    },
+    {
+      "name": "matches plan output 11 d1",
+      "input": {
+        "filter": {
+          "kind": "not",
+          "filter": {
+            "kind": "exists",
+            "field": "owner"
+          }
+        },
+        "record": {
+          "id": "d1",
+          "owner": "idn_01",
+          "size": 10,
+          "title": "Q1-plan",
+          "team": "eng",
+          "tags": [
+            "public"
+          ],
+          "publishedAt": "2025-06-01T00:00:00Z",
+          "origin": "10.1.2.3",
+          "status": "live",
+          "level": 1
+        }
+      },
+      "output": false
+    },
+    {
+      "name": "matches plan output 11 d2",
+      "input": {
+        "filter": {
+          "kind": "not",
+          "filter": {
+            "kind": "exists",
+            "field": "owner"
+          }
+        },
+        "record": {
+          "id": "d2",
+          "owner": "idn_02",
+          "size": 500,
+          "title": "q2-Draft",
+          "team": "OPS",
+          "tags": [],
+          "publishedAt": "2026-06-01T00:00:00Z",
+          "origin": "192.168.0.1",
+          "status": "archived",
+          "level": "one"
+        }
+      },
+      "output": false
+    },
+    {
+      "name": "matches plan output 11 d3",
+      "input": {
+        "filter": {
+          "kind": "not",
+          "filter": {
+            "kind": "exists",
+            "field": "owner"
+          }
+        },
+        "record": {
+          "id": "d3",
+          "size": "10",
+          "title": 100,
+          "tags": "public",
+          "publishedAt": "not a date",
+          "origin": "nope",
+          "level": true
+        }
+      },
+      "output": true
+    },
+    {
+      "name": "matches plan output 12 d1",
+      "input": {
+        "filter": {
+          "kind": "equals",
+          "field": "public",
+          "values": [
+            true
+          ]
+        },
+        "record": {
+          "id": "d1",
+          "owner": "idn_01",
+          "size": 10,
+          "title": "Q1-plan",
+          "team": "eng",
+          "tags": [
+            "public"
+          ],
+          "publishedAt": "2025-06-01T00:00:00Z",
+          "origin": "10.1.2.3",
+          "status": "live",
+          "level": 1
+        }
+      },
+      "output": false
+    },
+    {
+      "name": "matches plan output 12 d2",
+      "input": {
+        "filter": {
+          "kind": "equals",
+          "field": "public",
+          "values": [
+            true
+          ]
+        },
+        "record": {
+          "id": "d2",
+          "owner": "idn_02",
+          "size": 500,
+          "title": "q2-Draft",
+          "team": "OPS",
+          "tags": [],
+          "publishedAt": "2026-06-01T00:00:00Z",
+          "origin": "192.168.0.1",
+          "status": "archived",
+          "level": "one"
+        }
+      },
+      "output": false
+    },
+    {
+      "name": "matches plan output 12 d3",
+      "input": {
+        "filter": {
+          "kind": "equals",
+          "field": "public",
+          "values": [
+            true
+          ]
+        },
+        "record": {
+          "id": "d3",
+          "size": "10",
+          "title": 100,
+          "tags": "public",
+          "publishedAt": "not a date",
+          "origin": "nope",
+          "level": true
+        }
+      },
+      "output": false
+    },
+    {
+      "name": "matches plan output 13 d1",
+      "input": {
+        "filter": {
+          "kind": "not",
+          "filter": {
+            "kind": "like",
+            "field": "id",
+            "pattern": "secret-*"
+          }
+        },
+        "record": {
+          "id": "d1",
+          "owner": "idn_01",
+          "size": 10,
+          "title": "Q1-plan",
+          "team": "eng",
+          "tags": [
+            "public"
+          ],
+          "publishedAt": "2025-06-01T00:00:00Z",
+          "origin": "10.1.2.3",
+          "status": "live",
+          "level": 1
+        }
+      },
+      "output": true
+    },
+    {
+      "name": "matches plan output 13 d2",
+      "input": {
+        "filter": {
+          "kind": "not",
+          "filter": {
+            "kind": "like",
+            "field": "id",
+            "pattern": "secret-*"
+          }
+        },
+        "record": {
+          "id": "d2",
+          "owner": "idn_02",
+          "size": 500,
+          "title": "q2-Draft",
+          "team": "OPS",
+          "tags": [],
+          "publishedAt": "2026-06-01T00:00:00Z",
+          "origin": "192.168.0.1",
+          "status": "archived",
+          "level": "one"
+        }
+      },
+      "output": true
+    },
+    {
+      "name": "matches plan output 13 d3",
+      "input": {
+        "filter": {
+          "kind": "not",
+          "filter": {
+            "kind": "like",
+            "field": "id",
+            "pattern": "secret-*"
+          }
+        },
+        "record": {
+          "id": "d3",
+          "size": "10",
+          "title": 100,
+          "tags": "public",
+          "publishedAt": "not a date",
+          "origin": "nope",
+          "level": true
+        }
+      },
+      "output": true
+    },
+    {
+      "name": "matches plan output 14 d1",
+      "input": {
+        "filter": {
+          "kind": "not",
+          "filter": {
+            "kind": "equals",
+            "field": "classification",
+            "values": [
+              "secret"
+            ]
+          }
+        },
+        "record": {
+          "id": "d1",
+          "owner": "idn_01",
+          "size": 10,
+          "title": "Q1-plan",
+          "team": "eng",
+          "tags": [
+            "public"
+          ],
+          "publishedAt": "2025-06-01T00:00:00Z",
+          "origin": "10.1.2.3",
+          "status": "live",
+          "level": 1
+        }
+      },
+      "output": true
+    },
+    {
+      "name": "matches plan output 14 d2",
+      "input": {
+        "filter": {
+          "kind": "not",
+          "filter": {
+            "kind": "equals",
+            "field": "classification",
+            "values": [
+              "secret"
+            ]
+          }
+        },
+        "record": {
+          "id": "d2",
+          "owner": "idn_02",
+          "size": 500,
+          "title": "q2-Draft",
+          "team": "OPS",
+          "tags": [],
+          "publishedAt": "2026-06-01T00:00:00Z",
+          "origin": "192.168.0.1",
+          "status": "archived",
+          "level": "one"
+        }
+      },
+      "output": true
+    },
+    {
+      "name": "matches plan output 14 d3",
+      "input": {
+        "filter": {
+          "kind": "not",
+          "filter": {
+            "kind": "equals",
+            "field": "classification",
+            "values": [
+              "secret"
+            ]
+          }
+        },
+        "record": {
+          "id": "d3",
+          "size": "10",
+          "title": 100,
+          "tags": "public",
+          "publishedAt": "not a date",
+          "origin": "nope",
+          "level": true
+        }
+      },
+      "output": true
+    },
+    {
+      "name": "matches plan output 15 d1",
+      "input": {
+        "filter": {
+          "kind": "like",
+          "field": "id",
+          "pattern": "public-*"
+        },
+        "record": {
+          "id": "d1",
+          "owner": "idn_01",
+          "size": 10,
+          "title": "Q1-plan",
+          "team": "eng",
+          "tags": [
+            "public"
+          ],
+          "publishedAt": "2025-06-01T00:00:00Z",
+          "origin": "10.1.2.3",
+          "status": "live",
+          "level": 1
+        }
+      },
+      "output": false
+    },
+    {
+      "name": "matches plan output 15 d2",
+      "input": {
+        "filter": {
+          "kind": "like",
+          "field": "id",
+          "pattern": "public-*"
+        },
+        "record": {
+          "id": "d2",
+          "owner": "idn_02",
+          "size": 500,
+          "title": "q2-Draft",
+          "team": "OPS",
+          "tags": [],
+          "publishedAt": "2026-06-01T00:00:00Z",
+          "origin": "192.168.0.1",
+          "status": "archived",
+          "level": "one"
+        }
+      },
+      "output": false
+    },
+    {
+      "name": "matches plan output 15 d3",
+      "input": {
+        "filter": {
+          "kind": "like",
+          "field": "id",
+          "pattern": "public-*"
+        },
+        "record": {
+          "id": "d3",
+          "size": "10",
+          "title": 100,
+          "tags": "public",
+          "publishedAt": "not a date",
+          "origin": "nope",
+          "level": true
+        }
+      },
+      "output": false
+    },
+    {
+      "name": "matches plan output 16 d1",
+      "input": {
+        "filter": {
+          "kind": "equals",
+          "field": "id",
+          "values": [
+            "1"
+          ]
+        },
+        "record": {
+          "id": "d1",
+          "owner": "idn_01",
+          "size": 10,
+          "title": "Q1-plan",
+          "team": "eng",
+          "tags": [
+            "public"
+          ],
+          "publishedAt": "2025-06-01T00:00:00Z",
+          "origin": "10.1.2.3",
+          "status": "live",
+          "level": 1
+        }
+      },
+      "output": false
+    },
+    {
+      "name": "matches plan output 16 d2",
+      "input": {
+        "filter": {
+          "kind": "equals",
+          "field": "id",
+          "values": [
+            "1"
+          ]
+        },
+        "record": {
+          "id": "d2",
+          "owner": "idn_02",
+          "size": 500,
+          "title": "q2-Draft",
+          "team": "OPS",
+          "tags": [],
+          "publishedAt": "2026-06-01T00:00:00Z",
+          "origin": "192.168.0.1",
+          "status": "archived",
+          "level": "one"
+        }
+      },
+      "output": false
+    },
+    {
+      "name": "matches plan output 16 d3",
+      "input": {
+        "filter": {
+          "kind": "equals",
+          "field": "id",
+          "values": [
+            "1"
+          ]
+        },
+        "record": {
+          "id": "d3",
+          "size": "10",
+          "title": 100,
+          "tags": "public",
+          "publishedAt": "not a date",
+          "origin": "nope",
+          "level": true
+        }
+      },
+      "output": false
+    },
+    {
+      "name": "matches plan output 17 d1",
+      "input": {
+        "filter": {
+          "kind": "equals",
+          "field": "id",
+          "values": [
+            "1",
+            "2"
+          ]
+        },
+        "record": {
+          "id": "d1",
+          "owner": "idn_01",
+          "size": 10,
+          "title": "Q1-plan",
+          "team": "eng",
+          "tags": [
+            "public"
+          ],
+          "publishedAt": "2025-06-01T00:00:00Z",
+          "origin": "10.1.2.3",
+          "status": "live",
+          "level": 1
+        }
+      },
+      "output": false
+    },
+    {
+      "name": "matches plan output 17 d2",
+      "input": {
+        "filter": {
+          "kind": "equals",
+          "field": "id",
+          "values": [
+            "1",
+            "2"
+          ]
+        },
+        "record": {
+          "id": "d2",
+          "owner": "idn_02",
+          "size": 500,
+          "title": "q2-Draft",
+          "team": "OPS",
+          "tags": [],
+          "publishedAt": "2026-06-01T00:00:00Z",
+          "origin": "192.168.0.1",
+          "status": "archived",
+          "level": "one"
+        }
+      },
+      "output": false
+    },
+    {
+      "name": "matches plan output 17 d3",
+      "input": {
+        "filter": {
+          "kind": "equals",
+          "field": "id",
+          "values": [
+            "1",
+            "2"
+          ]
+        },
+        "record": {
+          "id": "d3",
+          "size": "10",
+          "title": 100,
+          "tags": "public",
+          "publishedAt": "not a date",
+          "origin": "nope",
+          "level": true
+        }
+      },
+      "output": false
+    },
+    {
+      "name": "matches plan output 18 d1",
+      "input": {
+        "filter": {
+          "kind": "equals",
+          "field": "id",
+          "values": [
+            "d1"
+          ]
+        },
+        "record": {
+          "id": "d1",
+          "owner": "idn_01",
+          "size": 10,
+          "title": "Q1-plan",
+          "team": "eng",
+          "tags": [
+            "public"
+          ],
+          "publishedAt": "2025-06-01T00:00:00Z",
+          "origin": "10.1.2.3",
+          "status": "live",
+          "level": 1
+        }
+      },
+      "output": true
+    },
+    {
+      "name": "matches plan output 18 d2",
+      "input": {
+        "filter": {
+          "kind": "equals",
+          "field": "id",
+          "values": [
+            "d1"
+          ]
+        },
+        "record": {
+          "id": "d2",
+          "owner": "idn_02",
+          "size": 500,
+          "title": "q2-Draft",
+          "team": "OPS",
+          "tags": [],
+          "publishedAt": "2026-06-01T00:00:00Z",
+          "origin": "192.168.0.1",
+          "status": "archived",
+          "level": "one"
+        }
+      },
+      "output": false
+    },
+    {
+      "name": "matches plan output 18 d3",
+      "input": {
+        "filter": {
+          "kind": "equals",
+          "field": "id",
+          "values": [
+            "d1"
+          ]
+        },
+        "record": {
+          "id": "d3",
+          "size": "10",
+          "title": 100,
+          "tags": "public",
+          "publishedAt": "not a date",
+          "origin": "nope",
+          "level": true
+        }
+      },
+      "output": false
+    },
+    {
+      "name": "matches plan output 19 d1",
+      "input": {
+        "filter": {
+          "kind": "and",
+          "filters": [
+            {
+              "kind": "equals",
+              "field": "parentType",
+              "values": [
+                "folder"
+              ]
+            },
+            {
+              "kind": "equals",
+              "field": "parentId",
+              "values": [
+                "f1"
+              ]
+            }
+          ]
+        },
+        "record": {
+          "id": "d1",
+          "owner": "idn_01",
+          "size": 10,
+          "title": "Q1-plan",
+          "team": "eng",
+          "tags": [
+            "public"
+          ],
+          "publishedAt": "2025-06-01T00:00:00Z",
+          "origin": "10.1.2.3",
+          "status": "live",
+          "level": 1
+        }
+      },
+      "output": false
+    },
+    {
+      "name": "matches plan output 19 d2",
+      "input": {
+        "filter": {
+          "kind": "and",
+          "filters": [
+            {
+              "kind": "equals",
+              "field": "parentType",
+              "values": [
+                "folder"
+              ]
+            },
+            {
+              "kind": "equals",
+              "field": "parentId",
+              "values": [
+                "f1"
+              ]
+            }
+          ]
+        },
+        "record": {
+          "id": "d2",
+          "owner": "idn_02",
+          "size": 500,
+          "title": "q2-Draft",
+          "team": "OPS",
+          "tags": [],
+          "publishedAt": "2026-06-01T00:00:00Z",
+          "origin": "192.168.0.1",
+          "status": "archived",
+          "level": "one"
+        }
+      },
+      "output": false
+    },
+    {
+      "name": "matches plan output 19 d3",
+      "input": {
+        "filter": {
+          "kind": "and",
+          "filters": [
+            {
+              "kind": "equals",
+              "field": "parentType",
+              "values": [
+                "folder"
+              ]
+            },
+            {
+              "kind": "equals",
+              "field": "parentId",
+              "values": [
+                "f1"
+              ]
+            }
+          ]
+        },
+        "record": {
+          "id": "d3",
+          "size": "10",
+          "title": 100,
+          "tags": "public",
+          "publishedAt": "not a date",
+          "origin": "nope",
+          "level": true
+        }
+      },
+      "output": false
+    },
+    {
+      "name": "matches plan output 20 d1",
+      "input": {
+        "filter": {
+          "kind": "compare",
+          "field": "classificationRank",
+          "operator": "le",
+          "value": 2
+        },
+        "record": {
+          "id": "d1",
+          "owner": "idn_01",
+          "size": 10,
+          "title": "Q1-plan",
+          "team": "eng",
+          "tags": [
+            "public"
+          ],
+          "publishedAt": "2025-06-01T00:00:00Z",
+          "origin": "10.1.2.3",
+          "status": "live",
+          "level": 1
+        }
+      },
+      "output": false
+    },
+    {
+      "name": "matches plan output 20 d2",
+      "input": {
+        "filter": {
+          "kind": "compare",
+          "field": "classificationRank",
+          "operator": "le",
+          "value": 2
+        },
+        "record": {
+          "id": "d2",
+          "owner": "idn_02",
+          "size": 500,
+          "title": "q2-Draft",
+          "team": "OPS",
+          "tags": [],
+          "publishedAt": "2026-06-01T00:00:00Z",
+          "origin": "192.168.0.1",
+          "status": "archived",
+          "level": "one"
+        }
+      },
+      "output": false
+    },
+    {
+      "name": "matches plan output 20 d3",
+      "input": {
+        "filter": {
+          "kind": "compare",
+          "field": "classificationRank",
+          "operator": "le",
+          "value": 2
+        },
+        "record": {
+          "id": "d3",
+          "size": "10",
+          "title": 100,
+          "tags": "public",
+          "publishedAt": "not a date",
+          "origin": "nope",
+          "level": true
+        }
+      },
+      "output": false
+    }
+  ]
+}

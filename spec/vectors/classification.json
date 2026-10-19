@@ -1,0 +1,3846 @@
+{
+  "description": "Security classification (mandatory access control): scheme validation, label validation, ranks, label joins (least upper bound), dominance checks of a clearance party (rank, compartments as a set, citizenship as a set) against a label, and label coverage. Party sets are written as {\"$set\": [...]}.",
+  "source": "packages/core/src/classification.ts#validateScheme,validateLabel,isValidClassificationLabel,labelRank,joinLabels,dominates,labelCovers,classificationTemplates",
+  "notes": {
+    "limits": {
+      "minLevels": 2,
+      "maxLevels": 20,
+      "maxRank": 999,
+      "maxCompartments": 200,
+      "maxOwnerCountries": 64,
+      "maxReleasableTo": 300,
+      "maxLevelNameLength": 64,
+      "maxCompartmentNameLength": 128,
+      "maxAbbreviationLength": 16
+    },
+    "idPattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$"
+  },
+  "cases": [
+    {
+      "name": "template us",
+      "input": {
+        "name": "us"
+      },
+      "output": {
+        "levels": [
+          {
+            "id": "U",
+            "name": "UNCLASSIFIED",
+            "rank": 0,
+            "abbreviation": "U"
+          },
+          {
+            "id": "C",
+            "name": "CONFIDENTIAL",
+            "rank": 1,
+            "abbreviation": "C"
+          },
+          {
+            "id": "S",
+            "name": "SECRET",
+            "rank": 2,
+            "abbreviation": "S"
+          },
+          {
+            "id": "TS",
+            "name": "TOP SECRET",
+            "rank": 3,
+            "abbreviation": "TS"
+          }
+        ],
+        "compartments": [],
+        "ownerCountries": [
+          "USA"
+        ],
+        "caveats": [
+          "NOFORN",
+          "RELTO"
+        ]
+      }
+    },
+    {
+      "name": "template uk",
+      "input": {
+        "name": "uk"
+      },
+      "output": {
+        "levels": [
+          {
+            "id": "OFFICIAL",
+            "name": "OFFICIAL",
+            "rank": 0,
+            "abbreviation": "O"
+          },
+          {
+            "id": "SECRET",
+            "name": "SECRET",
+            "rank": 1,
+            "abbreviation": "S"
+          },
+          {
+            "id": "TOP-SECRET",
+            "name": "TOP SECRET",
+            "rank": 2,
+            "abbreviation": "TS"
+          }
+        ],
+        "compartments": [],
+        "ownerCountries": [
+          "GBR"
+        ],
+        "caveats": [
+          "NOFORN",
+          "RELTO"
+        ]
+      }
+    },
+    {
+      "name": "template nato",
+      "input": {
+        "name": "nato"
+      },
+      "output": {
+        "levels": [
+          {
+            "id": "NU",
+            "name": "NATO UNCLASSIFIED",
+            "rank": 0,
+            "abbreviation": "NU"
+          },
+          {
+            "id": "NR",
+            "name": "NATO RESTRICTED",
+            "rank": 1,
+            "abbreviation": "NR"
+          },
+          {
+            "id": "NC",
+            "name": "NATO CONFIDENTIAL",
+            "rank": 2,
+            "abbreviation": "NC"
+          },
+          {
+            "id": "NS",
+            "name": "NATO SECRET",
+            "rank": 3,
+            "abbreviation": "NS"
+          },
+          {
+            "id": "CTS",
+            "name": "COSMIC TOP SECRET",
+            "rank": 4,
+            "abbreviation": "CTS"
+          }
+        ],
+        "compartments": [],
+        "ownerCountries": [],
+        "caveats": [
+          "RELTO"
+        ]
+      }
+    },
+    {
+      "name": "template corporate",
+      "input": {
+        "name": "corporate"
+      },
+      "output": {
+        "levels": [
+          {
+            "id": "public",
+            "name": "Public",
+            "rank": 0
+          },
+          {
+            "id": "internal",
+            "name": "Internal",
+            "rank": 1
+          },
+          {
+            "id": "confidential",
+            "name": "Confidential",
+            "rank": 2
+          },
+          {
+            "id": "restricted",
+            "name": "Restricted",
+            "rank": 3
+          }
+        ],
+        "compartments": [],
+        "ownerCountries": [],
+        "caveats": []
+      }
+    },
+    {
+      "name": "validateScheme valid with compartments",
+      "input": {
+        "scheme": {
+          "levels": [
+            {
+              "id": "U",
+              "name": "UNCLASSIFIED",
+              "rank": 0,
+              "abbreviation": "U"
+            },
+            {
+              "id": "C",
+              "name": "CONFIDENTIAL",
+              "rank": 1,
+              "abbreviation": "C"
+            },
+            {
+              "id": "S",
+              "name": "SECRET",
+              "rank": 2,
+              "abbreviation": "S"
+            },
+            {
+              "id": "TS",
+              "name": "TOP SECRET",
+              "rank": 3,
+              "abbreviation": "TS"
+            }
+          ],
+          "compartments": [
+            {
+              "id": "SI",
+              "name": "Special Intelligence"
+            },
+            {
+              "id": "TK",
+              "name": "Talent Keyhole"
+            }
+          ],
+          "ownerCountries": [
+            "USA"
+          ],
+          "caveats": [
+            "NOFORN",
+            "RELTO"
+          ]
+        }
+      },
+      "output": {
+        "levels": [
+          {
+            "id": "U",
+            "name": "UNCLASSIFIED",
+            "rank": 0,
+            "abbreviation": "U"
+          },
+          {
+            "id": "C",
+            "name": "CONFIDENTIAL",
+            "rank": 1,
+            "abbreviation": "C"
+          },
+          {
+            "id": "S",
+            "name": "SECRET",
+            "rank": 2,
+            "abbreviation": "S"
+          },
+          {
+            "id": "TS",
+            "name": "TOP SECRET",
+            "rank": 3,
+            "abbreviation": "TS"
+          }
+        ],
+        "compartments": [
+          {
+            "id": "SI",
+            "name": "Special Intelligence"
+          },
+          {
+            "id": "TK",
+            "name": "Talent Keyhole"
+          }
+        ],
+        "ownerCountries": [
+          "USA"
+        ],
+        "caveats": [
+          "NOFORN",
+          "RELTO"
+        ]
+      }
+    },
+    {
+      "name": "validateScheme one level",
+      "input": {
+        "scheme": {
+          "levels": [
+            {
+              "id": "U",
+              "name": "UNCLASSIFIED",
+              "rank": 0,
+              "abbreviation": "U"
+            }
+          ],
+          "compartments": [],
+          "ownerCountries": [
+            "USA"
+          ],
+          "caveats": [
+            "NOFORN",
+            "RELTO"
+          ]
+        }
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "INVALID_INPUT",
+          "status": 400,
+          "message": "A classification scheme needs 2 to 20 levels"
+        }
+      }
+    },
+    {
+      "name": "validateScheme ranks not increasing",
+      "input": {
+        "scheme": {
+          "levels": [
+            {
+              "id": "A",
+              "name": "A",
+              "rank": 0
+            },
+            {
+              "id": "B",
+              "name": "B",
+              "rank": 0
+            }
+          ],
+          "compartments": [],
+          "ownerCountries": [
+            "USA"
+          ],
+          "caveats": [
+            "NOFORN",
+            "RELTO"
+          ]
+        }
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "INVALID_INPUT",
+          "status": 400,
+          "message": "Level ranks must start at 0 and strictly increase in the order the levels are listed"
+        }
+      }
+    },
+    {
+      "name": "validateScheme rank not from zero",
+      "input": {
+        "scheme": {
+          "levels": [
+            {
+              "id": "A",
+              "name": "A",
+              "rank": 1
+            },
+            {
+              "id": "B",
+              "name": "B",
+              "rank": 2
+            }
+          ],
+          "compartments": [],
+          "ownerCountries": [
+            "USA"
+          ],
+          "caveats": [
+            "NOFORN",
+            "RELTO"
+          ]
+        }
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "INVALID_INPUT",
+          "status": 400,
+          "message": "Level ranks must start at 0 and strictly increase in the order the levels are listed"
+        }
+      }
+    },
+    {
+      "name": "validateScheme duplicate ids ignoring case",
+      "input": {
+        "scheme": {
+          "levels": [
+            {
+              "id": "A",
+              "name": "A",
+              "rank": 0
+            },
+            {
+              "id": "a",
+              "name": "B",
+              "rank": 1
+            }
+          ],
+          "compartments": [],
+          "ownerCountries": [
+            "USA"
+          ],
+          "caveats": [
+            "NOFORN",
+            "RELTO"
+          ]
+        }
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "INVALID_INPUT",
+          "status": 400,
+          "message": "Level ids must be unique, ignoring case"
+        }
+      }
+    },
+    {
+      "name": "validateScheme bad level id",
+      "input": {
+        "scheme": {
+          "levels": [
+            {
+              "id": "-A",
+              "name": "A",
+              "rank": 0
+            },
+            {
+              "id": "B",
+              "name": "B",
+              "rank": 1
+            }
+          ],
+          "compartments": [],
+          "ownerCountries": [
+            "USA"
+          ],
+          "caveats": [
+            "NOFORN",
+            "RELTO"
+          ]
+        }
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "INVALID_INPUT",
+          "status": 400,
+          "message": "levels[0].id is not a valid identifier"
+        }
+      }
+    },
+    {
+      "name": "validateScheme name with bidi control",
+      "input": {
+        "scheme": {
+          "levels": [
+            {
+              "id": "A",
+              "name": "A‮",
+              "rank": 0
+            },
+            {
+              "id": "B",
+              "name": "B",
+              "rank": 1
+            }
+          ],
+          "compartments": [],
+          "ownerCountries": [
+            "USA"
+          ],
+          "caveats": [
+            "NOFORN",
+            "RELTO"
+          ]
+        }
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "INVALID_INPUT",
+          "status": 400,
+          "message": "levels[0].name must be 1 to 64 printable characters"
+        }
+      }
+    },
+    {
+      "name": "validateScheme name with surrounding space",
+      "input": {
+        "scheme": {
+          "levels": [
+            {
+              "id": "A",
+              "name": " A",
+              "rank": 0
+            },
+            {
+              "id": "B",
+              "name": "B",
+              "rank": 1
+            }
+          ],
+          "compartments": [],
+          "ownerCountries": [
+            "USA"
+          ],
+          "caveats": [
+            "NOFORN",
+            "RELTO"
+          ]
+        }
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "INVALID_INPUT",
+          "status": 400,
+          "message": "levels[0].name must be 1 to 64 printable characters"
+        }
+      }
+    },
+    {
+      "name": "validateScheme unknown field",
+      "input": {
+        "scheme": {
+          "levels": [
+            {
+              "id": "U",
+              "name": "UNCLASSIFIED",
+              "rank": 0,
+              "abbreviation": "U"
+            },
+            {
+              "id": "C",
+              "name": "CONFIDENTIAL",
+              "rank": 1,
+              "abbreviation": "C"
+            },
+            {
+              "id": "S",
+              "name": "SECRET",
+              "rank": 2,
+              "abbreviation": "S"
+            },
+            {
+              "id": "TS",
+              "name": "TOP SECRET",
+              "rank": 3,
+              "abbreviation": "TS"
+            }
+          ],
+          "compartments": [],
+          "ownerCountries": [
+            "USA"
+          ],
+          "caveats": [
+            "NOFORN",
+            "RELTO"
+          ],
+          "extra": true
+        }
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "INVALID_INPUT",
+          "status": 400,
+          "message": "Unknown classification scheme field"
+        }
+      }
+    },
+    {
+      "name": "validateScheme lower-case country",
+      "input": {
+        "scheme": {
+          "levels": [
+            {
+              "id": "U",
+              "name": "UNCLASSIFIED",
+              "rank": 0,
+              "abbreviation": "U"
+            },
+            {
+              "id": "C",
+              "name": "CONFIDENTIAL",
+              "rank": 1,
+              "abbreviation": "C"
+            },
+            {
+              "id": "S",
+              "name": "SECRET",
+              "rank": 2,
+              "abbreviation": "S"
+            },
+            {
+              "id": "TS",
+              "name": "TOP SECRET",
+              "rank": 3,
+              "abbreviation": "TS"
+            }
+          ],
+          "compartments": [],
+          "ownerCountries": [
+            "usa"
+          ],
+          "caveats": [
+            "NOFORN",
+            "RELTO"
+          ]
+        }
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "INVALID_INPUT",
+          "status": 400,
+          "message": "ownerCountries must be ISO 3166-1 alpha-3 codes in upper case"
+        }
+      }
+    },
+    {
+      "name": "validateScheme repeated country",
+      "input": {
+        "scheme": {
+          "levels": [
+            {
+              "id": "U",
+              "name": "UNCLASSIFIED",
+              "rank": 0,
+              "abbreviation": "U"
+            },
+            {
+              "id": "C",
+              "name": "CONFIDENTIAL",
+              "rank": 1,
+              "abbreviation": "C"
+            },
+            {
+              "id": "S",
+              "name": "SECRET",
+              "rank": 2,
+              "abbreviation": "S"
+            },
+            {
+              "id": "TS",
+              "name": "TOP SECRET",
+              "rank": 3,
+              "abbreviation": "TS"
+            }
+          ],
+          "compartments": [],
+          "ownerCountries": [
+            "USA",
+            "USA"
+          ],
+          "caveats": [
+            "NOFORN",
+            "RELTO"
+          ]
+        }
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "INVALID_INPUT",
+          "status": 400,
+          "message": "ownerCountries must not repeat a country"
+        }
+      }
+    },
+    {
+      "name": "validateScheme unknown caveat",
+      "input": {
+        "scheme": {
+          "levels": [
+            {
+              "id": "U",
+              "name": "UNCLASSIFIED",
+              "rank": 0,
+              "abbreviation": "U"
+            },
+            {
+              "id": "C",
+              "name": "CONFIDENTIAL",
+              "rank": 1,
+              "abbreviation": "C"
+            },
+            {
+              "id": "S",
+              "name": "SECRET",
+              "rank": 2,
+              "abbreviation": "S"
+            },
+            {
+              "id": "TS",
+              "name": "TOP SECRET",
+              "rank": 3,
+              "abbreviation": "TS"
+            }
+          ],
+          "compartments": [],
+          "ownerCountries": [
+            "USA"
+          ],
+          "caveats": [
+            "ORCON"
+          ]
+        }
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "INVALID_INPUT",
+          "status": 400,
+          "message": "caveats may be NOFORN and RELTO only"
+        }
+      }
+    },
+    {
+      "name": "validateScheme NOFORN without owners",
+      "input": {
+        "scheme": {
+          "levels": [
+            {
+              "id": "U",
+              "name": "UNCLASSIFIED",
+              "rank": 0,
+              "abbreviation": "U"
+            },
+            {
+              "id": "C",
+              "name": "CONFIDENTIAL",
+              "rank": 1,
+              "abbreviation": "C"
+            },
+            {
+              "id": "S",
+              "name": "SECRET",
+              "rank": 2,
+              "abbreviation": "S"
+            },
+            {
+              "id": "TS",
+              "name": "TOP SECRET",
+              "rank": 3,
+              "abbreviation": "TS"
+            }
+          ],
+          "compartments": [],
+          "ownerCountries": [],
+          "caveats": [
+            "NOFORN",
+            "RELTO"
+          ]
+        }
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "INVALID_INPUT",
+          "status": 400,
+          "message": "The NOFORN caveat needs at least one owner country"
+        }
+      }
+    },
+    {
+      "name": "validateScheme not an object",
+      "input": {
+        "scheme": "us"
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "INVALID_INPUT",
+          "status": 400,
+          "message": "The classification scheme must be an object"
+        }
+      }
+    },
+    {
+      "name": "validateLabel level only",
+      "input": {
+        "label": {
+          "level": "S"
+        },
+        "scheme": {
+          "levels": [
+            {
+              "id": "U",
+              "name": "UNCLASSIFIED",
+              "rank": 0,
+              "abbreviation": "U"
+            },
+            {
+              "id": "C",
+              "name": "CONFIDENTIAL",
+              "rank": 1,
+              "abbreviation": "C"
+            },
+            {
+              "id": "S",
+              "name": "SECRET",
+              "rank": 2,
+              "abbreviation": "S"
+            },
+            {
+              "id": "TS",
+              "name": "TOP SECRET",
+              "rank": 3,
+              "abbreviation": "TS"
+            }
+          ],
+          "compartments": [
+            {
+              "id": "SI",
+              "name": "Special Intelligence"
+            },
+            {
+              "id": "TK",
+              "name": "Talent Keyhole"
+            }
+          ],
+          "ownerCountries": [
+            "USA"
+          ],
+          "caveats": [
+            "NOFORN",
+            "RELTO"
+          ]
+        }
+      },
+      "output": {
+        "level": "S"
+      }
+    },
+    {
+      "name": "isValidClassificationLabel level only",
+      "input": {
+        "label": {
+          "level": "S"
+        },
+        "scheme": {
+          "levels": [
+            {
+              "id": "U",
+              "name": "UNCLASSIFIED",
+              "rank": 0,
+              "abbreviation": "U"
+            },
+            {
+              "id": "C",
+              "name": "CONFIDENTIAL",
+              "rank": 1,
+              "abbreviation": "C"
+            },
+            {
+              "id": "S",
+              "name": "SECRET",
+              "rank": 2,
+              "abbreviation": "S"
+            },
+            {
+              "id": "TS",
+              "name": "TOP SECRET",
+              "rank": 3,
+              "abbreviation": "TS"
+            }
+          ],
+          "compartments": [
+            {
+              "id": "SI",
+              "name": "Special Intelligence"
+            },
+            {
+              "id": "TK",
+              "name": "Talent Keyhole"
+            }
+          ],
+          "ownerCountries": [
+            "USA"
+          ],
+          "caveats": [
+            "NOFORN",
+            "RELTO"
+          ]
+        }
+      },
+      "output": true
+    },
+    {
+      "name": "validateLabel with compartments",
+      "input": {
+        "label": {
+          "level": "TS",
+          "compartments": [
+            "TK",
+            "SI"
+          ]
+        },
+        "scheme": {
+          "levels": [
+            {
+              "id": "U",
+              "name": "UNCLASSIFIED",
+              "rank": 0,
+              "abbreviation": "U"
+            },
+            {
+              "id": "C",
+              "name": "CONFIDENTIAL",
+              "rank": 1,
+              "abbreviation": "C"
+            },
+            {
+              "id": "S",
+              "name": "SECRET",
+              "rank": 2,
+              "abbreviation": "S"
+            },
+            {
+              "id": "TS",
+              "name": "TOP SECRET",
+              "rank": 3,
+              "abbreviation": "TS"
+            }
+          ],
+          "compartments": [
+            {
+              "id": "SI",
+              "name": "Special Intelligence"
+            },
+            {
+              "id": "TK",
+              "name": "Talent Keyhole"
+            }
+          ],
+          "ownerCountries": [
+            "USA"
+          ],
+          "caveats": [
+            "NOFORN",
+            "RELTO"
+          ]
+        }
+      },
+      "output": {
+        "level": "TS",
+        "compartments": [
+          "SI",
+          "TK"
+        ]
+      }
+    },
+    {
+      "name": "isValidClassificationLabel with compartments",
+      "input": {
+        "label": {
+          "level": "TS",
+          "compartments": [
+            "TK",
+            "SI"
+          ]
+        },
+        "scheme": {
+          "levels": [
+            {
+              "id": "U",
+              "name": "UNCLASSIFIED",
+              "rank": 0,
+              "abbreviation": "U"
+            },
+            {
+              "id": "C",
+              "name": "CONFIDENTIAL",
+              "rank": 1,
+              "abbreviation": "C"
+            },
+            {
+              "id": "S",
+              "name": "SECRET",
+              "rank": 2,
+              "abbreviation": "S"
+            },
+            {
+              "id": "TS",
+              "name": "TOP SECRET",
+              "rank": 3,
+              "abbreviation": "TS"
+            }
+          ],
+          "compartments": [
+            {
+              "id": "SI",
+              "name": "Special Intelligence"
+            },
+            {
+              "id": "TK",
+              "name": "Talent Keyhole"
+            }
+          ],
+          "ownerCountries": [
+            "USA"
+          ],
+          "caveats": [
+            "NOFORN",
+            "RELTO"
+          ]
+        }
+      },
+      "output": true
+    },
+    {
+      "name": "validateLabel noforn",
+      "input": {
+        "label": {
+          "level": "S",
+          "noforn": true
+        },
+        "scheme": {
+          "levels": [
+            {
+              "id": "U",
+              "name": "UNCLASSIFIED",
+              "rank": 0,
+              "abbreviation": "U"
+            },
+            {
+              "id": "C",
+              "name": "CONFIDENTIAL",
+              "rank": 1,
+              "abbreviation": "C"
+            },
+            {
+              "id": "S",
+              "name": "SECRET",
+              "rank": 2,
+              "abbreviation": "S"
+            },
+            {
+              "id": "TS",
+              "name": "TOP SECRET",
+              "rank": 3,
+              "abbreviation": "TS"
+            }
+          ],
+          "compartments": [
+            {
+              "id": "SI",
+              "name": "Special Intelligence"
+            },
+            {
+              "id": "TK",
+              "name": "Talent Keyhole"
+            }
+          ],
+          "ownerCountries": [
+            "USA"
+          ],
+          "caveats": [
+            "NOFORN",
+            "RELTO"
+          ]
+        }
+      },
+      "output": {
+        "level": "S",
+        "noforn": true
+      }
+    },
+    {
+      "name": "isValidClassificationLabel noforn",
+      "input": {
+        "label": {
+          "level": "S",
+          "noforn": true
+        },
+        "scheme": {
+          "levels": [
+            {
+              "id": "U",
+              "name": "UNCLASSIFIED",
+              "rank": 0,
+              "abbreviation": "U"
+            },
+            {
+              "id": "C",
+              "name": "CONFIDENTIAL",
+              "rank": 1,
+              "abbreviation": "C"
+            },
+            {
+              "id": "S",
+              "name": "SECRET",
+              "rank": 2,
+              "abbreviation": "S"
+            },
+            {
+              "id": "TS",
+              "name": "TOP SECRET",
+              "rank": 3,
+              "abbreviation": "TS"
+            }
+          ],
+          "compartments": [
+            {
+              "id": "SI",
+              "name": "Special Intelligence"
+            },
+            {
+              "id": "TK",
+              "name": "Talent Keyhole"
+            }
+          ],
+          "ownerCountries": [
+            "USA"
+          ],
+          "caveats": [
+            "NOFORN",
+            "RELTO"
+          ]
+        }
+      },
+      "output": true
+    },
+    {
+      "name": "validateLabel releasable",
+      "input": {
+        "label": {
+          "level": "S",
+          "releasableTo": [
+            "GBR",
+            "CAN"
+          ]
+        },
+        "scheme": {
+          "levels": [
+            {
+              "id": "U",
+              "name": "UNCLASSIFIED",
+              "rank": 0,
+              "abbreviation": "U"
+            },
+            {
+              "id": "C",
+              "name": "CONFIDENTIAL",
+              "rank": 1,
+              "abbreviation": "C"
+            },
+            {
+              "id": "S",
+              "name": "SECRET",
+              "rank": 2,
+              "abbreviation": "S"
+            },
+            {
+              "id": "TS",
+              "name": "TOP SECRET",
+              "rank": 3,
+              "abbreviation": "TS"
+            }
+          ],
+          "compartments": [
+            {
+              "id": "SI",
+              "name": "Special Intelligence"
+            },
+            {
+              "id": "TK",
+              "name": "Talent Keyhole"
+            }
+          ],
+          "ownerCountries": [
+            "USA"
+          ],
+          "caveats": [
+            "NOFORN",
+            "RELTO"
+          ]
+        }
+      },
+      "output": {
+        "level": "S",
+        "releasableTo": [
+          "CAN",
+          "GBR"
+        ]
+      }
+    },
+    {
+      "name": "isValidClassificationLabel releasable",
+      "input": {
+        "label": {
+          "level": "S",
+          "releasableTo": [
+            "GBR",
+            "CAN"
+          ]
+        },
+        "scheme": {
+          "levels": [
+            {
+              "id": "U",
+              "name": "UNCLASSIFIED",
+              "rank": 0,
+              "abbreviation": "U"
+            },
+            {
+              "id": "C",
+              "name": "CONFIDENTIAL",
+              "rank": 1,
+              "abbreviation": "C"
+            },
+            {
+              "id": "S",
+              "name": "SECRET",
+              "rank": 2,
+              "abbreviation": "S"
+            },
+            {
+              "id": "TS",
+              "name": "TOP SECRET",
+              "rank": 3,
+              "abbreviation": "TS"
+            }
+          ],
+          "compartments": [
+            {
+              "id": "SI",
+              "name": "Special Intelligence"
+            },
+            {
+              "id": "TK",
+              "name": "Talent Keyhole"
+            }
+          ],
+          "ownerCountries": [
+            "USA"
+          ],
+          "caveats": [
+            "NOFORN",
+            "RELTO"
+          ]
+        }
+      },
+      "output": true
+    },
+    {
+      "name": "validateLabel unknown level",
+      "input": {
+        "label": {
+          "level": "X"
+        },
+        "scheme": {
+          "levels": [
+            {
+              "id": "U",
+              "name": "UNCLASSIFIED",
+              "rank": 0,
+              "abbreviation": "U"
+            },
+            {
+              "id": "C",
+              "name": "CONFIDENTIAL",
+              "rank": 1,
+              "abbreviation": "C"
+            },
+            {
+              "id": "S",
+              "name": "SECRET",
+              "rank": 2,
+              "abbreviation": "S"
+            },
+            {
+              "id": "TS",
+              "name": "TOP SECRET",
+              "rank": 3,
+              "abbreviation": "TS"
+            }
+          ],
+          "compartments": [
+            {
+              "id": "SI",
+              "name": "Special Intelligence"
+            },
+            {
+              "id": "TK",
+              "name": "Talent Keyhole"
+            }
+          ],
+          "ownerCountries": [
+            "USA"
+          ],
+          "caveats": [
+            "NOFORN",
+            "RELTO"
+          ]
+        }
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "INVALID_INPUT",
+          "status": 400,
+          "message": "The label names a level the scheme does not define"
+        }
+      }
+    },
+    {
+      "name": "isValidClassificationLabel unknown level",
+      "input": {
+        "label": {
+          "level": "X"
+        },
+        "scheme": {
+          "levels": [
+            {
+              "id": "U",
+              "name": "UNCLASSIFIED",
+              "rank": 0,
+              "abbreviation": "U"
+            },
+            {
+              "id": "C",
+              "name": "CONFIDENTIAL",
+              "rank": 1,
+              "abbreviation": "C"
+            },
+            {
+              "id": "S",
+              "name": "SECRET",
+              "rank": 2,
+              "abbreviation": "S"
+            },
+            {
+              "id": "TS",
+              "name": "TOP SECRET",
+              "rank": 3,
+              "abbreviation": "TS"
+            }
+          ],
+          "compartments": [
+            {
+              "id": "SI",
+              "name": "Special Intelligence"
+            },
+            {
+              "id": "TK",
+              "name": "Talent Keyhole"
+            }
+          ],
+          "ownerCountries": [
+            "USA"
+          ],
+          "caveats": [
+            "NOFORN",
+            "RELTO"
+          ]
+        }
+      },
+      "output": false
+    },
+    {
+      "name": "validateLabel unknown compartment",
+      "input": {
+        "label": {
+          "level": "S",
+          "compartments": [
+            "ZZ"
+          ]
+        },
+        "scheme": {
+          "levels": [
+            {
+              "id": "U",
+              "name": "UNCLASSIFIED",
+              "rank": 0,
+              "abbreviation": "U"
+            },
+            {
+              "id": "C",
+              "name": "CONFIDENTIAL",
+              "rank": 1,
+              "abbreviation": "C"
+            },
+            {
+              "id": "S",
+              "name": "SECRET",
+              "rank": 2,
+              "abbreviation": "S"
+            },
+            {
+              "id": "TS",
+              "name": "TOP SECRET",
+              "rank": 3,
+              "abbreviation": "TS"
+            }
+          ],
+          "compartments": [
+            {
+              "id": "SI",
+              "name": "Special Intelligence"
+            },
+            {
+              "id": "TK",
+              "name": "Talent Keyhole"
+            }
+          ],
+          "ownerCountries": [
+            "USA"
+          ],
+          "caveats": [
+            "NOFORN",
+            "RELTO"
+          ]
+        }
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "INVALID_INPUT",
+          "status": 400,
+          "message": "The label names a compartment the scheme does not define"
+        }
+      }
+    },
+    {
+      "name": "isValidClassificationLabel unknown compartment",
+      "input": {
+        "label": {
+          "level": "S",
+          "compartments": [
+            "ZZ"
+          ]
+        },
+        "scheme": {
+          "levels": [
+            {
+              "id": "U",
+              "name": "UNCLASSIFIED",
+              "rank": 0,
+              "abbreviation": "U"
+            },
+            {
+              "id": "C",
+              "name": "CONFIDENTIAL",
+              "rank": 1,
+              "abbreviation": "C"
+            },
+            {
+              "id": "S",
+              "name": "SECRET",
+              "rank": 2,
+              "abbreviation": "S"
+            },
+            {
+              "id": "TS",
+              "name": "TOP SECRET",
+              "rank": 3,
+              "abbreviation": "TS"
+            }
+          ],
+          "compartments": [
+            {
+              "id": "SI",
+              "name": "Special Intelligence"
+            },
+            {
+              "id": "TK",
+              "name": "Talent Keyhole"
+            }
+          ],
+          "ownerCountries": [
+            "USA"
+          ],
+          "caveats": [
+            "NOFORN",
+            "RELTO"
+          ]
+        }
+      },
+      "output": false
+    },
+    {
+      "name": "validateLabel noforn and releasable",
+      "input": {
+        "label": {
+          "level": "S",
+          "noforn": true,
+          "releasableTo": [
+            "GBR"
+          ]
+        },
+        "scheme": {
+          "levels": [
+            {
+              "id": "U",
+              "name": "UNCLASSIFIED",
+              "rank": 0,
+              "abbreviation": "U"
+            },
+            {
+              "id": "C",
+              "name": "CONFIDENTIAL",
+              "rank": 1,
+              "abbreviation": "C"
+            },
+            {
+              "id": "S",
+              "name": "SECRET",
+              "rank": 2,
+              "abbreviation": "S"
+            },
+            {
+              "id": "TS",
+              "name": "TOP SECRET",
+              "rank": 3,
+              "abbreviation": "TS"
+            }
+          ],
+          "compartments": [
+            {
+              "id": "SI",
+              "name": "Special Intelligence"
+            },
+            {
+              "id": "TK",
+              "name": "Talent Keyhole"
+            }
+          ],
+          "ownerCountries": [
+            "USA"
+          ],
+          "caveats": [
+            "NOFORN",
+            "RELTO"
+          ]
+        }
+      },
+      "output": {
+        "level": "S",
+        "noforn": true,
+        "releasableTo": [
+          "GBR"
+        ]
+      }
+    },
+    {
+      "name": "isValidClassificationLabel noforn and releasable",
+      "input": {
+        "label": {
+          "level": "S",
+          "noforn": true,
+          "releasableTo": [
+            "GBR"
+          ]
+        },
+        "scheme": {
+          "levels": [
+            {
+              "id": "U",
+              "name": "UNCLASSIFIED",
+              "rank": 0,
+              "abbreviation": "U"
+            },
+            {
+              "id": "C",
+              "name": "CONFIDENTIAL",
+              "rank": 1,
+              "abbreviation": "C"
+            },
+            {
+              "id": "S",
+              "name": "SECRET",
+              "rank": 2,
+              "abbreviation": "S"
+            },
+            {
+              "id": "TS",
+              "name": "TOP SECRET",
+              "rank": 3,
+              "abbreviation": "TS"
+            }
+          ],
+          "compartments": [
+            {
+              "id": "SI",
+              "name": "Special Intelligence"
+            },
+            {
+              "id": "TK",
+              "name": "Talent Keyhole"
+            }
+          ],
+          "ownerCountries": [
+            "USA"
+          ],
+          "caveats": [
+            "NOFORN",
+            "RELTO"
+          ]
+        }
+      },
+      "output": true
+    },
+    {
+      "name": "validateLabel owner in releasable",
+      "input": {
+        "label": {
+          "level": "S",
+          "releasableTo": [
+            "USA"
+          ]
+        },
+        "scheme": {
+          "levels": [
+            {
+              "id": "U",
+              "name": "UNCLASSIFIED",
+              "rank": 0,
+              "abbreviation": "U"
+            },
+            {
+              "id": "C",
+              "name": "CONFIDENTIAL",
+              "rank": 1,
+              "abbreviation": "C"
+            },
+            {
+              "id": "S",
+              "name": "SECRET",
+              "rank": 2,
+              "abbreviation": "S"
+            },
+            {
+              "id": "TS",
+              "name": "TOP SECRET",
+              "rank": 3,
+              "abbreviation": "TS"
+            }
+          ],
+          "compartments": [
+            {
+              "id": "SI",
+              "name": "Special Intelligence"
+            },
+            {
+              "id": "TK",
+              "name": "Talent Keyhole"
+            }
+          ],
+          "ownerCountries": [
+            "USA"
+          ],
+          "caveats": [
+            "NOFORN",
+            "RELTO"
+          ]
+        }
+      },
+      "output": {
+        "level": "S",
+        "releasableTo": [
+          "USA"
+        ]
+      }
+    },
+    {
+      "name": "isValidClassificationLabel owner in releasable",
+      "input": {
+        "label": {
+          "level": "S",
+          "releasableTo": [
+            "USA"
+          ]
+        },
+        "scheme": {
+          "levels": [
+            {
+              "id": "U",
+              "name": "UNCLASSIFIED",
+              "rank": 0,
+              "abbreviation": "U"
+            },
+            {
+              "id": "C",
+              "name": "CONFIDENTIAL",
+              "rank": 1,
+              "abbreviation": "C"
+            },
+            {
+              "id": "S",
+              "name": "SECRET",
+              "rank": 2,
+              "abbreviation": "S"
+            },
+            {
+              "id": "TS",
+              "name": "TOP SECRET",
+              "rank": 3,
+              "abbreviation": "TS"
+            }
+          ],
+          "compartments": [
+            {
+              "id": "SI",
+              "name": "Special Intelligence"
+            },
+            {
+              "id": "TK",
+              "name": "Talent Keyhole"
+            }
+          ],
+          "ownerCountries": [
+            "USA"
+          ],
+          "caveats": [
+            "NOFORN",
+            "RELTO"
+          ]
+        }
+      },
+      "output": true
+    },
+    {
+      "name": "validateLabel unknown field",
+      "input": {
+        "label": {
+          "level": "S",
+          "owner": "x"
+        },
+        "scheme": {
+          "levels": [
+            {
+              "id": "U",
+              "name": "UNCLASSIFIED",
+              "rank": 0,
+              "abbreviation": "U"
+            },
+            {
+              "id": "C",
+              "name": "CONFIDENTIAL",
+              "rank": 1,
+              "abbreviation": "C"
+            },
+            {
+              "id": "S",
+              "name": "SECRET",
+              "rank": 2,
+              "abbreviation": "S"
+            },
+            {
+              "id": "TS",
+              "name": "TOP SECRET",
+              "rank": 3,
+              "abbreviation": "TS"
+            }
+          ],
+          "compartments": [
+            {
+              "id": "SI",
+              "name": "Special Intelligence"
+            },
+            {
+              "id": "TK",
+              "name": "Talent Keyhole"
+            }
+          ],
+          "ownerCountries": [
+            "USA"
+          ],
+          "caveats": [
+            "NOFORN",
+            "RELTO"
+          ]
+        }
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "INVALID_INPUT",
+          "status": 400,
+          "message": "Unknown classification label field"
+        }
+      }
+    },
+    {
+      "name": "isValidClassificationLabel unknown field",
+      "input": {
+        "label": {
+          "level": "S",
+          "owner": "x"
+        },
+        "scheme": {
+          "levels": [
+            {
+              "id": "U",
+              "name": "UNCLASSIFIED",
+              "rank": 0,
+              "abbreviation": "U"
+            },
+            {
+              "id": "C",
+              "name": "CONFIDENTIAL",
+              "rank": 1,
+              "abbreviation": "C"
+            },
+            {
+              "id": "S",
+              "name": "SECRET",
+              "rank": 2,
+              "abbreviation": "S"
+            },
+            {
+              "id": "TS",
+              "name": "TOP SECRET",
+              "rank": 3,
+              "abbreviation": "TS"
+            }
+          ],
+          "compartments": [
+            {
+              "id": "SI",
+              "name": "Special Intelligence"
+            },
+            {
+              "id": "TK",
+              "name": "Talent Keyhole"
+            }
+          ],
+          "ownerCountries": [
+            "USA"
+          ],
+          "caveats": [
+            "NOFORN",
+            "RELTO"
+          ]
+        }
+      },
+      "output": false
+    },
+    {
+      "name": "validateLabel not an object",
+      "input": {
+        "label": "S",
+        "scheme": {
+          "levels": [
+            {
+              "id": "U",
+              "name": "UNCLASSIFIED",
+              "rank": 0,
+              "abbreviation": "U"
+            },
+            {
+              "id": "C",
+              "name": "CONFIDENTIAL",
+              "rank": 1,
+              "abbreviation": "C"
+            },
+            {
+              "id": "S",
+              "name": "SECRET",
+              "rank": 2,
+              "abbreviation": "S"
+            },
+            {
+              "id": "TS",
+              "name": "TOP SECRET",
+              "rank": 3,
+              "abbreviation": "TS"
+            }
+          ],
+          "compartments": [
+            {
+              "id": "SI",
+              "name": "Special Intelligence"
+            },
+            {
+              "id": "TK",
+              "name": "Talent Keyhole"
+            }
+          ],
+          "ownerCountries": [
+            "USA"
+          ],
+          "caveats": [
+            "NOFORN",
+            "RELTO"
+          ]
+        }
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "INVALID_INPUT",
+          "status": 400,
+          "message": "A classification label must be an object"
+        }
+      }
+    },
+    {
+      "name": "isValidClassificationLabel not an object",
+      "input": {
+        "label": "S",
+        "scheme": {
+          "levels": [
+            {
+              "id": "U",
+              "name": "UNCLASSIFIED",
+              "rank": 0,
+              "abbreviation": "U"
+            },
+            {
+              "id": "C",
+              "name": "CONFIDENTIAL",
+              "rank": 1,
+              "abbreviation": "C"
+            },
+            {
+              "id": "S",
+              "name": "SECRET",
+              "rank": 2,
+              "abbreviation": "S"
+            },
+            {
+              "id": "TS",
+              "name": "TOP SECRET",
+              "rank": 3,
+              "abbreviation": "TS"
+            }
+          ],
+          "compartments": [
+            {
+              "id": "SI",
+              "name": "Special Intelligence"
+            },
+            {
+              "id": "TK",
+              "name": "Talent Keyhole"
+            }
+          ],
+          "ownerCountries": [
+            "USA"
+          ],
+          "caveats": [
+            "NOFORN",
+            "RELTO"
+          ]
+        }
+      },
+      "output": false
+    },
+    {
+      "name": "labelRank U",
+      "input": {
+        "label": {
+          "level": "U"
+        },
+        "scheme": {
+          "levels": [
+            {
+              "id": "U",
+              "name": "UNCLASSIFIED",
+              "rank": 0,
+              "abbreviation": "U"
+            },
+            {
+              "id": "C",
+              "name": "CONFIDENTIAL",
+              "rank": 1,
+              "abbreviation": "C"
+            },
+            {
+              "id": "S",
+              "name": "SECRET",
+              "rank": 2,
+              "abbreviation": "S"
+            },
+            {
+              "id": "TS",
+              "name": "TOP SECRET",
+              "rank": 3,
+              "abbreviation": "TS"
+            }
+          ],
+          "compartments": [
+            {
+              "id": "SI",
+              "name": "Special Intelligence"
+            },
+            {
+              "id": "TK",
+              "name": "Talent Keyhole"
+            }
+          ],
+          "ownerCountries": [
+            "USA"
+          ],
+          "caveats": [
+            "NOFORN",
+            "RELTO"
+          ]
+        }
+      },
+      "output": 0
+    },
+    {
+      "name": "labelRank TS",
+      "input": {
+        "label": {
+          "level": "TS"
+        },
+        "scheme": {
+          "levels": [
+            {
+              "id": "U",
+              "name": "UNCLASSIFIED",
+              "rank": 0,
+              "abbreviation": "U"
+            },
+            {
+              "id": "C",
+              "name": "CONFIDENTIAL",
+              "rank": 1,
+              "abbreviation": "C"
+            },
+            {
+              "id": "S",
+              "name": "SECRET",
+              "rank": 2,
+              "abbreviation": "S"
+            },
+            {
+              "id": "TS",
+              "name": "TOP SECRET",
+              "rank": 3,
+              "abbreviation": "TS"
+            }
+          ],
+          "compartments": [
+            {
+              "id": "SI",
+              "name": "Special Intelligence"
+            },
+            {
+              "id": "TK",
+              "name": "Talent Keyhole"
+            }
+          ],
+          "ownerCountries": [
+            "USA"
+          ],
+          "caveats": [
+            "NOFORN",
+            "RELTO"
+          ]
+        }
+      },
+      "output": 3
+    },
+    {
+      "name": "labelRank X",
+      "input": {
+        "label": {
+          "level": "X"
+        },
+        "scheme": {
+          "levels": [
+            {
+              "id": "U",
+              "name": "UNCLASSIFIED",
+              "rank": 0,
+              "abbreviation": "U"
+            },
+            {
+              "id": "C",
+              "name": "CONFIDENTIAL",
+              "rank": 1,
+              "abbreviation": "C"
+            },
+            {
+              "id": "S",
+              "name": "SECRET",
+              "rank": 2,
+              "abbreviation": "S"
+            },
+            {
+              "id": "TS",
+              "name": "TOP SECRET",
+              "rank": 3,
+              "abbreviation": "TS"
+            }
+          ],
+          "compartments": [
+            {
+              "id": "SI",
+              "name": "Special Intelligence"
+            },
+            {
+              "id": "TK",
+              "name": "Talent Keyhole"
+            }
+          ],
+          "ownerCountries": [
+            "USA"
+          ],
+          "caveats": [
+            "NOFORN",
+            "RELTO"
+          ]
+        }
+      },
+      "output": {
+        "$undefined": true
+      }
+    },
+    {
+      "name": "joinLabels higher level wins",
+      "input": {
+        "a": {
+          "level": "C"
+        },
+        "b": {
+          "level": "S"
+        },
+        "scheme": {
+          "levels": [
+            {
+              "id": "U",
+              "name": "UNCLASSIFIED",
+              "rank": 0,
+              "abbreviation": "U"
+            },
+            {
+              "id": "C",
+              "name": "CONFIDENTIAL",
+              "rank": 1,
+              "abbreviation": "C"
+            },
+            {
+              "id": "S",
+              "name": "SECRET",
+              "rank": 2,
+              "abbreviation": "S"
+            },
+            {
+              "id": "TS",
+              "name": "TOP SECRET",
+              "rank": 3,
+              "abbreviation": "TS"
+            }
+          ],
+          "compartments": [
+            {
+              "id": "SI",
+              "name": "Special Intelligence"
+            },
+            {
+              "id": "TK",
+              "name": "Talent Keyhole"
+            }
+          ],
+          "ownerCountries": [
+            "USA"
+          ],
+          "caveats": [
+            "NOFORN",
+            "RELTO"
+          ]
+        }
+      },
+      "output": {
+        "level": "S"
+      }
+    },
+    {
+      "name": "joinLabels compartments union",
+      "input": {
+        "a": {
+          "level": "S",
+          "compartments": [
+            "SI"
+          ]
+        },
+        "b": {
+          "level": "C",
+          "compartments": [
+            "TK"
+          ]
+        },
+        "scheme": {
+          "levels": [
+            {
+              "id": "U",
+              "name": "UNCLASSIFIED",
+              "rank": 0,
+              "abbreviation": "U"
+            },
+            {
+              "id": "C",
+              "name": "CONFIDENTIAL",
+              "rank": 1,
+              "abbreviation": "C"
+            },
+            {
+              "id": "S",
+              "name": "SECRET",
+              "rank": 2,
+              "abbreviation": "S"
+            },
+            {
+              "id": "TS",
+              "name": "TOP SECRET",
+              "rank": 3,
+              "abbreviation": "TS"
+            }
+          ],
+          "compartments": [
+            {
+              "id": "SI",
+              "name": "Special Intelligence"
+            },
+            {
+              "id": "TK",
+              "name": "Talent Keyhole"
+            }
+          ],
+          "ownerCountries": [
+            "USA"
+          ],
+          "caveats": [
+            "NOFORN",
+            "RELTO"
+          ]
+        }
+      },
+      "output": {
+        "level": "S",
+        "compartments": [
+          "SI",
+          "TK"
+        ]
+      }
+    },
+    {
+      "name": "joinLabels noforn sticks",
+      "input": {
+        "a": {
+          "level": "S",
+          "noforn": true
+        },
+        "b": {
+          "level": "S",
+          "releasableTo": [
+            "GBR"
+          ]
+        },
+        "scheme": {
+          "levels": [
+            {
+              "id": "U",
+              "name": "UNCLASSIFIED",
+              "rank": 0,
+              "abbreviation": "U"
+            },
+            {
+              "id": "C",
+              "name": "CONFIDENTIAL",
+              "rank": 1,
+              "abbreviation": "C"
+            },
+            {
+              "id": "S",
+              "name": "SECRET",
+              "rank": 2,
+              "abbreviation": "S"
+            },
+            {
+              "id": "TS",
+              "name": "TOP SECRET",
+              "rank": 3,
+              "abbreviation": "TS"
+            }
+          ],
+          "compartments": [
+            {
+              "id": "SI",
+              "name": "Special Intelligence"
+            },
+            {
+              "id": "TK",
+              "name": "Talent Keyhole"
+            }
+          ],
+          "ownerCountries": [
+            "USA"
+          ],
+          "caveats": [
+            "NOFORN",
+            "RELTO"
+          ]
+        }
+      },
+      "output": {
+        "level": "S",
+        "noforn": true,
+        "releasableTo": [
+          "GBR"
+        ]
+      }
+    },
+    {
+      "name": "joinLabels releasability intersection",
+      "input": {
+        "a": {
+          "level": "S",
+          "releasableTo": [
+            "GBR",
+            "CAN"
+          ]
+        },
+        "b": {
+          "level": "S",
+          "releasableTo": [
+            "CAN",
+            "AUS"
+          ]
+        },
+        "scheme": {
+          "levels": [
+            {
+              "id": "U",
+              "name": "UNCLASSIFIED",
+              "rank": 0,
+              "abbreviation": "U"
+            },
+            {
+              "id": "C",
+              "name": "CONFIDENTIAL",
+              "rank": 1,
+              "abbreviation": "C"
+            },
+            {
+              "id": "S",
+              "name": "SECRET",
+              "rank": 2,
+              "abbreviation": "S"
+            },
+            {
+              "id": "TS",
+              "name": "TOP SECRET",
+              "rank": 3,
+              "abbreviation": "TS"
+            }
+          ],
+          "compartments": [
+            {
+              "id": "SI",
+              "name": "Special Intelligence"
+            },
+            {
+              "id": "TK",
+              "name": "Talent Keyhole"
+            }
+          ],
+          "ownerCountries": [
+            "USA"
+          ],
+          "caveats": [
+            "NOFORN",
+            "RELTO"
+          ]
+        }
+      },
+      "output": {
+        "level": "S",
+        "releasableTo": [
+          "CAN"
+        ]
+      }
+    },
+    {
+      "name": "joinLabels releasable vs unrestricted",
+      "input": {
+        "a": {
+          "level": "S",
+          "releasableTo": [
+            "GBR"
+          ]
+        },
+        "b": {
+          "level": "S"
+        },
+        "scheme": {
+          "levels": [
+            {
+              "id": "U",
+              "name": "UNCLASSIFIED",
+              "rank": 0,
+              "abbreviation": "U"
+            },
+            {
+              "id": "C",
+              "name": "CONFIDENTIAL",
+              "rank": 1,
+              "abbreviation": "C"
+            },
+            {
+              "id": "S",
+              "name": "SECRET",
+              "rank": 2,
+              "abbreviation": "S"
+            },
+            {
+              "id": "TS",
+              "name": "TOP SECRET",
+              "rank": 3,
+              "abbreviation": "TS"
+            }
+          ],
+          "compartments": [
+            {
+              "id": "SI",
+              "name": "Special Intelligence"
+            },
+            {
+              "id": "TK",
+              "name": "Talent Keyhole"
+            }
+          ],
+          "ownerCountries": [
+            "USA"
+          ],
+          "caveats": [
+            "NOFORN",
+            "RELTO"
+          ]
+        }
+      },
+      "output": {
+        "level": "S",
+        "releasableTo": [
+          "GBR"
+        ]
+      }
+    },
+    {
+      "name": "joinLabels with undefined",
+      "input": {
+        "a": {
+          "$undefined": true
+        },
+        "b": {
+          "level": "S"
+        },
+        "scheme": {
+          "levels": [
+            {
+              "id": "U",
+              "name": "UNCLASSIFIED",
+              "rank": 0,
+              "abbreviation": "U"
+            },
+            {
+              "id": "C",
+              "name": "CONFIDENTIAL",
+              "rank": 1,
+              "abbreviation": "C"
+            },
+            {
+              "id": "S",
+              "name": "SECRET",
+              "rank": 2,
+              "abbreviation": "S"
+            },
+            {
+              "id": "TS",
+              "name": "TOP SECRET",
+              "rank": 3,
+              "abbreviation": "TS"
+            }
+          ],
+          "compartments": [
+            {
+              "id": "SI",
+              "name": "Special Intelligence"
+            },
+            {
+              "id": "TK",
+              "name": "Talent Keyhole"
+            }
+          ],
+          "ownerCountries": [
+            "USA"
+          ],
+          "caveats": [
+            "NOFORN",
+            "RELTO"
+          ]
+        }
+      },
+      "output": {
+        "level": "S"
+      }
+    },
+    {
+      "name": "joinLabels both undefined",
+      "input": {
+        "a": {
+          "$undefined": true
+        },
+        "b": {
+          "$undefined": true
+        },
+        "scheme": {
+          "levels": [
+            {
+              "id": "U",
+              "name": "UNCLASSIFIED",
+              "rank": 0,
+              "abbreviation": "U"
+            },
+            {
+              "id": "C",
+              "name": "CONFIDENTIAL",
+              "rank": 1,
+              "abbreviation": "C"
+            },
+            {
+              "id": "S",
+              "name": "SECRET",
+              "rank": 2,
+              "abbreviation": "S"
+            },
+            {
+              "id": "TS",
+              "name": "TOP SECRET",
+              "rank": 3,
+              "abbreviation": "TS"
+            }
+          ],
+          "compartments": [
+            {
+              "id": "SI",
+              "name": "Special Intelligence"
+            },
+            {
+              "id": "TK",
+              "name": "Talent Keyhole"
+            }
+          ],
+          "ownerCountries": [
+            "USA"
+          ],
+          "caveats": [
+            "NOFORN",
+            "RELTO"
+          ]
+        }
+      },
+      "output": {
+        "$undefined": true
+      }
+    },
+    {
+      "name": "joinLabels invalid left",
+      "input": {
+        "a": {
+          "level": "X"
+        },
+        "b": {
+          "level": "S"
+        },
+        "scheme": {
+          "levels": [
+            {
+              "id": "U",
+              "name": "UNCLASSIFIED",
+              "rank": 0,
+              "abbreviation": "U"
+            },
+            {
+              "id": "C",
+              "name": "CONFIDENTIAL",
+              "rank": 1,
+              "abbreviation": "C"
+            },
+            {
+              "id": "S",
+              "name": "SECRET",
+              "rank": 2,
+              "abbreviation": "S"
+            },
+            {
+              "id": "TS",
+              "name": "TOP SECRET",
+              "rank": 3,
+              "abbreviation": "TS"
+            }
+          ],
+          "compartments": [
+            {
+              "id": "SI",
+              "name": "Special Intelligence"
+            },
+            {
+              "id": "TK",
+              "name": "Talent Keyhole"
+            }
+          ],
+          "ownerCountries": [
+            "USA"
+          ],
+          "caveats": [
+            "NOFORN",
+            "RELTO"
+          ]
+        }
+      },
+      "output": {
+        "level": "X"
+      }
+    },
+    {
+      "name": "dominates cleared for level",
+      "input": {
+        "party": {
+          "identityId": "idn_01",
+          "rank": 2,
+          "compartments": {
+            "$set": []
+          },
+          "citizenship": {
+            "$set": [
+              "USA"
+            ]
+          }
+        },
+        "label": {
+          "level": "S"
+        },
+        "scheme": {
+          "levels": [
+            {
+              "id": "U",
+              "name": "UNCLASSIFIED",
+              "rank": 0,
+              "abbreviation": "U"
+            },
+            {
+              "id": "C",
+              "name": "CONFIDENTIAL",
+              "rank": 1,
+              "abbreviation": "C"
+            },
+            {
+              "id": "S",
+              "name": "SECRET",
+              "rank": 2,
+              "abbreviation": "S"
+            },
+            {
+              "id": "TS",
+              "name": "TOP SECRET",
+              "rank": 3,
+              "abbreviation": "TS"
+            }
+          ],
+          "compartments": [
+            {
+              "id": "SI",
+              "name": "Special Intelligence"
+            },
+            {
+              "id": "TK",
+              "name": "Talent Keyhole"
+            }
+          ],
+          "ownerCountries": [
+            "USA"
+          ],
+          "caveats": [
+            "NOFORN",
+            "RELTO"
+          ]
+        }
+      },
+      "output": null
+    },
+    {
+      "name": "dominates level too low",
+      "input": {
+        "party": {
+          "identityId": "idn_01",
+          "rank": 1,
+          "compartments": {
+            "$set": []
+          },
+          "citizenship": {
+            "$set": [
+              "USA"
+            ]
+          }
+        },
+        "label": {
+          "level": "S"
+        },
+        "scheme": {
+          "levels": [
+            {
+              "id": "U",
+              "name": "UNCLASSIFIED",
+              "rank": 0,
+              "abbreviation": "U"
+            },
+            {
+              "id": "C",
+              "name": "CONFIDENTIAL",
+              "rank": 1,
+              "abbreviation": "C"
+            },
+            {
+              "id": "S",
+              "name": "SECRET",
+              "rank": 2,
+              "abbreviation": "S"
+            },
+            {
+              "id": "TS",
+              "name": "TOP SECRET",
+              "rank": 3,
+              "abbreviation": "TS"
+            }
+          ],
+          "compartments": [
+            {
+              "id": "SI",
+              "name": "Special Intelligence"
+            },
+            {
+              "id": "TK",
+              "name": "Talent Keyhole"
+            }
+          ],
+          "ownerCountries": [
+            "USA"
+          ],
+          "caveats": [
+            "NOFORN",
+            "RELTO"
+          ]
+        }
+      },
+      "output": "level"
+    },
+    {
+      "name": "dominates no clearance",
+      "input": {
+        "party": {
+          "identityId": "idn_01",
+          "rank": -1,
+          "compartments": {
+            "$set": []
+          },
+          "citizenship": {
+            "$set": [
+              "USA"
+            ]
+          }
+        },
+        "label": {
+          "level": "U"
+        },
+        "scheme": {
+          "levels": [
+            {
+              "id": "U",
+              "name": "UNCLASSIFIED",
+              "rank": 0,
+              "abbreviation": "U"
+            },
+            {
+              "id": "C",
+              "name": "CONFIDENTIAL",
+              "rank": 1,
+              "abbreviation": "C"
+            },
+            {
+              "id": "S",
+              "name": "SECRET",
+              "rank": 2,
+              "abbreviation": "S"
+            },
+            {
+              "id": "TS",
+              "name": "TOP SECRET",
+              "rank": 3,
+              "abbreviation": "TS"
+            }
+          ],
+          "compartments": [
+            {
+              "id": "SI",
+              "name": "Special Intelligence"
+            },
+            {
+              "id": "TK",
+              "name": "Talent Keyhole"
+            }
+          ],
+          "ownerCountries": [
+            "USA"
+          ],
+          "caveats": [
+            "NOFORN",
+            "RELTO"
+          ]
+        }
+      },
+      "output": "level"
+    },
+    {
+      "name": "dominates missing compartment",
+      "input": {
+        "party": {
+          "identityId": "idn_01",
+          "rank": 3,
+          "compartments": {
+            "$set": [
+              "SI"
+            ]
+          },
+          "citizenship": {
+            "$set": [
+              "USA"
+            ]
+          }
+        },
+        "label": {
+          "level": "TS",
+          "compartments": [
+            "SI",
+            "TK"
+          ]
+        },
+        "scheme": {
+          "levels": [
+            {
+              "id": "U",
+              "name": "UNCLASSIFIED",
+              "rank": 0,
+              "abbreviation": "U"
+            },
+            {
+              "id": "C",
+              "name": "CONFIDENTIAL",
+              "rank": 1,
+              "abbreviation": "C"
+            },
+            {
+              "id": "S",
+              "name": "SECRET",
+              "rank": 2,
+              "abbreviation": "S"
+            },
+            {
+              "id": "TS",
+              "name": "TOP SECRET",
+              "rank": 3,
+              "abbreviation": "TS"
+            }
+          ],
+          "compartments": [
+            {
+              "id": "SI",
+              "name": "Special Intelligence"
+            },
+            {
+              "id": "TK",
+              "name": "Talent Keyhole"
+            }
+          ],
+          "ownerCountries": [
+            "USA"
+          ],
+          "caveats": [
+            "NOFORN",
+            "RELTO"
+          ]
+        }
+      },
+      "output": "compartment"
+    },
+    {
+      "name": "dominates all compartments",
+      "input": {
+        "party": {
+          "identityId": "idn_01",
+          "rank": 3,
+          "compartments": {
+            "$set": [
+              "SI",
+              "TK"
+            ]
+          },
+          "citizenship": {
+            "$set": [
+              "USA"
+            ]
+          }
+        },
+        "label": {
+          "level": "TS",
+          "compartments": [
+            "SI",
+            "TK"
+          ]
+        },
+        "scheme": {
+          "levels": [
+            {
+              "id": "U",
+              "name": "UNCLASSIFIED",
+              "rank": 0,
+              "abbreviation": "U"
+            },
+            {
+              "id": "C",
+              "name": "CONFIDENTIAL",
+              "rank": 1,
+              "abbreviation": "C"
+            },
+            {
+              "id": "S",
+              "name": "SECRET",
+              "rank": 2,
+              "abbreviation": "S"
+            },
+            {
+              "id": "TS",
+              "name": "TOP SECRET",
+              "rank": 3,
+              "abbreviation": "TS"
+            }
+          ],
+          "compartments": [
+            {
+              "id": "SI",
+              "name": "Special Intelligence"
+            },
+            {
+              "id": "TK",
+              "name": "Talent Keyhole"
+            }
+          ],
+          "ownerCountries": [
+            "USA"
+          ],
+          "caveats": [
+            "NOFORN",
+            "RELTO"
+          ]
+        }
+      },
+      "output": null
+    },
+    {
+      "name": "dominates noforn citizen",
+      "input": {
+        "party": {
+          "identityId": "idn_01",
+          "rank": 2,
+          "compartments": {
+            "$set": []
+          },
+          "citizenship": {
+            "$set": [
+              "USA"
+            ]
+          }
+        },
+        "label": {
+          "level": "S",
+          "noforn": true
+        },
+        "scheme": {
+          "levels": [
+            {
+              "id": "U",
+              "name": "UNCLASSIFIED",
+              "rank": 0,
+              "abbreviation": "U"
+            },
+            {
+              "id": "C",
+              "name": "CONFIDENTIAL",
+              "rank": 1,
+              "abbreviation": "C"
+            },
+            {
+              "id": "S",
+              "name": "SECRET",
+              "rank": 2,
+              "abbreviation": "S"
+            },
+            {
+              "id": "TS",
+              "name": "TOP SECRET",
+              "rank": 3,
+              "abbreviation": "TS"
+            }
+          ],
+          "compartments": [
+            {
+              "id": "SI",
+              "name": "Special Intelligence"
+            },
+            {
+              "id": "TK",
+              "name": "Talent Keyhole"
+            }
+          ],
+          "ownerCountries": [
+            "USA"
+          ],
+          "caveats": [
+            "NOFORN",
+            "RELTO"
+          ]
+        }
+      },
+      "output": null
+    },
+    {
+      "name": "dominates noforn foreigner",
+      "input": {
+        "party": {
+          "identityId": "idn_01",
+          "rank": 2,
+          "compartments": {
+            "$set": []
+          },
+          "citizenship": {
+            "$set": [
+              "GBR"
+            ]
+          }
+        },
+        "label": {
+          "level": "S",
+          "noforn": true
+        },
+        "scheme": {
+          "levels": [
+            {
+              "id": "U",
+              "name": "UNCLASSIFIED",
+              "rank": 0,
+              "abbreviation": "U"
+            },
+            {
+              "id": "C",
+              "name": "CONFIDENTIAL",
+              "rank": 1,
+              "abbreviation": "C"
+            },
+            {
+              "id": "S",
+              "name": "SECRET",
+              "rank": 2,
+              "abbreviation": "S"
+            },
+            {
+              "id": "TS",
+              "name": "TOP SECRET",
+              "rank": 3,
+              "abbreviation": "TS"
+            }
+          ],
+          "compartments": [
+            {
+              "id": "SI",
+              "name": "Special Intelligence"
+            },
+            {
+              "id": "TK",
+              "name": "Talent Keyhole"
+            }
+          ],
+          "ownerCountries": [
+            "USA"
+          ],
+          "caveats": [
+            "NOFORN",
+            "RELTO"
+          ]
+        }
+      },
+      "output": "noforn"
+    },
+    {
+      "name": "dominates releasable to citizen",
+      "input": {
+        "party": {
+          "identityId": "idn_01",
+          "rank": 2,
+          "compartments": {
+            "$set": []
+          },
+          "citizenship": {
+            "$set": [
+              "GBR"
+            ]
+          }
+        },
+        "label": {
+          "level": "S",
+          "releasableTo": [
+            "GBR"
+          ]
+        },
+        "scheme": {
+          "levels": [
+            {
+              "id": "U",
+              "name": "UNCLASSIFIED",
+              "rank": 0,
+              "abbreviation": "U"
+            },
+            {
+              "id": "C",
+              "name": "CONFIDENTIAL",
+              "rank": 1,
+              "abbreviation": "C"
+            },
+            {
+              "id": "S",
+              "name": "SECRET",
+              "rank": 2,
+              "abbreviation": "S"
+            },
+            {
+              "id": "TS",
+              "name": "TOP SECRET",
+              "rank": 3,
+              "abbreviation": "TS"
+            }
+          ],
+          "compartments": [
+            {
+              "id": "SI",
+              "name": "Special Intelligence"
+            },
+            {
+              "id": "TK",
+              "name": "Talent Keyhole"
+            }
+          ],
+          "ownerCountries": [
+            "USA"
+          ],
+          "caveats": [
+            "NOFORN",
+            "RELTO"
+          ]
+        }
+      },
+      "output": null
+    },
+    {
+      "name": "dominates not releasable",
+      "input": {
+        "party": {
+          "identityId": "idn_01",
+          "rank": 2,
+          "compartments": {
+            "$set": []
+          },
+          "citizenship": {
+            "$set": [
+              "FRA"
+            ]
+          }
+        },
+        "label": {
+          "level": "S",
+          "releasableTo": [
+            "GBR"
+          ]
+        },
+        "scheme": {
+          "levels": [
+            {
+              "id": "U",
+              "name": "UNCLASSIFIED",
+              "rank": 0,
+              "abbreviation": "U"
+            },
+            {
+              "id": "C",
+              "name": "CONFIDENTIAL",
+              "rank": 1,
+              "abbreviation": "C"
+            },
+            {
+              "id": "S",
+              "name": "SECRET",
+              "rank": 2,
+              "abbreviation": "S"
+            },
+            {
+              "id": "TS",
+              "name": "TOP SECRET",
+              "rank": 3,
+              "abbreviation": "TS"
+            }
+          ],
+          "compartments": [
+            {
+              "id": "SI",
+              "name": "Special Intelligence"
+            },
+            {
+              "id": "TK",
+              "name": "Talent Keyhole"
+            }
+          ],
+          "ownerCountries": [
+            "USA"
+          ],
+          "caveats": [
+            "NOFORN",
+            "RELTO"
+          ]
+        }
+      },
+      "output": "releasability"
+    },
+    {
+      "name": "dominates dual citizen",
+      "input": {
+        "party": {
+          "identityId": "idn_01",
+          "rank": 2,
+          "compartments": {
+            "$set": []
+          },
+          "citizenship": {
+            "$set": [
+              "FRA",
+              "USA"
+            ]
+          }
+        },
+        "label": {
+          "level": "S",
+          "noforn": true
+        },
+        "scheme": {
+          "levels": [
+            {
+              "id": "U",
+              "name": "UNCLASSIFIED",
+              "rank": 0,
+              "abbreviation": "U"
+            },
+            {
+              "id": "C",
+              "name": "CONFIDENTIAL",
+              "rank": 1,
+              "abbreviation": "C"
+            },
+            {
+              "id": "S",
+              "name": "SECRET",
+              "rank": 2,
+              "abbreviation": "S"
+            },
+            {
+              "id": "TS",
+              "name": "TOP SECRET",
+              "rank": 3,
+              "abbreviation": "TS"
+            }
+          ],
+          "compartments": [
+            {
+              "id": "SI",
+              "name": "Special Intelligence"
+            },
+            {
+              "id": "TK",
+              "name": "Talent Keyhole"
+            }
+          ],
+          "ownerCountries": [
+            "USA"
+          ],
+          "caveats": [
+            "NOFORN",
+            "RELTO"
+          ]
+        }
+      },
+      "output": null
+    },
+    {
+      "name": "dominates invalid label",
+      "input": {
+        "party": {
+          "identityId": "idn_01",
+          "rank": 3,
+          "compartments": {
+            "$set": []
+          },
+          "citizenship": {
+            "$set": [
+              "USA"
+            ]
+          }
+        },
+        "label": {
+          "level": "X"
+        },
+        "scheme": {
+          "levels": [
+            {
+              "id": "U",
+              "name": "UNCLASSIFIED",
+              "rank": 0,
+              "abbreviation": "U"
+            },
+            {
+              "id": "C",
+              "name": "CONFIDENTIAL",
+              "rank": 1,
+              "abbreviation": "C"
+            },
+            {
+              "id": "S",
+              "name": "SECRET",
+              "rank": 2,
+              "abbreviation": "S"
+            },
+            {
+              "id": "TS",
+              "name": "TOP SECRET",
+              "rank": 3,
+              "abbreviation": "TS"
+            }
+          ],
+          "compartments": [
+            {
+              "id": "SI",
+              "name": "Special Intelligence"
+            },
+            {
+              "id": "TK",
+              "name": "Talent Keyhole"
+            }
+          ],
+          "ownerCountries": [
+            "USA"
+          ],
+          "caveats": [
+            "NOFORN",
+            "RELTO"
+          ]
+        }
+      },
+      "output": "invalid-label"
+    },
+    {
+      "name": "labelCovers higher covers lower",
+      "input": {
+        "upper": {
+          "level": "TS"
+        },
+        "lower": {
+          "level": "S"
+        },
+        "scheme": {
+          "levels": [
+            {
+              "id": "U",
+              "name": "UNCLASSIFIED",
+              "rank": 0,
+              "abbreviation": "U"
+            },
+            {
+              "id": "C",
+              "name": "CONFIDENTIAL",
+              "rank": 1,
+              "abbreviation": "C"
+            },
+            {
+              "id": "S",
+              "name": "SECRET",
+              "rank": 2,
+              "abbreviation": "S"
+            },
+            {
+              "id": "TS",
+              "name": "TOP SECRET",
+              "rank": 3,
+              "abbreviation": "TS"
+            }
+          ],
+          "compartments": [
+            {
+              "id": "SI",
+              "name": "Special Intelligence"
+            },
+            {
+              "id": "TK",
+              "name": "Talent Keyhole"
+            }
+          ],
+          "ownerCountries": [
+            "USA"
+          ],
+          "caveats": [
+            "NOFORN",
+            "RELTO"
+          ]
+        }
+      },
+      "output": true
+    },
+    {
+      "name": "labelCovers lower does not cover",
+      "input": {
+        "upper": {
+          "level": "C"
+        },
+        "lower": {
+          "level": "S"
+        },
+        "scheme": {
+          "levels": [
+            {
+              "id": "U",
+              "name": "UNCLASSIFIED",
+              "rank": 0,
+              "abbreviation": "U"
+            },
+            {
+              "id": "C",
+              "name": "CONFIDENTIAL",
+              "rank": 1,
+              "abbreviation": "C"
+            },
+            {
+              "id": "S",
+              "name": "SECRET",
+              "rank": 2,
+              "abbreviation": "S"
+            },
+            {
+              "id": "TS",
+              "name": "TOP SECRET",
+              "rank": 3,
+              "abbreviation": "TS"
+            }
+          ],
+          "compartments": [
+            {
+              "id": "SI",
+              "name": "Special Intelligence"
+            },
+            {
+              "id": "TK",
+              "name": "Talent Keyhole"
+            }
+          ],
+          "ownerCountries": [
+            "USA"
+          ],
+          "caveats": [
+            "NOFORN",
+            "RELTO"
+          ]
+        }
+      },
+      "output": false
+    },
+    {
+      "name": "labelCovers compartments superset",
+      "input": {
+        "upper": {
+          "level": "TS",
+          "compartments": [
+            "SI",
+            "TK"
+          ]
+        },
+        "lower": {
+          "level": "S",
+          "compartments": [
+            "SI"
+          ]
+        },
+        "scheme": {
+          "levels": [
+            {
+              "id": "U",
+              "name": "UNCLASSIFIED",
+              "rank": 0,
+              "abbreviation": "U"
+            },
+            {
+              "id": "C",
+              "name": "CONFIDENTIAL",
+              "rank": 1,
+              "abbreviation": "C"
+            },
+            {
+              "id": "S",
+              "name": "SECRET",
+              "rank": 2,
+              "abbreviation": "S"
+            },
+            {
+              "id": "TS",
+              "name": "TOP SECRET",
+              "rank": 3,
+              "abbreviation": "TS"
+            }
+          ],
+          "compartments": [
+            {
+              "id": "SI",
+              "name": "Special Intelligence"
+            },
+            {
+              "id": "TK",
+              "name": "Talent Keyhole"
+            }
+          ],
+          "ownerCountries": [
+            "USA"
+          ],
+          "caveats": [
+            "NOFORN",
+            "RELTO"
+          ]
+        }
+      },
+      "output": true
+    },
+    {
+      "name": "labelCovers compartments missing",
+      "input": {
+        "upper": {
+          "level": "TS",
+          "compartments": [
+            "SI"
+          ]
+        },
+        "lower": {
+          "level": "S",
+          "compartments": [
+            "TK"
+          ]
+        },
+        "scheme": {
+          "levels": [
+            {
+              "id": "U",
+              "name": "UNCLASSIFIED",
+              "rank": 0,
+              "abbreviation": "U"
+            },
+            {
+              "id": "C",
+              "name": "CONFIDENTIAL",
+              "rank": 1,
+              "abbreviation": "C"
+            },
+            {
+              "id": "S",
+              "name": "SECRET",
+              "rank": 2,
+              "abbreviation": "S"
+            },
+            {
+              "id": "TS",
+              "name": "TOP SECRET",
+              "rank": 3,
+              "abbreviation": "TS"
+            }
+          ],
+          "compartments": [
+            {
+              "id": "SI",
+              "name": "Special Intelligence"
+            },
+            {
+              "id": "TK",
+              "name": "Talent Keyhole"
+            }
+          ],
+          "ownerCountries": [
+            "USA"
+          ],
+          "caveats": [
+            "NOFORN",
+            "RELTO"
+          ]
+        }
+      },
+      "output": false
+    },
+    {
+      "name": "labelCovers noforn covers releasable",
+      "input": {
+        "upper": {
+          "level": "S",
+          "noforn": true
+        },
+        "lower": {
+          "level": "S",
+          "releasableTo": [
+            "GBR"
+          ]
+        },
+        "scheme": {
+          "levels": [
+            {
+              "id": "U",
+              "name": "UNCLASSIFIED",
+              "rank": 0,
+              "abbreviation": "U"
+            },
+            {
+              "id": "C",
+              "name": "CONFIDENTIAL",
+              "rank": 1,
+              "abbreviation": "C"
+            },
+            {
+              "id": "S",
+              "name": "SECRET",
+              "rank": 2,
+              "abbreviation": "S"
+            },
+            {
+              "id": "TS",
+              "name": "TOP SECRET",
+              "rank": 3,
+              "abbreviation": "TS"
+            }
+          ],
+          "compartments": [
+            {
+              "id": "SI",
+              "name": "Special Intelligence"
+            },
+            {
+              "id": "TK",
+              "name": "Talent Keyhole"
+            }
+          ],
+          "ownerCountries": [
+            "USA"
+          ],
+          "caveats": [
+            "NOFORN",
+            "RELTO"
+          ]
+        }
+      },
+      "output": true
+    },
+    {
+      "name": "labelCovers releasable does not cover noforn",
+      "input": {
+        "upper": {
+          "level": "S",
+          "releasableTo": [
+            "GBR"
+          ]
+        },
+        "lower": {
+          "level": "S",
+          "noforn": true
+        },
+        "scheme": {
+          "levels": [
+            {
+              "id": "U",
+              "name": "UNCLASSIFIED",
+              "rank": 0,
+              "abbreviation": "U"
+            },
+            {
+              "id": "C",
+              "name": "CONFIDENTIAL",
+              "rank": 1,
+              "abbreviation": "C"
+            },
+            {
+              "id": "S",
+              "name": "SECRET",
+              "rank": 2,
+              "abbreviation": "S"
+            },
+            {
+              "id": "TS",
+              "name": "TOP SECRET",
+              "rank": 3,
+              "abbreviation": "TS"
+            }
+          ],
+          "compartments": [
+            {
+              "id": "SI",
+              "name": "Special Intelligence"
+            },
+            {
+              "id": "TK",
+              "name": "Talent Keyhole"
+            }
+          ],
+          "ownerCountries": [
+            "USA"
+          ],
+          "caveats": [
+            "NOFORN",
+            "RELTO"
+          ]
+        }
+      },
+      "output": false
+    },
+    {
+      "name": "labelCovers narrower releasability covers wider",
+      "input": {
+        "upper": {
+          "level": "S",
+          "releasableTo": [
+            "GBR"
+          ]
+        },
+        "lower": {
+          "level": "S",
+          "releasableTo": [
+            "GBR",
+            "CAN"
+          ]
+        },
+        "scheme": {
+          "levels": [
+            {
+              "id": "U",
+              "name": "UNCLASSIFIED",
+              "rank": 0,
+              "abbreviation": "U"
+            },
+            {
+              "id": "C",
+              "name": "CONFIDENTIAL",
+              "rank": 1,
+              "abbreviation": "C"
+            },
+            {
+              "id": "S",
+              "name": "SECRET",
+              "rank": 2,
+              "abbreviation": "S"
+            },
+            {
+              "id": "TS",
+              "name": "TOP SECRET",
+              "rank": 3,
+              "abbreviation": "TS"
+            }
+          ],
+          "compartments": [
+            {
+              "id": "SI",
+              "name": "Special Intelligence"
+            },
+            {
+              "id": "TK",
+              "name": "Talent Keyhole"
+            }
+          ],
+          "ownerCountries": [
+            "USA"
+          ],
+          "caveats": [
+            "NOFORN",
+            "RELTO"
+          ]
+        }
+      },
+      "output": true
+    },
+    {
+      "name": "labelCovers invalid",
+      "input": {
+        "upper": {
+          "level": "X"
+        },
+        "lower": {
+          "level": "S"
+        },
+        "scheme": {
+          "levels": [
+            {
+              "id": "U",
+              "name": "UNCLASSIFIED",
+              "rank": 0,
+              "abbreviation": "U"
+            },
+            {
+              "id": "C",
+              "name": "CONFIDENTIAL",
+              "rank": 1,
+              "abbreviation": "C"
+            },
+            {
+              "id": "S",
+              "name": "SECRET",
+              "rank": 2,
+              "abbreviation": "S"
+            },
+            {
+              "id": "TS",
+              "name": "TOP SECRET",
+              "rank": 3,
+              "abbreviation": "TS"
+            }
+          ],
+          "compartments": [
+            {
+              "id": "SI",
+              "name": "Special Intelligence"
+            },
+            {
+              "id": "TK",
+              "name": "Talent Keyhole"
+            }
+          ],
+          "ownerCountries": [
+            "USA"
+          ],
+          "caveats": [
+            "NOFORN",
+            "RELTO"
+          ]
+        }
+      },
+      "output": false
+    }
+  ]
+}

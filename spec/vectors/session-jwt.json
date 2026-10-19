@@ -1,0 +1,2279 @@
+{
+  "description": "IAM session JWTs (sts.jwt): compact JWS with protected header {\"alg\",\"kid\",\"typ\":\"biam-session+jwt\"} (jose SignJWT member order), signed with Ed25519 (EdDSA, deterministic) or P-256 (ES256). Verification enforces typ, the alg allowlist pinned per kid, the exact issuer, one configured audience, exp/nbf with 5 s tolerance (signer) and the lifetime cap; failures are SessionTokenError (code INVALID_SESSION_TOKEN, status 401) with a reason. ES256 signatures are randomized: those cases keep the token from the previous generation as long as the TypeScript verifier still accepts it.",
+  "source": "packages/server/src/token-signing.ts#createSessionTokenSigner; packages/server/src/session-tokens.ts#createSessionTokenVerifier",
+  "notes": {
+    "keys": {
+      "ed25519": {
+        "kty": "OKP",
+        "crv": "Ed25519",
+        "x": "Q0suCGxx2S732ODnZOaj-vESi3M7uLVIM13dw-iIw90",
+        "d": "aSYEcbJR5zOFhN68gvjm34_3ztYTn__vkgImpV1-vfY",
+        "kid": "sess-ed-1",
+        "alg": "EdDSA"
+      },
+      "p256": {
+        "kty": "EC",
+        "crv": "P-256",
+        "x": "K82AIvq8zLzWQb42pL4KZK477ZECCgoRcdaCkkCeHU4",
+        "y": "A2faASwwrZMPoVFoGVDf5fAXmHQZ1fu6iTQTFFtOkr0",
+        "d": "kknWwlN9P2u4tzjbiJuKSqNQTNpgu6XQIUjG5fmRbVc",
+        "kid": "sess-ec-1",
+        "alg": "ES256"
+      },
+      "retiredEd25519": {
+        "kty": "OKP",
+        "crv": "Ed25519",
+        "x": "xsY-owD3Jt4b2IuLAfg427AEsOpdU-qhRjPejQBRzRQ",
+        "d": "gf33npKGwis-CQU0PpT_0TL5iKt_A157abdo73ijPaE",
+        "kid": "sess-ed-0",
+        "alg": "EdDSA"
+      }
+    }
+  },
+  "cases": [
+    {
+      "name": "signer public jwks and audiences",
+      "input": {
+        "options": {
+          "signingKeys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "Q0suCGxx2S732ODnZOaj-vESi3M7uLVIM13dw-iIw90",
+              "d": "aSYEcbJR5zOFhN68gvjm34_3ztYTn__vkgImpV1-vfY",
+              "kid": "sess-ed-1",
+              "alg": "EdDSA"
+            },
+            {
+              "kty": "EC",
+              "crv": "P-256",
+              "x": "K82AIvq8zLzWQb42pL4KZK477ZECCgoRcdaCkkCeHU4",
+              "y": "A2faASwwrZMPoVFoGVDf5fAXmHQZ1fu6iTQTFFtOkr0",
+              "d": "kknWwlN9P2u4tzjbiJuKSqNQTNpgu6XQIUjG5fmRbVc",
+              "kid": "sess-ec-1",
+              "alg": "ES256"
+            }
+          ],
+          "verificationKeys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "xsY-owD3Jt4b2IuLAfg427AEsOpdU-qhRjPejQBRzRQ",
+              "kid": "sess-ed-0",
+              "alg": "EdDSA"
+            }
+          ],
+          "audiences": [
+            "https://api.example.com"
+          ],
+          "maxLifetimeSeconds": 3600
+        },
+        "issuer": "https://iam.example.com/api/iam",
+        "now": 1767225600000
+      },
+      "output": {
+        "issuer": "https://iam.example.com/api/iam",
+        "audiences": [
+          "https://iam.example.com/api/iam",
+          "https://api.example.com"
+        ],
+        "maxLifetimeSeconds": 3600,
+        "jwks": {
+          "keys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "Q0suCGxx2S732ODnZOaj-vESi3M7uLVIM13dw-iIw90",
+              "kid": "sess-ed-1",
+              "alg": "EdDSA",
+              "use": "sig"
+            },
+            {
+              "kty": "EC",
+              "crv": "P-256",
+              "x": "K82AIvq8zLzWQb42pL4KZK477ZECCgoRcdaCkkCeHU4",
+              "y": "A2faASwwrZMPoVFoGVDf5fAXmHQZ1fu6iTQTFFtOkr0",
+              "kid": "sess-ec-1",
+              "alg": "ES256",
+              "use": "sig"
+            },
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "xsY-owD3Jt4b2IuLAfg427AEsOpdU-qhRjPejQBRzRQ",
+              "kid": "sess-ed-0",
+              "alg": "EdDSA",
+              "use": "sig"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "sign session-token claims (EdDSA)",
+      "input": {
+        "options": {
+          "signingKeys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "Q0suCGxx2S732ODnZOaj-vESi3M7uLVIM13dw-iIw90",
+              "d": "aSYEcbJR5zOFhN68gvjm34_3ztYTn__vkgImpV1-vfY",
+              "kid": "sess-ed-1",
+              "alg": "EdDSA"
+            },
+            {
+              "kty": "EC",
+              "crv": "P-256",
+              "x": "K82AIvq8zLzWQb42pL4KZK477ZECCgoRcdaCkkCeHU4",
+              "y": "A2faASwwrZMPoVFoGVDf5fAXmHQZ1fu6iTQTFFtOkr0",
+              "d": "kknWwlN9P2u4tzjbiJuKSqNQTNpgu6XQIUjG5fmRbVc",
+              "kid": "sess-ec-1",
+              "alg": "ES256"
+            }
+          ],
+          "verificationKeys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "xsY-owD3Jt4b2IuLAfg427AEsOpdU-qhRjPejQBRzRQ",
+              "kid": "sess-ed-0",
+              "alg": "EdDSA"
+            }
+          ],
+          "audiences": [
+            "https://api.example.com"
+          ],
+          "maxLifetimeSeconds": 3600
+        },
+        "issuer": "https://iam.example.com/api/iam",
+        "now": 1767225600000,
+        "claims": {
+          "iss": "https://iam.example.com/api/iam",
+          "aud": [
+            "https://iam.example.com/api/iam",
+            "https://api.example.com"
+          ],
+          "sub": "idn_01",
+          "tid": "tnt_01",
+          "sid": "ses_01",
+          "jti": "ses_01",
+          "iat": 1767225600,
+          "nbf": 1767225600,
+          "exp": 1767226500,
+          "auth_time": 1767225540,
+          "kind": "session-token",
+          "mfa": true
+        }
+      },
+      "output": {
+        "token": "eyJhbGciOiJFZERTQSIsImtpZCI6InNlc3MtZWQtMSIsInR5cCI6ImJpYW0tc2Vzc2lvbitqd3QifQ.eyJpc3MiOiJodHRwczovL2lhbS5leGFtcGxlLmNvbS9hcGkvaWFtIiwiYXVkIjpbImh0dHBzOi8vaWFtLmV4YW1wbGUuY29tL2FwaS9pYW0iLCJodHRwczovL2FwaS5leGFtcGxlLmNvbSJdLCJzdWIiOiJpZG5fMDEiLCJ0aWQiOiJ0bnRfMDEiLCJzaWQiOiJzZXNfMDEiLCJqdGkiOiJzZXNfMDEiLCJpYXQiOjE3NjcyMjU2MDAsIm5iZiI6MTc2NzIyNTYwMCwiZXhwIjoxNzY3MjI2NTAwLCJhdXRoX3RpbWUiOjE3NjcyMjU1NDAsImtpbmQiOiJzZXNzaW9uLXRva2VuIiwibWZhIjp0cnVlfQ.q0p9qss7WWePEzYEn2qIzfL2lHF_mmAVclflBDiiztH-hwpA2y8HEIFNr3kedQXqVRHflXJk4i-aZWYottztCg",
+        "header": {
+          "alg": "EdDSA",
+          "kid": "sess-ed-1",
+          "typ": "biam-session+jwt"
+        },
+        "payload": {
+          "iss": "https://iam.example.com/api/iam",
+          "aud": [
+            "https://iam.example.com/api/iam",
+            "https://api.example.com"
+          ],
+          "sub": "idn_01",
+          "tid": "tnt_01",
+          "sid": "ses_01",
+          "jti": "ses_01",
+          "iat": 1767225600,
+          "nbf": 1767225600,
+          "exp": 1767226500,
+          "auth_time": 1767225540,
+          "kind": "session-token",
+          "mfa": true
+        },
+        "signature": "q0p9qss7WWePEzYEn2qIzfL2lHF_mmAVclflBDiiztH-hwpA2y8HEIFNr3kedQXqVRHflXJk4i-aZWYottztCg"
+      }
+    },
+    {
+      "name": "sign role claims (EdDSA)",
+      "input": {
+        "options": {
+          "signingKeys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "Q0suCGxx2S732ODnZOaj-vESi3M7uLVIM13dw-iIw90",
+              "d": "aSYEcbJR5zOFhN68gvjm34_3ztYTn__vkgImpV1-vfY",
+              "kid": "sess-ed-1",
+              "alg": "EdDSA"
+            },
+            {
+              "kty": "EC",
+              "crv": "P-256",
+              "x": "K82AIvq8zLzWQb42pL4KZK477ZECCgoRcdaCkkCeHU4",
+              "y": "A2faASwwrZMPoVFoGVDf5fAXmHQZ1fu6iTQTFFtOkr0",
+              "d": "kknWwlN9P2u4tzjbiJuKSqNQTNpgu6XQIUjG5fmRbVc",
+              "kid": "sess-ec-1",
+              "alg": "ES256"
+            }
+          ],
+          "verificationKeys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "xsY-owD3Jt4b2IuLAfg427AEsOpdU-qhRjPejQBRzRQ",
+              "kid": "sess-ed-0",
+              "alg": "EdDSA"
+            }
+          ],
+          "audiences": [
+            "https://api.example.com"
+          ],
+          "maxLifetimeSeconds": 3600
+        },
+        "issuer": "https://iam.example.com/api/iam",
+        "now": 1767225600000,
+        "claims": {
+          "iss": "https://iam.example.com/api/iam",
+          "aud": "https://iam.example.com/api/iam",
+          "sub": "idn_01",
+          "tid": "tnt_01",
+          "sid": "ses_01",
+          "jti": "ses_01",
+          "iat": 1767225600,
+          "nbf": 1767225600,
+          "exp": 1767226500,
+          "auth_time": 1767225540,
+          "kind": "role",
+          "mfa": true,
+          "role": "role_admin",
+          "trust": "trs_01",
+          "src_tid": "tnt_00",
+          "session_name": "deploy",
+          "source_identity": "ci-bot"
+        }
+      },
+      "output": {
+        "token": "eyJhbGciOiJFZERTQSIsImtpZCI6InNlc3MtZWQtMSIsInR5cCI6ImJpYW0tc2Vzc2lvbitqd3QifQ.eyJpc3MiOiJodHRwczovL2lhbS5leGFtcGxlLmNvbS9hcGkvaWFtIiwiYXVkIjoiaHR0cHM6Ly9pYW0uZXhhbXBsZS5jb20vYXBpL2lhbSIsInN1YiI6Imlkbl8wMSIsInRpZCI6InRudF8wMSIsInNpZCI6InNlc18wMSIsImp0aSI6InNlc18wMSIsImlhdCI6MTc2NzIyNTYwMCwibmJmIjoxNzY3MjI1NjAwLCJleHAiOjE3NjcyMjY1MDAsImF1dGhfdGltZSI6MTc2NzIyNTU0MCwia2luZCI6InJvbGUiLCJtZmEiOnRydWUsInJvbGUiOiJyb2xlX2FkbWluIiwidHJ1c3QiOiJ0cnNfMDEiLCJzcmNfdGlkIjoidG50XzAwIiwic2Vzc2lvbl9uYW1lIjoiZGVwbG95Iiwic291cmNlX2lkZW50aXR5IjoiY2ktYm90In0.N_FQaK-m5iWgDZqP0DDMrZJUwOGi9qDDjRre_7LbiqrCoGsjq_ligkp3UB7aJW-G7dUK_g59MJJt4zpNno98CQ",
+        "header": {
+          "alg": "EdDSA",
+          "kid": "sess-ed-1",
+          "typ": "biam-session+jwt"
+        },
+        "payload": {
+          "iss": "https://iam.example.com/api/iam",
+          "aud": "https://iam.example.com/api/iam",
+          "sub": "idn_01",
+          "tid": "tnt_01",
+          "sid": "ses_01",
+          "jti": "ses_01",
+          "iat": 1767225600,
+          "nbf": 1767225600,
+          "exp": 1767226500,
+          "auth_time": 1767225540,
+          "kind": "role",
+          "mfa": true,
+          "role": "role_admin",
+          "trust": "trs_01",
+          "src_tid": "tnt_00",
+          "session_name": "deploy",
+          "source_identity": "ci-bot"
+        },
+        "signature": "N_FQaK-m5iWgDZqP0DDMrZJUwOGi9qDDjRre_7LbiqrCoGsjq_ligkp3UB7aJW-G7dUK_g59MJJt4zpNno98CQ"
+      }
+    },
+    {
+      "name": "sign web identity claims (EdDSA)",
+      "input": {
+        "options": {
+          "signingKeys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "Q0suCGxx2S732ODnZOaj-vESi3M7uLVIM13dw-iIw90",
+              "d": "aSYEcbJR5zOFhN68gvjm34_3ztYTn__vkgImpV1-vfY",
+              "kid": "sess-ed-1",
+              "alg": "EdDSA"
+            },
+            {
+              "kty": "EC",
+              "crv": "P-256",
+              "x": "K82AIvq8zLzWQb42pL4KZK477ZECCgoRcdaCkkCeHU4",
+              "y": "A2faASwwrZMPoVFoGVDf5fAXmHQZ1fu6iTQTFFtOkr0",
+              "d": "kknWwlN9P2u4tzjbiJuKSqNQTNpgu6XQIUjG5fmRbVc",
+              "kid": "sess-ec-1",
+              "alg": "ES256"
+            }
+          ],
+          "verificationKeys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "xsY-owD3Jt4b2IuLAfg427AEsOpdU-qhRjPejQBRzRQ",
+              "kid": "sess-ed-0",
+              "alg": "EdDSA"
+            }
+          ],
+          "audiences": [
+            "https://api.example.com"
+          ],
+          "maxLifetimeSeconds": 3600
+        },
+        "issuer": "https://iam.example.com/api/iam",
+        "now": 1767225600000,
+        "claims": {
+          "iss": "https://iam.example.com/api/iam",
+          "aud": "https://iam.example.com/api/iam",
+          "sub": "idn_01",
+          "tid": "tnt_01",
+          "sid": "ses_01",
+          "jti": "ses_01",
+          "iat": 1767225600,
+          "nbf": 1767225600,
+          "exp": 1767226500,
+          "auth_time": 1767225540,
+          "kind": "role",
+          "mfa": false,
+          "role": "role_ci",
+          "idp": "oidc_gh",
+          "idp_sub": "repo:org/app:ref:refs/heads/main"
+        }
+      },
+      "output": {
+        "token": "eyJhbGciOiJFZERTQSIsImtpZCI6InNlc3MtZWQtMSIsInR5cCI6ImJpYW0tc2Vzc2lvbitqd3QifQ.eyJpc3MiOiJodHRwczovL2lhbS5leGFtcGxlLmNvbS9hcGkvaWFtIiwiYXVkIjoiaHR0cHM6Ly9pYW0uZXhhbXBsZS5jb20vYXBpL2lhbSIsInN1YiI6Imlkbl8wMSIsInRpZCI6InRudF8wMSIsInNpZCI6InNlc18wMSIsImp0aSI6InNlc18wMSIsImlhdCI6MTc2NzIyNTYwMCwibmJmIjoxNzY3MjI1NjAwLCJleHAiOjE3NjcyMjY1MDAsImF1dGhfdGltZSI6MTc2NzIyNTU0MCwia2luZCI6InJvbGUiLCJtZmEiOmZhbHNlLCJyb2xlIjoicm9sZV9jaSIsImlkcCI6Im9pZGNfZ2giLCJpZHBfc3ViIjoicmVwbzpvcmcvYXBwOnJlZjpyZWZzL2hlYWRzL21haW4ifQ.VCU7G4r5hrnXoahmUEZLAjjix7QUsvP_9WXGW9pAkn_tiooRwEN21CgSDHwgr6q86vD7kEPaPbQ7F2Ab1S5nBA",
+        "header": {
+          "alg": "EdDSA",
+          "kid": "sess-ed-1",
+          "typ": "biam-session+jwt"
+        },
+        "payload": {
+          "iss": "https://iam.example.com/api/iam",
+          "aud": "https://iam.example.com/api/iam",
+          "sub": "idn_01",
+          "tid": "tnt_01",
+          "sid": "ses_01",
+          "jti": "ses_01",
+          "iat": 1767225600,
+          "nbf": 1767225600,
+          "exp": 1767226500,
+          "auth_time": 1767225540,
+          "kind": "role",
+          "mfa": false,
+          "role": "role_ci",
+          "idp": "oidc_gh",
+          "idp_sub": "repo:org/app:ref:refs/heads/main"
+        },
+        "signature": "VCU7G4r5hrnXoahmUEZLAjjix7QUsvP_9WXGW9pAkn_tiooRwEN21CgSDHwgr6q86vD7kEPaPbQ7F2Ab1S5nBA"
+      }
+    },
+    {
+      "name": "sign session-token claims (ES256)",
+      "input": {
+        "options": {
+          "signingKeys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "Q0suCGxx2S732ODnZOaj-vESi3M7uLVIM13dw-iIw90",
+              "d": "aSYEcbJR5zOFhN68gvjm34_3ztYTn__vkgImpV1-vfY",
+              "kid": "sess-ed-1",
+              "alg": "EdDSA"
+            },
+            {
+              "kty": "EC",
+              "crv": "P-256",
+              "x": "K82AIvq8zLzWQb42pL4KZK477ZECCgoRcdaCkkCeHU4",
+              "y": "A2faASwwrZMPoVFoGVDf5fAXmHQZ1fu6iTQTFFtOkr0",
+              "d": "kknWwlN9P2u4tzjbiJuKSqNQTNpgu6XQIUjG5fmRbVc",
+              "kid": "sess-ec-1",
+              "alg": "ES256"
+            }
+          ],
+          "verificationKeys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "xsY-owD3Jt4b2IuLAfg427AEsOpdU-qhRjPejQBRzRQ",
+              "kid": "sess-ed-0",
+              "alg": "EdDSA"
+            }
+          ],
+          "audiences": [
+            "https://api.example.com"
+          ],
+          "maxLifetimeSeconds": 3600,
+          "activeKeyId": "sess-ec-1"
+        },
+        "issuer": "https://iam.example.com/api/iam",
+        "now": 1767225600000,
+        "claims": {
+          "iss": "https://iam.example.com/api/iam",
+          "aud": [
+            "https://iam.example.com/api/iam",
+            "https://api.example.com"
+          ],
+          "sub": "idn_01",
+          "tid": "tnt_01",
+          "sid": "ses_01",
+          "jti": "ses_01",
+          "iat": 1767225600,
+          "nbf": 1767225600,
+          "exp": 1767226500,
+          "auth_time": 1767225540,
+          "kind": "session-token",
+          "mfa": true
+        }
+      },
+      "output": {
+        "token": "eyJhbGciOiJFUzI1NiIsImtpZCI6InNlc3MtZWMtMSIsInR5cCI6ImJpYW0tc2Vzc2lvbitqd3QifQ.eyJpc3MiOiJodHRwczovL2lhbS5leGFtcGxlLmNvbS9hcGkvaWFtIiwiYXVkIjpbImh0dHBzOi8vaWFtLmV4YW1wbGUuY29tL2FwaS9pYW0iLCJodHRwczovL2FwaS5leGFtcGxlLmNvbSJdLCJzdWIiOiJpZG5fMDEiLCJ0aWQiOiJ0bnRfMDEiLCJzaWQiOiJzZXNfMDEiLCJqdGkiOiJzZXNfMDEiLCJpYXQiOjE3NjcyMjU2MDAsIm5iZiI6MTc2NzIyNTYwMCwiZXhwIjoxNzY3MjI2NTAwLCJhdXRoX3RpbWUiOjE3NjcyMjU1NDAsImtpbmQiOiJzZXNzaW9uLXRva2VuIiwibWZhIjp0cnVlfQ.zWzab9fR1df3Kbf48EIvF4sxKdOb9rbEgqocKHNjwQgIaBN134eNbQfpfJzeQPLOt5jl-rNjljE2HOUouP8LSg",
+        "header": {
+          "alg": "ES256",
+          "kid": "sess-ec-1",
+          "typ": "biam-session+jwt"
+        },
+        "payload": {
+          "iss": "https://iam.example.com/api/iam",
+          "aud": [
+            "https://iam.example.com/api/iam",
+            "https://api.example.com"
+          ],
+          "sub": "idn_01",
+          "tid": "tnt_01",
+          "sid": "ses_01",
+          "jti": "ses_01",
+          "iat": 1767225600,
+          "nbf": 1767225600,
+          "exp": 1767226500,
+          "auth_time": 1767225540,
+          "kind": "session-token",
+          "mfa": true
+        },
+        "signature": "zWzab9fR1df3Kbf48EIvF4sxKdOb9rbEgqocKHNjwQgIaBN134eNbQfpfJzeQPLOt5jl-rNjljE2HOUouP8LSg"
+      },
+      "nondeterministic": "ECDSA signature; verify, do not compare"
+    },
+    {
+      "name": "verify EdDSA for issuer audience",
+      "input": {
+        "options": {
+          "signingKeys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "Q0suCGxx2S732ODnZOaj-vESi3M7uLVIM13dw-iIw90",
+              "d": "aSYEcbJR5zOFhN68gvjm34_3ztYTn__vkgImpV1-vfY",
+              "kid": "sess-ed-1",
+              "alg": "EdDSA"
+            },
+            {
+              "kty": "EC",
+              "crv": "P-256",
+              "x": "K82AIvq8zLzWQb42pL4KZK477ZECCgoRcdaCkkCeHU4",
+              "y": "A2faASwwrZMPoVFoGVDf5fAXmHQZ1fu6iTQTFFtOkr0",
+              "d": "kknWwlN9P2u4tzjbiJuKSqNQTNpgu6XQIUjG5fmRbVc",
+              "kid": "sess-ec-1",
+              "alg": "ES256"
+            }
+          ],
+          "verificationKeys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "xsY-owD3Jt4b2IuLAfg427AEsOpdU-qhRjPejQBRzRQ",
+              "kid": "sess-ed-0",
+              "alg": "EdDSA"
+            }
+          ],
+          "audiences": [
+            "https://api.example.com"
+          ],
+          "maxLifetimeSeconds": 3600
+        },
+        "issuer": "https://iam.example.com/api/iam",
+        "now": 1767225600000,
+        "token": "eyJhbGciOiJFZERTQSIsImtpZCI6InNlc3MtZWQtMSIsInR5cCI6ImJpYW0tc2Vzc2lvbitqd3QifQ.eyJpc3MiOiJodHRwczovL2lhbS5leGFtcGxlLmNvbS9hcGkvaWFtIiwiYXVkIjpbImh0dHBzOi8vaWFtLmV4YW1wbGUuY29tL2FwaS9pYW0iLCJodHRwczovL2FwaS5leGFtcGxlLmNvbSJdLCJzdWIiOiJpZG5fMDEiLCJ0aWQiOiJ0bnRfMDEiLCJzaWQiOiJzZXNfMDEiLCJqdGkiOiJzZXNfMDEiLCJpYXQiOjE3NjcyMjU2MDAsIm5iZiI6MTc2NzIyNTYwMCwiZXhwIjoxNzY3MjI2NTAwLCJhdXRoX3RpbWUiOjE3NjcyMjU1NDAsImtpbmQiOiJzZXNzaW9uLXRva2VuIiwibWZhIjp0cnVlfQ.q0p9qss7WWePEzYEn2qIzfL2lHF_mmAVclflBDiiztH-hwpA2y8HEIFNr3kedQXqVRHflXJk4i-aZWYottztCg"
+      },
+      "output": {
+        "iss": "https://iam.example.com/api/iam",
+        "aud": [
+          "https://iam.example.com/api/iam",
+          "https://api.example.com"
+        ],
+        "sub": "idn_01",
+        "tid": "tnt_01",
+        "sid": "ses_01",
+        "jti": "ses_01",
+        "iat": 1767225600,
+        "nbf": 1767225600,
+        "exp": 1767226500,
+        "auth_time": 1767225540,
+        "kind": "session-token",
+        "mfa": true
+      }
+    },
+    {
+      "name": "verify EdDSA for configured audience",
+      "input": {
+        "options": {
+          "signingKeys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "Q0suCGxx2S732ODnZOaj-vESi3M7uLVIM13dw-iIw90",
+              "d": "aSYEcbJR5zOFhN68gvjm34_3ztYTn__vkgImpV1-vfY",
+              "kid": "sess-ed-1",
+              "alg": "EdDSA"
+            },
+            {
+              "kty": "EC",
+              "crv": "P-256",
+              "x": "K82AIvq8zLzWQb42pL4KZK477ZECCgoRcdaCkkCeHU4",
+              "y": "A2faASwwrZMPoVFoGVDf5fAXmHQZ1fu6iTQTFFtOkr0",
+              "d": "kknWwlN9P2u4tzjbiJuKSqNQTNpgu6XQIUjG5fmRbVc",
+              "kid": "sess-ec-1",
+              "alg": "ES256"
+            }
+          ],
+          "verificationKeys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "xsY-owD3Jt4b2IuLAfg427AEsOpdU-qhRjPejQBRzRQ",
+              "kid": "sess-ed-0",
+              "alg": "EdDSA"
+            }
+          ],
+          "audiences": [
+            "https://api.example.com"
+          ],
+          "maxLifetimeSeconds": 3600
+        },
+        "issuer": "https://iam.example.com/api/iam",
+        "now": 1767225600000,
+        "token": "eyJhbGciOiJFZERTQSIsImtpZCI6InNlc3MtZWQtMSIsInR5cCI6ImJpYW0tc2Vzc2lvbitqd3QifQ.eyJpc3MiOiJodHRwczovL2lhbS5leGFtcGxlLmNvbS9hcGkvaWFtIiwiYXVkIjpbImh0dHBzOi8vaWFtLmV4YW1wbGUuY29tL2FwaS9pYW0iLCJodHRwczovL2FwaS5leGFtcGxlLmNvbSJdLCJzdWIiOiJpZG5fMDEiLCJ0aWQiOiJ0bnRfMDEiLCJzaWQiOiJzZXNfMDEiLCJqdGkiOiJzZXNfMDEiLCJpYXQiOjE3NjcyMjU2MDAsIm5iZiI6MTc2NzIyNTYwMCwiZXhwIjoxNzY3MjI2NTAwLCJhdXRoX3RpbWUiOjE3NjcyMjU1NDAsImtpbmQiOiJzZXNzaW9uLXRva2VuIiwibWZhIjp0cnVlfQ.q0p9qss7WWePEzYEn2qIzfL2lHF_mmAVclflBDiiztH-hwpA2y8HEIFNr3kedQXqVRHflXJk4i-aZWYottztCg",
+        "audience": "https://api.example.com"
+      },
+      "output": {
+        "iss": "https://iam.example.com/api/iam",
+        "aud": [
+          "https://iam.example.com/api/iam",
+          "https://api.example.com"
+        ],
+        "sub": "idn_01",
+        "tid": "tnt_01",
+        "sid": "ses_01",
+        "jti": "ses_01",
+        "iat": 1767225600,
+        "nbf": 1767225600,
+        "exp": 1767226500,
+        "auth_time": 1767225540,
+        "kind": "session-token",
+        "mfa": true
+      }
+    },
+    {
+      "name": "verify ES256",
+      "input": {
+        "options": {
+          "signingKeys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "Q0suCGxx2S732ODnZOaj-vESi3M7uLVIM13dw-iIw90",
+              "d": "aSYEcbJR5zOFhN68gvjm34_3ztYTn__vkgImpV1-vfY",
+              "kid": "sess-ed-1",
+              "alg": "EdDSA"
+            },
+            {
+              "kty": "EC",
+              "crv": "P-256",
+              "x": "K82AIvq8zLzWQb42pL4KZK477ZECCgoRcdaCkkCeHU4",
+              "y": "A2faASwwrZMPoVFoGVDf5fAXmHQZ1fu6iTQTFFtOkr0",
+              "d": "kknWwlN9P2u4tzjbiJuKSqNQTNpgu6XQIUjG5fmRbVc",
+              "kid": "sess-ec-1",
+              "alg": "ES256"
+            }
+          ],
+          "verificationKeys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "xsY-owD3Jt4b2IuLAfg427AEsOpdU-qhRjPejQBRzRQ",
+              "kid": "sess-ed-0",
+              "alg": "EdDSA"
+            }
+          ],
+          "audiences": [
+            "https://api.example.com"
+          ],
+          "maxLifetimeSeconds": 3600
+        },
+        "issuer": "https://iam.example.com/api/iam",
+        "now": 1767225600000,
+        "token": "eyJhbGciOiJFUzI1NiIsImtpZCI6InNlc3MtZWMtMSIsInR5cCI6ImJpYW0tc2Vzc2lvbitqd3QifQ.eyJpc3MiOiJodHRwczovL2lhbS5leGFtcGxlLmNvbS9hcGkvaWFtIiwiYXVkIjpbImh0dHBzOi8vaWFtLmV4YW1wbGUuY29tL2FwaS9pYW0iLCJodHRwczovL2FwaS5leGFtcGxlLmNvbSJdLCJzdWIiOiJpZG5fMDEiLCJ0aWQiOiJ0bnRfMDEiLCJzaWQiOiJzZXNfMDEiLCJqdGkiOiJzZXNfMDEiLCJpYXQiOjE3NjcyMjU2MDAsIm5iZiI6MTc2NzIyNTYwMCwiZXhwIjoxNzY3MjI2NTAwLCJhdXRoX3RpbWUiOjE3NjcyMjU1NDAsImtpbmQiOiJzZXNzaW9uLXRva2VuIiwibWZhIjp0cnVlfQ.zWzab9fR1df3Kbf48EIvF4sxKdOb9rbEgqocKHNjwQgIaBN134eNbQfpfJzeQPLOt5jl-rNjljE2HOUouP8LSg",
+        "audience": "https://api.example.com"
+      },
+      "output": {
+        "iss": "https://iam.example.com/api/iam",
+        "aud": [
+          "https://iam.example.com/api/iam",
+          "https://api.example.com"
+        ],
+        "sub": "idn_01",
+        "tid": "tnt_01",
+        "sid": "ses_01",
+        "jti": "ses_01",
+        "iat": 1767225600,
+        "nbf": 1767225600,
+        "exp": 1767226500,
+        "auth_time": 1767225540,
+        "kind": "session-token",
+        "mfa": true
+      }
+    },
+    {
+      "name": "verify role token for issuer",
+      "input": {
+        "options": {
+          "signingKeys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "Q0suCGxx2S732ODnZOaj-vESi3M7uLVIM13dw-iIw90",
+              "d": "aSYEcbJR5zOFhN68gvjm34_3ztYTn__vkgImpV1-vfY",
+              "kid": "sess-ed-1",
+              "alg": "EdDSA"
+            },
+            {
+              "kty": "EC",
+              "crv": "P-256",
+              "x": "K82AIvq8zLzWQb42pL4KZK477ZECCgoRcdaCkkCeHU4",
+              "y": "A2faASwwrZMPoVFoGVDf5fAXmHQZ1fu6iTQTFFtOkr0",
+              "d": "kknWwlN9P2u4tzjbiJuKSqNQTNpgu6XQIUjG5fmRbVc",
+              "kid": "sess-ec-1",
+              "alg": "ES256"
+            }
+          ],
+          "verificationKeys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "xsY-owD3Jt4b2IuLAfg427AEsOpdU-qhRjPejQBRzRQ",
+              "kid": "sess-ed-0",
+              "alg": "EdDSA"
+            }
+          ],
+          "audiences": [
+            "https://api.example.com"
+          ],
+          "maxLifetimeSeconds": 3600
+        },
+        "issuer": "https://iam.example.com/api/iam",
+        "now": 1767225600000,
+        "token": "eyJhbGciOiJFZERTQSIsImtpZCI6InNlc3MtZWQtMSIsInR5cCI6ImJpYW0tc2Vzc2lvbitqd3QifQ.eyJpc3MiOiJodHRwczovL2lhbS5leGFtcGxlLmNvbS9hcGkvaWFtIiwiYXVkIjoiaHR0cHM6Ly9pYW0uZXhhbXBsZS5jb20vYXBpL2lhbSIsInN1YiI6Imlkbl8wMSIsInRpZCI6InRudF8wMSIsInNpZCI6InNlc18wMSIsImp0aSI6InNlc18wMSIsImlhdCI6MTc2NzIyNTYwMCwibmJmIjoxNzY3MjI1NjAwLCJleHAiOjE3NjcyMjY1MDAsImF1dGhfdGltZSI6MTc2NzIyNTU0MCwia2luZCI6InJvbGUiLCJtZmEiOnRydWUsInJvbGUiOiJyb2xlX2FkbWluIiwidHJ1c3QiOiJ0cnNfMDEiLCJzcmNfdGlkIjoidG50XzAwIiwic2Vzc2lvbl9uYW1lIjoiZGVwbG95Iiwic291cmNlX2lkZW50aXR5IjoiY2ktYm90In0.N_FQaK-m5iWgDZqP0DDMrZJUwOGi9qDDjRre_7LbiqrCoGsjq_ligkp3UB7aJW-G7dUK_g59MJJt4zpNno98CQ"
+      },
+      "output": {
+        "iss": "https://iam.example.com/api/iam",
+        "aud": "https://iam.example.com/api/iam",
+        "sub": "idn_01",
+        "tid": "tnt_01",
+        "sid": "ses_01",
+        "jti": "ses_01",
+        "iat": 1767225600,
+        "nbf": 1767225600,
+        "exp": 1767226500,
+        "auth_time": 1767225540,
+        "kind": "role",
+        "mfa": true,
+        "role": "role_admin",
+        "trust": "trs_01",
+        "src_tid": "tnt_00",
+        "session_name": "deploy",
+        "source_identity": "ci-bot"
+      }
+    },
+    {
+      "name": "verify role token for other audience",
+      "input": {
+        "options": {
+          "signingKeys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "Q0suCGxx2S732ODnZOaj-vESi3M7uLVIM13dw-iIw90",
+              "d": "aSYEcbJR5zOFhN68gvjm34_3ztYTn__vkgImpV1-vfY",
+              "kid": "sess-ed-1",
+              "alg": "EdDSA"
+            },
+            {
+              "kty": "EC",
+              "crv": "P-256",
+              "x": "K82AIvq8zLzWQb42pL4KZK477ZECCgoRcdaCkkCeHU4",
+              "y": "A2faASwwrZMPoVFoGVDf5fAXmHQZ1fu6iTQTFFtOkr0",
+              "d": "kknWwlN9P2u4tzjbiJuKSqNQTNpgu6XQIUjG5fmRbVc",
+              "kid": "sess-ec-1",
+              "alg": "ES256"
+            }
+          ],
+          "verificationKeys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "xsY-owD3Jt4b2IuLAfg427AEsOpdU-qhRjPejQBRzRQ",
+              "kid": "sess-ed-0",
+              "alg": "EdDSA"
+            }
+          ],
+          "audiences": [
+            "https://api.example.com"
+          ],
+          "maxLifetimeSeconds": 3600
+        },
+        "issuer": "https://iam.example.com/api/iam",
+        "now": 1767225600000,
+        "token": "eyJhbGciOiJFZERTQSIsImtpZCI6InNlc3MtZWQtMSIsInR5cCI6ImJpYW0tc2Vzc2lvbitqd3QifQ.eyJpc3MiOiJodHRwczovL2lhbS5leGFtcGxlLmNvbS9hcGkvaWFtIiwiYXVkIjoiaHR0cHM6Ly9pYW0uZXhhbXBsZS5jb20vYXBpL2lhbSIsInN1YiI6Imlkbl8wMSIsInRpZCI6InRudF8wMSIsInNpZCI6InNlc18wMSIsImp0aSI6InNlc18wMSIsImlhdCI6MTc2NzIyNTYwMCwibmJmIjoxNzY3MjI1NjAwLCJleHAiOjE3NjcyMjY1MDAsImF1dGhfdGltZSI6MTc2NzIyNTU0MCwia2luZCI6InJvbGUiLCJtZmEiOnRydWUsInJvbGUiOiJyb2xlX2FkbWluIiwidHJ1c3QiOiJ0cnNfMDEiLCJzcmNfdGlkIjoidG50XzAwIiwic2Vzc2lvbl9uYW1lIjoiZGVwbG95Iiwic291cmNlX2lkZW50aXR5IjoiY2ktYm90In0.N_FQaK-m5iWgDZqP0DDMrZJUwOGi9qDDjRre_7LbiqrCoGsjq_ligkp3UB7aJW-G7dUK_g59MJJt4zpNno98CQ",
+        "audience": "https://api.example.com"
+      },
+      "output": {
+        "$error": {
+          "name": "SessionTokenError",
+          "code": "INVALID_SESSION_TOKEN",
+          "status": 401,
+          "reason": "audience",
+          "message": "The session token is invalid or expired"
+        }
+      }
+    },
+    {
+      "name": "verify unconfigured audience",
+      "input": {
+        "options": {
+          "signingKeys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "Q0suCGxx2S732ODnZOaj-vESi3M7uLVIM13dw-iIw90",
+              "d": "aSYEcbJR5zOFhN68gvjm34_3ztYTn__vkgImpV1-vfY",
+              "kid": "sess-ed-1",
+              "alg": "EdDSA"
+            },
+            {
+              "kty": "EC",
+              "crv": "P-256",
+              "x": "K82AIvq8zLzWQb42pL4KZK477ZECCgoRcdaCkkCeHU4",
+              "y": "A2faASwwrZMPoVFoGVDf5fAXmHQZ1fu6iTQTFFtOkr0",
+              "d": "kknWwlN9P2u4tzjbiJuKSqNQTNpgu6XQIUjG5fmRbVc",
+              "kid": "sess-ec-1",
+              "alg": "ES256"
+            }
+          ],
+          "verificationKeys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "xsY-owD3Jt4b2IuLAfg427AEsOpdU-qhRjPejQBRzRQ",
+              "kid": "sess-ed-0",
+              "alg": "EdDSA"
+            }
+          ],
+          "audiences": [
+            "https://api.example.com"
+          ],
+          "maxLifetimeSeconds": 3600
+        },
+        "issuer": "https://iam.example.com/api/iam",
+        "now": 1767225600000,
+        "token": "eyJhbGciOiJFZERTQSIsImtpZCI6InNlc3MtZWQtMSIsInR5cCI6ImJpYW0tc2Vzc2lvbitqd3QifQ.eyJpc3MiOiJodHRwczovL2lhbS5leGFtcGxlLmNvbS9hcGkvaWFtIiwiYXVkIjpbImh0dHBzOi8vaWFtLmV4YW1wbGUuY29tL2FwaS9pYW0iLCJodHRwczovL2FwaS5leGFtcGxlLmNvbSJdLCJzdWIiOiJpZG5fMDEiLCJ0aWQiOiJ0bnRfMDEiLCJzaWQiOiJzZXNfMDEiLCJqdGkiOiJzZXNfMDEiLCJpYXQiOjE3NjcyMjU2MDAsIm5iZiI6MTc2NzIyNTYwMCwiZXhwIjoxNzY3MjI2NTAwLCJhdXRoX3RpbWUiOjE3NjcyMjU1NDAsImtpbmQiOiJzZXNzaW9uLXRva2VuIiwibWZhIjp0cnVlfQ.q0p9qss7WWePEzYEn2qIzfL2lHF_mmAVclflBDiiztH-hwpA2y8HEIFNr3kedQXqVRHflXJk4i-aZWYottztCg",
+        "audience": "https://unknown.example.com"
+      },
+      "output": {
+        "$error": {
+          "name": "SessionTokenError",
+          "code": "INVALID_SESSION_TOKEN",
+          "status": 401,
+          "reason": "audience",
+          "message": "The session token is invalid or expired"
+        }
+      }
+    },
+    {
+      "name": "verify token of retired key",
+      "input": {
+        "options": {
+          "signingKeys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "Q0suCGxx2S732ODnZOaj-vESi3M7uLVIM13dw-iIw90",
+              "d": "aSYEcbJR5zOFhN68gvjm34_3ztYTn__vkgImpV1-vfY",
+              "kid": "sess-ed-1",
+              "alg": "EdDSA"
+            },
+            {
+              "kty": "EC",
+              "crv": "P-256",
+              "x": "K82AIvq8zLzWQb42pL4KZK477ZECCgoRcdaCkkCeHU4",
+              "y": "A2faASwwrZMPoVFoGVDf5fAXmHQZ1fu6iTQTFFtOkr0",
+              "d": "kknWwlN9P2u4tzjbiJuKSqNQTNpgu6XQIUjG5fmRbVc",
+              "kid": "sess-ec-1",
+              "alg": "ES256"
+            }
+          ],
+          "verificationKeys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "xsY-owD3Jt4b2IuLAfg427AEsOpdU-qhRjPejQBRzRQ",
+              "kid": "sess-ed-0",
+              "alg": "EdDSA"
+            }
+          ],
+          "audiences": [
+            "https://api.example.com"
+          ],
+          "maxLifetimeSeconds": 3600
+        },
+        "issuer": "https://iam.example.com/api/iam",
+        "now": 1767225600000,
+        "token": "eyJhbGciOiJFZERTQSIsImtpZCI6InNlc3MtZWQtMCIsInR5cCI6ImJpYW0tc2Vzc2lvbitqd3QifQ.eyJpc3MiOiJodHRwczovL2lhbS5leGFtcGxlLmNvbS9hcGkvaWFtIiwiYXVkIjpbImh0dHBzOi8vaWFtLmV4YW1wbGUuY29tL2FwaS9pYW0iLCJodHRwczovL2FwaS5leGFtcGxlLmNvbSJdLCJzdWIiOiJpZG5fMDEiLCJ0aWQiOiJ0bnRfMDEiLCJzaWQiOiJzZXNfMDEiLCJqdGkiOiJzZXNfMDEiLCJpYXQiOjE3NjcyMjU2MDAsIm5iZiI6MTc2NzIyNTYwMCwiZXhwIjoxNzY3MjI2NTAwLCJhdXRoX3RpbWUiOjE3NjcyMjU1NDAsImtpbmQiOiJzZXNzaW9uLXRva2VuIiwibWZhIjp0cnVlfQ.60Yj5RqkkPGLGmyUhpwNiY6QE7R8N7ve2GIkkVd7JCtNWHR6Cp5FSbYpRBX7y-phG6qTsgh-0_voPkTLR8cSDQ"
+      },
+      "output": {
+        "iss": "https://iam.example.com/api/iam",
+        "aud": [
+          "https://iam.example.com/api/iam",
+          "https://api.example.com"
+        ],
+        "sub": "idn_01",
+        "tid": "tnt_01",
+        "sid": "ses_01",
+        "jti": "ses_01",
+        "iat": 1767225600,
+        "nbf": 1767225600,
+        "exp": 1767226500,
+        "auth_time": 1767225540,
+        "kind": "session-token",
+        "mfa": true
+      }
+    },
+    {
+      "name": "verify expired (beyond tolerance)",
+      "input": {
+        "options": {
+          "signingKeys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "Q0suCGxx2S732ODnZOaj-vESi3M7uLVIM13dw-iIw90",
+              "d": "aSYEcbJR5zOFhN68gvjm34_3ztYTn__vkgImpV1-vfY",
+              "kid": "sess-ed-1",
+              "alg": "EdDSA"
+            },
+            {
+              "kty": "EC",
+              "crv": "P-256",
+              "x": "K82AIvq8zLzWQb42pL4KZK477ZECCgoRcdaCkkCeHU4",
+              "y": "A2faASwwrZMPoVFoGVDf5fAXmHQZ1fu6iTQTFFtOkr0",
+              "d": "kknWwlN9P2u4tzjbiJuKSqNQTNpgu6XQIUjG5fmRbVc",
+              "kid": "sess-ec-1",
+              "alg": "ES256"
+            }
+          ],
+          "verificationKeys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "xsY-owD3Jt4b2IuLAfg427AEsOpdU-qhRjPejQBRzRQ",
+              "kid": "sess-ed-0",
+              "alg": "EdDSA"
+            }
+          ],
+          "audiences": [
+            "https://api.example.com"
+          ],
+          "maxLifetimeSeconds": 3600
+        },
+        "issuer": "https://iam.example.com/api/iam",
+        "now": 1767226506000,
+        "token": "eyJhbGciOiJFZERTQSIsImtpZCI6InNlc3MtZWQtMSIsInR5cCI6ImJpYW0tc2Vzc2lvbitqd3QifQ.eyJpc3MiOiJodHRwczovL2lhbS5leGFtcGxlLmNvbS9hcGkvaWFtIiwiYXVkIjpbImh0dHBzOi8vaWFtLmV4YW1wbGUuY29tL2FwaS9pYW0iLCJodHRwczovL2FwaS5leGFtcGxlLmNvbSJdLCJzdWIiOiJpZG5fMDEiLCJ0aWQiOiJ0bnRfMDEiLCJzaWQiOiJzZXNfMDEiLCJqdGkiOiJzZXNfMDEiLCJpYXQiOjE3NjcyMjU2MDAsIm5iZiI6MTc2NzIyNTYwMCwiZXhwIjoxNzY3MjI2NTAwLCJhdXRoX3RpbWUiOjE3NjcyMjU1NDAsImtpbmQiOiJzZXNzaW9uLXRva2VuIiwibWZhIjp0cnVlfQ.q0p9qss7WWePEzYEn2qIzfL2lHF_mmAVclflBDiiztH-hwpA2y8HEIFNr3kedQXqVRHflXJk4i-aZWYottztCg"
+      },
+      "output": {
+        "$error": {
+          "name": "SessionTokenError",
+          "code": "INVALID_SESSION_TOKEN",
+          "status": 401,
+          "reason": "expired",
+          "message": "The session token is invalid or expired"
+        }
+      }
+    },
+    {
+      "name": "verify expired within tolerance",
+      "input": {
+        "options": {
+          "signingKeys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "Q0suCGxx2S732ODnZOaj-vESi3M7uLVIM13dw-iIw90",
+              "d": "aSYEcbJR5zOFhN68gvjm34_3ztYTn__vkgImpV1-vfY",
+              "kid": "sess-ed-1",
+              "alg": "EdDSA"
+            },
+            {
+              "kty": "EC",
+              "crv": "P-256",
+              "x": "K82AIvq8zLzWQb42pL4KZK477ZECCgoRcdaCkkCeHU4",
+              "y": "A2faASwwrZMPoVFoGVDf5fAXmHQZ1fu6iTQTFFtOkr0",
+              "d": "kknWwlN9P2u4tzjbiJuKSqNQTNpgu6XQIUjG5fmRbVc",
+              "kid": "sess-ec-1",
+              "alg": "ES256"
+            }
+          ],
+          "verificationKeys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "xsY-owD3Jt4b2IuLAfg427AEsOpdU-qhRjPejQBRzRQ",
+              "kid": "sess-ed-0",
+              "alg": "EdDSA"
+            }
+          ],
+          "audiences": [
+            "https://api.example.com"
+          ],
+          "maxLifetimeSeconds": 3600
+        },
+        "issuer": "https://iam.example.com/api/iam",
+        "now": 1767226504000,
+        "token": "eyJhbGciOiJFZERTQSIsImtpZCI6InNlc3MtZWQtMSIsInR5cCI6ImJpYW0tc2Vzc2lvbitqd3QifQ.eyJpc3MiOiJodHRwczovL2lhbS5leGFtcGxlLmNvbS9hcGkvaWFtIiwiYXVkIjpbImh0dHBzOi8vaWFtLmV4YW1wbGUuY29tL2FwaS9pYW0iLCJodHRwczovL2FwaS5leGFtcGxlLmNvbSJdLCJzdWIiOiJpZG5fMDEiLCJ0aWQiOiJ0bnRfMDEiLCJzaWQiOiJzZXNfMDEiLCJqdGkiOiJzZXNfMDEiLCJpYXQiOjE3NjcyMjU2MDAsIm5iZiI6MTc2NzIyNTYwMCwiZXhwIjoxNzY3MjI2NTAwLCJhdXRoX3RpbWUiOjE3NjcyMjU1NDAsImtpbmQiOiJzZXNzaW9uLXRva2VuIiwibWZhIjp0cnVlfQ.q0p9qss7WWePEzYEn2qIzfL2lHF_mmAVclflBDiiztH-hwpA2y8HEIFNr3kedQXqVRHflXJk4i-aZWYottztCg"
+      },
+      "output": {
+        "iss": "https://iam.example.com/api/iam",
+        "aud": [
+          "https://iam.example.com/api/iam",
+          "https://api.example.com"
+        ],
+        "sub": "idn_01",
+        "tid": "tnt_01",
+        "sid": "ses_01",
+        "jti": "ses_01",
+        "iat": 1767225600,
+        "nbf": 1767225600,
+        "exp": 1767226500,
+        "auth_time": 1767225540,
+        "kind": "session-token",
+        "mfa": true
+      }
+    },
+    {
+      "name": "verify before nbf",
+      "input": {
+        "options": {
+          "signingKeys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "Q0suCGxx2S732ODnZOaj-vESi3M7uLVIM13dw-iIw90",
+              "d": "aSYEcbJR5zOFhN68gvjm34_3ztYTn__vkgImpV1-vfY",
+              "kid": "sess-ed-1",
+              "alg": "EdDSA"
+            },
+            {
+              "kty": "EC",
+              "crv": "P-256",
+              "x": "K82AIvq8zLzWQb42pL4KZK477ZECCgoRcdaCkkCeHU4",
+              "y": "A2faASwwrZMPoVFoGVDf5fAXmHQZ1fu6iTQTFFtOkr0",
+              "d": "kknWwlN9P2u4tzjbiJuKSqNQTNpgu6XQIUjG5fmRbVc",
+              "kid": "sess-ec-1",
+              "alg": "ES256"
+            }
+          ],
+          "verificationKeys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "xsY-owD3Jt4b2IuLAfg427AEsOpdU-qhRjPejQBRzRQ",
+              "kid": "sess-ed-0",
+              "alg": "EdDSA"
+            }
+          ],
+          "audiences": [
+            "https://api.example.com"
+          ],
+          "maxLifetimeSeconds": 3600
+        },
+        "issuer": "https://iam.example.com/api/iam",
+        "now": 1767225594000,
+        "token": "eyJhbGciOiJFZERTQSIsImtpZCI6InNlc3MtZWQtMSIsInR5cCI6ImJpYW0tc2Vzc2lvbitqd3QifQ.eyJpc3MiOiJodHRwczovL2lhbS5leGFtcGxlLmNvbS9hcGkvaWFtIiwiYXVkIjpbImh0dHBzOi8vaWFtLmV4YW1wbGUuY29tL2FwaS9pYW0iLCJodHRwczovL2FwaS5leGFtcGxlLmNvbSJdLCJzdWIiOiJpZG5fMDEiLCJ0aWQiOiJ0bnRfMDEiLCJzaWQiOiJzZXNfMDEiLCJqdGkiOiJzZXNfMDEiLCJpYXQiOjE3NjcyMjU2MDAsIm5iZiI6MTc2NzIyNTYwMCwiZXhwIjoxNzY3MjI2NTAwLCJhdXRoX3RpbWUiOjE3NjcyMjU1NDAsImtpbmQiOiJzZXNzaW9uLXRva2VuIiwibWZhIjp0cnVlfQ.q0p9qss7WWePEzYEn2qIzfL2lHF_mmAVclflBDiiztH-hwpA2y8HEIFNr3kedQXqVRHflXJk4i-aZWYottztCg"
+      },
+      "output": {
+        "$error": {
+          "name": "SessionTokenError",
+          "code": "INVALID_SESSION_TOKEN",
+          "status": 401,
+          "reason": "not-yet-valid",
+          "message": "The session token is invalid or expired"
+        }
+      }
+    },
+    {
+      "name": "verify tampered payload",
+      "input": {
+        "options": {
+          "signingKeys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "Q0suCGxx2S732ODnZOaj-vESi3M7uLVIM13dw-iIw90",
+              "d": "aSYEcbJR5zOFhN68gvjm34_3ztYTn__vkgImpV1-vfY",
+              "kid": "sess-ed-1",
+              "alg": "EdDSA"
+            },
+            {
+              "kty": "EC",
+              "crv": "P-256",
+              "x": "K82AIvq8zLzWQb42pL4KZK477ZECCgoRcdaCkkCeHU4",
+              "y": "A2faASwwrZMPoVFoGVDf5fAXmHQZ1fu6iTQTFFtOkr0",
+              "d": "kknWwlN9P2u4tzjbiJuKSqNQTNpgu6XQIUjG5fmRbVc",
+              "kid": "sess-ec-1",
+              "alg": "ES256"
+            }
+          ],
+          "verificationKeys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "xsY-owD3Jt4b2IuLAfg427AEsOpdU-qhRjPejQBRzRQ",
+              "kid": "sess-ed-0",
+              "alg": "EdDSA"
+            }
+          ],
+          "audiences": [
+            "https://api.example.com"
+          ],
+          "maxLifetimeSeconds": 3600
+        },
+        "issuer": "https://iam.example.com/api/iam",
+        "now": 1767225600000,
+        "token": "eyJhbGciOiJFZERTQSIsImtpZCI6InNlc3MtZWQtMSIsInR5cCI6ImJpYW0tc2Vzc2lvbitqd3QifQ.eyJpc3MiOiJodHRwczovL2lhbS5leGFtcGxlLmNvbS9hcGkvaWFtIiwiYXVkIjpbImh0dHBzOi8vaWFtLmV4YW1wbGUuY29tL2FwaS9pYW0iLCJodHRwczovL2FwaS5leGFtcGxlLmNvbSJdLCJzdWIiOiJpZG5fOTkiLCJ0aWQiOiJ0bnRfMDEiLCJzaWQiOiJzZXNfMDEiLCJqdGkiOiJzZXNfMDEiLCJpYXQiOjE3NjcyMjU2MDAsIm5iZiI6MTc2NzIyNTYwMCwiZXhwIjoxNzY3MjI2NTAwLCJhdXRoX3RpbWUiOjE3NjcyMjU1NDAsImtpbmQiOiJzZXNzaW9uLXRva2VuIiwibWZhIjp0cnVlfQ.q0p9qss7WWePEzYEn2qIzfL2lHF_mmAVclflBDiiztH-hwpA2y8HEIFNr3kedQXqVRHflXJk4i-aZWYottztCg"
+      },
+      "output": {
+        "$error": {
+          "name": "SessionTokenError",
+          "code": "INVALID_SESSION_TOKEN",
+          "status": 401,
+          "reason": "signature",
+          "message": "The session token is invalid or expired"
+        }
+      }
+    },
+    {
+      "name": "verify malformed",
+      "input": {
+        "options": {
+          "signingKeys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "Q0suCGxx2S732ODnZOaj-vESi3M7uLVIM13dw-iIw90",
+              "d": "aSYEcbJR5zOFhN68gvjm34_3ztYTn__vkgImpV1-vfY",
+              "kid": "sess-ed-1",
+              "alg": "EdDSA"
+            },
+            {
+              "kty": "EC",
+              "crv": "P-256",
+              "x": "K82AIvq8zLzWQb42pL4KZK477ZECCgoRcdaCkkCeHU4",
+              "y": "A2faASwwrZMPoVFoGVDf5fAXmHQZ1fu6iTQTFFtOkr0",
+              "d": "kknWwlN9P2u4tzjbiJuKSqNQTNpgu6XQIUjG5fmRbVc",
+              "kid": "sess-ec-1",
+              "alg": "ES256"
+            }
+          ],
+          "verificationKeys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "xsY-owD3Jt4b2IuLAfg427AEsOpdU-qhRjPejQBRzRQ",
+              "kid": "sess-ed-0",
+              "alg": "EdDSA"
+            }
+          ],
+          "audiences": [
+            "https://api.example.com"
+          ],
+          "maxLifetimeSeconds": 3600
+        },
+        "issuer": "https://iam.example.com/api/iam",
+        "now": 1767225600000,
+        "token": "abc.def"
+      },
+      "output": {
+        "$error": {
+          "name": "SessionTokenError",
+          "code": "INVALID_SESSION_TOKEN",
+          "status": 401,
+          "reason": "malformed",
+          "message": "The session token is invalid or expired"
+        }
+      }
+    },
+    {
+      "name": "verify too large",
+      "input": {
+        "options": {
+          "signingKeys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "Q0suCGxx2S732ODnZOaj-vESi3M7uLVIM13dw-iIw90",
+              "d": "aSYEcbJR5zOFhN68gvjm34_3ztYTn__vkgImpV1-vfY",
+              "kid": "sess-ed-1",
+              "alg": "EdDSA"
+            },
+            {
+              "kty": "EC",
+              "crv": "P-256",
+              "x": "K82AIvq8zLzWQb42pL4KZK477ZECCgoRcdaCkkCeHU4",
+              "y": "A2faASwwrZMPoVFoGVDf5fAXmHQZ1fu6iTQTFFtOkr0",
+              "d": "kknWwlN9P2u4tzjbiJuKSqNQTNpgu6XQIUjG5fmRbVc",
+              "kid": "sess-ec-1",
+              "alg": "ES256"
+            }
+          ],
+          "verificationKeys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "xsY-owD3Jt4b2IuLAfg427AEsOpdU-qhRjPejQBRzRQ",
+              "kid": "sess-ed-0",
+              "alg": "EdDSA"
+            }
+          ],
+          "audiences": [
+            "https://api.example.com"
+          ],
+          "maxLifetimeSeconds": 3600
+        },
+        "issuer": "https://iam.example.com/api/iam",
+        "now": 1767225600000,
+        "token": "eyJhbGciOiJFZERTQSIsImtpZCI6InNlc3MtZWQtMSIsInR5cCI6ImJpYW0tc2Vzc2lvbitqd3QifQ.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA.q0p9qss7WWePEzYEn2qIzfL2lHF_mmAVclflBDiiztH-hwpA2y8HEIFNr3kedQXqVRHflXJk4i-aZWYottztCg"
+      },
+      "output": {
+        "$error": {
+          "name": "SessionTokenError",
+          "code": "INVALID_SESSION_TOKEN",
+          "status": 401,
+          "reason": "too-large",
+          "message": "The session token is invalid or expired"
+        }
+      }
+    },
+    {
+      "name": "verify wrong typ",
+      "input": {
+        "options": {
+          "signingKeys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "Q0suCGxx2S732ODnZOaj-vESi3M7uLVIM13dw-iIw90",
+              "d": "aSYEcbJR5zOFhN68gvjm34_3ztYTn__vkgImpV1-vfY",
+              "kid": "sess-ed-1",
+              "alg": "EdDSA"
+            },
+            {
+              "kty": "EC",
+              "crv": "P-256",
+              "x": "K82AIvq8zLzWQb42pL4KZK477ZECCgoRcdaCkkCeHU4",
+              "y": "A2faASwwrZMPoVFoGVDf5fAXmHQZ1fu6iTQTFFtOkr0",
+              "d": "kknWwlN9P2u4tzjbiJuKSqNQTNpgu6XQIUjG5fmRbVc",
+              "kid": "sess-ec-1",
+              "alg": "ES256"
+            }
+          ],
+          "verificationKeys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "xsY-owD3Jt4b2IuLAfg427AEsOpdU-qhRjPejQBRzRQ",
+              "kid": "sess-ed-0",
+              "alg": "EdDSA"
+            }
+          ],
+          "audiences": [
+            "https://api.example.com"
+          ],
+          "maxLifetimeSeconds": 3600
+        },
+        "issuer": "https://iam.example.com/api/iam",
+        "now": 1767225600000,
+        "token": "eyJhbGciOiJFZERTQSIsImtpZCI6InNlc3MtZWQtMSIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJodHRwczovL2lhbS5leGFtcGxlLmNvbS9hcGkvaWFtIiwiYXVkIjpbImh0dHBzOi8vaWFtLmV4YW1wbGUuY29tL2FwaS9pYW0iLCJodHRwczovL2FwaS5leGFtcGxlLmNvbSJdLCJzdWIiOiJpZG5fMDEiLCJ0aWQiOiJ0bnRfMDEiLCJzaWQiOiJzZXNfMDEiLCJqdGkiOiJzZXNfMDEiLCJpYXQiOjE3NjcyMjU2MDAsIm5iZiI6MTc2NzIyNTYwMCwiZXhwIjoxNzY3MjI2NTAwLCJhdXRoX3RpbWUiOjE3NjcyMjU1NDAsImtpbmQiOiJzZXNzaW9uLXRva2VuIiwibWZhIjp0cnVlfQ.D5w9Gh4iQLjRtZqWve_sSsWJTTk_IxYXjL4pWoJEUs-blIbozDllxnzGpFhXPusFCWZmlA6gj6pFkNFLFY23Aw"
+      },
+      "output": {
+        "$error": {
+          "name": "SessionTokenError",
+          "code": "INVALID_SESSION_TOKEN",
+          "status": 401,
+          "reason": "type",
+          "message": "The session token is invalid or expired"
+        }
+      }
+    },
+    {
+      "name": "verify unknown kid",
+      "input": {
+        "options": {
+          "signingKeys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "Q0suCGxx2S732ODnZOaj-vESi3M7uLVIM13dw-iIw90",
+              "d": "aSYEcbJR5zOFhN68gvjm34_3ztYTn__vkgImpV1-vfY",
+              "kid": "sess-ed-1",
+              "alg": "EdDSA"
+            },
+            {
+              "kty": "EC",
+              "crv": "P-256",
+              "x": "K82AIvq8zLzWQb42pL4KZK477ZECCgoRcdaCkkCeHU4",
+              "y": "A2faASwwrZMPoVFoGVDf5fAXmHQZ1fu6iTQTFFtOkr0",
+              "d": "kknWwlN9P2u4tzjbiJuKSqNQTNpgu6XQIUjG5fmRbVc",
+              "kid": "sess-ec-1",
+              "alg": "ES256"
+            }
+          ],
+          "verificationKeys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "xsY-owD3Jt4b2IuLAfg427AEsOpdU-qhRjPejQBRzRQ",
+              "kid": "sess-ed-0",
+              "alg": "EdDSA"
+            }
+          ],
+          "audiences": [
+            "https://api.example.com"
+          ],
+          "maxLifetimeSeconds": 3600
+        },
+        "issuer": "https://iam.example.com/api/iam",
+        "now": 1767225600000,
+        "token": "eyJhbGciOiJFZERTQSIsImtpZCI6Im5vcGUiLCJ0eXAiOiJiaWFtLXNlc3Npb24rand0In0.eyJpc3MiOiJodHRwczovL2lhbS5leGFtcGxlLmNvbS9hcGkvaWFtIiwiYXVkIjpbImh0dHBzOi8vaWFtLmV4YW1wbGUuY29tL2FwaS9pYW0iLCJodHRwczovL2FwaS5leGFtcGxlLmNvbSJdLCJzdWIiOiJpZG5fMDEiLCJ0aWQiOiJ0bnRfMDEiLCJzaWQiOiJzZXNfMDEiLCJqdGkiOiJzZXNfMDEiLCJpYXQiOjE3NjcyMjU2MDAsIm5iZiI6MTc2NzIyNTYwMCwiZXhwIjoxNzY3MjI2NTAwLCJhdXRoX3RpbWUiOjE3NjcyMjU1NDAsImtpbmQiOiJzZXNzaW9uLXRva2VuIiwibWZhIjp0cnVlfQ.O1zRj5wcGCIwvxWpEXq_ZhUhVnhE2kAvFf338erb-51d6tfmjviNiSo8atmvypRHPNk08Mb5UcbJy-wQLPFtDA"
+      },
+      "output": {
+        "$error": {
+          "name": "SessionTokenError",
+          "code": "INVALID_SESSION_TOKEN",
+          "status": 401,
+          "reason": "unknown-key",
+          "message": "The session token is invalid or expired"
+        }
+      }
+    },
+    {
+      "name": "verify alg differs from key",
+      "input": {
+        "options": {
+          "signingKeys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "Q0suCGxx2S732ODnZOaj-vESi3M7uLVIM13dw-iIw90",
+              "d": "aSYEcbJR5zOFhN68gvjm34_3ztYTn__vkgImpV1-vfY",
+              "kid": "sess-ed-1",
+              "alg": "EdDSA"
+            },
+            {
+              "kty": "EC",
+              "crv": "P-256",
+              "x": "K82AIvq8zLzWQb42pL4KZK477ZECCgoRcdaCkkCeHU4",
+              "y": "A2faASwwrZMPoVFoGVDf5fAXmHQZ1fu6iTQTFFtOkr0",
+              "d": "kknWwlN9P2u4tzjbiJuKSqNQTNpgu6XQIUjG5fmRbVc",
+              "kid": "sess-ec-1",
+              "alg": "ES256"
+            }
+          ],
+          "verificationKeys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "xsY-owD3Jt4b2IuLAfg427AEsOpdU-qhRjPejQBRzRQ",
+              "kid": "sess-ed-0",
+              "alg": "EdDSA"
+            }
+          ],
+          "audiences": [
+            "https://api.example.com"
+          ],
+          "maxLifetimeSeconds": 3600
+        },
+        "issuer": "https://iam.example.com/api/iam",
+        "now": 1767225600000,
+        "token": "eyJhbGciOiJFUzI1NiIsImtpZCI6InNlc3MtZWQtMSIsInR5cCI6ImJpYW0tc2Vzc2lvbitqd3QifQ.eyJpc3MiOiJodHRwczovL2lhbS5leGFtcGxlLmNvbS9hcGkvaWFtIiwiYXVkIjpbImh0dHBzOi8vaWFtLmV4YW1wbGUuY29tL2FwaS9pYW0iLCJodHRwczovL2FwaS5leGFtcGxlLmNvbSJdLCJzdWIiOiJpZG5fMDEiLCJ0aWQiOiJ0bnRfMDEiLCJzaWQiOiJzZXNfMDEiLCJqdGkiOiJzZXNfMDEiLCJpYXQiOjE3NjcyMjU2MDAsIm5iZiI6MTc2NzIyNTYwMCwiZXhwIjoxNzY3MjI2NTAwLCJhdXRoX3RpbWUiOjE3NjcyMjU1NDAsImtpbmQiOiJzZXNzaW9uLXRva2VuIiwibWZhIjp0cnVlfQ.q0p9qss7WWePEzYEn2qIzfL2lHF_mmAVclflBDiiztH-hwpA2y8HEIFNr3kedQXqVRHflXJk4i-aZWYottztCg"
+      },
+      "output": {
+        "$error": {
+          "name": "SessionTokenError",
+          "code": "INVALID_SESSION_TOKEN",
+          "status": 401,
+          "reason": "algorithm",
+          "message": "The session token is invalid or expired"
+        }
+      }
+    },
+    {
+      "name": "verify wrong issuer claim",
+      "input": {
+        "options": {
+          "signingKeys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "Q0suCGxx2S732ODnZOaj-vESi3M7uLVIM13dw-iIw90",
+              "d": "aSYEcbJR5zOFhN68gvjm34_3ztYTn__vkgImpV1-vfY",
+              "kid": "sess-ed-1",
+              "alg": "EdDSA"
+            },
+            {
+              "kty": "EC",
+              "crv": "P-256",
+              "x": "K82AIvq8zLzWQb42pL4KZK477ZECCgoRcdaCkkCeHU4",
+              "y": "A2faASwwrZMPoVFoGVDf5fAXmHQZ1fu6iTQTFFtOkr0",
+              "d": "kknWwlN9P2u4tzjbiJuKSqNQTNpgu6XQIUjG5fmRbVc",
+              "kid": "sess-ec-1",
+              "alg": "ES256"
+            }
+          ],
+          "verificationKeys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "xsY-owD3Jt4b2IuLAfg427AEsOpdU-qhRjPejQBRzRQ",
+              "kid": "sess-ed-0",
+              "alg": "EdDSA"
+            }
+          ],
+          "audiences": [
+            "https://api.example.com"
+          ],
+          "maxLifetimeSeconds": 3600
+        },
+        "issuer": "https://iam.example.com/api/iam",
+        "now": 1767225600000,
+        "token": "eyJhbGciOiJFZERTQSIsImtpZCI6InNlc3MtZWQtMSIsInR5cCI6ImJpYW0tc2Vzc2lvbitqd3QifQ.eyJpc3MiOiJodHRwczovL2V2aWwuZXhhbXBsZS5jb20iLCJhdWQiOlsiaHR0cHM6Ly9pYW0uZXhhbXBsZS5jb20vYXBpL2lhbSIsImh0dHBzOi8vYXBpLmV4YW1wbGUuY29tIl0sInN1YiI6Imlkbl8wMSIsInRpZCI6InRudF8wMSIsInNpZCI6InNlc18wMSIsImp0aSI6InNlc18wMSIsImlhdCI6MTc2NzIyNTYwMCwibmJmIjoxNzY3MjI1NjAwLCJleHAiOjE3NjcyMjY1MDAsImF1dGhfdGltZSI6MTc2NzIyNTU0MCwia2luZCI6InNlc3Npb24tdG9rZW4iLCJtZmEiOnRydWV9.I2d-2opkB0_Sm0dwXF3JXvcZhx_HuoaBEOTpsK2wO2-j2rvJtzipZsAQT8KDZ_WfC8XkklQOzK2jVW-tZSaODw"
+      },
+      "output": {
+        "$error": {
+          "name": "SessionTokenError",
+          "code": "INVALID_SESSION_TOKEN",
+          "status": 401,
+          "reason": "issuer",
+          "message": "The session token is invalid or expired"
+        }
+      }
+    },
+    {
+      "name": "verify lifetime above cap",
+      "input": {
+        "options": {
+          "signingKeys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "Q0suCGxx2S732ODnZOaj-vESi3M7uLVIM13dw-iIw90",
+              "d": "aSYEcbJR5zOFhN68gvjm34_3ztYTn__vkgImpV1-vfY",
+              "kid": "sess-ed-1",
+              "alg": "EdDSA"
+            },
+            {
+              "kty": "EC",
+              "crv": "P-256",
+              "x": "K82AIvq8zLzWQb42pL4KZK477ZECCgoRcdaCkkCeHU4",
+              "y": "A2faASwwrZMPoVFoGVDf5fAXmHQZ1fu6iTQTFFtOkr0",
+              "d": "kknWwlN9P2u4tzjbiJuKSqNQTNpgu6XQIUjG5fmRbVc",
+              "kid": "sess-ec-1",
+              "alg": "ES256"
+            }
+          ],
+          "verificationKeys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "xsY-owD3Jt4b2IuLAfg427AEsOpdU-qhRjPejQBRzRQ",
+              "kid": "sess-ed-0",
+              "alg": "EdDSA"
+            }
+          ],
+          "audiences": [
+            "https://api.example.com"
+          ],
+          "maxLifetimeSeconds": 3600
+        },
+        "issuer": "https://iam.example.com/api/iam",
+        "now": 1767225600000,
+        "token": "eyJhbGciOiJFZERTQSIsImtpZCI6InNlc3MtZWQtMSIsInR5cCI6ImJpYW0tc2Vzc2lvbitqd3QifQ.eyJpc3MiOiJodHRwczovL2lhbS5leGFtcGxlLmNvbS9hcGkvaWFtIiwiYXVkIjpbImh0dHBzOi8vaWFtLmV4YW1wbGUuY29tL2FwaS9pYW0iLCJodHRwczovL2FwaS5leGFtcGxlLmNvbSJdLCJzdWIiOiJpZG5fMDEiLCJ0aWQiOiJ0bnRfMDEiLCJzaWQiOiJzZXNfMDEiLCJqdGkiOiJzZXNfMDEiLCJpYXQiOjE3NjcyMjU2MDAsIm5iZiI6MTc2NzIyNTYwMCwiZXhwIjoxNzY3MjMyODAwLCJhdXRoX3RpbWUiOjE3NjcyMjU1NDAsImtpbmQiOiJzZXNzaW9uLXRva2VuIiwibWZhIjp0cnVlfQ.yQwrTZAyd30HWg9itW5pHYYpkGPJdw-aZXl0prGKpn7XqD3SXl6XEQ7AwWwx1hxTMDjqKFFpDPHevTDsmpikDA"
+      },
+      "output": {
+        "$error": {
+          "name": "SessionTokenError",
+          "code": "INVALID_SESSION_TOKEN",
+          "status": 401,
+          "reason": "lifetime",
+          "message": "The session token is invalid or expired"
+        }
+      }
+    },
+    {
+      "name": "verify unknown kind",
+      "input": {
+        "options": {
+          "signingKeys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "Q0suCGxx2S732ODnZOaj-vESi3M7uLVIM13dw-iIw90",
+              "d": "aSYEcbJR5zOFhN68gvjm34_3ztYTn__vkgImpV1-vfY",
+              "kid": "sess-ed-1",
+              "alg": "EdDSA"
+            },
+            {
+              "kty": "EC",
+              "crv": "P-256",
+              "x": "K82AIvq8zLzWQb42pL4KZK477ZECCgoRcdaCkkCeHU4",
+              "y": "A2faASwwrZMPoVFoGVDf5fAXmHQZ1fu6iTQTFFtOkr0",
+              "d": "kknWwlN9P2u4tzjbiJuKSqNQTNpgu6XQIUjG5fmRbVc",
+              "kid": "sess-ec-1",
+              "alg": "ES256"
+            }
+          ],
+          "verificationKeys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "xsY-owD3Jt4b2IuLAfg427AEsOpdU-qhRjPejQBRzRQ",
+              "kid": "sess-ed-0",
+              "alg": "EdDSA"
+            }
+          ],
+          "audiences": [
+            "https://api.example.com"
+          ],
+          "maxLifetimeSeconds": 3600
+        },
+        "issuer": "https://iam.example.com/api/iam",
+        "now": 1767225600000,
+        "token": "eyJhbGciOiJFZERTQSIsImtpZCI6InNlc3MtZWQtMSIsInR5cCI6ImJpYW0tc2Vzc2lvbitqd3QifQ.eyJpc3MiOiJodHRwczovL2lhbS5leGFtcGxlLmNvbS9hcGkvaWFtIiwiYXVkIjpbImh0dHBzOi8vaWFtLmV4YW1wbGUuY29tL2FwaS9pYW0iLCJodHRwczovL2FwaS5leGFtcGxlLmNvbSJdLCJzdWIiOiJpZG5fMDEiLCJ0aWQiOiJ0bnRfMDEiLCJzaWQiOiJzZXNfMDEiLCJqdGkiOiJzZXNfMDEiLCJpYXQiOjE3NjcyMjU2MDAsIm5iZiI6MTc2NzIyNTYwMCwiZXhwIjoxNzY3MjI2NTAwLCJhdXRoX3RpbWUiOjE3NjcyMjU1NDAsImtpbmQiOiJ1c2VyIiwibWZhIjp0cnVlfQ.3TOxL3jI0ofUZFJnEYWXhYM8osui5A42FIKyUVp4g-52Ilhy3wI022SNMbEkuZejsfbibU7_PAOFH0PYXInXBQ"
+      },
+      "output": {
+        "$error": {
+          "name": "SessionTokenError",
+          "code": "INVALID_SESSION_TOKEN",
+          "status": 401,
+          "reason": "kind",
+          "message": "The session token is invalid or expired"
+        }
+      }
+    },
+    {
+      "name": "verify jti differs from sid",
+      "input": {
+        "options": {
+          "signingKeys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "Q0suCGxx2S732ODnZOaj-vESi3M7uLVIM13dw-iIw90",
+              "d": "aSYEcbJR5zOFhN68gvjm34_3ztYTn__vkgImpV1-vfY",
+              "kid": "sess-ed-1",
+              "alg": "EdDSA"
+            },
+            {
+              "kty": "EC",
+              "crv": "P-256",
+              "x": "K82AIvq8zLzWQb42pL4KZK477ZECCgoRcdaCkkCeHU4",
+              "y": "A2faASwwrZMPoVFoGVDf5fAXmHQZ1fu6iTQTFFtOkr0",
+              "d": "kknWwlN9P2u4tzjbiJuKSqNQTNpgu6XQIUjG5fmRbVc",
+              "kid": "sess-ec-1",
+              "alg": "ES256"
+            }
+          ],
+          "verificationKeys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "xsY-owD3Jt4b2IuLAfg427AEsOpdU-qhRjPejQBRzRQ",
+              "kid": "sess-ed-0",
+              "alg": "EdDSA"
+            }
+          ],
+          "audiences": [
+            "https://api.example.com"
+          ],
+          "maxLifetimeSeconds": 3600
+        },
+        "issuer": "https://iam.example.com/api/iam",
+        "now": 1767225600000,
+        "token": "eyJhbGciOiJFZERTQSIsImtpZCI6InNlc3MtZWQtMSIsInR5cCI6ImJpYW0tc2Vzc2lvbitqd3QifQ.eyJpc3MiOiJodHRwczovL2lhbS5leGFtcGxlLmNvbS9hcGkvaWFtIiwiYXVkIjpbImh0dHBzOi8vaWFtLmV4YW1wbGUuY29tL2FwaS9pYW0iLCJodHRwczovL2FwaS5leGFtcGxlLmNvbSJdLCJzdWIiOiJpZG5fMDEiLCJ0aWQiOiJ0bnRfMDEiLCJzaWQiOiJzZXNfMDEiLCJqdGkiOiJvdGhlciIsImlhdCI6MTc2NzIyNTYwMCwibmJmIjoxNzY3MjI1NjAwLCJleHAiOjE3NjcyMjY1MDAsImF1dGhfdGltZSI6MTc2NzIyNTU0MCwia2luZCI6InNlc3Npb24tdG9rZW4iLCJtZmEiOnRydWV9.6lip8BJFbEZRQ669-sIXOnl2D1gqu4BZrPoWgmjAqUuRmCHkm5bq1ed1EG2lzQoQb0KpwgNaXxq4Xn6sAt4WCQ"
+      },
+      "output": {
+        "$error": {
+          "name": "SessionTokenError",
+          "code": "INVALID_SESSION_TOKEN",
+          "status": 401,
+          "reason": "claims",
+          "message": "The session token is invalid or expired"
+        }
+      }
+    },
+    {
+      "name": "verify mfa not boolean",
+      "input": {
+        "options": {
+          "signingKeys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "Q0suCGxx2S732ODnZOaj-vESi3M7uLVIM13dw-iIw90",
+              "d": "aSYEcbJR5zOFhN68gvjm34_3ztYTn__vkgImpV1-vfY",
+              "kid": "sess-ed-1",
+              "alg": "EdDSA"
+            },
+            {
+              "kty": "EC",
+              "crv": "P-256",
+              "x": "K82AIvq8zLzWQb42pL4KZK477ZECCgoRcdaCkkCeHU4",
+              "y": "A2faASwwrZMPoVFoGVDf5fAXmHQZ1fu6iTQTFFtOkr0",
+              "d": "kknWwlN9P2u4tzjbiJuKSqNQTNpgu6XQIUjG5fmRbVc",
+              "kid": "sess-ec-1",
+              "alg": "ES256"
+            }
+          ],
+          "verificationKeys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "xsY-owD3Jt4b2IuLAfg427AEsOpdU-qhRjPejQBRzRQ",
+              "kid": "sess-ed-0",
+              "alg": "EdDSA"
+            }
+          ],
+          "audiences": [
+            "https://api.example.com"
+          ],
+          "maxLifetimeSeconds": 3600
+        },
+        "issuer": "https://iam.example.com/api/iam",
+        "now": 1767225600000,
+        "token": "eyJhbGciOiJFZERTQSIsImtpZCI6InNlc3MtZWQtMSIsInR5cCI6ImJpYW0tc2Vzc2lvbitqd3QifQ.eyJpc3MiOiJodHRwczovL2lhbS5leGFtcGxlLmNvbS9hcGkvaWFtIiwiYXVkIjpbImh0dHBzOi8vaWFtLmV4YW1wbGUuY29tL2FwaS9pYW0iLCJodHRwczovL2FwaS5leGFtcGxlLmNvbSJdLCJzdWIiOiJpZG5fMDEiLCJ0aWQiOiJ0bnRfMDEiLCJzaWQiOiJzZXNfMDEiLCJqdGkiOiJzZXNfMDEiLCJpYXQiOjE3NjcyMjU2MDAsIm5iZiI6MTc2NzIyNTYwMCwiZXhwIjoxNzY3MjI2NTAwLCJhdXRoX3RpbWUiOjE3NjcyMjU1NDAsImtpbmQiOiJzZXNzaW9uLXRva2VuIiwibWZhIjoieWVzIn0.z-tkgaQHAcryOsL1Agtg3YTntGHwLFwi1DXX5nuSF-MiWHe5kz9y0eK0U8uKtyoj2lW90y08dFvkyt8XEAEhCg"
+      },
+      "output": {
+        "$error": {
+          "name": "SessionTokenError",
+          "code": "INVALID_SESSION_TOKEN",
+          "status": 401,
+          "reason": "claims",
+          "message": "The session token is invalid or expired"
+        }
+      }
+    },
+    {
+      "name": "verify missing tid",
+      "input": {
+        "options": {
+          "signingKeys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "Q0suCGxx2S732ODnZOaj-vESi3M7uLVIM13dw-iIw90",
+              "d": "aSYEcbJR5zOFhN68gvjm34_3ztYTn__vkgImpV1-vfY",
+              "kid": "sess-ed-1",
+              "alg": "EdDSA"
+            },
+            {
+              "kty": "EC",
+              "crv": "P-256",
+              "x": "K82AIvq8zLzWQb42pL4KZK477ZECCgoRcdaCkkCeHU4",
+              "y": "A2faASwwrZMPoVFoGVDf5fAXmHQZ1fu6iTQTFFtOkr0",
+              "d": "kknWwlN9P2u4tzjbiJuKSqNQTNpgu6XQIUjG5fmRbVc",
+              "kid": "sess-ec-1",
+              "alg": "ES256"
+            }
+          ],
+          "verificationKeys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "xsY-owD3Jt4b2IuLAfg427AEsOpdU-qhRjPejQBRzRQ",
+              "kid": "sess-ed-0",
+              "alg": "EdDSA"
+            }
+          ],
+          "audiences": [
+            "https://api.example.com"
+          ],
+          "maxLifetimeSeconds": 3600
+        },
+        "issuer": "https://iam.example.com/api/iam",
+        "now": 1767225600000,
+        "token": "eyJhbGciOiJFZERTQSIsImtpZCI6InNlc3MtZWQtMSIsInR5cCI6ImJpYW0tc2Vzc2lvbitqd3QifQ.eyJpc3MiOiJodHRwczovL2lhbS5leGFtcGxlLmNvbS9hcGkvaWFtIiwiYXVkIjpbImh0dHBzOi8vaWFtLmV4YW1wbGUuY29tL2FwaS9pYW0iLCJodHRwczovL2FwaS5leGFtcGxlLmNvbSJdLCJzdWIiOiJpZG5fMDEiLCJzaWQiOiJzZXNfMDEiLCJqdGkiOiJzZXNfMDEiLCJpYXQiOjE3NjcyMjU2MDAsIm5iZiI6MTc2NzIyNTYwMCwiZXhwIjoxNzY3MjI2NTAwLCJhdXRoX3RpbWUiOjE3NjcyMjU1NDAsImtpbmQiOiJzZXNzaW9uLXRva2VuIiwibWZhIjp0cnVlfQ.LcSG5uugfBWFtG1yi0OK_CoQE1nxzM9OdM0iyry_yKOF_zDoLixWHYD9MIDEykFF4DBv_-N8JMHDNwmc9EDiDg"
+      },
+      "output": {
+        "$error": {
+          "name": "SessionTokenError",
+          "code": "INVALID_SESSION_TOKEN",
+          "status": 401,
+          "reason": "claims",
+          "message": "The session token is invalid or expired"
+        }
+      }
+    },
+    {
+      "name": "verify empty optional claim",
+      "input": {
+        "options": {
+          "signingKeys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "Q0suCGxx2S732ODnZOaj-vESi3M7uLVIM13dw-iIw90",
+              "d": "aSYEcbJR5zOFhN68gvjm34_3ztYTn__vkgImpV1-vfY",
+              "kid": "sess-ed-1",
+              "alg": "EdDSA"
+            },
+            {
+              "kty": "EC",
+              "crv": "P-256",
+              "x": "K82AIvq8zLzWQb42pL4KZK477ZECCgoRcdaCkkCeHU4",
+              "y": "A2faASwwrZMPoVFoGVDf5fAXmHQZ1fu6iTQTFFtOkr0",
+              "d": "kknWwlN9P2u4tzjbiJuKSqNQTNpgu6XQIUjG5fmRbVc",
+              "kid": "sess-ec-1",
+              "alg": "ES256"
+            }
+          ],
+          "verificationKeys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "xsY-owD3Jt4b2IuLAfg427AEsOpdU-qhRjPejQBRzRQ",
+              "kid": "sess-ed-0",
+              "alg": "EdDSA"
+            }
+          ],
+          "audiences": [
+            "https://api.example.com"
+          ],
+          "maxLifetimeSeconds": 3600
+        },
+        "issuer": "https://iam.example.com/api/iam",
+        "now": 1767225600000,
+        "token": "eyJhbGciOiJFZERTQSIsImtpZCI6InNlc3MtZWQtMSIsInR5cCI6ImJpYW0tc2Vzc2lvbitqd3QifQ.eyJpc3MiOiJodHRwczovL2lhbS5leGFtcGxlLmNvbS9hcGkvaWFtIiwiYXVkIjpbImh0dHBzOi8vaWFtLmV4YW1wbGUuY29tL2FwaS9pYW0iLCJodHRwczovL2FwaS5leGFtcGxlLmNvbSJdLCJzdWIiOiJpZG5fMDEiLCJ0aWQiOiJ0bnRfMDEiLCJzaWQiOiJzZXNfMDEiLCJqdGkiOiJzZXNfMDEiLCJpYXQiOjE3NjcyMjU2MDAsIm5iZiI6MTc2NzIyNTYwMCwiZXhwIjoxNzY3MjI2NTAwLCJhdXRoX3RpbWUiOjE3NjcyMjU1NDAsImtpbmQiOiJzZXNzaW9uLXRva2VuIiwibWZhIjp0cnVlLCJyb2xlIjoiIn0.LKasUrPSs5RZp8GfPHyNtZIxFMw0RDglFgXWl6wNqK_8sTtetqt56GUbWXnTaKbOR12JPJBrB7rQ2DXb4rbOAA"
+      },
+      "output": {
+        "$error": {
+          "name": "SessionTokenError",
+          "code": "INVALID_SESSION_TOKEN",
+          "status": 401,
+          "reason": "claims",
+          "message": "The session token is invalid or expired"
+        }
+      }
+    },
+    {
+      "name": "offline verifier, kinds role only",
+      "input": {
+        "verifier": {
+          "issuer": "https://iam.example.com/api/iam",
+          "audience": "https://iam.example.com/api/iam",
+          "jwks": {
+            "keys": [
+              {
+                "kty": "OKP",
+                "crv": "Ed25519",
+                "x": "Q0suCGxx2S732ODnZOaj-vESi3M7uLVIM13dw-iIw90",
+                "kid": "sess-ed-1",
+                "alg": "EdDSA"
+              },
+              {
+                "kty": "EC",
+                "crv": "P-256",
+                "x": "K82AIvq8zLzWQb42pL4KZK477ZECCgoRcdaCkkCeHU4",
+                "y": "A2faASwwrZMPoVFoGVDf5fAXmHQZ1fu6iTQTFFtOkr0",
+                "kid": "sess-ec-1",
+                "alg": "ES256"
+              },
+              {
+                "kty": "OKP",
+                "crv": "Ed25519",
+                "x": "xsY-owD3Jt4b2IuLAfg427AEsOpdU-qhRjPejQBRzRQ",
+                "kid": "sess-ed-0",
+                "alg": "EdDSA"
+              }
+            ]
+          },
+          "kinds": [
+            "role"
+          ]
+        },
+        "now": 1767225600000,
+        "token": "eyJhbGciOiJFZERTQSIsImtpZCI6InNlc3MtZWQtMSIsInR5cCI6ImJpYW0tc2Vzc2lvbitqd3QifQ.eyJpc3MiOiJodHRwczovL2lhbS5leGFtcGxlLmNvbS9hcGkvaWFtIiwiYXVkIjpbImh0dHBzOi8vaWFtLmV4YW1wbGUuY29tL2FwaS9pYW0iLCJodHRwczovL2FwaS5leGFtcGxlLmNvbSJdLCJzdWIiOiJpZG5fMDEiLCJ0aWQiOiJ0bnRfMDEiLCJzaWQiOiJzZXNfMDEiLCJqdGkiOiJzZXNfMDEiLCJpYXQiOjE3NjcyMjU2MDAsIm5iZiI6MTc2NzIyNTYwMCwiZXhwIjoxNzY3MjI2NTAwLCJhdXRoX3RpbWUiOjE3NjcyMjU1NDAsImtpbmQiOiJzZXNzaW9uLXRva2VuIiwibWZhIjp0cnVlfQ.q0p9qss7WWePEzYEn2qIzfL2lHF_mmAVclflBDiiztH-hwpA2y8HEIFNr3kedQXqVRHflXJk4i-aZWYottztCg"
+      },
+      "output": {
+        "$error": {
+          "name": "SessionTokenError",
+          "code": "INVALID_SESSION_TOKEN",
+          "status": 401,
+          "reason": "kind",
+          "message": "The session token is invalid or expired"
+        }
+      }
+    },
+    {
+      "name": "offline verifier, algorithms ES256 only",
+      "input": {
+        "verifier": {
+          "issuer": "https://iam.example.com/api/iam",
+          "audience": "https://iam.example.com/api/iam",
+          "jwks": {
+            "keys": [
+              {
+                "kty": "OKP",
+                "crv": "Ed25519",
+                "x": "Q0suCGxx2S732ODnZOaj-vESi3M7uLVIM13dw-iIw90",
+                "kid": "sess-ed-1",
+                "alg": "EdDSA"
+              },
+              {
+                "kty": "EC",
+                "crv": "P-256",
+                "x": "K82AIvq8zLzWQb42pL4KZK477ZECCgoRcdaCkkCeHU4",
+                "y": "A2faASwwrZMPoVFoGVDf5fAXmHQZ1fu6iTQTFFtOkr0",
+                "kid": "sess-ec-1",
+                "alg": "ES256"
+              },
+              {
+                "kty": "OKP",
+                "crv": "Ed25519",
+                "x": "xsY-owD3Jt4b2IuLAfg427AEsOpdU-qhRjPejQBRzRQ",
+                "kid": "sess-ed-0",
+                "alg": "EdDSA"
+              }
+            ]
+          },
+          "algorithms": [
+            "ES256"
+          ]
+        },
+        "now": 1767225600000,
+        "token": "eyJhbGciOiJFZERTQSIsImtpZCI6InNlc3MtZWQtMSIsInR5cCI6ImJpYW0tc2Vzc2lvbitqd3QifQ.eyJpc3MiOiJodHRwczovL2lhbS5leGFtcGxlLmNvbS9hcGkvaWFtIiwiYXVkIjpbImh0dHBzOi8vaWFtLmV4YW1wbGUuY29tL2FwaS9pYW0iLCJodHRwczovL2FwaS5leGFtcGxlLmNvbSJdLCJzdWIiOiJpZG5fMDEiLCJ0aWQiOiJ0bnRfMDEiLCJzaWQiOiJzZXNfMDEiLCJqdGkiOiJzZXNfMDEiLCJpYXQiOjE3NjcyMjU2MDAsIm5iZiI6MTc2NzIyNTYwMCwiZXhwIjoxNzY3MjI2NTAwLCJhdXRoX3RpbWUiOjE3NjcyMjU1NDAsImtpbmQiOiJzZXNzaW9uLXRva2VuIiwibWZhIjp0cnVlfQ.q0p9qss7WWePEzYEn2qIzfL2lHF_mmAVclflBDiiztH-hwpA2y8HEIFNr3kedQXqVRHflXJk4i-aZWYottztCg"
+      },
+      "output": {
+        "$error": {
+          "name": "SessionTokenError",
+          "code": "INVALID_SESSION_TOKEN",
+          "status": 401,
+          "reason": "algorithm",
+          "message": "The session token is invalid or expired"
+        }
+      }
+    },
+    {
+      "name": "offline verifier default tolerance",
+      "input": {
+        "verifier": {
+          "issuer": "https://iam.example.com/api/iam",
+          "audience": "https://api.example.com",
+          "jwks": {
+            "keys": [
+              {
+                "kty": "OKP",
+                "crv": "Ed25519",
+                "x": "Q0suCGxx2S732ODnZOaj-vESi3M7uLVIM13dw-iIw90",
+                "kid": "sess-ed-1",
+                "alg": "EdDSA"
+              },
+              {
+                "kty": "EC",
+                "crv": "P-256",
+                "x": "K82AIvq8zLzWQb42pL4KZK477ZECCgoRcdaCkkCeHU4",
+                "y": "A2faASwwrZMPoVFoGVDf5fAXmHQZ1fu6iTQTFFtOkr0",
+                "kid": "sess-ec-1",
+                "alg": "ES256"
+              },
+              {
+                "kty": "OKP",
+                "crv": "Ed25519",
+                "x": "xsY-owD3Jt4b2IuLAfg427AEsOpdU-qhRjPejQBRzRQ",
+                "kid": "sess-ed-0",
+                "alg": "EdDSA"
+              }
+            ]
+          }
+        },
+        "now": 1767226504000,
+        "token": "eyJhbGciOiJFZERTQSIsImtpZCI6InNlc3MtZWQtMSIsInR5cCI6ImJpYW0tc2Vzc2lvbitqd3QifQ.eyJpc3MiOiJodHRwczovL2lhbS5leGFtcGxlLmNvbS9hcGkvaWFtIiwiYXVkIjpbImh0dHBzOi8vaWFtLmV4YW1wbGUuY29tL2FwaS9pYW0iLCJodHRwczovL2FwaS5leGFtcGxlLmNvbSJdLCJzdWIiOiJpZG5fMDEiLCJ0aWQiOiJ0bnRfMDEiLCJzaWQiOiJzZXNfMDEiLCJqdGkiOiJzZXNfMDEiLCJpYXQiOjE3NjcyMjU2MDAsIm5iZiI6MTc2NzIyNTYwMCwiZXhwIjoxNzY3MjI2NTAwLCJhdXRoX3RpbWUiOjE3NjcyMjU1NDAsImtpbmQiOiJzZXNzaW9uLXRva2VuIiwibWZhIjp0cnVlfQ.q0p9qss7WWePEzYEn2qIzfL2lHF_mmAVclflBDiiztH-hwpA2y8HEIFNr3kedQXqVRHflXJk4i-aZWYottztCg"
+      },
+      "output": {
+        "iss": "https://iam.example.com/api/iam",
+        "aud": [
+          "https://iam.example.com/api/iam",
+          "https://api.example.com"
+        ],
+        "sub": "idn_01",
+        "tid": "tnt_01",
+        "sid": "ses_01",
+        "jti": "ses_01",
+        "iat": 1767225600,
+        "nbf": 1767225600,
+        "exp": 1767226500,
+        "auth_time": 1767225540,
+        "kind": "session-token",
+        "mfa": true
+      }
+    },
+    {
+      "name": "offline verifier tolerance 0",
+      "input": {
+        "verifier": {
+          "issuer": "https://iam.example.com/api/iam",
+          "audience": "https://api.example.com",
+          "jwks": {
+            "keys": [
+              {
+                "kty": "OKP",
+                "crv": "Ed25519",
+                "x": "Q0suCGxx2S732ODnZOaj-vESi3M7uLVIM13dw-iIw90",
+                "kid": "sess-ed-1",
+                "alg": "EdDSA"
+              },
+              {
+                "kty": "EC",
+                "crv": "P-256",
+                "x": "K82AIvq8zLzWQb42pL4KZK477ZECCgoRcdaCkkCeHU4",
+                "y": "A2faASwwrZMPoVFoGVDf5fAXmHQZ1fu6iTQTFFtOkr0",
+                "kid": "sess-ec-1",
+                "alg": "ES256"
+              },
+              {
+                "kty": "OKP",
+                "crv": "Ed25519",
+                "x": "xsY-owD3Jt4b2IuLAfg427AEsOpdU-qhRjPejQBRzRQ",
+                "kid": "sess-ed-0",
+                "alg": "EdDSA"
+              }
+            ]
+          },
+          "clockToleranceSeconds": 0
+        },
+        "now": 1767226500000,
+        "token": "eyJhbGciOiJFZERTQSIsImtpZCI6InNlc3MtZWQtMSIsInR5cCI6ImJpYW0tc2Vzc2lvbitqd3QifQ.eyJpc3MiOiJodHRwczovL2lhbS5leGFtcGxlLmNvbS9hcGkvaWFtIiwiYXVkIjpbImh0dHBzOi8vaWFtLmV4YW1wbGUuY29tL2FwaS9pYW0iLCJodHRwczovL2FwaS5leGFtcGxlLmNvbSJdLCJzdWIiOiJpZG5fMDEiLCJ0aWQiOiJ0bnRfMDEiLCJzaWQiOiJzZXNfMDEiLCJqdGkiOiJzZXNfMDEiLCJpYXQiOjE3NjcyMjU2MDAsIm5iZiI6MTc2NzIyNTYwMCwiZXhwIjoxNzY3MjI2NTAwLCJhdXRoX3RpbWUiOjE3NjcyMjU1NDAsImtpbmQiOiJzZXNzaW9uLXRva2VuIiwibWZhIjp0cnVlfQ.q0p9qss7WWePEzYEn2qIzfL2lHF_mmAVclflBDiiztH-hwpA2y8HEIFNr3kedQXqVRHflXJk4i-aZWYottztCg"
+      },
+      "output": {
+        "$error": {
+          "name": "SessionTokenError",
+          "code": "INVALID_SESSION_TOKEN",
+          "status": 401,
+          "reason": "expired",
+          "message": "The session token is invalid or expired"
+        }
+      }
+    },
+    {
+      "name": "looksLikeJwt compact",
+      "input": {
+        "value": "eyJhbGciOiJFZERTQSIsImtpZCI6InNlc3MtZWQtMSIsInR5cCI6ImJpYW0tc2Vzc2lvbitqd3QifQ.eyJpc3MiOiJodHRwczovL2lhbS5leGFtcGxlLmNvbS9hcGkvaWFtIiwiYXVkIjpbImh0dHBzOi8vaWFtLmV4YW1wbGUuY29tL2FwaS9pYW0iLCJodHRwczovL2FwaS5leGFtcGxlLmNvbSJdLCJzdWIiOiJpZG5fMDEiLCJ0aWQiOiJ0bnRfMDEiLCJzaWQiOiJzZXNfMDEiLCJqdGkiOiJzZXNfMDEiLCJpYXQiOjE3NjcyMjU2MDAsIm5iZiI6MTc2NzIyNTYwMCwiZXhwIjoxNzY3MjI2NTAwLCJhdXRoX3RpbWUiOjE3NjcyMjU1NDAsImtpbmQiOiJzZXNzaW9uLXRva2VuIiwibWZhIjp0cnVlfQ.q0p9qss7WWePEzYEn2qIzfL2lHF_mmAVclflBDiiztH-hwpA2y8HEIFNr3kedQXqVRHflXJk4i-aZWYottztCg"
+      },
+      "output": true
+    },
+    {
+      "name": "looksLikeJwt two segments",
+      "input": {
+        "value": "aa.bb"
+      },
+      "output": false
+    },
+    {
+      "name": "looksLikeJwt short segment",
+      "input": {
+        "value": "a.bb.cc"
+      },
+      "output": false
+    },
+    {
+      "name": "looksLikeJwt opaque token",
+      "input": {
+        "value": "biam_ses_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+      },
+      "output": false
+    },
+    {
+      "name": "config: no signing keys",
+      "input": {
+        "options": {
+          "signingKeys": []
+        },
+        "issuer": "https://iam.example.com/api/iam",
+        "now": 1767225600000
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "INVALID_CONFIG",
+          "status": 400,
+          "message": "sts.jwt.signingKeys must contain 1 to 10 keys"
+        }
+      }
+    },
+    {
+      "name": "config: public signing key",
+      "input": {
+        "options": {
+          "signingKeys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "Q0suCGxx2S732ODnZOaj-vESi3M7uLVIM13dw-iIw90",
+              "kid": "sess-ed-1",
+              "alg": "EdDSA"
+            }
+          ]
+        },
+        "issuer": "https://iam.example.com/api/iam",
+        "now": 1767225600000
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "INVALID_CONFIG",
+          "status": 400,
+          "message": "sts.jwt.signingKeys keys must be private keys"
+        }
+      }
+    },
+    {
+      "name": "config: RSA key",
+      "input": {
+        "options": {
+          "signingKeys": [
+            {
+              "kty": "RSA",
+              "n": "x",
+              "e": "AQAB",
+              "d": "y",
+              "kid": "r",
+              "alg": "RS256"
+            }
+          ]
+        },
+        "issuer": "https://iam.example.com/api/iam",
+        "now": 1767225600000
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "INVALID_CONFIG",
+          "status": 400,
+          "message": "sts.jwt.signingKeys keys must be kty OKP/crv Ed25519/alg EdDSA or kty EC/crv P-256/alg ES256"
+        }
+      }
+    },
+    {
+      "name": "config: bad kid",
+      "input": {
+        "options": {
+          "signingKeys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "Q0suCGxx2S732ODnZOaj-vESi3M7uLVIM13dw-iIw90",
+              "d": "aSYEcbJR5zOFhN68gvjm34_3ztYTn__vkgImpV1-vfY",
+              "kid": "has space",
+              "alg": "EdDSA"
+            }
+          ]
+        },
+        "issuer": "https://iam.example.com/api/iam",
+        "now": 1767225600000
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "INVALID_CONFIG",
+          "status": 400,
+          "message": "sts.jwt.signingKeys keys need a kid matching /^[A-Za-z0-9._-]{1,64}$/"
+        }
+      }
+    },
+    {
+      "name": "config: duplicate kid",
+      "input": {
+        "options": {
+          "signingKeys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "Q0suCGxx2S732ODnZOaj-vESi3M7uLVIM13dw-iIw90",
+              "d": "aSYEcbJR5zOFhN68gvjm34_3ztYTn__vkgImpV1-vfY",
+              "kid": "sess-ed-1",
+              "alg": "EdDSA"
+            },
+            {
+              "kty": "EC",
+              "crv": "P-256",
+              "x": "K82AIvq8zLzWQb42pL4KZK477ZECCgoRcdaCkkCeHU4",
+              "y": "A2faASwwrZMPoVFoGVDf5fAXmHQZ1fu6iTQTFFtOkr0",
+              "d": "kknWwlN9P2u4tzjbiJuKSqNQTNpgu6XQIUjG5fmRbVc",
+              "kid": "sess-ed-1",
+              "alg": "ES256"
+            }
+          ]
+        },
+        "issuer": "https://iam.example.com/api/iam",
+        "now": 1767225600000
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "INVALID_CONFIG",
+          "status": 400,
+          "message": "sts.jwt.signingKeys kid sess-ed-1 is used more than once"
+        }
+      }
+    },
+    {
+      "name": "config: private verification key",
+      "input": {
+        "options": {
+          "signingKeys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "Q0suCGxx2S732ODnZOaj-vESi3M7uLVIM13dw-iIw90",
+              "d": "aSYEcbJR5zOFhN68gvjm34_3ztYTn__vkgImpV1-vfY",
+              "kid": "sess-ed-1",
+              "alg": "EdDSA"
+            }
+          ],
+          "verificationKeys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "xsY-owD3Jt4b2IuLAfg427AEsOpdU-qhRjPejQBRzRQ",
+              "d": "gf33npKGwis-CQU0PpT_0TL5iKt_A157abdo73ijPaE",
+              "kid": "sess-ed-0",
+              "alg": "EdDSA"
+            }
+          ]
+        },
+        "issuer": "https://iam.example.com/api/iam",
+        "now": 1767225600000
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "INVALID_CONFIG",
+          "status": 400,
+          "message": "sts.jwt.verificationKeys must contain public keys only"
+        }
+      }
+    },
+    {
+      "name": "config: x does not match d",
+      "input": {
+        "options": {
+          "signingKeys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "xsY-owD3Jt4b2IuLAfg427AEsOpdU-qhRjPejQBRzRQ",
+              "d": "aSYEcbJR5zOFhN68gvjm34_3ztYTn__vkgImpV1-vfY",
+              "kid": "sess-ed-1",
+              "alg": "EdDSA"
+            }
+          ]
+        },
+        "issuer": "https://iam.example.com/api/iam",
+        "now": 1767225600000
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "INVALID_CONFIG",
+          "status": 400,
+          "message": "sts.jwt.signingKeys key sess-ed-1 is not a valid EdDSA key"
+        }
+      }
+    },
+    {
+      "name": "config: unknown active key",
+      "input": {
+        "options": {
+          "signingKeys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "Q0suCGxx2S732ODnZOaj-vESi3M7uLVIM13dw-iIw90",
+              "d": "aSYEcbJR5zOFhN68gvjm34_3ztYTn__vkgImpV1-vfY",
+              "kid": "sess-ed-1",
+              "alg": "EdDSA"
+            }
+          ],
+          "activeKeyId": "other"
+        },
+        "issuer": "https://iam.example.com/api/iam",
+        "now": 1767225600000
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "INVALID_CONFIG",
+          "status": 400,
+          "message": "sts.jwt.activeKeyId must name one of the signing keys"
+        }
+      }
+    },
+    {
+      "name": "config: lifetime below 300",
+      "input": {
+        "options": {
+          "signingKeys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "Q0suCGxx2S732ODnZOaj-vESi3M7uLVIM13dw-iIw90",
+              "d": "aSYEcbJR5zOFhN68gvjm34_3ztYTn__vkgImpV1-vfY",
+              "kid": "sess-ed-1",
+              "alg": "EdDSA"
+            }
+          ],
+          "maxLifetimeSeconds": 299
+        },
+        "issuer": "https://iam.example.com/api/iam",
+        "now": 1767225600000
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "INVALID_CONFIG",
+          "status": 400,
+          "message": "sts.jwt.maxLifetimeSeconds must be an integer from 300 to 43200"
+        }
+      }
+    },
+    {
+      "name": "config: issuer with query",
+      "input": {
+        "options": {
+          "signingKeys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "Q0suCGxx2S732ODnZOaj-vESi3M7uLVIM13dw-iIw90",
+              "d": "aSYEcbJR5zOFhN68gvjm34_3ztYTn__vkgImpV1-vfY",
+              "kid": "sess-ed-1",
+              "alg": "EdDSA"
+            }
+          ],
+          "issuer": "https://iam.example.com/?x=1"
+        },
+        "issuer": "https://iam.example.com/api/iam",
+        "now": 1767225600000
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "INVALID_CONFIG",
+          "status": 400,
+          "message": "sts.jwt.issuer must be an absolute http(s) URL without credentials, query or fragment"
+        }
+      }
+    },
+    {
+      "name": "config: invalid audience",
+      "input": {
+        "options": {
+          "signingKeys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "Q0suCGxx2S732ODnZOaj-vESi3M7uLVIM13dw-iIw90",
+              "d": "aSYEcbJR5zOFhN68gvjm34_3ztYTn__vkgImpV1-vfY",
+              "kid": "sess-ed-1",
+              "alg": "EdDSA"
+            }
+          ],
+          "audiences": [
+            "has space"
+          ]
+        },
+        "issuer": "https://iam.example.com/api/iam",
+        "now": 1767225600000
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "INVALID_CONFIG",
+          "status": 400,
+          "message": "sts.jwt.audiences entries must match /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$/"
+        }
+      }
+    },
+    {
+      "name": "config: use enc",
+      "input": {
+        "options": {
+          "signingKeys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "Q0suCGxx2S732ODnZOaj-vESi3M7uLVIM13dw-iIw90",
+              "d": "aSYEcbJR5zOFhN68gvjm34_3ztYTn__vkgImpV1-vfY",
+              "kid": "sess-ed-1",
+              "alg": "EdDSA",
+              "use": "enc"
+            }
+          ]
+        },
+        "issuer": "https://iam.example.com/api/iam",
+        "now": 1767225600000
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "INVALID_CONFIG",
+          "status": 400,
+          "message": "sts.jwt.signingKeys keys must have use 'sig'"
+        }
+      }
+    },
+    {
+      "name": "config: key_ops without sign",
+      "input": {
+        "options": {
+          "signingKeys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "Q0suCGxx2S732ODnZOaj-vESi3M7uLVIM13dw-iIw90",
+              "d": "aSYEcbJR5zOFhN68gvjm34_3ztYTn__vkgImpV1-vfY",
+              "kid": "sess-ed-1",
+              "alg": "EdDSA",
+              "key_ops": [
+                "verify"
+              ]
+            }
+          ]
+        },
+        "issuer": "https://iam.example.com/api/iam",
+        "now": 1767225600000
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "INVALID_CONFIG",
+          "status": 400,
+          "message": "sts.jwt.signingKeys key_ops must include 'sign'"
+        }
+      }
+    }
+  ]
+}

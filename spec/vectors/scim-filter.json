@@ -1,0 +1,2600 @@
+{
+  "description": "SCIM filters (RFC 7644 section 3.4.2.2) as the SCIM server reads them: parseFilterExpression -> FilterNode (attribute paths lowercased, schema URNs stripped except the enterprise extension, which stays one segment), invalid filters throw IamError invalidFilter (400). `matches` cases evaluate the parsed filter against three rendered users (ids u1, u2, u3) and list the ids that pass. id, externalId and members.value compare case-exactly; everything else ignores case.",
+  "source": "packages/scim/src/filter.ts#parseFilterExpression,evaluateFilter,attributePath,sortResources,projectResource,attributeList",
+  "notes": {
+    "resources": [
+      {
+        "schemas": [
+          "urn:ietf:params:scim:schemas:core:2.0:User",
+          "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User"
+        ],
+        "id": "u1",
+        "externalId": "EXT-1",
+        "userName": "Alice@Example.com",
+        "name": {
+          "givenName": "Alice",
+          "familyName": "Smith",
+          "formatted": "Alice Smith"
+        },
+        "displayName": "Alice Smith",
+        "active": true,
+        "title": "Engineer",
+        "emails": [
+          {
+            "value": "alice@example.com",
+            "type": "work",
+            "primary": true
+          },
+          {
+            "value": "alice@home.example",
+            "type": "home"
+          }
+        ],
+        "groups": [
+          {
+            "value": "g1",
+            "display": "Engineering"
+          }
+        ],
+        "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User": {
+          "employeeNumber": "1001",
+          "department": "R&D",
+          "manager": {
+            "value": "u2"
+          }
+        },
+        "meta": {
+          "resourceType": "User",
+          "created": "2026-01-01T00:00:00.000Z",
+          "version": "W/\"3\""
+        }
+      },
+      {
+        "schemas": [
+          "urn:ietf:params:scim:schemas:core:2.0:User"
+        ],
+        "id": "u2",
+        "userName": "bob@example.com",
+        "name": {
+          "givenName": "Bob",
+          "familyName": "Jones"
+        },
+        "active": false,
+        "emails": [
+          {
+            "value": "bob@example.com",
+            "type": "work"
+          }
+        ],
+        "meta": {
+          "resourceType": "User",
+          "created": "2025-06-01T00:00:00.000Z",
+          "version": "W/\"1\""
+        }
+      },
+      {
+        "schemas": [
+          "urn:ietf:params:scim:schemas:core:2.0:User"
+        ],
+        "id": "u3",
+        "userName": "carol@example.com",
+        "displayName": "",
+        "active": true,
+        "emails": [],
+        "meta": {
+          "resourceType": "User",
+          "created": "2026-02-01T00:00:00.000Z",
+          "version": "W/\"1\""
+        }
+      }
+    ]
+  },
+  "cases": [
+    {
+      "name": "parse 01 userName eq \"alice@example.com\"",
+      "input": {
+        "filter": "userName eq \"alice@example.com\""
+      },
+      "output": {
+        "kind": "compare",
+        "path": [
+          "username"
+        ],
+        "op": "eq",
+        "value": "alice@example.com"
+      }
+    },
+    {
+      "name": "matches 01 userName eq \"alice@example.com\"",
+      "input": {
+        "filter": "userName eq \"alice@example.com\""
+      },
+      "output": [
+        "u1"
+      ]
+    },
+    {
+      "name": "parse 02 userName eq \"ALICE@EXAMPLE.COM\"",
+      "input": {
+        "filter": "userName eq \"ALICE@EXAMPLE.COM\""
+      },
+      "output": {
+        "kind": "compare",
+        "path": [
+          "username"
+        ],
+        "op": "eq",
+        "value": "ALICE@EXAMPLE.COM"
+      }
+    },
+    {
+      "name": "matches 02 userName eq \"ALICE@EXAMPLE.COM\"",
+      "input": {
+        "filter": "userName eq \"ALICE@EXAMPLE.COM\""
+      },
+      "output": [
+        "u1"
+      ]
+    },
+    {
+      "name": "parse 03 id eq \"U1\"",
+      "input": {
+        "filter": "id eq \"U1\""
+      },
+      "output": {
+        "kind": "compare",
+        "path": [
+          "id"
+        ],
+        "op": "eq",
+        "value": "U1"
+      }
+    },
+    {
+      "name": "matches 03 id eq \"U1\"",
+      "input": {
+        "filter": "id eq \"U1\""
+      },
+      "output": []
+    },
+    {
+      "name": "parse 04 id eq \"u1\"",
+      "input": {
+        "filter": "id eq \"u1\""
+      },
+      "output": {
+        "kind": "compare",
+        "path": [
+          "id"
+        ],
+        "op": "eq",
+        "value": "u1"
+      }
+    },
+    {
+      "name": "matches 04 id eq \"u1\"",
+      "input": {
+        "filter": "id eq \"u1\""
+      },
+      "output": [
+        "u1"
+      ]
+    },
+    {
+      "name": "parse 05 externalId eq \"ext-1\"",
+      "input": {
+        "filter": "externalId eq \"ext-1\""
+      },
+      "output": {
+        "kind": "compare",
+        "path": [
+          "externalid"
+        ],
+        "op": "eq",
+        "value": "ext-1"
+      }
+    },
+    {
+      "name": "matches 05 externalId eq \"ext-1\"",
+      "input": {
+        "filter": "externalId eq \"ext-1\""
+      },
+      "output": []
+    },
+    {
+      "name": "parse 06 userName ne \"bob@example.com\"",
+      "input": {
+        "filter": "userName ne \"bob@example.com\""
+      },
+      "output": {
+        "kind": "compare",
+        "path": [
+          "username"
+        ],
+        "op": "ne",
+        "value": "bob@example.com"
+      }
+    },
+    {
+      "name": "matches 06 userName ne \"bob@example.com\"",
+      "input": {
+        "filter": "userName ne \"bob@example.com\""
+      },
+      "output": [
+        "u1",
+        "u3"
+      ]
+    },
+    {
+      "name": "parse 07 userName co \"example\"",
+      "input": {
+        "filter": "userName co \"example\""
+      },
+      "output": {
+        "kind": "compare",
+        "path": [
+          "username"
+        ],
+        "op": "co",
+        "value": "example"
+      }
+    },
+    {
+      "name": "matches 07 userName co \"example\"",
+      "input": {
+        "filter": "userName co \"example\""
+      },
+      "output": [
+        "u1",
+        "u2",
+        "u3"
+      ]
+    },
+    {
+      "name": "parse 08 userName sw \"ali\"",
+      "input": {
+        "filter": "userName sw \"ali\""
+      },
+      "output": {
+        "kind": "compare",
+        "path": [
+          "username"
+        ],
+        "op": "sw",
+        "value": "ali"
+      }
+    },
+    {
+      "name": "matches 08 userName sw \"ali\"",
+      "input": {
+        "filter": "userName sw \"ali\""
+      },
+      "output": [
+        "u1"
+      ]
+    },
+    {
+      "name": "parse 09 userName ew \".com\"",
+      "input": {
+        "filter": "userName ew \".com\""
+      },
+      "output": {
+        "kind": "compare",
+        "path": [
+          "username"
+        ],
+        "op": "ew",
+        "value": ".com"
+      }
+    },
+    {
+      "name": "matches 09 userName ew \".com\"",
+      "input": {
+        "filter": "userName ew \".com\""
+      },
+      "output": [
+        "u1",
+        "u2",
+        "u3"
+      ]
+    },
+    {
+      "name": "parse 10 title pr",
+      "input": {
+        "filter": "title pr"
+      },
+      "output": {
+        "kind": "compare",
+        "path": [
+          "title"
+        ],
+        "op": "pr"
+      }
+    },
+    {
+      "name": "matches 10 title pr",
+      "input": {
+        "filter": "title pr"
+      },
+      "output": [
+        "u1"
+      ]
+    },
+    {
+      "name": "parse 11 displayName pr",
+      "input": {
+        "filter": "displayName pr"
+      },
+      "output": {
+        "kind": "compare",
+        "path": [
+          "displayname"
+        ],
+        "op": "pr"
+      }
+    },
+    {
+      "name": "matches 11 displayName pr",
+      "input": {
+        "filter": "displayName pr"
+      },
+      "output": [
+        "u1"
+      ]
+    },
+    {
+      "name": "parse 12 emails pr",
+      "input": {
+        "filter": "emails pr"
+      },
+      "output": {
+        "kind": "compare",
+        "path": [
+          "emails"
+        ],
+        "op": "pr"
+      }
+    },
+    {
+      "name": "matches 12 emails pr",
+      "input": {
+        "filter": "emails pr"
+      },
+      "output": [
+        "u1",
+        "u2"
+      ]
+    },
+    {
+      "name": "parse 13 name.familyName eq \"Smith\"",
+      "input": {
+        "filter": "name.familyName eq \"Smith\""
+      },
+      "output": {
+        "kind": "compare",
+        "path": [
+          "name",
+          "familyname"
+        ],
+        "op": "eq",
+        "value": "Smith"
+      }
+    },
+    {
+      "name": "matches 13 name.familyName eq \"Smith\"",
+      "input": {
+        "filter": "name.familyName eq \"Smith\""
+      },
+      "output": [
+        "u1"
+      ]
+    },
+    {
+      "name": "parse 14 name.givenName sw \"B\" or name.givenName sw \"A\"",
+      "input": {
+        "filter": "name.givenName sw \"B\" or name.givenName sw \"A\""
+      },
+      "output": {
+        "kind": "or",
+        "left": {
+          "kind": "compare",
+          "path": [
+            "name",
+            "givenname"
+          ],
+          "op": "sw",
+          "value": "B"
+        },
+        "right": {
+          "kind": "compare",
+          "path": [
+            "name",
+            "givenname"
+          ],
+          "op": "sw",
+          "value": "A"
+        }
+      }
+    },
+    {
+      "name": "matches 14 name.givenName sw \"B\" or name.givenName sw \"A\"",
+      "input": {
+        "filter": "name.givenName sw \"B\" or name.givenName sw \"A\""
+      },
+      "output": [
+        "u1",
+        "u2"
+      ]
+    },
+    {
+      "name": "parse 15 active eq true",
+      "input": {
+        "filter": "active eq true"
+      },
+      "output": {
+        "kind": "compare",
+        "path": [
+          "active"
+        ],
+        "op": "eq",
+        "value": true
+      }
+    },
+    {
+      "name": "matches 15 active eq true",
+      "input": {
+        "filter": "active eq true"
+      },
+      "output": [
+        "u1",
+        "u3"
+      ]
+    },
+    {
+      "name": "parse 16 active eq false and userName co \"bob\"",
+      "input": {
+        "filter": "active eq false and userName co \"bob\""
+      },
+      "output": {
+        "kind": "and",
+        "left": {
+          "kind": "compare",
+          "path": [
+            "active"
+          ],
+          "op": "eq",
+          "value": false
+        },
+        "right": {
+          "kind": "compare",
+          "path": [
+            "username"
+          ],
+          "op": "co",
+          "value": "bob"
+        }
+      }
+    },
+    {
+      "name": "matches 16 active eq false and userName co \"bob\"",
+      "input": {
+        "filter": "active eq false and userName co \"bob\""
+      },
+      "output": [
+        "u2"
+      ]
+    },
+    {
+      "name": "parse 17 not (active eq true)",
+      "input": {
+        "filter": "not (active eq true)"
+      },
+      "output": {
+        "kind": "not",
+        "node": {
+          "kind": "compare",
+          "path": [
+            "active"
+          ],
+          "op": "eq",
+          "value": true
+        }
+      }
+    },
+    {
+      "name": "matches 17 not (active eq true)",
+      "input": {
+        "filter": "not (active eq true)"
+      },
+      "output": [
+        "u2"
+      ]
+    },
+    {
+      "name": "parse 18 emails[type eq \"work\" and value co \"alice\"]",
+      "input": {
+        "filter": "emails[type eq \"work\" and value co \"alice\"]"
+      },
+      "output": {
+        "kind": "valuePath",
+        "path": [
+          "emails"
+        ],
+        "filter": {
+          "kind": "and",
+          "left": {
+            "kind": "compare",
+            "path": [
+              "type"
+            ],
+            "op": "eq",
+            "value": "work"
+          },
+          "right": {
+            "kind": "compare",
+            "path": [
+              "value"
+            ],
+            "op": "co",
+            "value": "alice"
+          }
+        }
+      }
+    },
+    {
+      "name": "matches 18 emails[type eq \"work\" and value co \"alice\"]",
+      "input": {
+        "filter": "emails[type eq \"work\" and value co \"alice\"]"
+      },
+      "output": [
+        "u1"
+      ]
+    },
+    {
+      "name": "parse 19 emails[type eq \"home\"]",
+      "input": {
+        "filter": "emails[type eq \"home\"]"
+      },
+      "output": {
+        "kind": "valuePath",
+        "path": [
+          "emails"
+        ],
+        "filter": {
+          "kind": "compare",
+          "path": [
+            "type"
+          ],
+          "op": "eq",
+          "value": "home"
+        }
+      }
+    },
+    {
+      "name": "matches 19 emails[type eq \"home\"]",
+      "input": {
+        "filter": "emails[type eq \"home\"]"
+      },
+      "output": [
+        "u1"
+      ]
+    },
+    {
+      "name": "parse 20 emails.value ew \"home.example\"",
+      "input": {
+        "filter": "emails.value ew \"home.example\""
+      },
+      "output": {
+        "kind": "compare",
+        "path": [
+          "emails",
+          "value"
+        ],
+        "op": "ew",
+        "value": "home.example"
+      }
+    },
+    {
+      "name": "matches 20 emails.value ew \"home.example\"",
+      "input": {
+        "filter": "emails.value ew \"home.example\""
+      },
+      "output": [
+        "u1"
+      ]
+    },
+    {
+      "name": "parse 21 emails.type ne \"home\"",
+      "input": {
+        "filter": "emails.type ne \"home\""
+      },
+      "output": {
+        "kind": "compare",
+        "path": [
+          "emails",
+          "type"
+        ],
+        "op": "ne",
+        "value": "home"
+      }
+    },
+    {
+      "name": "matches 21 emails.type ne \"home\"",
+      "input": {
+        "filter": "emails.type ne \"home\""
+      },
+      "output": [
+        "u2",
+        "u3"
+      ]
+    },
+    {
+      "name": "parse 22 meta.created gt \"2025-12-31T00:00:00.000Z\"",
+      "input": {
+        "filter": "meta.created gt \"2025-12-31T00:00:00.000Z\""
+      },
+      "output": {
+        "kind": "compare",
+        "path": [
+          "meta",
+          "created"
+        ],
+        "op": "gt",
+        "value": "2025-12-31T00:00:00.000Z"
+      }
+    },
+    {
+      "name": "matches 22 meta.created gt \"2025-12-31T00:00:00.000Z\"",
+      "input": {
+        "filter": "meta.created gt \"2025-12-31T00:00:00.000Z\""
+      },
+      "output": [
+        "u1",
+        "u3"
+      ]
+    },
+    {
+      "name": "parse 23 meta.created le \"2026-01-01T00:00:00.000Z\"",
+      "input": {
+        "filter": "meta.created le \"2026-01-01T00:00:00.000Z\""
+      },
+      "output": {
+        "kind": "compare",
+        "path": [
+          "meta",
+          "created"
+        ],
+        "op": "le",
+        "value": "2026-01-01T00:00:00.000Z"
+      }
+    },
+    {
+      "name": "matches 23 meta.created le \"2026-01-01T00:00:00.000Z\"",
+      "input": {
+        "filter": "meta.created le \"2026-01-01T00:00:00.000Z\""
+      },
+      "output": [
+        "u1",
+        "u2"
+      ]
+    },
+    {
+      "name": "parse 24 urn:ietf:params:scim:schemas:core:2.0:User:userName eq \"b...",
+      "input": {
+        "filter": "urn:ietf:params:scim:schemas:core:2.0:User:userName eq \"bob@example.com\""
+      },
+      "output": {
+        "kind": "compare",
+        "path": [
+          "username"
+        ],
+        "op": "eq",
+        "value": "bob@example.com"
+      }
+    },
+    {
+      "name": "matches 24 urn:ietf:params:scim:schemas:core:2.0:User:userName eq \"b...",
+      "input": {
+        "filter": "urn:ietf:params:scim:schemas:core:2.0:User:userName eq \"bob@example.com\""
+      },
+      "output": [
+        "u2"
+      ]
+    },
+    {
+      "name": "parse 25 urn:ietf:params:scim:schemas:extension:enterprise:2.0:Use...",
+      "input": {
+        "filter": "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User:employeeNumber eq \"1001\""
+      },
+      "output": {
+        "kind": "compare",
+        "path": [
+          "urn:ietf:params:scim:schemas:extension:enterprise:2.0:user",
+          "employeenumber"
+        ],
+        "op": "eq",
+        "value": "1001"
+      }
+    },
+    {
+      "name": "matches 25 urn:ietf:params:scim:schemas:extension:enterprise:2.0:Use...",
+      "input": {
+        "filter": "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User:employeeNumber eq \"1001\""
+      },
+      "output": [
+        "u1"
+      ]
+    },
+    {
+      "name": "parse 26 urn:ietf:params:scim:schemas:extension:enterprise:2.0:Use...",
+      "input": {
+        "filter": "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User:manager.value eq \"u2\""
+      },
+      "output": {
+        "kind": "compare",
+        "path": [
+          "urn:ietf:params:scim:schemas:extension:enterprise:2.0:user",
+          "manager",
+          "value"
+        ],
+        "op": "eq",
+        "value": "u2"
+      }
+    },
+    {
+      "name": "matches 26 urn:ietf:params:scim:schemas:extension:enterprise:2.0:Use...",
+      "input": {
+        "filter": "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User:manager.value eq \"u2\""
+      },
+      "output": [
+        "u1"
+      ]
+    },
+    {
+      "name": "parse 27 groups.value eq \"g1\"",
+      "input": {
+        "filter": "groups.value eq \"g1\""
+      },
+      "output": {
+        "kind": "compare",
+        "path": [
+          "groups",
+          "value"
+        ],
+        "op": "eq",
+        "value": "g1"
+      }
+    },
+    {
+      "name": "matches 27 groups.value eq \"g1\"",
+      "input": {
+        "filter": "groups.value eq \"g1\""
+      },
+      "output": [
+        "u1"
+      ]
+    },
+    {
+      "name": "parse 28 groups[display eq \"engineering\"]",
+      "input": {
+        "filter": "groups[display eq \"engineering\"]"
+      },
+      "output": {
+        "kind": "valuePath",
+        "path": [
+          "groups"
+        ],
+        "filter": {
+          "kind": "compare",
+          "path": [
+            "display"
+          ],
+          "op": "eq",
+          "value": "engineering"
+        }
+      }
+    },
+    {
+      "name": "matches 28 groups[display eq \"engineering\"]",
+      "input": {
+        "filter": "groups[display eq \"engineering\"]"
+      },
+      "output": [
+        "u1"
+      ]
+    },
+    {
+      "name": "parse 29 title eq null",
+      "input": {
+        "filter": "title eq null"
+      },
+      "output": {
+        "kind": "compare",
+        "path": [
+          "title"
+        ],
+        "op": "eq",
+        "value": null
+      }
+    },
+    {
+      "name": "matches 29 title eq null",
+      "input": {
+        "filter": "title eq null"
+      },
+      "output": []
+    },
+    {
+      "name": "parse 30 title ne null",
+      "input": {
+        "filter": "title ne null"
+      },
+      "output": {
+        "kind": "compare",
+        "path": [
+          "title"
+        ],
+        "op": "ne",
+        "value": null
+      }
+    },
+    {
+      "name": "matches 30 title ne null",
+      "input": {
+        "filter": "title ne null"
+      },
+      "output": [
+        "u1"
+      ]
+    },
+    {
+      "name": "parse 31 (userName sw \"a\" or userName sw \"b\") and active eq true",
+      "input": {
+        "filter": "(userName sw \"a\" or userName sw \"b\") and active eq true"
+      },
+      "output": {
+        "kind": "and",
+        "left": {
+          "kind": "or",
+          "left": {
+            "kind": "compare",
+            "path": [
+              "username"
+            ],
+            "op": "sw",
+            "value": "a"
+          },
+          "right": {
+            "kind": "compare",
+            "path": [
+              "username"
+            ],
+            "op": "sw",
+            "value": "b"
+          }
+        },
+        "right": {
+          "kind": "compare",
+          "path": [
+            "active"
+          ],
+          "op": "eq",
+          "value": true
+        }
+      }
+    },
+    {
+      "name": "matches 31 (userName sw \"a\" or userName sw \"b\") and active eq true",
+      "input": {
+        "filter": "(userName sw \"a\" or userName sw \"b\") and active eq true"
+      },
+      "output": [
+        "u1"
+      ]
+    },
+    {
+      "name": "parse 32 userName eq \"a\\\"quoted\"",
+      "input": {
+        "filter": "userName eq \"a\\\"quoted\""
+      },
+      "output": {
+        "kind": "compare",
+        "path": [
+          "username"
+        ],
+        "op": "eq",
+        "value": "a\"quoted"
+      }
+    },
+    {
+      "name": "matches 32 userName eq \"a\\\"quoted\"",
+      "input": {
+        "filter": "userName eq \"a\\\"quoted\""
+      },
+      "output": []
+    },
+    {
+      "name": "parse 33 USERNAME EQ \"alice@example.com\"",
+      "input": {
+        "filter": "USERNAME EQ \"alice@example.com\""
+      },
+      "output": {
+        "kind": "compare",
+        "path": [
+          "username"
+        ],
+        "op": "eq",
+        "value": "alice@example.com"
+      }
+    },
+    {
+      "name": "matches 33 USERNAME EQ \"alice@example.com\"",
+      "input": {
+        "filter": "USERNAME EQ \"alice@example.com\""
+      },
+      "output": [
+        "u1"
+      ]
+    },
+    {
+      "name": "parse 34 userName gt 5",
+      "input": {
+        "filter": "userName gt 5"
+      },
+      "output": {
+        "kind": "compare",
+        "path": [
+          "username"
+        ],
+        "op": "gt",
+        "value": 5
+      }
+    },
+    {
+      "name": "matches 34 userName gt 5",
+      "input": {
+        "filter": "userName gt 5"
+      },
+      "output": []
+    },
+    {
+      "name": "parse 35 ",
+      "input": {
+        "filter": ""
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "invalidFilter",
+          "status": 400,
+          "message": "Filter is empty."
+        }
+      }
+    },
+    {
+      "name": "matches 35 ",
+      "input": {
+        "filter": ""
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "invalidFilter",
+          "status": 400,
+          "message": "Filter is empty."
+        }
+      }
+    },
+    {
+      "name": "parse 36    ",
+      "input": {
+        "filter": "   "
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "invalidFilter",
+          "status": 400,
+          "message": "Filter is empty."
+        }
+      }
+    },
+    {
+      "name": "matches 36    ",
+      "input": {
+        "filter": "   "
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "invalidFilter",
+          "status": 400,
+          "message": "Filter is empty."
+        }
+      }
+    },
+    {
+      "name": "parse 37 userName",
+      "input": {
+        "filter": "userName"
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "invalidFilter",
+          "status": 400,
+          "message": "Expected \"word\" in filter."
+        }
+      }
+    },
+    {
+      "name": "matches 37 userName",
+      "input": {
+        "filter": "userName"
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "invalidFilter",
+          "status": 400,
+          "message": "Expected \"word\" in filter."
+        }
+      }
+    },
+    {
+      "name": "parse 38 userName eq",
+      "input": {
+        "filter": "userName eq"
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "invalidFilter",
+          "status": 400,
+          "message": "Filter comparison is missing a value."
+        }
+      }
+    },
+    {
+      "name": "matches 38 userName eq",
+      "input": {
+        "filter": "userName eq"
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "invalidFilter",
+          "status": 400,
+          "message": "Filter comparison is missing a value."
+        }
+      }
+    },
+    {
+      "name": "parse 39 userName xx \"a\"",
+      "input": {
+        "filter": "userName xx \"a\""
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "invalidFilter",
+          "status": 400,
+          "message": "Unsupported filter operator \"xx\"."
+        }
+      }
+    },
+    {
+      "name": "matches 39 userName xx \"a\"",
+      "input": {
+        "filter": "userName xx \"a\""
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "invalidFilter",
+          "status": 400,
+          "message": "Unsupported filter operator \"xx\"."
+        }
+      }
+    },
+    {
+      "name": "parse 40 userName eq \"unterminated",
+      "input": {
+        "filter": "userName eq \"unterminated"
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "invalidFilter",
+          "status": 400,
+          "message": "Unterminated string in filter."
+        }
+      }
+    },
+    {
+      "name": "matches 40 userName eq \"unterminated",
+      "input": {
+        "filter": "userName eq \"unterminated"
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "invalidFilter",
+          "status": 400,
+          "message": "Unterminated string in filter."
+        }
+      }
+    },
+    {
+      "name": "parse 41 userName eq \"a\" and",
+      "input": {
+        "filter": "userName eq \"a\" and"
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "invalidFilter",
+          "status": 400,
+          "message": "Expected \"word\" in filter."
+        }
+      }
+    },
+    {
+      "name": "matches 41 userName eq \"a\" and",
+      "input": {
+        "filter": "userName eq \"a\" and"
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "invalidFilter",
+          "status": 400,
+          "message": "Expected \"word\" in filter."
+        }
+      }
+    },
+    {
+      "name": "parse 42 (userName eq \"a\"",
+      "input": {
+        "filter": "(userName eq \"a\""
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "invalidFilter",
+          "status": 400,
+          "message": "Expected \")\" in filter."
+        }
+      }
+    },
+    {
+      "name": "matches 42 (userName eq \"a\"",
+      "input": {
+        "filter": "(userName eq \"a\""
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "invalidFilter",
+          "status": 400,
+          "message": "Expected \")\" in filter."
+        }
+      }
+    },
+    {
+      "name": "parse 43 userName eq \"a\")",
+      "input": {
+        "filter": "userName eq \"a\")"
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "invalidFilter",
+          "status": 400,
+          "message": "Unexpected trailing filter content."
+        }
+      }
+    },
+    {
+      "name": "matches 43 userName eq \"a\")",
+      "input": {
+        "filter": "userName eq \"a\")"
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "invalidFilter",
+          "status": 400,
+          "message": "Unexpected trailing filter content."
+        }
+      }
+    },
+    {
+      "name": "parse 44 active eq \"yes\"",
+      "input": {
+        "filter": "active eq \"yes\""
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "invalidFilter",
+          "status": 400,
+          "message": "active requires a boolean comparison."
+        }
+      }
+    },
+    {
+      "name": "matches 44 active eq \"yes\"",
+      "input": {
+        "filter": "active eq \"yes\""
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "invalidFilter",
+          "status": 400,
+          "message": "active requires a boolean comparison."
+        }
+      }
+    },
+    {
+      "name": "parse 45 active gt true",
+      "input": {
+        "filter": "active gt true"
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "invalidFilter",
+          "status": 400,
+          "message": "Booleans support only eq and ne."
+        }
+      }
+    },
+    {
+      "name": "matches 45 active gt true",
+      "input": {
+        "filter": "active gt true"
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "invalidFilter",
+          "status": 400,
+          "message": "Booleans support only eq and ne."
+        }
+      }
+    },
+    {
+      "name": "parse 46 userName co 5",
+      "input": {
+        "filter": "userName co 5"
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "invalidFilter",
+          "status": 400,
+          "message": "co requires a string value."
+        }
+      }
+    },
+    {
+      "name": "matches 46 userName co 5",
+      "input": {
+        "filter": "userName co 5"
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "invalidFilter",
+          "status": 400,
+          "message": "co requires a string value."
+        }
+      }
+    },
+    {
+      "name": "parse 47 userName eq {\"a\":1}",
+      "input": {
+        "filter": "userName eq {\"a\":1}"
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "invalidFilter",
+          "status": 400,
+          "message": "Unexpected character \"{\" in filter."
+        }
+      }
+    },
+    {
+      "name": "matches 47 userName eq {\"a\":1}",
+      "input": {
+        "filter": "userName eq {\"a\":1}"
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "invalidFilter",
+          "status": 400,
+          "message": "Unexpected character \"{\" in filter."
+        }
+      }
+    },
+    {
+      "name": "parse 48 userName eq [1]",
+      "input": {
+        "filter": "userName eq [1]"
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "invalidFilter",
+          "status": 400,
+          "message": "Filter comparison is missing a value."
+        }
+      }
+    },
+    {
+      "name": "matches 48 userName eq [1]",
+      "input": {
+        "filter": "userName eq [1]"
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "invalidFilter",
+          "status": 400,
+          "message": "Filter comparison is missing a value."
+        }
+      }
+    },
+    {
+      "name": "parse 49 urn:example:custom:attr eq \"x\"",
+      "input": {
+        "filter": "urn:example:custom:attr eq \"x\""
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "invalidFilter",
+          "status": 400,
+          "message": "Unsupported schema URN."
+        }
+      }
+    },
+    {
+      "name": "matches 49 urn:example:custom:attr eq \"x\"",
+      "input": {
+        "filter": "urn:example:custom:attr eq \"x\""
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "invalidFilter",
+          "status": 400,
+          "message": "Unsupported schema URN."
+        }
+      }
+    },
+    {
+      "name": "parse 50 a.b.c.d eq \"x\"",
+      "input": {
+        "filter": "a.b.c.d eq \"x\""
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "invalidFilter",
+          "status": 400,
+          "message": "Invalid attribute path \"a.b.c.d\"."
+        }
+      }
+    },
+    {
+      "name": "matches 50 a.b.c.d eq \"x\"",
+      "input": {
+        "filter": "a.b.c.d eq \"x\""
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "invalidFilter",
+          "status": 400,
+          "message": "Invalid attribute path \"a.b.c.d\"."
+        }
+      }
+    },
+    {
+      "name": "parse 51 1abc eq \"x\"",
+      "input": {
+        "filter": "1abc eq \"x\""
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "invalidFilter",
+          "status": 400,
+          "message": "Invalid attribute path \"1abc\"."
+        }
+      }
+    },
+    {
+      "name": "matches 51 1abc eq \"x\"",
+      "input": {
+        "filter": "1abc eq \"x\""
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "invalidFilter",
+          "status": 400,
+          "message": "Invalid attribute path \"1abc\"."
+        }
+      }
+    },
+    {
+      "name": "parse 52 userName eq \"a\" # comment",
+      "input": {
+        "filter": "userName eq \"a\" # comment"
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "invalidFilter",
+          "status": 400,
+          "message": "Unexpected character \"#\" in filter."
+        }
+      }
+    },
+    {
+      "name": "matches 52 userName eq \"a\" # comment",
+      "input": {
+        "filter": "userName eq \"a\" # comment"
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "invalidFilter",
+          "status": 400,
+          "message": "Unexpected character \"#\" in filter."
+        }
+      }
+    },
+    {
+      "name": "parse 53 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx...",
+      "input": {
+        "filter": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "invalidFilter",
+          "status": 400,
+          "message": "Filter is too long."
+        }
+      }
+    },
+    {
+      "name": "matches 53 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx...",
+      "input": {
+        "filter": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "invalidFilter",
+          "status": 400,
+          "message": "Filter is too long."
+        }
+      }
+    },
+    {
+      "name": "parse 54 userName eq \"0\" or userName eq \"1\" or userName eq \"2\" or ...",
+      "input": {
+        "filter": "userName eq \"0\" or userName eq \"1\" or userName eq \"2\" or userName eq \"3\" or userName eq \"4\" or userName eq \"5\" or userName eq \"6\" or userName eq \"7\" or userName eq \"8\" or userName eq \"9\" or userName eq \"10\" or userName eq \"11\" or userName eq \"12\" or userName eq \"13\" or userName eq \"14\" or userName eq \"15\" or userName eq \"16\" or userName eq \"17\" or userName eq \"18\" or userName eq \"19\" or userName eq \"20\" or userName eq \"21\" or userName eq \"22\" or userName eq \"23\" or userName eq \"24\" or userName eq \"25\" or userName eq \"26\" or userName eq \"27\" or userName eq \"28\" or userName eq \"29\" or userName eq \"30\" or userName eq \"31\" or userName eq \"32\" or userName eq \"33\" or userName eq \"34\" or userName eq \"35\" or userName eq \"36\" or userName eq \"37\" or userName eq \"38\" or userName eq \"39\" or userName eq \"40\" or userName eq \"41\" or userName eq \"42\" or userName eq \"43\" or userName eq \"44\" or userName eq \"45\" or userName eq \"46\" or userName eq \"47\" or userName eq \"48\" or userName eq \"49\" or userName eq \"50\" or userName eq \"51\" or userName eq \"52\" or userName eq \"53\" or userName eq \"54\" or userName eq \"55\" or userName eq \"56\" or userName eq \"57\" or userName eq \"58\" or userName eq \"59\" or userName eq \"60\" or userName eq \"61\" or userName eq \"62\" or userName eq \"63\" or userName eq \"64\""
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "invalidFilter",
+          "status": 400,
+          "message": "Filter has too many comparisons."
+        }
+      }
+    },
+    {
+      "name": "matches 54 userName eq \"0\" or userName eq \"1\" or userName eq \"2\" or ...",
+      "input": {
+        "filter": "userName eq \"0\" or userName eq \"1\" or userName eq \"2\" or userName eq \"3\" or userName eq \"4\" or userName eq \"5\" or userName eq \"6\" or userName eq \"7\" or userName eq \"8\" or userName eq \"9\" or userName eq \"10\" or userName eq \"11\" or userName eq \"12\" or userName eq \"13\" or userName eq \"14\" or userName eq \"15\" or userName eq \"16\" or userName eq \"17\" or userName eq \"18\" or userName eq \"19\" or userName eq \"20\" or userName eq \"21\" or userName eq \"22\" or userName eq \"23\" or userName eq \"24\" or userName eq \"25\" or userName eq \"26\" or userName eq \"27\" or userName eq \"28\" or userName eq \"29\" or userName eq \"30\" or userName eq \"31\" or userName eq \"32\" or userName eq \"33\" or userName eq \"34\" or userName eq \"35\" or userName eq \"36\" or userName eq \"37\" or userName eq \"38\" or userName eq \"39\" or userName eq \"40\" or userName eq \"41\" or userName eq \"42\" or userName eq \"43\" or userName eq \"44\" or userName eq \"45\" or userName eq \"46\" or userName eq \"47\" or userName eq \"48\" or userName eq \"49\" or userName eq \"50\" or userName eq \"51\" or userName eq \"52\" or userName eq \"53\" or userName eq \"54\" or userName eq \"55\" or userName eq \"56\" or userName eq \"57\" or userName eq \"58\" or userName eq \"59\" or userName eq \"60\" or userName eq \"61\" or userName eq \"62\" or userName eq \"63\" or userName eq \"64\""
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "invalidFilter",
+          "status": 400,
+          "message": "Filter has too many comparisons."
+        }
+      }
+    },
+    {
+      "name": "parse 55 ((((((((((((((((((userName eq \"a\"))))))))))))))))))",
+      "input": {
+        "filter": "((((((((((((((((((userName eq \"a\"))))))))))))))))))"
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "invalidFilter",
+          "status": 400,
+          "message": "Filter is nested too deeply."
+        }
+      }
+    },
+    {
+      "name": "matches 55 ((((((((((((((((((userName eq \"a\"))))))))))))))))))",
+      "input": {
+        "filter": "((((((((((((((((((userName eq \"a\"))))))))))))))))))"
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "invalidFilter",
+          "status": 400,
+          "message": "Filter is nested too deeply."
+        }
+      }
+    },
+    {
+      "name": "parse 56 urn:ietf:params:scim:schemas:extension:enterprise:2.0:Use...",
+      "input": {
+        "filter": "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User: eq \"x\""
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "invalidFilter",
+          "status": 400,
+          "message": "Attribute name is missing after the schema URN."
+        }
+      }
+    },
+    {
+      "name": "matches 56 urn:ietf:params:scim:schemas:extension:enterprise:2.0:Use...",
+      "input": {
+        "filter": "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User: eq \"x\""
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "invalidFilter",
+          "status": 400,
+          "message": "Attribute name is missing after the schema URN."
+        }
+      }
+    },
+    {
+      "name": "attributePath userName",
+      "input": {
+        "raw": "userName"
+      },
+      "output": [
+        "username"
+      ]
+    },
+    {
+      "name": "attributePath name.givenName",
+      "input": {
+        "raw": "name.givenName"
+      },
+      "output": [
+        "name",
+        "givenname"
+      ]
+    },
+    {
+      "name": "attributePath Emails.Value",
+      "input": {
+        "raw": "Emails.Value"
+      },
+      "output": [
+        "emails",
+        "value"
+      ]
+    },
+    {
+      "name": "attributePath urn:ietf:params:scim:schemas:core:2.0:User:userName",
+      "input": {
+        "raw": "urn:ietf:params:scim:schemas:core:2.0:User:userName"
+      },
+      "output": [
+        "username"
+      ]
+    },
+    {
+      "name": "attributePath urn:ietf:params:scim:schemas:extension:enterprise:2.0:User",
+      "input": {
+        "raw": "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User"
+      },
+      "output": [
+        "urn:ietf:params:scim:schemas:extension:enterprise:2.0:user"
+      ]
+    },
+    {
+      "name": "attributePath urn:ietf:params:scim:schemas:extension:enterprise:2.0:User:manager.value",
+      "input": {
+        "raw": "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User:manager.value"
+      },
+      "output": [
+        "urn:ietf:params:scim:schemas:extension:enterprise:2.0:user",
+        "manager",
+        "value"
+      ]
+    },
+    {
+      "name": "attributePath urn:x:y",
+      "input": {
+        "raw": "urn:x:y"
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "invalidFilter",
+          "status": 400,
+          "message": "Unsupported schema URN."
+        }
+      }
+    },
+    {
+      "name": "attributePath a b",
+      "input": {
+        "raw": "a b"
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "invalidFilter",
+          "status": 400,
+          "message": "Invalid attribute path \"a b\"."
+        }
+      }
+    },
+    {
+      "name": "attributePath urn:ietf:params:scim:schemas:core:2.0:User:",
+      "input": {
+        "raw": "urn:ietf:params:scim:schemas:core:2.0:User:"
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "invalidFilter",
+          "status": 400,
+          "message": "Attribute name is missing after the schema URN."
+        }
+      }
+    },
+    {
+      "name": "sort userName default",
+      "input": {
+        "sortBy": "userName",
+        "sortOrder": {
+          "$undefined": true
+        }
+      },
+      "output": [
+        "u1",
+        "u2",
+        "u3"
+      ]
+    },
+    {
+      "name": "sort userName descending",
+      "input": {
+        "sortBy": "userName",
+        "sortOrder": "descending"
+      },
+      "output": [
+        "u3",
+        "u2",
+        "u1"
+      ]
+    },
+    {
+      "name": "sort name.familyName ascending",
+      "input": {
+        "sortBy": "name.familyName",
+        "sortOrder": "ascending"
+      },
+      "output": [
+        "u2",
+        "u1",
+        "u3"
+      ]
+    },
+    {
+      "name": "sort emails ascending",
+      "input": {
+        "sortBy": "emails",
+        "sortOrder": "ascending"
+      },
+      "output": [
+        "u1",
+        "u2",
+        "u3"
+      ]
+    },
+    {
+      "name": "sort displayName descending",
+      "input": {
+        "sortBy": "displayName",
+        "sortOrder": "descending"
+      },
+      "output": [
+        "u1",
+        "u3",
+        "u2"
+      ]
+    },
+    {
+      "name": "sort title ascending",
+      "input": {
+        "sortBy": "title",
+        "sortOrder": "ascending"
+      },
+      "output": [
+        "u1",
+        "u2",
+        "u3"
+      ]
+    },
+    {
+      "name": "sort userName sideways",
+      "input": {
+        "sortBy": "userName",
+        "sortOrder": "sideways"
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "invalidValue",
+          "status": 400,
+          "message": "sortOrder must be ascending or descending."
+        }
+      }
+    },
+    {
+      "name": "sort none default",
+      "input": {
+        "sortBy": {
+          "$undefined": true
+        },
+        "sortOrder": {
+          "$undefined": true
+        }
+      },
+      "output": [
+        "u1",
+        "u2",
+        "u3"
+      ]
+    },
+    {
+      "name": "project attributes userName",
+      "input": {
+        "resource": {
+          "schemas": [
+            "urn:ietf:params:scim:schemas:core:2.0:User",
+            "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User"
+          ],
+          "id": "u1",
+          "externalId": "EXT-1",
+          "userName": "Alice@Example.com",
+          "name": {
+            "givenName": "Alice",
+            "familyName": "Smith",
+            "formatted": "Alice Smith"
+          },
+          "displayName": "Alice Smith",
+          "active": true,
+          "title": "Engineer",
+          "emails": [
+            {
+              "value": "alice@example.com",
+              "type": "work",
+              "primary": true
+            },
+            {
+              "value": "alice@home.example",
+              "type": "home"
+            }
+          ],
+          "groups": [
+            {
+              "value": "g1",
+              "display": "Engineering"
+            }
+          ],
+          "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User": {
+            "employeeNumber": "1001",
+            "department": "R&D",
+            "manager": {
+              "value": "u2"
+            }
+          },
+          "meta": {
+            "resourceType": "User",
+            "created": "2026-01-01T00:00:00.000Z",
+            "version": "W/\"3\""
+          }
+        },
+        "attributes": [
+          "userName"
+        ],
+        "excluded": {
+          "$undefined": true
+        }
+      },
+      "output": {
+        "schemas": [
+          "urn:ietf:params:scim:schemas:core:2.0:User",
+          "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User"
+        ],
+        "id": "u1",
+        "userName": "Alice@Example.com"
+      }
+    },
+    {
+      "name": "project attributes sub-attribute",
+      "input": {
+        "resource": {
+          "schemas": [
+            "urn:ietf:params:scim:schemas:core:2.0:User",
+            "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User"
+          ],
+          "id": "u1",
+          "externalId": "EXT-1",
+          "userName": "Alice@Example.com",
+          "name": {
+            "givenName": "Alice",
+            "familyName": "Smith",
+            "formatted": "Alice Smith"
+          },
+          "displayName": "Alice Smith",
+          "active": true,
+          "title": "Engineer",
+          "emails": [
+            {
+              "value": "alice@example.com",
+              "type": "work",
+              "primary": true
+            },
+            {
+              "value": "alice@home.example",
+              "type": "home"
+            }
+          ],
+          "groups": [
+            {
+              "value": "g1",
+              "display": "Engineering"
+            }
+          ],
+          "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User": {
+            "employeeNumber": "1001",
+            "department": "R&D",
+            "manager": {
+              "value": "u2"
+            }
+          },
+          "meta": {
+            "resourceType": "User",
+            "created": "2026-01-01T00:00:00.000Z",
+            "version": "W/\"3\""
+          }
+        },
+        "attributes": [
+          "name.givenName",
+          "emails.value"
+        ],
+        "excluded": {
+          "$undefined": true
+        }
+      },
+      "output": {
+        "schemas": [
+          "urn:ietf:params:scim:schemas:core:2.0:User",
+          "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User"
+        ],
+        "id": "u1",
+        "name": {
+          "givenName": "Alice"
+        },
+        "emails": [
+          {
+            "value": "alice@example.com"
+          },
+          {
+            "value": "alice@home.example"
+          }
+        ]
+      }
+    },
+    {
+      "name": "project attributes enterprise",
+      "input": {
+        "resource": {
+          "schemas": [
+            "urn:ietf:params:scim:schemas:core:2.0:User",
+            "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User"
+          ],
+          "id": "u1",
+          "externalId": "EXT-1",
+          "userName": "Alice@Example.com",
+          "name": {
+            "givenName": "Alice",
+            "familyName": "Smith",
+            "formatted": "Alice Smith"
+          },
+          "displayName": "Alice Smith",
+          "active": true,
+          "title": "Engineer",
+          "emails": [
+            {
+              "value": "alice@example.com",
+              "type": "work",
+              "primary": true
+            },
+            {
+              "value": "alice@home.example",
+              "type": "home"
+            }
+          ],
+          "groups": [
+            {
+              "value": "g1",
+              "display": "Engineering"
+            }
+          ],
+          "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User": {
+            "employeeNumber": "1001",
+            "department": "R&D",
+            "manager": {
+              "value": "u2"
+            }
+          },
+          "meta": {
+            "resourceType": "User",
+            "created": "2026-01-01T00:00:00.000Z",
+            "version": "W/\"3\""
+          }
+        },
+        "attributes": [
+          "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User:employeeNumber"
+        ],
+        "excluded": {
+          "$undefined": true
+        }
+      },
+      "output": {
+        "schemas": [
+          "urn:ietf:params:scim:schemas:core:2.0:User",
+          "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User"
+        ],
+        "id": "u1",
+        "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User": {
+          "employeeNumber": "1001"
+        }
+      }
+    },
+    {
+      "name": "project attributes always id and schemas",
+      "input": {
+        "resource": {
+          "schemas": [
+            "urn:ietf:params:scim:schemas:core:2.0:User",
+            "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User"
+          ],
+          "id": "u1",
+          "externalId": "EXT-1",
+          "userName": "Alice@Example.com",
+          "name": {
+            "givenName": "Alice",
+            "familyName": "Smith",
+            "formatted": "Alice Smith"
+          },
+          "displayName": "Alice Smith",
+          "active": true,
+          "title": "Engineer",
+          "emails": [
+            {
+              "value": "alice@example.com",
+              "type": "work",
+              "primary": true
+            },
+            {
+              "value": "alice@home.example",
+              "type": "home"
+            }
+          ],
+          "groups": [
+            {
+              "value": "g1",
+              "display": "Engineering"
+            }
+          ],
+          "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User": {
+            "employeeNumber": "1001",
+            "department": "R&D",
+            "manager": {
+              "value": "u2"
+            }
+          },
+          "meta": {
+            "resourceType": "User",
+            "created": "2026-01-01T00:00:00.000Z",
+            "version": "W/\"3\""
+          }
+        },
+        "attributes": [
+          "id",
+          "schemas"
+        ],
+        "excluded": {
+          "$undefined": true
+        }
+      },
+      "output": {
+        "schemas": [
+          "urn:ietf:params:scim:schemas:core:2.0:User",
+          "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User"
+        ],
+        "id": "u1"
+      }
+    },
+    {
+      "name": "project excluded emails",
+      "input": {
+        "resource": {
+          "schemas": [
+            "urn:ietf:params:scim:schemas:core:2.0:User",
+            "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User"
+          ],
+          "id": "u1",
+          "externalId": "EXT-1",
+          "userName": "Alice@Example.com",
+          "name": {
+            "givenName": "Alice",
+            "familyName": "Smith",
+            "formatted": "Alice Smith"
+          },
+          "displayName": "Alice Smith",
+          "active": true,
+          "title": "Engineer",
+          "emails": [
+            {
+              "value": "alice@example.com",
+              "type": "work",
+              "primary": true
+            },
+            {
+              "value": "alice@home.example",
+              "type": "home"
+            }
+          ],
+          "groups": [
+            {
+              "value": "g1",
+              "display": "Engineering"
+            }
+          ],
+          "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User": {
+            "employeeNumber": "1001",
+            "department": "R&D",
+            "manager": {
+              "value": "u2"
+            }
+          },
+          "meta": {
+            "resourceType": "User",
+            "created": "2026-01-01T00:00:00.000Z",
+            "version": "W/\"3\""
+          }
+        },
+        "attributes": {
+          "$undefined": true
+        },
+        "excluded": [
+          "emails"
+        ]
+      },
+      "output": {
+        "schemas": [
+          "urn:ietf:params:scim:schemas:core:2.0:User",
+          "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User"
+        ],
+        "id": "u1",
+        "externalId": "EXT-1",
+        "userName": "Alice@Example.com",
+        "name": {
+          "givenName": "Alice",
+          "familyName": "Smith",
+          "formatted": "Alice Smith"
+        },
+        "displayName": "Alice Smith",
+        "active": true,
+        "title": "Engineer",
+        "groups": [
+          {
+            "value": "g1",
+            "display": "Engineering"
+          }
+        ],
+        "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User": {
+          "employeeNumber": "1001",
+          "department": "R&D",
+          "manager": {
+            "value": "u2"
+          }
+        },
+        "meta": {
+          "resourceType": "User",
+          "created": "2026-01-01T00:00:00.000Z",
+          "version": "W/\"3\""
+        }
+      }
+    },
+    {
+      "name": "project excluded sub-attribute",
+      "input": {
+        "resource": {
+          "schemas": [
+            "urn:ietf:params:scim:schemas:core:2.0:User",
+            "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User"
+          ],
+          "id": "u1",
+          "externalId": "EXT-1",
+          "userName": "Alice@Example.com",
+          "name": {
+            "givenName": "Alice",
+            "familyName": "Smith",
+            "formatted": "Alice Smith"
+          },
+          "displayName": "Alice Smith",
+          "active": true,
+          "title": "Engineer",
+          "emails": [
+            {
+              "value": "alice@example.com",
+              "type": "work",
+              "primary": true
+            },
+            {
+              "value": "alice@home.example",
+              "type": "home"
+            }
+          ],
+          "groups": [
+            {
+              "value": "g1",
+              "display": "Engineering"
+            }
+          ],
+          "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User": {
+            "employeeNumber": "1001",
+            "department": "R&D",
+            "manager": {
+              "value": "u2"
+            }
+          },
+          "meta": {
+            "resourceType": "User",
+            "created": "2026-01-01T00:00:00.000Z",
+            "version": "W/\"3\""
+          }
+        },
+        "attributes": {
+          "$undefined": true
+        },
+        "excluded": [
+          "emails.type",
+          "name.formatted"
+        ]
+      },
+      "output": {
+        "schemas": [
+          "urn:ietf:params:scim:schemas:core:2.0:User",
+          "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User"
+        ],
+        "id": "u1",
+        "externalId": "EXT-1",
+        "userName": "Alice@Example.com",
+        "name": {
+          "givenName": "Alice",
+          "familyName": "Smith"
+        },
+        "displayName": "Alice Smith",
+        "active": true,
+        "title": "Engineer",
+        "emails": [
+          {
+            "value": "alice@example.com",
+            "primary": true
+          },
+          {
+            "value": "alice@home.example"
+          }
+        ],
+        "groups": [
+          {
+            "value": "g1",
+            "display": "Engineering"
+          }
+        ],
+        "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User": {
+          "employeeNumber": "1001",
+          "department": "R&D",
+          "manager": {
+            "value": "u2"
+          }
+        },
+        "meta": {
+          "resourceType": "User",
+          "created": "2026-01-01T00:00:00.000Z",
+          "version": "W/\"3\""
+        }
+      }
+    },
+    {
+      "name": "project excluded id is ignored",
+      "input": {
+        "resource": {
+          "schemas": [
+            "urn:ietf:params:scim:schemas:core:2.0:User",
+            "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User"
+          ],
+          "id": "u1",
+          "externalId": "EXT-1",
+          "userName": "Alice@Example.com",
+          "name": {
+            "givenName": "Alice",
+            "familyName": "Smith",
+            "formatted": "Alice Smith"
+          },
+          "displayName": "Alice Smith",
+          "active": true,
+          "title": "Engineer",
+          "emails": [
+            {
+              "value": "alice@example.com",
+              "type": "work",
+              "primary": true
+            },
+            {
+              "value": "alice@home.example",
+              "type": "home"
+            }
+          ],
+          "groups": [
+            {
+              "value": "g1",
+              "display": "Engineering"
+            }
+          ],
+          "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User": {
+            "employeeNumber": "1001",
+            "department": "R&D",
+            "manager": {
+              "value": "u2"
+            }
+          },
+          "meta": {
+            "resourceType": "User",
+            "created": "2026-01-01T00:00:00.000Z",
+            "version": "W/\"3\""
+          }
+        },
+        "attributes": {
+          "$undefined": true
+        },
+        "excluded": [
+          "id"
+        ]
+      },
+      "output": {
+        "schemas": [
+          "urn:ietf:params:scim:schemas:core:2.0:User",
+          "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User"
+        ],
+        "id": "u1",
+        "externalId": "EXT-1",
+        "userName": "Alice@Example.com",
+        "name": {
+          "givenName": "Alice",
+          "familyName": "Smith",
+          "formatted": "Alice Smith"
+        },
+        "displayName": "Alice Smith",
+        "active": true,
+        "title": "Engineer",
+        "emails": [
+          {
+            "value": "alice@example.com",
+            "type": "work",
+            "primary": true
+          },
+          {
+            "value": "alice@home.example",
+            "type": "home"
+          }
+        ],
+        "groups": [
+          {
+            "value": "g1",
+            "display": "Engineering"
+          }
+        ],
+        "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User": {
+          "employeeNumber": "1001",
+          "department": "R&D",
+          "manager": {
+            "value": "u2"
+          }
+        },
+        "meta": {
+          "resourceType": "User",
+          "created": "2026-01-01T00:00:00.000Z",
+          "version": "W/\"3\""
+        }
+      }
+    },
+    {
+      "name": "project both lists",
+      "input": {
+        "resource": {
+          "schemas": [
+            "urn:ietf:params:scim:schemas:core:2.0:User",
+            "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User"
+          ],
+          "id": "u1",
+          "externalId": "EXT-1",
+          "userName": "Alice@Example.com",
+          "name": {
+            "givenName": "Alice",
+            "familyName": "Smith",
+            "formatted": "Alice Smith"
+          },
+          "displayName": "Alice Smith",
+          "active": true,
+          "title": "Engineer",
+          "emails": [
+            {
+              "value": "alice@example.com",
+              "type": "work",
+              "primary": true
+            },
+            {
+              "value": "alice@home.example",
+              "type": "home"
+            }
+          ],
+          "groups": [
+            {
+              "value": "g1",
+              "display": "Engineering"
+            }
+          ],
+          "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User": {
+            "employeeNumber": "1001",
+            "department": "R&D",
+            "manager": {
+              "value": "u2"
+            }
+          },
+          "meta": {
+            "resourceType": "User",
+            "created": "2026-01-01T00:00:00.000Z",
+            "version": "W/\"3\""
+          }
+        },
+        "attributes": [
+          "userName"
+        ],
+        "excluded": [
+          "emails"
+        ]
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "invalidValue",
+          "status": 400,
+          "message": "attributes and excludedAttributes are mutually exclusive."
+        }
+      }
+    },
+    {
+      "name": "project none",
+      "input": {
+        "resource": {
+          "schemas": [
+            "urn:ietf:params:scim:schemas:core:2.0:User",
+            "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User"
+          ],
+          "id": "u1",
+          "externalId": "EXT-1",
+          "userName": "Alice@Example.com",
+          "name": {
+            "givenName": "Alice",
+            "familyName": "Smith",
+            "formatted": "Alice Smith"
+          },
+          "displayName": "Alice Smith",
+          "active": true,
+          "title": "Engineer",
+          "emails": [
+            {
+              "value": "alice@example.com",
+              "type": "work",
+              "primary": true
+            },
+            {
+              "value": "alice@home.example",
+              "type": "home"
+            }
+          ],
+          "groups": [
+            {
+              "value": "g1",
+              "display": "Engineering"
+            }
+          ],
+          "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User": {
+            "employeeNumber": "1001",
+            "department": "R&D",
+            "manager": {
+              "value": "u2"
+            }
+          },
+          "meta": {
+            "resourceType": "User",
+            "created": "2026-01-01T00:00:00.000Z",
+            "version": "W/\"3\""
+          }
+        },
+        "attributes": {
+          "$undefined": true
+        },
+        "excluded": {
+          "$undefined": true
+        }
+      },
+      "output": {
+        "schemas": [
+          "urn:ietf:params:scim:schemas:core:2.0:User",
+          "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User"
+        ],
+        "id": "u1",
+        "externalId": "EXT-1",
+        "userName": "Alice@Example.com",
+        "name": {
+          "givenName": "Alice",
+          "familyName": "Smith",
+          "formatted": "Alice Smith"
+        },
+        "displayName": "Alice Smith",
+        "active": true,
+        "title": "Engineer",
+        "emails": [
+          {
+            "value": "alice@example.com",
+            "type": "work",
+            "primary": true
+          },
+          {
+            "value": "alice@home.example",
+            "type": "home"
+          }
+        ],
+        "groups": [
+          {
+            "value": "g1",
+            "display": "Engineering"
+          }
+        ],
+        "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User": {
+          "employeeNumber": "1001",
+          "department": "R&D",
+          "manager": {
+            "value": "u2"
+          }
+        },
+        "meta": {
+          "resourceType": "User",
+          "created": "2026-01-01T00:00:00.000Z",
+          "version": "W/\"3\""
+        }
+      }
+    },
+    {
+      "name": "attributeList \"userName,emails\"",
+      "input": {
+        "value": "userName,emails"
+      },
+      "output": [
+        "userName",
+        "emails"
+      ]
+    },
+    {
+      "name": "attributeList \" userName , name.givenName ,\"",
+      "input": {
+        "value": " userName , name.givenName ,"
+      },
+      "output": [
+        "userName",
+        "name.givenName"
+      ]
+    },
+    {
+      "name": "attributeList \"\"",
+      "input": {
+        "value": ""
+      },
+      "output": {
+        "$undefined": true
+      }
+    },
+    {
+      "name": "attributeList null",
+      "input": {
+        "value": null
+      },
+      "output": {
+        "$undefined": true
+      }
+    },
+    {
+      "name": "attributeList [\"a\",\"b\"]",
+      "input": {
+        "value": [
+          "a",
+          "b"
+        ]
+      },
+      "output": [
+        "a",
+        "b"
+      ]
+    },
+    {
+      "name": "attributeList \"a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a",
+      "input": {
+        "value": "a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a"
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "invalidValue",
+          "status": 400,
+          "message": "Attribute lists hold at most 50 attribute names."
+        }
+      }
+    },
+    {
+      "name": "attributeList [1]",
+      "input": {
+        "value": [
+          1
+        ]
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "invalidValue",
+          "status": 400,
+          "message": "Attribute lists hold at most 50 attribute names."
+        }
+      }
+    }
+  ]
+}

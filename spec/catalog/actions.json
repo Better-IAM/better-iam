@@ -1,0 +1,2397 @@
+{
+  "source": "packages/server/src/catalog.ts",
+  "description": "Platform actions and resource types as Catalog holds them. `actions` keeps catalog order (built-ins, then configured actions, then plugin actions in plugin order: application plugins, inference, ssh, verifiable credentials). Tenant-defined actions and types come from the actions/resourceTypes collections.",
+  "builtInActions": [
+    "iam:tenants:create",
+    "iam:tenants:read",
+    "iam:tenants:update",
+    "iam:tenants:delete",
+    "iam:identities:create",
+    "iam:identities:read",
+    "iam:identities:update",
+    "iam:identities:delete",
+    "iam:identities:impersonate",
+    "iam:groups:create",
+    "iam:groups:read",
+    "iam:groups:update",
+    "iam:groups:delete",
+    "iam:roles:create",
+    "iam:roles:read",
+    "iam:roles:update",
+    "iam:roles:delete",
+    "iam:policies:create",
+    "iam:policies:read",
+    "iam:policies:update",
+    "iam:policies:delete",
+    "iam:bindings:create",
+    "iam:bindings:read",
+    "iam:bindings:delete",
+    "iam:bindings:activate",
+    "iam:bindings:approve",
+    "iam:packages:create",
+    "iam:packages:read",
+    "iam:packages:update",
+    "iam:packages:delete",
+    "iam:packages:assign",
+    "iam:packages:request",
+    "iam:packages:approve",
+    "iam:authorities:create",
+    "iam:authorities:revoke",
+    "iam:boundaries:update",
+    "iam:actions:create",
+    "iam:actions:read",
+    "iam:actions:delete",
+    "iam:resource-types:create",
+    "iam:resource-types:read",
+    "iam:resource-types:update",
+    "iam:resource-types:delete",
+    "iam:resources:create",
+    "iam:resources:read",
+    "iam:resources:update",
+    "iam:resources:delete",
+    "iam:relationships:create",
+    "iam:relationships:read",
+    "iam:relationships:delete",
+    "iam:credentials:create",
+    "iam:credentials:read",
+    "iam:credentials:revoke",
+    "iam:trust:create",
+    "iam:trust:read",
+    "iam:trust:update",
+    "iam:trust:revoke",
+    "iam:roles:assume",
+    "iam:roles:revoke-sessions",
+    "iam:session-tokens:create",
+    "iam:oidc-providers:create",
+    "iam:oidc-providers:read",
+    "iam:oidc-providers:update",
+    "iam:oidc-providers:delete",
+    "iam:audit:read",
+    "iam:assertions:create",
+    "iam:policies:simulate",
+    "iam:config:read",
+    "iam:config:apply",
+    "iam:root:grant",
+    "iam:access-requests:create",
+    "iam:access-requests:read",
+    "iam:access-requests:review",
+    "iam:webhooks:create",
+    "iam:webhooks:read",
+    "iam:webhooks:update",
+    "iam:webhooks:delete",
+    "iam:oauth:clients:create",
+    "iam:oauth:clients:read",
+    "iam:oauth:clients:delete",
+    "iam:oauth:clients:update",
+    "iam:oauth:grants:read",
+    "iam:oauth:grants:revoke",
+    "iam:scim:connections:create",
+    "iam:scim:connections:read",
+    "iam:scim:connections:delete",
+    "iam:scim:credentials:create",
+    "iam:scim:credentials:revoke",
+    "iam:scim:mappings:update",
+    "iam:scim:targets:create",
+    "iam:scim:targets:read",
+    "iam:scim:targets:update",
+    "iam:scim:targets:delete",
+    "iam:scim:targets:sync",
+    "iam:saml:connections:create",
+    "iam:saml:connections:read",
+    "iam:saml:connections:update",
+    "iam:saml:connections:delete",
+    "iam:ssf:streams:create",
+    "iam:ssf:streams:read",
+    "iam:ssf:streams:update",
+    "iam:ssf:streams:delete",
+    "iam:domains:create",
+    "iam:domains:read",
+    "iam:domains:update",
+    "iam:domains:delete",
+    "iam:hostnames:create",
+    "iam:hostnames:read",
+    "iam:hostnames:update",
+    "iam:hostnames:delete",
+    "iam:analysis:read",
+    "iam:analysis:update",
+    "iam:certifications:read",
+    "iam:certifications:review",
+    "iam:certifications:manage",
+    "iam:sod:read",
+    "iam:sod:manage",
+    "iam:security:read",
+    "iam:security:manage",
+    "iam:invariants:read",
+    "iam:invariants:manage",
+    "iam:agreements:read",
+    "iam:agreements:manage",
+    "iam:features:read",
+    "iam:features:manage",
+    "iam:features:override",
+    "iam:onboarding:read",
+    "iam:onboarding:manage",
+    "iam:agents:create",
+    "iam:agents:read",
+    "iam:agents:update",
+    "iam:agents:delete",
+    "iam:delegations:read",
+    "iam:delegations:revoke",
+    "iam:inference:manage",
+    "iam:inference:read",
+    "iam:inference:record",
+    "iam:teams:create",
+    "iam:teams:read",
+    "iam:teams:update",
+    "iam:teams:delete",
+    "iam:departments:read",
+    "iam:departments:manage",
+    "iam:billing:read",
+    "iam:billing:manage",
+    "iam:billing:record",
+    "iam:kms:create",
+    "iam:kms:read",
+    "iam:kms:update",
+    "iam:kms:delete",
+    "iam:kms:grant",
+    "iam:kms:encrypt",
+    "iam:kms:decrypt",
+    "iam:kms:generate-data-key",
+    "iam:kms:sign",
+    "iam:kms:verify",
+    "iam:kms:generate-mac",
+    "iam:kms:verify-mac",
+    "iam:pki:create",
+    "iam:pki:read",
+    "iam:pki:update",
+    "iam:pki:issue",
+    "iam:pki:request",
+    "iam:pki:revoke",
+    "iam:protection:read",
+    "iam:protection:manage",
+    "iam:protection:tokenize",
+    "iam:protection:detokenize",
+    "iam:protection:mask",
+    "iam:protection:delete",
+    "iam:vault:read",
+    "iam:vault:reveal",
+    "iam:vault:write",
+    "iam:vault:rotate",
+    "iam:vault:lease",
+    "iam:vault:manage",
+    "iam:quotas:read",
+    "iam:quotas:manage",
+    "iam:privacy:read",
+    "iam:privacy:manage",
+    "iam:privacy:record",
+    "iam:privacy:check",
+    "iam:privacy:handle",
+    "iam:ssh:read",
+    "iam:ssh:manage",
+    "iam:threats:read",
+    "iam:threats:manage",
+    "iam:threats:respond",
+    "iam:workflows:read",
+    "iam:workflows:manage",
+    "iam:workflows:run",
+    "iam:compliance:read",
+    "iam:compliance:evaluate",
+    "iam:compliance:manage",
+    "iam:applications:read",
+    "iam:applications:manage",
+    "iam:applications:assign",
+    "iam:vc:read",
+    "iam:vc:manage",
+    "iam:vc:issue",
+    "iam:vc:revoke",
+    "iam:ldap:read",
+    "iam:ldap:manage",
+    "iam:devices:read",
+    "iam:devices:manage",
+    "iam:devices:report",
+    "iam:signals:read",
+    "iam:signals:manage",
+    "iam:licenses:read",
+    "iam:licenses:manage",
+    "iam:licenses:assign",
+    "iam:guests:read",
+    "iam:guests:invite",
+    "iam:guests:manage",
+    "iam:guests:settings",
+    "iam:clearances:read",
+    "iam:clearances:adjudicate",
+    "iam:clearances:suspend",
+    "iam:classifications:manage",
+    "iam:classifications:label",
+    "iam:classifications:declassify"
+  ],
+  "default": {
+    "plugins": [],
+    "actions": [
+      {
+        "name": "iam:tenants:create",
+        "source": "platform"
+      },
+      {
+        "name": "iam:tenants:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:tenants:update",
+        "source": "platform"
+      },
+      {
+        "name": "iam:tenants:delete",
+        "source": "platform"
+      },
+      {
+        "name": "iam:identities:create",
+        "source": "platform"
+      },
+      {
+        "name": "iam:identities:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:identities:update",
+        "source": "platform"
+      },
+      {
+        "name": "iam:identities:delete",
+        "source": "platform"
+      },
+      {
+        "name": "iam:identities:impersonate",
+        "source": "platform"
+      },
+      {
+        "name": "iam:groups:create",
+        "source": "platform"
+      },
+      {
+        "name": "iam:groups:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:groups:update",
+        "source": "platform"
+      },
+      {
+        "name": "iam:groups:delete",
+        "source": "platform"
+      },
+      {
+        "name": "iam:roles:create",
+        "source": "platform"
+      },
+      {
+        "name": "iam:roles:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:roles:update",
+        "source": "platform"
+      },
+      {
+        "name": "iam:roles:delete",
+        "source": "platform"
+      },
+      {
+        "name": "iam:policies:create",
+        "source": "platform"
+      },
+      {
+        "name": "iam:policies:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:policies:update",
+        "source": "platform"
+      },
+      {
+        "name": "iam:policies:delete",
+        "source": "platform"
+      },
+      {
+        "name": "iam:bindings:create",
+        "source": "platform"
+      },
+      {
+        "name": "iam:bindings:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:bindings:delete",
+        "source": "platform"
+      },
+      {
+        "name": "iam:bindings:activate",
+        "source": "platform"
+      },
+      {
+        "name": "iam:bindings:approve",
+        "source": "platform"
+      },
+      {
+        "name": "iam:packages:create",
+        "source": "platform"
+      },
+      {
+        "name": "iam:packages:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:packages:update",
+        "source": "platform"
+      },
+      {
+        "name": "iam:packages:delete",
+        "source": "platform"
+      },
+      {
+        "name": "iam:packages:assign",
+        "source": "platform"
+      },
+      {
+        "name": "iam:packages:request",
+        "source": "platform"
+      },
+      {
+        "name": "iam:packages:approve",
+        "source": "platform"
+      },
+      {
+        "name": "iam:authorities:create",
+        "source": "platform"
+      },
+      {
+        "name": "iam:authorities:revoke",
+        "source": "platform"
+      },
+      {
+        "name": "iam:boundaries:update",
+        "source": "platform"
+      },
+      {
+        "name": "iam:actions:create",
+        "source": "platform"
+      },
+      {
+        "name": "iam:actions:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:actions:delete",
+        "source": "platform"
+      },
+      {
+        "name": "iam:resource-types:create",
+        "source": "platform"
+      },
+      {
+        "name": "iam:resource-types:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:resource-types:update",
+        "source": "platform"
+      },
+      {
+        "name": "iam:resource-types:delete",
+        "source": "platform"
+      },
+      {
+        "name": "iam:resources:create",
+        "source": "platform"
+      },
+      {
+        "name": "iam:resources:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:resources:update",
+        "source": "platform"
+      },
+      {
+        "name": "iam:resources:delete",
+        "source": "platform"
+      },
+      {
+        "name": "iam:relationships:create",
+        "source": "platform"
+      },
+      {
+        "name": "iam:relationships:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:relationships:delete",
+        "source": "platform"
+      },
+      {
+        "name": "iam:credentials:create",
+        "source": "platform"
+      },
+      {
+        "name": "iam:credentials:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:credentials:revoke",
+        "source": "platform"
+      },
+      {
+        "name": "iam:trust:create",
+        "source": "platform"
+      },
+      {
+        "name": "iam:trust:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:trust:update",
+        "source": "platform"
+      },
+      {
+        "name": "iam:trust:revoke",
+        "source": "platform"
+      },
+      {
+        "name": "iam:roles:assume",
+        "source": "platform"
+      },
+      {
+        "name": "iam:roles:revoke-sessions",
+        "source": "platform"
+      },
+      {
+        "name": "iam:session-tokens:create",
+        "source": "platform"
+      },
+      {
+        "name": "iam:oidc-providers:create",
+        "source": "platform"
+      },
+      {
+        "name": "iam:oidc-providers:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:oidc-providers:update",
+        "source": "platform"
+      },
+      {
+        "name": "iam:oidc-providers:delete",
+        "source": "platform"
+      },
+      {
+        "name": "iam:audit:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:assertions:create",
+        "source": "platform"
+      },
+      {
+        "name": "iam:policies:simulate",
+        "source": "platform"
+      },
+      {
+        "name": "iam:config:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:config:apply",
+        "source": "platform"
+      },
+      {
+        "name": "iam:root:grant",
+        "source": "platform"
+      },
+      {
+        "name": "iam:access-requests:create",
+        "source": "platform"
+      },
+      {
+        "name": "iam:access-requests:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:access-requests:review",
+        "source": "platform"
+      },
+      {
+        "name": "iam:webhooks:create",
+        "source": "platform"
+      },
+      {
+        "name": "iam:webhooks:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:webhooks:update",
+        "source": "platform"
+      },
+      {
+        "name": "iam:webhooks:delete",
+        "source": "platform"
+      },
+      {
+        "name": "iam:oauth:clients:create",
+        "source": "platform"
+      },
+      {
+        "name": "iam:oauth:clients:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:oauth:clients:delete",
+        "source": "platform"
+      },
+      {
+        "name": "iam:oauth:clients:update",
+        "source": "platform"
+      },
+      {
+        "name": "iam:oauth:grants:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:oauth:grants:revoke",
+        "source": "platform"
+      },
+      {
+        "name": "iam:scim:connections:create",
+        "source": "platform"
+      },
+      {
+        "name": "iam:scim:connections:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:scim:connections:delete",
+        "source": "platform"
+      },
+      {
+        "name": "iam:scim:credentials:create",
+        "source": "platform"
+      },
+      {
+        "name": "iam:scim:credentials:revoke",
+        "source": "platform"
+      },
+      {
+        "name": "iam:scim:mappings:update",
+        "source": "platform"
+      },
+      {
+        "name": "iam:scim:targets:create",
+        "source": "platform"
+      },
+      {
+        "name": "iam:scim:targets:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:scim:targets:update",
+        "source": "platform"
+      },
+      {
+        "name": "iam:scim:targets:delete",
+        "source": "platform"
+      },
+      {
+        "name": "iam:scim:targets:sync",
+        "source": "platform"
+      },
+      {
+        "name": "iam:saml:connections:create",
+        "source": "platform"
+      },
+      {
+        "name": "iam:saml:connections:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:saml:connections:update",
+        "source": "platform"
+      },
+      {
+        "name": "iam:saml:connections:delete",
+        "source": "platform"
+      },
+      {
+        "name": "iam:ssf:streams:create",
+        "source": "platform"
+      },
+      {
+        "name": "iam:ssf:streams:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:ssf:streams:update",
+        "source": "platform"
+      },
+      {
+        "name": "iam:ssf:streams:delete",
+        "source": "platform"
+      },
+      {
+        "name": "iam:domains:create",
+        "source": "platform"
+      },
+      {
+        "name": "iam:domains:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:domains:update",
+        "source": "platform"
+      },
+      {
+        "name": "iam:domains:delete",
+        "source": "platform"
+      },
+      {
+        "name": "iam:hostnames:create",
+        "source": "platform"
+      },
+      {
+        "name": "iam:hostnames:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:hostnames:update",
+        "source": "platform"
+      },
+      {
+        "name": "iam:hostnames:delete",
+        "source": "platform"
+      },
+      {
+        "name": "iam:analysis:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:analysis:update",
+        "source": "platform"
+      },
+      {
+        "name": "iam:certifications:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:certifications:review",
+        "source": "platform"
+      },
+      {
+        "name": "iam:certifications:manage",
+        "source": "platform"
+      },
+      {
+        "name": "iam:sod:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:sod:manage",
+        "source": "platform"
+      },
+      {
+        "name": "iam:security:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:security:manage",
+        "source": "platform"
+      },
+      {
+        "name": "iam:invariants:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:invariants:manage",
+        "source": "platform"
+      },
+      {
+        "name": "iam:agreements:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:agreements:manage",
+        "source": "platform"
+      },
+      {
+        "name": "iam:features:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:features:manage",
+        "source": "platform"
+      },
+      {
+        "name": "iam:features:override",
+        "source": "platform"
+      },
+      {
+        "name": "iam:onboarding:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:onboarding:manage",
+        "source": "platform"
+      },
+      {
+        "name": "iam:agents:create",
+        "source": "platform"
+      },
+      {
+        "name": "iam:agents:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:agents:update",
+        "source": "platform"
+      },
+      {
+        "name": "iam:agents:delete",
+        "source": "platform"
+      },
+      {
+        "name": "iam:delegations:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:delegations:revoke",
+        "source": "platform"
+      },
+      {
+        "name": "iam:inference:manage",
+        "source": "platform"
+      },
+      {
+        "name": "iam:inference:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:inference:record",
+        "source": "platform"
+      },
+      {
+        "name": "iam:teams:create",
+        "source": "platform"
+      },
+      {
+        "name": "iam:teams:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:teams:update",
+        "source": "platform"
+      },
+      {
+        "name": "iam:teams:delete",
+        "source": "platform"
+      },
+      {
+        "name": "iam:departments:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:departments:manage",
+        "source": "platform"
+      },
+      {
+        "name": "iam:billing:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:billing:manage",
+        "source": "platform"
+      },
+      {
+        "name": "iam:billing:record",
+        "source": "platform"
+      },
+      {
+        "name": "iam:kms:create",
+        "source": "platform"
+      },
+      {
+        "name": "iam:kms:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:kms:update",
+        "source": "platform"
+      },
+      {
+        "name": "iam:kms:delete",
+        "source": "platform"
+      },
+      {
+        "name": "iam:kms:grant",
+        "source": "platform"
+      },
+      {
+        "name": "iam:kms:encrypt",
+        "source": "platform"
+      },
+      {
+        "name": "iam:kms:decrypt",
+        "source": "platform"
+      },
+      {
+        "name": "iam:kms:generate-data-key",
+        "source": "platform"
+      },
+      {
+        "name": "iam:kms:sign",
+        "source": "platform"
+      },
+      {
+        "name": "iam:kms:verify",
+        "source": "platform"
+      },
+      {
+        "name": "iam:kms:generate-mac",
+        "source": "platform"
+      },
+      {
+        "name": "iam:kms:verify-mac",
+        "source": "platform"
+      },
+      {
+        "name": "iam:pki:create",
+        "source": "platform"
+      },
+      {
+        "name": "iam:pki:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:pki:update",
+        "source": "platform"
+      },
+      {
+        "name": "iam:pki:issue",
+        "source": "platform"
+      },
+      {
+        "name": "iam:pki:request",
+        "source": "platform"
+      },
+      {
+        "name": "iam:pki:revoke",
+        "source": "platform"
+      },
+      {
+        "name": "iam:protection:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:protection:manage",
+        "source": "platform"
+      },
+      {
+        "name": "iam:protection:tokenize",
+        "source": "platform"
+      },
+      {
+        "name": "iam:protection:detokenize",
+        "source": "platform"
+      },
+      {
+        "name": "iam:protection:mask",
+        "source": "platform"
+      },
+      {
+        "name": "iam:protection:delete",
+        "source": "platform"
+      },
+      {
+        "name": "iam:vault:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:vault:reveal",
+        "source": "platform"
+      },
+      {
+        "name": "iam:vault:write",
+        "source": "platform"
+      },
+      {
+        "name": "iam:vault:rotate",
+        "source": "platform"
+      },
+      {
+        "name": "iam:vault:lease",
+        "source": "platform"
+      },
+      {
+        "name": "iam:vault:manage",
+        "source": "platform"
+      },
+      {
+        "name": "iam:quotas:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:quotas:manage",
+        "source": "platform"
+      },
+      {
+        "name": "iam:privacy:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:privacy:manage",
+        "source": "platform"
+      },
+      {
+        "name": "iam:privacy:record",
+        "source": "platform"
+      },
+      {
+        "name": "iam:privacy:check",
+        "source": "platform"
+      },
+      {
+        "name": "iam:privacy:handle",
+        "source": "platform"
+      },
+      {
+        "name": "iam:ssh:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:ssh:manage",
+        "source": "platform"
+      },
+      {
+        "name": "iam:threats:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:threats:manage",
+        "source": "platform"
+      },
+      {
+        "name": "iam:threats:respond",
+        "source": "platform"
+      },
+      {
+        "name": "iam:workflows:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:workflows:manage",
+        "source": "platform"
+      },
+      {
+        "name": "iam:workflows:run",
+        "source": "platform"
+      },
+      {
+        "name": "iam:compliance:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:compliance:evaluate",
+        "source": "platform"
+      },
+      {
+        "name": "iam:compliance:manage",
+        "source": "platform"
+      },
+      {
+        "name": "iam:applications:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:applications:manage",
+        "source": "platform"
+      },
+      {
+        "name": "iam:applications:assign",
+        "source": "platform"
+      },
+      {
+        "name": "iam:vc:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:vc:manage",
+        "source": "platform"
+      },
+      {
+        "name": "iam:vc:issue",
+        "source": "platform"
+      },
+      {
+        "name": "iam:vc:revoke",
+        "source": "platform"
+      },
+      {
+        "name": "iam:ldap:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:ldap:manage",
+        "source": "platform"
+      },
+      {
+        "name": "iam:devices:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:devices:manage",
+        "source": "platform"
+      },
+      {
+        "name": "iam:devices:report",
+        "source": "platform"
+      },
+      {
+        "name": "iam:signals:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:signals:manage",
+        "source": "platform"
+      },
+      {
+        "name": "iam:licenses:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:licenses:manage",
+        "source": "platform"
+      },
+      {
+        "name": "iam:licenses:assign",
+        "source": "platform"
+      },
+      {
+        "name": "iam:guests:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:guests:invite",
+        "source": "platform"
+      },
+      {
+        "name": "iam:guests:manage",
+        "source": "platform"
+      },
+      {
+        "name": "iam:guests:settings",
+        "source": "platform"
+      },
+      {
+        "name": "iam:clearances:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:clearances:adjudicate",
+        "source": "platform"
+      },
+      {
+        "name": "iam:clearances:suspend",
+        "source": "platform"
+      },
+      {
+        "name": "iam:classifications:manage",
+        "source": "platform"
+      },
+      {
+        "name": "iam:classifications:label",
+        "source": "platform"
+      },
+      {
+        "name": "iam:classifications:declassify",
+        "source": "platform"
+      }
+    ],
+    "resourceTypes": [],
+    "namespaces": [
+      "iam"
+    ],
+    "reservedAttributes": null
+  },
+  "modules": {
+    "inference": {
+      "option": "inference",
+      "plugins": [
+        "better-iam:inference"
+      ],
+      "addedActions": [
+        {
+          "name": "inference:invoke",
+          "source": "platform",
+          "resourceType": "model"
+        },
+        {
+          "name": "inference:use-tool",
+          "source": "platform",
+          "resourceType": "model-tool"
+        }
+      ],
+      "addedResourceTypes": [
+        {
+          "name": "model",
+          "source": "platform",
+          "description": "An AI model callers may invoke through the inference gateway",
+          "actions": [
+            "inference:invoke"
+          ],
+          "attributes": {
+            "provider": "string",
+            "providerKind": "string",
+            "upstreamModel": "string",
+            "family": "string",
+            "tier": "string",
+            "contextWindow": "number",
+            "inputPricePerMTok": "number",
+            "outputPricePerMTok": "number",
+            "enabled": "boolean"
+          },
+          "managed": false,
+          "relations": []
+        },
+        {
+          "name": "model-tool",
+          "source": "platform",
+          "description": "A tool the model provider runs itself (web search, code execution, a remote MCP server, ...)",
+          "actions": [
+            "inference:use-tool"
+          ],
+          "attributes": {
+            "kind": "string",
+            "host": "string"
+          },
+          "managed": false,
+          "relations": []
+        }
+      ],
+      "reservedAttributes": null
+    },
+    "ssh": {
+      "option": "ssh",
+      "plugins": [
+        "better-iam:ssh"
+      ],
+      "addedActions": [
+        {
+          "name": "ssh:login",
+          "source": "platform",
+          "resourceType": "ssh-login"
+        },
+        {
+          "name": "ssh:port-forward",
+          "source": "platform",
+          "resourceType": "ssh-host"
+        },
+        {
+          "name": "ssh:agent-forward",
+          "source": "platform",
+          "resourceType": "ssh-host"
+        },
+        {
+          "name": "ssh:x11-forward",
+          "source": "platform",
+          "resourceType": "ssh-host"
+        }
+      ],
+      "addedResourceTypes": [
+        {
+          "name": "ssh-login",
+          "source": "platform",
+          "description": "Logging in to an enrolled SSH host as one local account: ssh-login/{host}/{login}",
+          "actions": [
+            "ssh:login"
+          ],
+          "attributes": {
+            "host": "string",
+            "login": "string"
+          },
+          "managed": false,
+          "relations": []
+        },
+        {
+          "name": "ssh-host",
+          "source": "platform",
+          "description": "An enrolled SSH host, for the forwarding a certificate may allow: ssh-host/{host}",
+          "actions": [
+            "ssh:port-forward",
+            "ssh:agent-forward",
+            "ssh:x11-forward"
+          ],
+          "attributes": {
+            "host": "string"
+          },
+          "managed": false,
+          "relations": []
+        }
+      ],
+      "reservedAttributes": null
+    },
+    "verifiableCredentials": {
+      "option": "verifiableCredentials",
+      "plugins": [
+        "better-iam:verifiable-credentials"
+      ],
+      "addedActions": [
+        {
+          "name": "vc:request",
+          "source": "platform",
+          "resourceType": "credential-type"
+        }
+      ],
+      "addedResourceTypes": [
+        {
+          "name": "credential-type",
+          "source": "platform",
+          "description": "A kind of verifiable credential the organization issues: credential-type/{name}",
+          "actions": [
+            "vc:request"
+          ],
+          "attributes": {
+            "name": "string",
+            "vct": "string",
+            "requireMfa": "boolean"
+          },
+          "managed": false,
+          "relations": []
+        }
+      ],
+      "reservedAttributes": null
+    },
+    "clearances": {
+      "option": "clearances",
+      "plugins": [],
+      "addedActions": [],
+      "addedResourceTypes": [],
+      "reservedAttributes": [
+        "classification",
+        "classificationRank",
+        "compartments",
+        "noforn",
+        "releasableTo"
+      ]
+    }
+  },
+  "allModules": {
+    "plugins": [
+      "better-iam:inference",
+      "better-iam:ssh",
+      "better-iam:verifiable-credentials"
+    ],
+    "actions": [
+      {
+        "name": "iam:tenants:create",
+        "source": "platform"
+      },
+      {
+        "name": "iam:tenants:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:tenants:update",
+        "source": "platform"
+      },
+      {
+        "name": "iam:tenants:delete",
+        "source": "platform"
+      },
+      {
+        "name": "iam:identities:create",
+        "source": "platform"
+      },
+      {
+        "name": "iam:identities:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:identities:update",
+        "source": "platform"
+      },
+      {
+        "name": "iam:identities:delete",
+        "source": "platform"
+      },
+      {
+        "name": "iam:identities:impersonate",
+        "source": "platform"
+      },
+      {
+        "name": "iam:groups:create",
+        "source": "platform"
+      },
+      {
+        "name": "iam:groups:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:groups:update",
+        "source": "platform"
+      },
+      {
+        "name": "iam:groups:delete",
+        "source": "platform"
+      },
+      {
+        "name": "iam:roles:create",
+        "source": "platform"
+      },
+      {
+        "name": "iam:roles:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:roles:update",
+        "source": "platform"
+      },
+      {
+        "name": "iam:roles:delete",
+        "source": "platform"
+      },
+      {
+        "name": "iam:policies:create",
+        "source": "platform"
+      },
+      {
+        "name": "iam:policies:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:policies:update",
+        "source": "platform"
+      },
+      {
+        "name": "iam:policies:delete",
+        "source": "platform"
+      },
+      {
+        "name": "iam:bindings:create",
+        "source": "platform"
+      },
+      {
+        "name": "iam:bindings:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:bindings:delete",
+        "source": "platform"
+      },
+      {
+        "name": "iam:bindings:activate",
+        "source": "platform"
+      },
+      {
+        "name": "iam:bindings:approve",
+        "source": "platform"
+      },
+      {
+        "name": "iam:packages:create",
+        "source": "platform"
+      },
+      {
+        "name": "iam:packages:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:packages:update",
+        "source": "platform"
+      },
+      {
+        "name": "iam:packages:delete",
+        "source": "platform"
+      },
+      {
+        "name": "iam:packages:assign",
+        "source": "platform"
+      },
+      {
+        "name": "iam:packages:request",
+        "source": "platform"
+      },
+      {
+        "name": "iam:packages:approve",
+        "source": "platform"
+      },
+      {
+        "name": "iam:authorities:create",
+        "source": "platform"
+      },
+      {
+        "name": "iam:authorities:revoke",
+        "source": "platform"
+      },
+      {
+        "name": "iam:boundaries:update",
+        "source": "platform"
+      },
+      {
+        "name": "iam:actions:create",
+        "source": "platform"
+      },
+      {
+        "name": "iam:actions:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:actions:delete",
+        "source": "platform"
+      },
+      {
+        "name": "iam:resource-types:create",
+        "source": "platform"
+      },
+      {
+        "name": "iam:resource-types:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:resource-types:update",
+        "source": "platform"
+      },
+      {
+        "name": "iam:resource-types:delete",
+        "source": "platform"
+      },
+      {
+        "name": "iam:resources:create",
+        "source": "platform"
+      },
+      {
+        "name": "iam:resources:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:resources:update",
+        "source": "platform"
+      },
+      {
+        "name": "iam:resources:delete",
+        "source": "platform"
+      },
+      {
+        "name": "iam:relationships:create",
+        "source": "platform"
+      },
+      {
+        "name": "iam:relationships:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:relationships:delete",
+        "source": "platform"
+      },
+      {
+        "name": "iam:credentials:create",
+        "source": "platform"
+      },
+      {
+        "name": "iam:credentials:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:credentials:revoke",
+        "source": "platform"
+      },
+      {
+        "name": "iam:trust:create",
+        "source": "platform"
+      },
+      {
+        "name": "iam:trust:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:trust:update",
+        "source": "platform"
+      },
+      {
+        "name": "iam:trust:revoke",
+        "source": "platform"
+      },
+      {
+        "name": "iam:roles:assume",
+        "source": "platform"
+      },
+      {
+        "name": "iam:roles:revoke-sessions",
+        "source": "platform"
+      },
+      {
+        "name": "iam:session-tokens:create",
+        "source": "platform"
+      },
+      {
+        "name": "iam:oidc-providers:create",
+        "source": "platform"
+      },
+      {
+        "name": "iam:oidc-providers:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:oidc-providers:update",
+        "source": "platform"
+      },
+      {
+        "name": "iam:oidc-providers:delete",
+        "source": "platform"
+      },
+      {
+        "name": "iam:audit:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:assertions:create",
+        "source": "platform"
+      },
+      {
+        "name": "iam:policies:simulate",
+        "source": "platform"
+      },
+      {
+        "name": "iam:config:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:config:apply",
+        "source": "platform"
+      },
+      {
+        "name": "iam:root:grant",
+        "source": "platform"
+      },
+      {
+        "name": "iam:access-requests:create",
+        "source": "platform"
+      },
+      {
+        "name": "iam:access-requests:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:access-requests:review",
+        "source": "platform"
+      },
+      {
+        "name": "iam:webhooks:create",
+        "source": "platform"
+      },
+      {
+        "name": "iam:webhooks:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:webhooks:update",
+        "source": "platform"
+      },
+      {
+        "name": "iam:webhooks:delete",
+        "source": "platform"
+      },
+      {
+        "name": "iam:oauth:clients:create",
+        "source": "platform"
+      },
+      {
+        "name": "iam:oauth:clients:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:oauth:clients:delete",
+        "source": "platform"
+      },
+      {
+        "name": "iam:oauth:clients:update",
+        "source": "platform"
+      },
+      {
+        "name": "iam:oauth:grants:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:oauth:grants:revoke",
+        "source": "platform"
+      },
+      {
+        "name": "iam:scim:connections:create",
+        "source": "platform"
+      },
+      {
+        "name": "iam:scim:connections:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:scim:connections:delete",
+        "source": "platform"
+      },
+      {
+        "name": "iam:scim:credentials:create",
+        "source": "platform"
+      },
+      {
+        "name": "iam:scim:credentials:revoke",
+        "source": "platform"
+      },
+      {
+        "name": "iam:scim:mappings:update",
+        "source": "platform"
+      },
+      {
+        "name": "iam:scim:targets:create",
+        "source": "platform"
+      },
+      {
+        "name": "iam:scim:targets:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:scim:targets:update",
+        "source": "platform"
+      },
+      {
+        "name": "iam:scim:targets:delete",
+        "source": "platform"
+      },
+      {
+        "name": "iam:scim:targets:sync",
+        "source": "platform"
+      },
+      {
+        "name": "iam:saml:connections:create",
+        "source": "platform"
+      },
+      {
+        "name": "iam:saml:connections:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:saml:connections:update",
+        "source": "platform"
+      },
+      {
+        "name": "iam:saml:connections:delete",
+        "source": "platform"
+      },
+      {
+        "name": "iam:ssf:streams:create",
+        "source": "platform"
+      },
+      {
+        "name": "iam:ssf:streams:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:ssf:streams:update",
+        "source": "platform"
+      },
+      {
+        "name": "iam:ssf:streams:delete",
+        "source": "platform"
+      },
+      {
+        "name": "iam:domains:create",
+        "source": "platform"
+      },
+      {
+        "name": "iam:domains:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:domains:update",
+        "source": "platform"
+      },
+      {
+        "name": "iam:domains:delete",
+        "source": "platform"
+      },
+      {
+        "name": "iam:hostnames:create",
+        "source": "platform"
+      },
+      {
+        "name": "iam:hostnames:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:hostnames:update",
+        "source": "platform"
+      },
+      {
+        "name": "iam:hostnames:delete",
+        "source": "platform"
+      },
+      {
+        "name": "iam:analysis:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:analysis:update",
+        "source": "platform"
+      },
+      {
+        "name": "iam:certifications:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:certifications:review",
+        "source": "platform"
+      },
+      {
+        "name": "iam:certifications:manage",
+        "source": "platform"
+      },
+      {
+        "name": "iam:sod:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:sod:manage",
+        "source": "platform"
+      },
+      {
+        "name": "iam:security:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:security:manage",
+        "source": "platform"
+      },
+      {
+        "name": "iam:invariants:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:invariants:manage",
+        "source": "platform"
+      },
+      {
+        "name": "iam:agreements:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:agreements:manage",
+        "source": "platform"
+      },
+      {
+        "name": "iam:features:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:features:manage",
+        "source": "platform"
+      },
+      {
+        "name": "iam:features:override",
+        "source": "platform"
+      },
+      {
+        "name": "iam:onboarding:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:onboarding:manage",
+        "source": "platform"
+      },
+      {
+        "name": "iam:agents:create",
+        "source": "platform"
+      },
+      {
+        "name": "iam:agents:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:agents:update",
+        "source": "platform"
+      },
+      {
+        "name": "iam:agents:delete",
+        "source": "platform"
+      },
+      {
+        "name": "iam:delegations:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:delegations:revoke",
+        "source": "platform"
+      },
+      {
+        "name": "iam:inference:manage",
+        "source": "platform"
+      },
+      {
+        "name": "iam:inference:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:inference:record",
+        "source": "platform"
+      },
+      {
+        "name": "iam:teams:create",
+        "source": "platform"
+      },
+      {
+        "name": "iam:teams:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:teams:update",
+        "source": "platform"
+      },
+      {
+        "name": "iam:teams:delete",
+        "source": "platform"
+      },
+      {
+        "name": "iam:departments:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:departments:manage",
+        "source": "platform"
+      },
+      {
+        "name": "iam:billing:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:billing:manage",
+        "source": "platform"
+      },
+      {
+        "name": "iam:billing:record",
+        "source": "platform"
+      },
+      {
+        "name": "iam:kms:create",
+        "source": "platform"
+      },
+      {
+        "name": "iam:kms:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:kms:update",
+        "source": "platform"
+      },
+      {
+        "name": "iam:kms:delete",
+        "source": "platform"
+      },
+      {
+        "name": "iam:kms:grant",
+        "source": "platform"
+      },
+      {
+        "name": "iam:kms:encrypt",
+        "source": "platform"
+      },
+      {
+        "name": "iam:kms:decrypt",
+        "source": "platform"
+      },
+      {
+        "name": "iam:kms:generate-data-key",
+        "source": "platform"
+      },
+      {
+        "name": "iam:kms:sign",
+        "source": "platform"
+      },
+      {
+        "name": "iam:kms:verify",
+        "source": "platform"
+      },
+      {
+        "name": "iam:kms:generate-mac",
+        "source": "platform"
+      },
+      {
+        "name": "iam:kms:verify-mac",
+        "source": "platform"
+      },
+      {
+        "name": "iam:pki:create",
+        "source": "platform"
+      },
+      {
+        "name": "iam:pki:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:pki:update",
+        "source": "platform"
+      },
+      {
+        "name": "iam:pki:issue",
+        "source": "platform"
+      },
+      {
+        "name": "iam:pki:request",
+        "source": "platform"
+      },
+      {
+        "name": "iam:pki:revoke",
+        "source": "platform"
+      },
+      {
+        "name": "iam:protection:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:protection:manage",
+        "source": "platform"
+      },
+      {
+        "name": "iam:protection:tokenize",
+        "source": "platform"
+      },
+      {
+        "name": "iam:protection:detokenize",
+        "source": "platform"
+      },
+      {
+        "name": "iam:protection:mask",
+        "source": "platform"
+      },
+      {
+        "name": "iam:protection:delete",
+        "source": "platform"
+      },
+      {
+        "name": "iam:vault:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:vault:reveal",
+        "source": "platform"
+      },
+      {
+        "name": "iam:vault:write",
+        "source": "platform"
+      },
+      {
+        "name": "iam:vault:rotate",
+        "source": "platform"
+      },
+      {
+        "name": "iam:vault:lease",
+        "source": "platform"
+      },
+      {
+        "name": "iam:vault:manage",
+        "source": "platform"
+      },
+      {
+        "name": "iam:quotas:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:quotas:manage",
+        "source": "platform"
+      },
+      {
+        "name": "iam:privacy:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:privacy:manage",
+        "source": "platform"
+      },
+      {
+        "name": "iam:privacy:record",
+        "source": "platform"
+      },
+      {
+        "name": "iam:privacy:check",
+        "source": "platform"
+      },
+      {
+        "name": "iam:privacy:handle",
+        "source": "platform"
+      },
+      {
+        "name": "iam:ssh:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:ssh:manage",
+        "source": "platform"
+      },
+      {
+        "name": "iam:threats:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:threats:manage",
+        "source": "platform"
+      },
+      {
+        "name": "iam:threats:respond",
+        "source": "platform"
+      },
+      {
+        "name": "iam:workflows:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:workflows:manage",
+        "source": "platform"
+      },
+      {
+        "name": "iam:workflows:run",
+        "source": "platform"
+      },
+      {
+        "name": "iam:compliance:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:compliance:evaluate",
+        "source": "platform"
+      },
+      {
+        "name": "iam:compliance:manage",
+        "source": "platform"
+      },
+      {
+        "name": "iam:applications:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:applications:manage",
+        "source": "platform"
+      },
+      {
+        "name": "iam:applications:assign",
+        "source": "platform"
+      },
+      {
+        "name": "iam:vc:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:vc:manage",
+        "source": "platform"
+      },
+      {
+        "name": "iam:vc:issue",
+        "source": "platform"
+      },
+      {
+        "name": "iam:vc:revoke",
+        "source": "platform"
+      },
+      {
+        "name": "iam:ldap:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:ldap:manage",
+        "source": "platform"
+      },
+      {
+        "name": "iam:devices:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:devices:manage",
+        "source": "platform"
+      },
+      {
+        "name": "iam:devices:report",
+        "source": "platform"
+      },
+      {
+        "name": "iam:signals:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:signals:manage",
+        "source": "platform"
+      },
+      {
+        "name": "iam:licenses:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:licenses:manage",
+        "source": "platform"
+      },
+      {
+        "name": "iam:licenses:assign",
+        "source": "platform"
+      },
+      {
+        "name": "iam:guests:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:guests:invite",
+        "source": "platform"
+      },
+      {
+        "name": "iam:guests:manage",
+        "source": "platform"
+      },
+      {
+        "name": "iam:guests:settings",
+        "source": "platform"
+      },
+      {
+        "name": "iam:clearances:read",
+        "source": "platform"
+      },
+      {
+        "name": "iam:clearances:adjudicate",
+        "source": "platform"
+      },
+      {
+        "name": "iam:clearances:suspend",
+        "source": "platform"
+      },
+      {
+        "name": "iam:classifications:manage",
+        "source": "platform"
+      },
+      {
+        "name": "iam:classifications:label",
+        "source": "platform"
+      },
+      {
+        "name": "iam:classifications:declassify",
+        "source": "platform"
+      },
+      {
+        "name": "inference:invoke",
+        "source": "platform",
+        "resourceType": "model"
+      },
+      {
+        "name": "inference:use-tool",
+        "source": "platform",
+        "resourceType": "model-tool"
+      },
+      {
+        "name": "ssh:login",
+        "source": "platform",
+        "resourceType": "ssh-login"
+      },
+      {
+        "name": "ssh:port-forward",
+        "source": "platform",
+        "resourceType": "ssh-host"
+      },
+      {
+        "name": "ssh:agent-forward",
+        "source": "platform",
+        "resourceType": "ssh-host"
+      },
+      {
+        "name": "ssh:x11-forward",
+        "source": "platform",
+        "resourceType": "ssh-host"
+      },
+      {
+        "name": "vc:request",
+        "source": "platform",
+        "resourceType": "credential-type"
+      }
+    ],
+    "resourceTypes": [
+      {
+        "name": "model",
+        "source": "platform",
+        "description": "An AI model callers may invoke through the inference gateway",
+        "actions": [
+          "inference:invoke"
+        ],
+        "attributes": {
+          "provider": "string",
+          "providerKind": "string",
+          "upstreamModel": "string",
+          "family": "string",
+          "tier": "string",
+          "contextWindow": "number",
+          "inputPricePerMTok": "number",
+          "outputPricePerMTok": "number",
+          "enabled": "boolean"
+        },
+        "managed": false,
+        "relations": []
+      },
+      {
+        "name": "model-tool",
+        "source": "platform",
+        "description": "A tool the model provider runs itself (web search, code execution, a remote MCP server, ...)",
+        "actions": [
+          "inference:use-tool"
+        ],
+        "attributes": {
+          "kind": "string",
+          "host": "string"
+        },
+        "managed": false,
+        "relations": []
+      },
+      {
+        "name": "ssh-login",
+        "source": "platform",
+        "description": "Logging in to an enrolled SSH host as one local account: ssh-login/{host}/{login}",
+        "actions": [
+          "ssh:login"
+        ],
+        "attributes": {
+          "host": "string",
+          "login": "string"
+        },
+        "managed": false,
+        "relations": []
+      },
+      {
+        "name": "ssh-host",
+        "source": "platform",
+        "description": "An enrolled SSH host, for the forwarding a certificate may allow: ssh-host/{host}",
+        "actions": [
+          "ssh:port-forward",
+          "ssh:agent-forward",
+          "ssh:x11-forward"
+        ],
+        "attributes": {
+          "host": "string"
+        },
+        "managed": false,
+        "relations": []
+      },
+      {
+        "name": "credential-type",
+        "source": "platform",
+        "description": "A kind of verifiable credential the organization issues: credential-type/{name}",
+        "actions": [
+          "vc:request"
+        ],
+        "attributes": {
+          "name": "string",
+          "vct": "string",
+          "requireMfa": "boolean"
+        },
+        "managed": false,
+        "relations": []
+      }
+    ],
+    "namespaces": [
+      "iam",
+      "inference",
+      "ssh",
+      "vc"
+    ],
+    "reservedAttributes": null
+  },
+  "internalResourceTypes": [
+    "iam",
+    "oauth-client",
+    "scim",
+    "saml",
+    "ssf",
+    "role"
+  ],
+  "reservedResourceTypes": [
+    "iam",
+    "oauth-client",
+    "scim",
+    "saml",
+    "ssf",
+    "role",
+    "tenant",
+    "identity",
+    "session"
+  ],
+  "reservedPrincipalKeys": [
+    "id",
+    "tenantId",
+    "mfa",
+    "kind",
+    "owner",
+    "rootAdmin",
+    "groups",
+    "roles",
+    "sessionKind",
+    "authMethod",
+    "impersonated",
+    "impersonatorId",
+    "agreements",
+    "pendingAgreements",
+    "onboarding",
+    "pendingOnboarding",
+    "teams",
+    "departments",
+    "departmentId",
+    "spendExceeded",
+    "budgetsExceeded",
+    "consents",
+    "riskLevel",
+    "riskScore",
+    "licenses",
+    "guest",
+    "guestSponsorId",
+    "homeTenantId",
+    "sessionId",
+    "tokenIssueTime",
+    "authTime",
+    "mfaTime",
+    "sourceTenantId",
+    "sessionName",
+    "sourceIdentity",
+    "sessionTags",
+    "sessionTagKeys",
+    "webIdentityProvider",
+    "webIdentitySubject",
+    "delegated",
+    "delegationId",
+    "agentId",
+    "agentSponsorId",
+    "agentModel",
+    "agentProvider",
+    "delegationChain"
+  ],
+  "clearancePrincipalNames": [
+    "clearanceLevel",
+    "clearanceRank",
+    "clearanceStatus",
+    "clearanceCompartments",
+    "clearanceCitizenship"
+  ],
+  "classificationAttributeNames": [
+    "classification",
+    "classificationRank",
+    "compartments",
+    "noforn",
+    "releasableTo"
+  ],
+  "patterns": {
+    "resourceTypeName": "^[a-z][a-z0-9-]{0,63}$",
+    "tenantAction": "^([a-z][a-z0-9-]{0,63}):([a-zA-Z][a-zA-Z0-9_-]{0,63})$",
+    "relationName": "^[a-z][a-z0-9_-]{0,63}$",
+    "attributeName": "^[a-zA-Z][a-zA-Z0-9_]{0,63}$"
+  },
+  "limits": {
+    "maxRelationsPerType": 32,
+    "maxAttributesPerType": 64,
+    "maxAttributeStringLength": 2048,
+    "descriptionLength": 512
+  },
+  "rules": [
+    "Configured and plugin actions may not start with iam: or tenant/ and may not contain *, ? or whitespace (INVALID_CONFIG \"Reserved or invalid action\").",
+    "Attribute types are string, number or boolean; tenantId is never an attribute name.",
+    "Tenant actions need permissions.mode tenant-defined (CATALOG_LOCKED 403) and an existing tenant resource type named by their prefix."
+  ]
+}

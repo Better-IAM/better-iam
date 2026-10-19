@@ -1,0 +1,2194 @@
+{
+  "description": "Query planning (planResources): which resources of one type a principal may act on, as a ResourceFilter over id and attributes; kind always / never / conditional. Also the filter constructors (andFilter, orFilter, notFilter simplification) and filter globs (parseGlob, globMatches).",
+  "source": "packages/core/src/plan.ts#planResources,andFilter,orFilter,notFilter,parseGlob,globMatches,intersectPlans,fixedPlan",
+  "cases": [
+    {
+      "name": "no paths",
+      "input": {
+        "action": "docs:read",
+        "resourceType": "doc",
+        "tenantId": "tnt_01",
+        "context": {
+          "principal.id": "idn_01",
+          "principal.team": "eng",
+          "principal.mfa": true
+        },
+        "denies": [],
+        "boundaries": [],
+        "paths": []
+      },
+      "output": {
+        "kind": "never",
+        "filter": {
+          "kind": "false"
+        }
+      }
+    },
+    {
+      "name": "allow all of type",
+      "input": {
+        "action": "docs:read",
+        "resourceType": "doc",
+        "tenantId": "tnt_01",
+        "context": {
+          "principal.id": "idn_01",
+          "principal.team": "eng",
+          "principal.mfa": true
+        },
+        "denies": [],
+        "boundaries": [],
+        "paths": [
+          {
+            "grants": [
+              {
+                "version": 1,
+                "statements": [
+                  {
+                    "effect": "allow",
+                    "actions": [
+                      "docs:read"
+                    ],
+                    "resources": [
+                      "doc/*"
+                    ]
+                  }
+                ]
+              }
+            ],
+            "boundaries": []
+          }
+        ]
+      },
+      "output": {
+        "kind": "always",
+        "filter": {
+          "kind": "true"
+        }
+      }
+    },
+    {
+      "name": "allow everything",
+      "input": {
+        "action": "docs:read",
+        "resourceType": "doc",
+        "tenantId": "tnt_01",
+        "context": {
+          "principal.id": "idn_01",
+          "principal.team": "eng",
+          "principal.mfa": true
+        },
+        "denies": [],
+        "boundaries": [],
+        "paths": [
+          {
+            "grants": [
+              {
+                "version": 1,
+                "statements": [
+                  {
+                    "effect": "allow",
+                    "actions": [
+                      "*"
+                    ],
+                    "resources": [
+                      "*"
+                    ]
+                  }
+                ]
+              }
+            ],
+            "boundaries": []
+          }
+        ]
+      },
+      "output": {
+        "kind": "always",
+        "filter": {
+          "kind": "true"
+        }
+      }
+    },
+    {
+      "name": "other type only",
+      "input": {
+        "action": "docs:read",
+        "resourceType": "doc",
+        "tenantId": "tnt_01",
+        "context": {
+          "principal.id": "idn_01",
+          "principal.team": "eng",
+          "principal.mfa": true
+        },
+        "denies": [],
+        "boundaries": [],
+        "paths": [
+          {
+            "grants": [
+              {
+                "version": 1,
+                "statements": [
+                  {
+                    "effect": "allow",
+                    "actions": [
+                      "docs:read"
+                    ],
+                    "resources": [
+                      "folder/*"
+                    ]
+                  }
+                ]
+              }
+            ],
+            "boundaries": []
+          }
+        ]
+      },
+      "output": {
+        "kind": "never",
+        "filter": {
+          "kind": "false"
+        }
+      }
+    },
+    {
+      "name": "other action only",
+      "input": {
+        "action": "docs:read",
+        "resourceType": "doc",
+        "tenantId": "tnt_01",
+        "context": {
+          "principal.id": "idn_01",
+          "principal.team": "eng",
+          "principal.mfa": true
+        },
+        "denies": [],
+        "boundaries": [],
+        "paths": [
+          {
+            "grants": [
+              {
+                "version": 1,
+                "statements": [
+                  {
+                    "effect": "allow",
+                    "actions": [
+                      "docs:write"
+                    ],
+                    "resources": [
+                      "doc/*"
+                    ]
+                  }
+                ]
+              }
+            ],
+            "boundaries": []
+          }
+        ]
+      },
+      "output": {
+        "kind": "never",
+        "filter": {
+          "kind": "false"
+        }
+      }
+    },
+    {
+      "name": "specific ids",
+      "input": {
+        "action": "docs:read",
+        "resourceType": "doc",
+        "tenantId": "tnt_01",
+        "context": {
+          "principal.id": "idn_01",
+          "principal.team": "eng",
+          "principal.mfa": true
+        },
+        "denies": [],
+        "boundaries": [],
+        "paths": [
+          {
+            "grants": [
+              {
+                "version": 1,
+                "statements": [
+                  {
+                    "effect": "allow",
+                    "actions": [
+                      "docs:read"
+                    ],
+                    "resources": [
+                      "doc/1",
+                      "doc/2"
+                    ]
+                  }
+                ]
+              }
+            ],
+            "boundaries": []
+          }
+        ]
+      },
+      "output": {
+        "kind": "conditional",
+        "filter": {
+          "kind": "equals",
+          "field": "id",
+          "values": [
+            "1",
+            "2"
+          ]
+        }
+      }
+    },
+    {
+      "name": "id glob",
+      "input": {
+        "action": "docs:read",
+        "resourceType": "doc",
+        "tenantId": "tnt_01",
+        "context": {
+          "principal.id": "idn_01",
+          "principal.team": "eng",
+          "principal.mfa": true
+        },
+        "denies": [],
+        "boundaries": [],
+        "paths": [
+          {
+            "grants": [
+              {
+                "version": 1,
+                "statements": [
+                  {
+                    "effect": "allow",
+                    "actions": [
+                      "docs:read"
+                    ],
+                    "resources": [
+                      "doc/report-*"
+                    ]
+                  }
+                ]
+              }
+            ],
+            "boundaries": []
+          }
+        ]
+      },
+      "output": {
+        "kind": "conditional",
+        "filter": {
+          "kind": "like",
+          "field": "id",
+          "pattern": "report-*"
+        }
+      }
+    },
+    {
+      "name": "id with variable",
+      "input": {
+        "action": "docs:read",
+        "resourceType": "doc",
+        "tenantId": "tnt_01",
+        "context": {
+          "principal.id": "idn_01",
+          "principal.team": "eng",
+          "principal.mfa": true
+        },
+        "denies": [],
+        "boundaries": [],
+        "paths": [
+          {
+            "grants": [
+              {
+                "version": 1,
+                "statements": [
+                  {
+                    "effect": "allow",
+                    "actions": [
+                      "docs:read"
+                    ],
+                    "resources": [
+                      "doc/${principal.id}-*"
+                    ]
+                  }
+                ]
+              }
+            ],
+            "boundaries": []
+          }
+        ]
+      },
+      "output": {
+        "kind": "conditional",
+        "filter": {
+          "kind": "like",
+          "field": "id",
+          "pattern": "idn_01-*"
+        }
+      }
+    },
+    {
+      "name": "resource attribute equals principal",
+      "input": {
+        "action": "docs:read",
+        "resourceType": "doc",
+        "tenantId": "tnt_01",
+        "context": {
+          "principal.id": "idn_01",
+          "principal.team": "eng",
+          "principal.mfa": true
+        },
+        "denies": [],
+        "boundaries": [],
+        "paths": [
+          {
+            "grants": [
+              {
+                "version": 1,
+                "statements": [
+                  {
+                    "effect": "allow",
+                    "actions": [
+                      "docs:read"
+                    ],
+                    "resources": [
+                      "doc/*"
+                    ],
+                    "conditions": {
+                      "StringEquals": {
+                        "resource.owner": "${principal.id}"
+                      }
+                    }
+                  }
+                ]
+              }
+            ],
+            "boundaries": []
+          }
+        ]
+      },
+      "output": {
+        "kind": "conditional",
+        "filter": {
+          "kind": "equals",
+          "field": "owner",
+          "values": [
+            "idn_01"
+          ]
+        }
+      }
+    },
+    {
+      "name": "resource attribute row variable in id",
+      "input": {
+        "action": "docs:read",
+        "resourceType": "doc",
+        "tenantId": "tnt_01",
+        "context": {
+          "principal.id": "idn_01",
+          "principal.team": "eng",
+          "principal.mfa": true
+        },
+        "denies": [],
+        "boundaries": [],
+        "paths": [
+          {
+            "grants": [
+              {
+                "version": 1,
+                "statements": [
+                  {
+                    "effect": "allow",
+                    "actions": [
+                      "docs:read"
+                    ],
+                    "resources": [
+                      "doc/${resource.owner}"
+                    ]
+                  }
+                ]
+              }
+            ],
+            "boundaries": []
+          }
+        ]
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "UNSUPPORTED_FILTER",
+          "status": 400,
+          "message": "A policy compares a value with ${resource.…}, one of the resource’s own attributes, which a filter cannot express; check the resources with authorize"
+        }
+      }
+    },
+    {
+      "name": "principal condition true",
+      "input": {
+        "action": "docs:read",
+        "resourceType": "doc",
+        "tenantId": "tnt_01",
+        "context": {
+          "principal.id": "idn_01",
+          "principal.team": "eng",
+          "principal.mfa": true
+        },
+        "denies": [],
+        "boundaries": [],
+        "paths": [
+          {
+            "grants": [
+              {
+                "version": 1,
+                "statements": [
+                  {
+                    "effect": "allow",
+                    "actions": [
+                      "docs:read"
+                    ],
+                    "resources": [
+                      "doc/*"
+                    ],
+                    "conditions": {
+                      "StringEquals": {
+                        "principal.team": "eng"
+                      }
+                    }
+                  }
+                ]
+              }
+            ],
+            "boundaries": []
+          }
+        ]
+      },
+      "output": {
+        "kind": "always",
+        "filter": {
+          "kind": "true"
+        }
+      }
+    },
+    {
+      "name": "principal condition false",
+      "input": {
+        "action": "docs:read",
+        "resourceType": "doc",
+        "tenantId": "tnt_01",
+        "context": {
+          "principal.id": "idn_01",
+          "principal.team": "eng",
+          "principal.mfa": true
+        },
+        "denies": [],
+        "boundaries": [],
+        "paths": [
+          {
+            "grants": [
+              {
+                "version": 1,
+                "statements": [
+                  {
+                    "effect": "allow",
+                    "actions": [
+                      "docs:read"
+                    ],
+                    "resources": [
+                      "doc/*"
+                    ],
+                    "conditions": {
+                      "StringEquals": {
+                        "principal.team": "ops"
+                      }
+                    }
+                  }
+                ]
+              }
+            ],
+            "boundaries": []
+          }
+        ]
+      },
+      "output": {
+        "kind": "never",
+        "filter": {
+          "kind": "false"
+        }
+      }
+    },
+    {
+      "name": "numeric resource condition",
+      "input": {
+        "action": "docs:read",
+        "resourceType": "doc",
+        "tenantId": "tnt_01",
+        "context": {
+          "principal.id": "idn_01",
+          "principal.team": "eng",
+          "principal.mfa": true
+        },
+        "denies": [],
+        "boundaries": [],
+        "paths": [
+          {
+            "grants": [
+              {
+                "version": 1,
+                "statements": [
+                  {
+                    "effect": "allow",
+                    "actions": [
+                      "docs:read"
+                    ],
+                    "resources": [
+                      "doc/*"
+                    ],
+                    "conditions": {
+                      "NumericLessThan": {
+                        "resource.size": 100
+                      }
+                    }
+                  }
+                ]
+              }
+            ],
+            "boundaries": []
+          }
+        ]
+      },
+      "output": {
+        "kind": "conditional",
+        "filter": {
+          "kind": "compare",
+          "field": "size",
+          "operator": "lt",
+          "value": 100
+        }
+      }
+    },
+    {
+      "name": "like resource condition ignore case",
+      "input": {
+        "action": "docs:read",
+        "resourceType": "doc",
+        "tenantId": "tnt_01",
+        "context": {
+          "principal.id": "idn_01",
+          "principal.team": "eng",
+          "principal.mfa": true
+        },
+        "denies": [],
+        "boundaries": [],
+        "paths": [
+          {
+            "grants": [
+              {
+                "version": 1,
+                "statements": [
+                  {
+                    "effect": "allow",
+                    "actions": [
+                      "docs:read"
+                    ],
+                    "resources": [
+                      "doc/*"
+                    ],
+                    "conditions": {
+                      "StringLikeIgnoreCase": {
+                        "resource.title": "Q?-*"
+                      }
+                    }
+                  }
+                ]
+              }
+            ],
+            "boundaries": []
+          }
+        ]
+      },
+      "output": {
+        "kind": "conditional",
+        "filter": {
+          "kind": "like",
+          "field": "title",
+          "pattern": "q?-*",
+          "ignoreCase": true
+        }
+      }
+    },
+    {
+      "name": "not equals resource condition",
+      "input": {
+        "action": "docs:read",
+        "resourceType": "doc",
+        "tenantId": "tnt_01",
+        "context": {
+          "principal.id": "idn_01",
+          "principal.team": "eng",
+          "principal.mfa": true
+        },
+        "denies": [],
+        "boundaries": [],
+        "paths": [
+          {
+            "grants": [
+              {
+                "version": 1,
+                "statements": [
+                  {
+                    "effect": "allow",
+                    "actions": [
+                      "docs:read"
+                    ],
+                    "resources": [
+                      "doc/*"
+                    ],
+                    "conditions": {
+                      "StringNotEquals": {
+                        "resource.status": [
+                          "archived",
+                          "deleted"
+                        ]
+                      }
+                    }
+                  }
+                ]
+              }
+            ],
+            "boundaries": []
+          }
+        ]
+      },
+      "output": {
+        "kind": "conditional",
+        "filter": {
+          "kind": "and",
+          "filters": [
+            {
+              "kind": "type",
+              "field": "status",
+              "type": "string"
+            },
+            {
+              "kind": "not",
+              "filter": {
+                "kind": "equals",
+                "field": "status",
+                "values": [
+                  "archived",
+                  "deleted"
+                ]
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "date resource condition",
+      "input": {
+        "action": "docs:read",
+        "resourceType": "doc",
+        "tenantId": "tnt_01",
+        "context": {
+          "principal.id": "idn_01",
+          "principal.team": "eng",
+          "principal.mfa": true
+        },
+        "denies": [],
+        "boundaries": [],
+        "paths": [
+          {
+            "grants": [
+              {
+                "version": 1,
+                "statements": [
+                  {
+                    "effect": "allow",
+                    "actions": [
+                      "docs:read"
+                    ],
+                    "resources": [
+                      "doc/*"
+                    ],
+                    "conditions": {
+                      "DateAfter": {
+                        "resource.publishedAt": "2025-01-01T00:00:00Z"
+                      }
+                    }
+                  }
+                ]
+              }
+            ],
+            "boundaries": []
+          }
+        ]
+      },
+      "output": {
+        "kind": "conditional",
+        "filter": {
+          "kind": "date",
+          "field": "publishedAt",
+          "operator": "after",
+          "value": "2025-01-01T00:00:00Z"
+        }
+      }
+    },
+    {
+      "name": "ip resource condition",
+      "input": {
+        "action": "docs:read",
+        "resourceType": "doc",
+        "tenantId": "tnt_01",
+        "context": {
+          "principal.id": "idn_01",
+          "principal.team": "eng",
+          "principal.mfa": true
+        },
+        "denies": [],
+        "boundaries": [],
+        "paths": [
+          {
+            "grants": [
+              {
+                "version": 1,
+                "statements": [
+                  {
+                    "effect": "allow",
+                    "actions": [
+                      "docs:read"
+                    ],
+                    "resources": [
+                      "doc/*"
+                    ],
+                    "conditions": {
+                      "IpAddress": {
+                        "resource.origin": "10.0.0.0/8"
+                      }
+                    }
+                  }
+                ]
+              }
+            ],
+            "boundaries": []
+          }
+        ]
+      },
+      "output": {
+        "kind": "conditional",
+        "filter": {
+          "kind": "ip",
+          "field": "origin",
+          "network": "10.0.0.0/8"
+        }
+      }
+    },
+    {
+      "name": "array resource condition",
+      "input": {
+        "action": "docs:read",
+        "resourceType": "doc",
+        "tenantId": "tnt_01",
+        "context": {
+          "principal.id": "idn_01",
+          "principal.team": "eng",
+          "principal.mfa": true
+        },
+        "denies": [],
+        "boundaries": [],
+        "paths": [
+          {
+            "grants": [
+              {
+                "version": 1,
+                "statements": [
+                  {
+                    "effect": "allow",
+                    "actions": [
+                      "docs:read"
+                    ],
+                    "resources": [
+                      "doc/*"
+                    ],
+                    "conditions": {
+                      "ArrayContains": {
+                        "resource.tags": "public"
+                      }
+                    }
+                  }
+                ]
+              }
+            ],
+            "boundaries": []
+          }
+        ]
+      },
+      "output": {
+        "kind": "conditional",
+        "filter": {
+          "kind": "contains",
+          "field": "tags",
+          "value": "public"
+        }
+      }
+    },
+    {
+      "name": "exists resource condition",
+      "input": {
+        "action": "docs:read",
+        "resourceType": "doc",
+        "tenantId": "tnt_01",
+        "context": {
+          "principal.id": "idn_01",
+          "principal.team": "eng",
+          "principal.mfa": true
+        },
+        "denies": [],
+        "boundaries": [],
+        "paths": [
+          {
+            "grants": [
+              {
+                "version": 1,
+                "statements": [
+                  {
+                    "effect": "allow",
+                    "actions": [
+                      "docs:read"
+                    ],
+                    "resources": [
+                      "doc/*"
+                    ],
+                    "conditions": {
+                      "Exists": {
+                        "resource.owner": false
+                      }
+                    }
+                  }
+                ]
+              }
+            ],
+            "boundaries": []
+          }
+        ]
+      },
+      "output": {
+        "kind": "conditional",
+        "filter": {
+          "kind": "not",
+          "filter": {
+            "kind": "exists",
+            "field": "owner"
+          }
+        }
+      }
+    },
+    {
+      "name": "bool resource condition",
+      "input": {
+        "action": "docs:read",
+        "resourceType": "doc",
+        "tenantId": "tnt_01",
+        "context": {
+          "principal.id": "idn_01",
+          "principal.team": "eng",
+          "principal.mfa": true
+        },
+        "denies": [],
+        "boundaries": [],
+        "paths": [
+          {
+            "grants": [
+              {
+                "version": 1,
+                "statements": [
+                  {
+                    "effect": "allow",
+                    "actions": [
+                      "docs:read"
+                    ],
+                    "resources": [
+                      "doc/*"
+                    ],
+                    "conditions": {
+                      "Bool": {
+                        "resource.public": true
+                      }
+                    }
+                  }
+                ]
+              }
+            ],
+            "boundaries": []
+          }
+        ]
+      },
+      "output": {
+        "kind": "conditional",
+        "filter": {
+          "kind": "equals",
+          "field": "public",
+          "values": [
+            true
+          ]
+        }
+      }
+    },
+    {
+      "name": "tenant condition",
+      "input": {
+        "action": "docs:read",
+        "resourceType": "doc",
+        "tenantId": "tnt_01",
+        "context": {
+          "principal.id": "idn_01",
+          "principal.team": "eng",
+          "principal.mfa": true
+        },
+        "denies": [],
+        "boundaries": [],
+        "paths": [
+          {
+            "grants": [
+              {
+                "version": 1,
+                "statements": [
+                  {
+                    "effect": "allow",
+                    "actions": [
+                      "docs:read"
+                    ],
+                    "resources": [
+                      "doc/*"
+                    ],
+                    "conditions": {
+                      "StringEquals": {
+                        "resource.tenantId": "tnt_01"
+                      }
+                    }
+                  }
+                ]
+              }
+            ],
+            "boundaries": []
+          }
+        ]
+      },
+      "output": {
+        "kind": "always",
+        "filter": {
+          "kind": "true"
+        }
+      }
+    },
+    {
+      "name": "deny subset",
+      "input": {
+        "action": "docs:read",
+        "resourceType": "doc",
+        "tenantId": "tnt_01",
+        "context": {
+          "principal.id": "idn_01",
+          "principal.team": "eng",
+          "principal.mfa": true
+        },
+        "denies": [],
+        "boundaries": [],
+        "paths": [
+          {
+            "grants": [
+              {
+                "version": 1,
+                "statements": [
+                  {
+                    "effect": "allow",
+                    "actions": [
+                      "docs:read"
+                    ],
+                    "resources": [
+                      "doc/*"
+                    ]
+                  },
+                  {
+                    "effect": "deny",
+                    "actions": [
+                      "docs:read"
+                    ],
+                    "resources": [
+                      "doc/secret-*"
+                    ]
+                  }
+                ]
+              }
+            ],
+            "boundaries": []
+          }
+        ]
+      },
+      "output": {
+        "kind": "conditional",
+        "filter": {
+          "kind": "not",
+          "filter": {
+            "kind": "like",
+            "field": "id",
+            "pattern": "secret-*"
+          }
+        }
+      }
+    },
+    {
+      "name": "global deny",
+      "input": {
+        "action": "docs:read",
+        "resourceType": "doc",
+        "tenantId": "tnt_01",
+        "context": {
+          "principal.id": "idn_01",
+          "principal.team": "eng",
+          "principal.mfa": true
+        },
+        "denies": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "deny",
+                "actions": [
+                  "docs:*"
+                ],
+                "resources": [
+                  "doc/*"
+                ],
+                "conditions": {
+                  "StringEquals": {
+                    "resource.classification": "secret"
+                  }
+                }
+              }
+            ]
+          }
+        ],
+        "boundaries": [],
+        "paths": [
+          {
+            "grants": [
+              {
+                "version": 1,
+                "statements": [
+                  {
+                    "effect": "allow",
+                    "actions": [
+                      "*"
+                    ],
+                    "resources": [
+                      "*"
+                    ]
+                  }
+                ]
+              }
+            ],
+            "boundaries": []
+          }
+        ]
+      },
+      "output": {
+        "kind": "conditional",
+        "filter": {
+          "kind": "not",
+          "filter": {
+            "kind": "equals",
+            "field": "classification",
+            "values": [
+              "secret"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "boundary limits",
+      "input": {
+        "action": "docs:read",
+        "resourceType": "doc",
+        "tenantId": "tnt_01",
+        "context": {
+          "principal.id": "idn_01",
+          "principal.team": "eng",
+          "principal.mfa": true
+        },
+        "denies": [],
+        "boundaries": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "docs:read"
+                ],
+                "resources": [
+                  "doc/public-*"
+                ]
+              }
+            ]
+          }
+        ],
+        "paths": [
+          {
+            "grants": [
+              {
+                "version": 1,
+                "statements": [
+                  {
+                    "effect": "allow",
+                    "actions": [
+                      "docs:*"
+                    ],
+                    "resources": [
+                      "doc/*"
+                    ]
+                  }
+                ]
+              }
+            ],
+            "boundaries": []
+          }
+        ]
+      },
+      "output": {
+        "kind": "conditional",
+        "filter": {
+          "kind": "like",
+          "field": "id",
+          "pattern": "public-*"
+        }
+      }
+    },
+    {
+      "name": "path boundary",
+      "input": {
+        "action": "docs:read",
+        "resourceType": "doc",
+        "tenantId": "tnt_01",
+        "context": {
+          "principal.id": "idn_01",
+          "principal.team": "eng",
+          "principal.mfa": true
+        },
+        "denies": [],
+        "boundaries": [],
+        "paths": [
+          {
+            "grants": [
+              {
+                "version": 1,
+                "statements": [
+                  {
+                    "effect": "allow",
+                    "actions": [
+                      "*"
+                    ],
+                    "resources": [
+                      "*"
+                    ]
+                  }
+                ]
+              }
+            ],
+            "boundaries": [
+              {
+                "version": 1,
+                "statements": [
+                  {
+                    "effect": "allow",
+                    "actions": [
+                      "docs:read"
+                    ],
+                    "resources": [
+                      "doc/1"
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "kind": "conditional",
+        "filter": {
+          "kind": "equals",
+          "field": "id",
+          "values": [
+            "1"
+          ]
+        }
+      }
+    },
+    {
+      "name": "two paths merge equals",
+      "input": {
+        "action": "docs:read",
+        "resourceType": "doc",
+        "tenantId": "tnt_01",
+        "context": {
+          "principal.id": "idn_01",
+          "principal.team": "eng",
+          "principal.mfa": true
+        },
+        "denies": [],
+        "boundaries": [],
+        "paths": [
+          {
+            "grants": [
+              {
+                "version": 1,
+                "statements": [
+                  {
+                    "effect": "allow",
+                    "actions": [
+                      "docs:read"
+                    ],
+                    "resources": [
+                      "doc/1"
+                    ]
+                  }
+                ]
+              }
+            ],
+            "boundaries": []
+          },
+          {
+            "grants": [
+              {
+                "version": 1,
+                "statements": [
+                  {
+                    "effect": "allow",
+                    "actions": [
+                      "docs:read"
+                    ],
+                    "resources": [
+                      "doc/2"
+                    ]
+                  }
+                ]
+              }
+            ],
+            "boundaries": []
+          }
+        ]
+      },
+      "output": {
+        "kind": "conditional",
+        "filter": {
+          "kind": "equals",
+          "field": "id",
+          "values": [
+            "1",
+            "2"
+          ]
+        }
+      }
+    },
+    {
+      "name": "relations",
+      "input": {
+        "action": "docs:read",
+        "resourceType": "doc",
+        "tenantId": "tnt_01",
+        "context": {
+          "principal.id": "idn_01",
+          "principal.team": "eng",
+          "principal.mfa": true
+        },
+        "denies": [],
+        "boundaries": [],
+        "relations": [
+          {
+            "type": "doc",
+            "id": "d1",
+            "relations": [
+              "viewer"
+            ]
+          },
+          {
+            "type": "folder",
+            "id": "f1",
+            "relations": [
+              "viewer"
+            ]
+          }
+        ],
+        "paths": [
+          {
+            "grants": [
+              {
+                "version": 1,
+                "statements": [
+                  {
+                    "effect": "allow",
+                    "actions": [
+                      "docs:read"
+                    ],
+                    "resources": [
+                      "doc/*"
+                    ],
+                    "conditions": {
+                      "ArrayContains": {
+                        "resource.relations": "viewer"
+                      }
+                    }
+                  }
+                ]
+              }
+            ],
+            "boundaries": []
+          }
+        ]
+      },
+      "output": {
+        "kind": "conditional",
+        "filter": {
+          "kind": "equals",
+          "field": "id",
+          "values": [
+            "d1"
+          ]
+        }
+      }
+    },
+    {
+      "name": "parent relations",
+      "input": {
+        "action": "docs:read",
+        "resourceType": "doc",
+        "tenantId": "tnt_01",
+        "context": {
+          "principal.id": "idn_01",
+          "principal.team": "eng",
+          "principal.mfa": true
+        },
+        "denies": [],
+        "boundaries": [],
+        "relations": [
+          {
+            "type": "folder",
+            "id": "f1",
+            "relations": [
+              "editor"
+            ]
+          }
+        ],
+        "paths": [
+          {
+            "grants": [
+              {
+                "version": 1,
+                "statements": [
+                  {
+                    "effect": "allow",
+                    "actions": [
+                      "docs:read"
+                    ],
+                    "resources": [
+                      "doc/*"
+                    ],
+                    "conditions": {
+                      "ArrayContains": {
+                        "resource.parentRelations": "editor"
+                      }
+                    }
+                  }
+                ]
+              }
+            ],
+            "boundaries": []
+          }
+        ]
+      },
+      "output": {
+        "kind": "conditional",
+        "filter": {
+          "kind": "and",
+          "filters": [
+            {
+              "kind": "equals",
+              "field": "parentType",
+              "values": [
+                "folder"
+              ]
+            },
+            {
+              "kind": "equals",
+              "field": "parentId",
+              "values": [
+                "f1"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "mandatory filter",
+      "input": {
+        "action": "docs:read",
+        "resourceType": "doc",
+        "tenantId": "tnt_01",
+        "context": {
+          "principal.id": "idn_01",
+          "principal.team": "eng",
+          "principal.mfa": true
+        },
+        "denies": [],
+        "boundaries": [],
+        "mandatory": {
+          "kind": "compare",
+          "field": "classificationRank",
+          "operator": "le",
+          "value": 2
+        },
+        "paths": [
+          {
+            "grants": [
+              {
+                "version": 1,
+                "statements": [
+                  {
+                    "effect": "allow",
+                    "actions": [
+                      "*"
+                    ],
+                    "resources": [
+                      "*"
+                    ]
+                  }
+                ]
+              }
+            ],
+            "boundaries": []
+          }
+        ]
+      },
+      "output": {
+        "kind": "conditional",
+        "filter": {
+          "kind": "compare",
+          "field": "classificationRank",
+          "operator": "le",
+          "value": 2
+        }
+      }
+    },
+    {
+      "name": "derived resource key refuses",
+      "input": {
+        "action": "docs:read",
+        "resourceType": "doc",
+        "tenantId": "tnt_01",
+        "context": {
+          "principal.id": "idn_01",
+          "principal.team": "eng",
+          "principal.mfa": true
+        },
+        "denies": [],
+        "boundaries": [],
+        "derivedResourceKeys": [
+          "resource.classificationRank"
+        ],
+        "paths": [
+          {
+            "grants": [
+              {
+                "version": 1,
+                "statements": [
+                  {
+                    "effect": "allow",
+                    "actions": [
+                      "docs:read"
+                    ],
+                    "resources": [
+                      "doc/*"
+                    ],
+                    "conditions": {
+                      "NumericLessThan": {
+                        "resource.classificationRank": 3
+                      }
+                    }
+                  }
+                ]
+              }
+            ],
+            "boundaries": []
+          }
+        ]
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "UNSUPPORTED_FILTER",
+          "status": 400,
+          "message": "A policy has a condition on resource.classificationRank, which the server derives for each resource rather than reading from the row; check the resources with authorize"
+        }
+      }
+    },
+    {
+      "name": "invalid resource type",
+      "input": {
+        "action": "docs:read",
+        "resourceType": "a/b",
+        "tenantId": "tnt_01",
+        "context": {
+          "principal.id": "idn_01",
+          "principal.team": "eng",
+          "principal.mfa": true
+        },
+        "denies": [],
+        "boundaries": [],
+        "paths": []
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "INVALID_INPUT",
+          "status": 400,
+          "message": "Invalid resource type"
+        }
+      }
+    },
+    {
+      "name": "invalid policy",
+      "input": {
+        "action": "docs:read",
+        "resourceType": "doc",
+        "tenantId": "tnt_01",
+        "context": {
+          "principal.id": "idn_01",
+          "principal.team": "eng",
+          "principal.mfa": true
+        },
+        "denies": [],
+        "boundaries": [],
+        "paths": [
+          {
+            "grants": [
+              {
+                "version": 1,
+                "statements": [
+                  {
+                    "effect": "maybe"
+                  }
+                ]
+              }
+            ],
+            "boundaries": []
+          }
+        ]
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "INVALID_POLICY",
+          "status": 400,
+          "message": "Statement effect must be allow or deny"
+        }
+      }
+    },
+    {
+      "name": "andFilter empty",
+      "input": {
+        "filters": []
+      },
+      "output": {
+        "kind": "true"
+      }
+    },
+    {
+      "name": "andFilter drops true",
+      "input": {
+        "filters": [
+          {
+            "kind": "true"
+          },
+          {
+            "kind": "equals",
+            "field": "id",
+            "values": [
+              "a"
+            ]
+          }
+        ]
+      },
+      "output": {
+        "kind": "equals",
+        "field": "id",
+        "values": [
+          "a"
+        ]
+      }
+    },
+    {
+      "name": "andFilter false absorbs",
+      "input": {
+        "filters": [
+          {
+            "kind": "equals",
+            "field": "id",
+            "values": [
+              "a"
+            ]
+          },
+          {
+            "kind": "false"
+          }
+        ]
+      },
+      "output": {
+        "kind": "false"
+      }
+    },
+    {
+      "name": "andFilter flattens and dedupes",
+      "input": {
+        "filters": [
+          {
+            "kind": "and",
+            "filters": [
+              {
+                "kind": "equals",
+                "field": "id",
+                "values": [
+                  "a"
+                ]
+              },
+              {
+                "kind": "equals",
+                "field": "owner",
+                "values": [
+                  "x"
+                ]
+              }
+            ]
+          },
+          {
+            "kind": "equals",
+            "field": "id",
+            "values": [
+              "a"
+            ]
+          }
+        ]
+      },
+      "output": {
+        "kind": "and",
+        "filters": [
+          {
+            "kind": "equals",
+            "field": "id",
+            "values": [
+              "a"
+            ]
+          },
+          {
+            "kind": "equals",
+            "field": "owner",
+            "values": [
+              "x"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "orFilter empty",
+      "input": {
+        "filters": []
+      },
+      "output": {
+        "kind": "false"
+      }
+    },
+    {
+      "name": "orFilter true absorbs",
+      "input": {
+        "filters": [
+          {
+            "kind": "equals",
+            "field": "id",
+            "values": [
+              "a"
+            ]
+          },
+          {
+            "kind": "true"
+          }
+        ]
+      },
+      "output": {
+        "kind": "true"
+      }
+    },
+    {
+      "name": "orFilter merges equals",
+      "input": {
+        "filters": [
+          {
+            "kind": "equals",
+            "field": "id",
+            "values": [
+              "a"
+            ]
+          },
+          {
+            "kind": "equals",
+            "field": "id",
+            "values": [
+              "b",
+              "a"
+            ]
+          },
+          {
+            "kind": "equals",
+            "field": "owner",
+            "values": [
+              "x"
+            ]
+          }
+        ]
+      },
+      "output": {
+        "kind": "or",
+        "filters": [
+          {
+            "kind": "equals",
+            "field": "id",
+            "values": [
+              "a",
+              "b"
+            ]
+          },
+          {
+            "kind": "equals",
+            "field": "owner",
+            "values": [
+              "x"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "orFilter keeps case rules apart",
+      "input": {
+        "filters": [
+          {
+            "kind": "equals",
+            "field": "id",
+            "values": [
+              "a"
+            ]
+          },
+          {
+            "kind": "equals",
+            "field": "id",
+            "values": [
+              "B"
+            ],
+            "ignoreCase": true
+          }
+        ]
+      },
+      "output": {
+        "kind": "or",
+        "filters": [
+          {
+            "kind": "equals",
+            "field": "id",
+            "values": [
+              "a"
+            ]
+          },
+          {
+            "kind": "equals",
+            "field": "id",
+            "values": [
+              "B"
+            ],
+            "ignoreCase": true
+          }
+        ]
+      }
+    },
+    {
+      "name": "notFilter true",
+      "input": {
+        "filter": {
+          "kind": "true"
+        }
+      },
+      "output": {
+        "kind": "false"
+      }
+    },
+    {
+      "name": "notFilter false",
+      "input": {
+        "filter": {
+          "kind": "false"
+        }
+      },
+      "output": {
+        "kind": "true"
+      }
+    },
+    {
+      "name": "notFilter double",
+      "input": {
+        "filter": {
+          "kind": "not",
+          "filter": {
+            "kind": "equals",
+            "field": "id",
+            "values": [
+              "a"
+            ]
+          }
+        }
+      },
+      "output": {
+        "kind": "equals",
+        "field": "id",
+        "values": [
+          "a"
+        ]
+      }
+    },
+    {
+      "name": "notFilter atom",
+      "input": {
+        "filter": {
+          "kind": "equals",
+          "field": "id",
+          "values": [
+            "a"
+          ]
+        }
+      },
+      "output": {
+        "kind": "not",
+        "filter": {
+          "kind": "equals",
+          "field": "id",
+          "values": [
+            "a"
+          ]
+        }
+      }
+    },
+    {
+      "name": "parseGlob a*",
+      "input": {
+        "pattern": "a*"
+      },
+      "output": [
+        {
+          "kind": "char",
+          "value": "a"
+        },
+        {
+          "kind": "star"
+        }
+      ]
+    },
+    {
+      "name": "globMatches a* a",
+      "input": {
+        "pattern": "a*",
+        "value": "a"
+      },
+      "output": true
+    },
+    {
+      "name": "globMatches a* ab",
+      "input": {
+        "pattern": "a*",
+        "value": "ab"
+      },
+      "output": true
+    },
+    {
+      "name": "globMatches a* b",
+      "input": {
+        "pattern": "a*",
+        "value": "b"
+      },
+      "output": false
+    },
+    {
+      "name": "parseGlob \\*",
+      "input": {
+        "pattern": "\\*"
+      },
+      "output": [
+        {
+          "kind": "char",
+          "value": "*"
+        }
+      ]
+    },
+    {
+      "name": "globMatches \\* *",
+      "input": {
+        "pattern": "\\*",
+        "value": "*"
+      },
+      "output": true
+    },
+    {
+      "name": "globMatches \\* a",
+      "input": {
+        "pattern": "\\*",
+        "value": "a"
+      },
+      "output": false
+    },
+    {
+      "name": "parseGlob a\\?b?",
+      "input": {
+        "pattern": "a\\?b?"
+      },
+      "output": [
+        {
+          "kind": "char",
+          "value": "a"
+        },
+        {
+          "kind": "char",
+          "value": "?"
+        },
+        {
+          "kind": "char",
+          "value": "b"
+        },
+        {
+          "kind": "any"
+        }
+      ]
+    },
+    {
+      "name": "globMatches a\\?b? a?bc",
+      "input": {
+        "pattern": "a\\?b?",
+        "value": "a?bc"
+      },
+      "output": true
+    },
+    {
+      "name": "globMatches a\\?b? axbc",
+      "input": {
+        "pattern": "a\\?b?",
+        "value": "axbc"
+      },
+      "output": false
+    },
+    {
+      "name": "parseGlob \\\\x",
+      "input": {
+        "pattern": "\\\\x"
+      },
+      "output": [
+        {
+          "kind": "char",
+          "value": "\\"
+        },
+        {
+          "kind": "char",
+          "value": "x"
+        }
+      ]
+    },
+    {
+      "name": "globMatches \\\\x \\x",
+      "input": {
+        "pattern": "\\\\x",
+        "value": "\\x"
+      },
+      "output": true
+    },
+    {
+      "name": "globMatches \\\\x x",
+      "input": {
+        "pattern": "\\\\x",
+        "value": "x"
+      },
+      "output": false
+    },
+    {
+      "name": "parseGlob ?😀",
+      "input": {
+        "pattern": "?😀"
+      },
+      "output": [
+        {
+          "kind": "any"
+        },
+        {
+          "kind": "char",
+          "value": "😀"
+        }
+      ]
+    },
+    {
+      "name": "globMatches ?😀 a😀",
+      "input": {
+        "pattern": "?😀",
+        "value": "a😀"
+      },
+      "output": true
+    },
+    {
+      "name": "globMatches ?😀 😀",
+      "input": {
+        "pattern": "?😀",
+        "value": "😀"
+      },
+      "output": false
+    },
+    {
+      "name": "parseGlob trailing\\",
+      "input": {
+        "pattern": "trailing\\"
+      },
+      "output": [
+        {
+          "kind": "char",
+          "value": "t"
+        },
+        {
+          "kind": "char",
+          "value": "r"
+        },
+        {
+          "kind": "char",
+          "value": "a"
+        },
+        {
+          "kind": "char",
+          "value": "i"
+        },
+        {
+          "kind": "char",
+          "value": "l"
+        },
+        {
+          "kind": "char",
+          "value": "i"
+        },
+        {
+          "kind": "char",
+          "value": "n"
+        },
+        {
+          "kind": "char",
+          "value": "g"
+        },
+        {
+          "kind": "char",
+          "value": "\\"
+        }
+      ]
+    },
+    {
+      "name": "globMatches trailing\\ trailing\\",
+      "input": {
+        "pattern": "trailing\\",
+        "value": "trailing\\"
+      },
+      "output": true
+    },
+    {
+      "name": "globMatches trailing\\ trailing",
+      "input": {
+        "pattern": "trailing\\",
+        "value": "trailing"
+      },
+      "output": false
+    },
+    {
+      "name": "fixedPlan true",
+      "input": {
+        "allowed": true
+      },
+      "output": {
+        "kind": "always",
+        "filter": {
+          "kind": "true"
+        }
+      }
+    },
+    {
+      "name": "fixedPlan false",
+      "input": {
+        "allowed": false
+      },
+      "output": {
+        "kind": "never",
+        "filter": {
+          "kind": "false"
+        }
+      }
+    },
+    {
+      "name": "intersectPlans",
+      "input": {
+        "left": {
+          "kind": "conditional",
+          "filter": {
+            "kind": "equals",
+            "field": "id",
+            "values": [
+              "a",
+              "b"
+            ]
+          }
+        },
+        "right": {
+          "kind": "conditional",
+          "filter": {
+            "kind": "equals",
+            "field": "owner",
+            "values": [
+              "x"
+            ]
+          }
+        }
+      },
+      "output": {
+        "kind": "conditional",
+        "filter": {
+          "kind": "and",
+          "filters": [
+            {
+              "kind": "equals",
+              "field": "id",
+              "values": [
+                "a",
+                "b"
+              ]
+            },
+            {
+              "kind": "equals",
+              "field": "owner",
+              "values": [
+                "x"
+              ]
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

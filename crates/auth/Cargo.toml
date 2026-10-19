@@ -1,0 +1,57 @@
+[package]
+name = "better-iam-auth"
+description = "Tenant-scoped authentication for Better IAM (Rust): passwords, passkeys, magic links, email and SMS codes, TOTP with recovery codes, and sessions, sharing its records with the TypeScript implementation."
+readme = "README.md"
+exclude = ["tests/fixtures"]
+keywords = ["iam", "authentication", "passkeys", "webauthn", "totp"]
+categories = ["authentication", "web-programming"]
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+better-iam-core.workspace = true
+async-trait.workspace = true
+futures.workspace = true
+regex.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["rt", "sync", "macros", "time", "net", "io-util"] }
+rustls.workspace = true
+webpki-roots.workspace = true
+bytes.workspace = true
+# Cryptography (RustCrypto, no OpenSSL).
+aes-gcm = "0.10"
+argon2 = { version = "0.5", default-features = false, features = ["alloc"] }
+base64 = "0.22"
+crc32fast = "1"
+ed25519-dalek = "2"
+hmac = "0.12"
+p256 = { version = "0.13", default-features = false, features = ["ecdsa", "std"] }
+p384 = { version = "0.13", default-features = false, features = ["ecdsa", "std"] }
+p521 = { version = "0.13", default-features = false, features = ["ecdsa", "std"] }
+rand = "0.8"
+rsa = { version = "0.9", default-features = false, features = ["std", "sha2"] }
+sha1 = { version = "0.10", features = ["oid"] }
+subtle = "2"
+# X.509 parsing for WebAuthn attestation statements.
+der = { version = "0.7", features = ["std", "oid", "derive"] }
+x509-cert = { version = "0.2", default-features = false, features = ["std"] }
+# Guarded outbound HTTP (safe-fetch).
+http-body-util = "0.1"
+hyper = { version = "1", features = ["client", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12", "logging"] }
+url = "2"
+
+[dev-dependencies]
+better-iam-adapter-sqlite.workspace = true
+tempfile.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time", "net", "io-util"] }
+p256 = { version = "0.13", default-features = false, features = ["ecdsa", "std"] }

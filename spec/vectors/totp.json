@@ -1,0 +1,326 @@
+{
+  "description": "TOTP (RFC 6238) as the auth service uses otplib's authenticator: base32 secrets of 20 random bytes (generateSecret(20)), HMAC-SHA1, 6 digits, 30-second steps, window 1 (the previous, current and next step are accepted). checkTotp accepts a code once per step: step = floor(now / 30000) + delta, and the step must be greater than the record's lastUsedStep; codes must match /^\\d{6}$/. keyuri: otpauth://totp/{issuer}:{account}?secret=...&period=30&digits=6&algorithm=SHA1&issuer={issuer} (appName default \"Better IAM\").",
+  "source": "packages/auth/src/service/mfa.ts#beginMfa,checkTotp (otplib 12 authenticator)",
+  "cases": [
+    {
+      "name": "generateSecret(20)",
+      "input": {},
+      "output": "BAIBOYCGPNRUWCSPEYLB4PYRIUGSID2A"
+    },
+    {
+      "name": "generate fixed secret at 0",
+      "input": {
+        "secret": "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP",
+        "epoch": 0
+      },
+      "output": "702218"
+    },
+    {
+      "name": "generate generated secret at 0",
+      "input": {
+        "secret": "BAIBOYCGPNRUWCSPEYLB4PYRIUGSID2A",
+        "epoch": 0
+      },
+      "output": "667630"
+    },
+    {
+      "name": "generate fixed secret at 59000",
+      "input": {
+        "secret": "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP",
+        "epoch": 59000
+      },
+      "output": "503347"
+    },
+    {
+      "name": "generate generated secret at 59000",
+      "input": {
+        "secret": "BAIBOYCGPNRUWCSPEYLB4PYRIUGSID2A",
+        "epoch": 59000
+      },
+      "output": "943653"
+    },
+    {
+      "name": "generate fixed secret at 1111111109000",
+      "input": {
+        "secret": "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP",
+        "epoch": 1111111109000
+      },
+      "output": "088309"
+    },
+    {
+      "name": "generate generated secret at 1111111109000",
+      "input": {
+        "secret": "BAIBOYCGPNRUWCSPEYLB4PYRIUGSID2A",
+        "epoch": 1111111109000
+      },
+      "output": "882483"
+    },
+    {
+      "name": "generate fixed secret at 1234567890000",
+      "input": {
+        "secret": "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP",
+        "epoch": 1234567890000
+      },
+      "output": "401544"
+    },
+    {
+      "name": "generate generated secret at 1234567890000",
+      "input": {
+        "secret": "BAIBOYCGPNRUWCSPEYLB4PYRIUGSID2A",
+        "epoch": 1234567890000
+      },
+      "output": "893216"
+    },
+    {
+      "name": "generate fixed secret at 2000000000000",
+      "input": {
+        "secret": "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP",
+        "epoch": 2000000000000
+      },
+      "output": "978524"
+    },
+    {
+      "name": "generate generated secret at 2000000000000",
+      "input": {
+        "secret": "BAIBOYCGPNRUWCSPEYLB4PYRIUGSID2A",
+        "epoch": 2000000000000
+      },
+      "output": "441446"
+    },
+    {
+      "name": "generate fixed secret at 1767225600000",
+      "input": {
+        "secret": "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP",
+        "epoch": 1767225600000
+      },
+      "output": "452777"
+    },
+    {
+      "name": "generate generated secret at 1767225600000",
+      "input": {
+        "secret": "BAIBOYCGPNRUWCSPEYLB4PYRIUGSID2A",
+        "epoch": 1767225600000
+      },
+      "output": "209346"
+    },
+    {
+      "name": "generate fixed secret at 1767225629999",
+      "input": {
+        "secret": "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP",
+        "epoch": 1767225629999
+      },
+      "output": "452777"
+    },
+    {
+      "name": "generate generated secret at 1767225629999",
+      "input": {
+        "secret": "BAIBOYCGPNRUWCSPEYLB4PYRIUGSID2A",
+        "epoch": 1767225629999
+      },
+      "output": "209346"
+    },
+    {
+      "name": "generate fixed secret at 1767225630000",
+      "input": {
+        "secret": "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP",
+        "epoch": 1767225630000
+      },
+      "output": "978927"
+    },
+    {
+      "name": "generate generated secret at 1767225630000",
+      "input": {
+        "secret": "BAIBOYCGPNRUWCSPEYLB4PYRIUGSID2A",
+        "epoch": 1767225630000
+      },
+      "output": "351013"
+    },
+    {
+      "name": "checkDelta current step",
+      "input": {
+        "secret": "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP",
+        "code": "452777",
+        "epoch": 1767225600000
+      },
+      "output": 0
+    },
+    {
+      "name": "checkDelta previous step",
+      "input": {
+        "secret": "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP",
+        "code": "633020",
+        "epoch": 1767225600000
+      },
+      "output": -1
+    },
+    {
+      "name": "checkDelta next step",
+      "input": {
+        "secret": "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP",
+        "code": "978927",
+        "epoch": 1767225600000
+      },
+      "output": 1
+    },
+    {
+      "name": "checkDelta two steps back",
+      "input": {
+        "secret": "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP",
+        "code": "478298",
+        "epoch": 1767225600000
+      },
+      "output": null
+    },
+    {
+      "name": "checkDelta wrong code",
+      "input": {
+        "secret": "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP",
+        "code": "000000",
+        "epoch": 1767225600000
+      },
+      "output": null
+    },
+    {
+      "name": "keyuri ada@example.com",
+      "input": {
+        "account": "ada@example.com",
+        "issuer": "Better IAM",
+        "secret": "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP"
+      },
+      "output": "otpauth://totp/Better%20IAM:ada%40example.com?secret=JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP&period=30&digits=6&algorithm=SHA1&issuer=Better%20IAM"
+    },
+    {
+      "name": "keyuri idn_01",
+      "input": {
+        "account": "idn_01",
+        "issuer": "Acme Identity",
+        "secret": "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP"
+      },
+      "output": "otpauth://totp/Acme%20Identity:idn_01?secret=JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP&period=30&digits=6&algorithm=SHA1&issuer=Acme%20Identity"
+    },
+    {
+      "name": "keyuri ünï code@example.com",
+      "input": {
+        "account": "ünï code@example.com",
+        "issuer": "Better IAM",
+        "secret": "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP"
+      },
+      "output": "otpauth://totp/Better%20IAM:%C3%BCn%C3%AF%20code%40example.com?secret=JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP&period=30&digits=6&algorithm=SHA1&issuer=Better%20IAM"
+    },
+    {
+      "name": "checkTotp current code",
+      "input": {
+        "secret": "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP",
+        "code": "452777",
+        "now": 1767225600000,
+        "lastUsedStep": -1
+      },
+      "output": 58907520
+    },
+    {
+      "name": "checkTotp previous-step code",
+      "input": {
+        "secret": "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP",
+        "code": "633020",
+        "now": 1767225600000,
+        "lastUsedStep": -1
+      },
+      "output": 58907519
+    },
+    {
+      "name": "checkTotp next-step code",
+      "input": {
+        "secret": "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP",
+        "code": "978927",
+        "now": 1767225600000,
+        "lastUsedStep": -1
+      },
+      "output": 58907521
+    },
+    {
+      "name": "checkTotp replayed step",
+      "input": {
+        "secret": "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP",
+        "code": "452777",
+        "now": 1767225600000,
+        "lastUsedStep": 58907520
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "INVALID_MFA",
+          "status": 401,
+          "message": "Invalid or previously used MFA code"
+        }
+      }
+    },
+    {
+      "name": "checkTotp older step after newer use",
+      "input": {
+        "secret": "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP",
+        "code": "633020",
+        "now": 1767225600000,
+        "lastUsedStep": 58907520
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "INVALID_MFA",
+          "status": 401,
+          "message": "Invalid or previously used MFA code"
+        }
+      }
+    },
+    {
+      "name": "checkTotp wrong code",
+      "input": {
+        "secret": "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP",
+        "code": "123456",
+        "now": 1767225600000,
+        "lastUsedStep": -1
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "INVALID_MFA",
+          "status": 401,
+          "message": "Invalid or previously used MFA code"
+        }
+      }
+    },
+    {
+      "name": "checkTotp five digits",
+      "input": {
+        "secret": "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP",
+        "code": "12345",
+        "now": 1767225600000,
+        "lastUsedStep": -1
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "INVALID_MFA",
+          "status": 401,
+          "message": "Invalid MFA code"
+        }
+      }
+    },
+    {
+      "name": "checkTotp letters",
+      "input": {
+        "secret": "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP",
+        "code": "abcdef",
+        "now": 1767225600000,
+        "lastUsedStep": -1
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "INVALID_MFA",
+          "status": 401,
+          "message": "Invalid MFA code"
+        }
+      }
+    }
+  ]
+}

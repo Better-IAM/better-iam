@@ -1,0 +1,914 @@
+{
+  "description": "Stateless HS256 assertions. key = assertionKey(secret) (hex); token = base64url(JSON {\"alg\":\"HS256\",\"typ\":\"JWT\"}) \".\" base64url(JSON.stringify(claims)) \".\" base64url(HMAC-SHA256(hex-decoded key, header.payload)). issue cases run the real assertions.issue with a stubbed operation envelope (principal, tenant, grant sources and clock given in the input). verifyAssertion accepts only the canonical header and signature spelling, checks the audience, optional issuer, exp + tolerance > now and iat - tolerance <= now (seconds, tolerance default 30).",
+  "source": "packages/server/src/assertions.ts#createAssertionsApi.issue,verifyAssertion,assertionKey",
+  "cases": [
+    {
+      "name": "issue user assertion",
+      "input": {
+        "baseURL": "https://iam.example.com",
+        "now": 1767225600000,
+        "principal": {
+          "identity": {
+            "id": "idn_01",
+            "name": "Ada Lovelace",
+            "email": "ada@example.com"
+          },
+          "session": {
+            "kind": "user",
+            "mfa": true,
+            "method": "password"
+          }
+        },
+        "groupIds": [
+          "grp_b",
+          "grp_a"
+        ],
+        "roleIds": [
+          "role_x",
+          "role_a",
+          "role_x"
+        ],
+        "request": {
+          "tenantId": "tnt_01",
+          "audience": "https://api.example.com"
+        }
+      },
+      "output": {
+        "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJodHRwczovL2lhbS5leGFtcGxlLmNvbSIsInN1YiI6Imlkbl8wMSIsImF1ZCI6Imh0dHBzOi8vYXBpLmV4YW1wbGUuY29tIiwiaWF0IjoxNzY3MjI1NjAwLCJleHAiOjE3NjcyMjU5MDAsImp0aSI6ImFmYWY4MTBjLTI0ZjItNDNkNi1hMThlLTRmNGNlOTdmY2ExNiIsInRpZCI6InRudF8wMSIsImtpbmQiOiJ1c2VyIiwibWZhIjp0cnVlLCJuYW1lIjoiQWRhIExvdmVsYWNlIiwicm9sZXMiOlsicm9sZV9hIiwicm9sZV94Il0sImdyb3VwcyI6WyJncnBfYSIsImdycF9iIl0sIm1ldGhvZCI6InBhc3N3b3JkIiwiZW1haWwiOiJhZGFAZXhhbXBsZS5jb20ifQ.76WqETIkeUjIVQQKKE_AHy1nex86ybEhgiRxrdX6tC4",
+        "expiresAt": 1767225900000,
+        "claims": {
+          "iss": "https://iam.example.com",
+          "sub": "idn_01",
+          "aud": "https://api.example.com",
+          "iat": 1767225600,
+          "exp": 1767225900,
+          "jti": "afaf810c-24f2-43d6-a18e-4f4ce97fca16",
+          "tid": "tnt_01",
+          "kind": "user",
+          "mfa": true,
+          "name": "Ada Lovelace",
+          "roles": [
+            "role_a",
+            "role_x"
+          ],
+          "groups": [
+            "grp_a",
+            "grp_b"
+          ],
+          "method": "password",
+          "email": "ada@example.com"
+        }
+      }
+    },
+    {
+      "name": "issue with ttl and claims",
+      "input": {
+        "baseURL": "https://iam.example.com",
+        "now": 1767225600000,
+        "principal": {
+          "identity": {
+            "id": "idn_01",
+            "name": "Ada Lovelace",
+            "email": "ada@example.com"
+          },
+          "session": {
+            "kind": "user",
+            "mfa": true,
+            "method": "password"
+          }
+        },
+        "groupIds": [
+          "grp_b",
+          "grp_a"
+        ],
+        "roleIds": [
+          "role_x",
+          "role_a",
+          "role_x"
+        ],
+        "request": {
+          "tenantId": "tnt_01",
+          "audience": "billing-service",
+          "ttlSeconds": 60,
+          "claims": {
+            "plan": "pro",
+            "seats": 5
+          }
+        }
+      },
+      "output": {
+        "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJodHRwczovL2lhbS5leGFtcGxlLmNvbSIsInN1YiI6Imlkbl8wMSIsImF1ZCI6ImJpbGxpbmctc2VydmljZSIsImlhdCI6MTc2NzIyNTYwMCwiZXhwIjoxNzY3MjI1NjYwLCJqdGkiOiIyMDJlMDI2Ni0xYzA1LTRlNzUtOTczNC01ZTE4YTJmYmIwMmIiLCJ0aWQiOiJ0bnRfMDEiLCJraW5kIjoidXNlciIsIm1mYSI6dHJ1ZSwibmFtZSI6IkFkYSBMb3ZlbGFjZSIsInJvbGVzIjpbInJvbGVfYSIsInJvbGVfeCJdLCJncm91cHMiOlsiZ3JwX2EiLCJncnBfYiJdLCJtZXRob2QiOiJwYXNzd29yZCIsImVtYWlsIjoiYWRhQGV4YW1wbGUuY29tIiwiZXh0Ijp7InBsYW4iOiJwcm8iLCJzZWF0cyI6NX19.9tub8VfKbkyNGs1XAnLOK8mgnxr3WE5Tzyr8H8Yrqh4",
+        "expiresAt": 1767225660000,
+        "claims": {
+          "iss": "https://iam.example.com",
+          "sub": "idn_01",
+          "aud": "billing-service",
+          "iat": 1767225600,
+          "exp": 1767225660,
+          "jti": "202e0266-1c05-4e75-9734-5e18a2fbb02b",
+          "tid": "tnt_01",
+          "kind": "user",
+          "mfa": true,
+          "name": "Ada Lovelace",
+          "roles": [
+            "role_a",
+            "role_x"
+          ],
+          "groups": [
+            "grp_a",
+            "grp_b"
+          ],
+          "method": "password",
+          "email": "ada@example.com",
+          "ext": {
+            "plan": "pro",
+            "seats": 5
+          }
+        }
+      }
+    },
+    {
+      "name": "issue for role session",
+      "input": {
+        "baseURL": "https://iam.example.com",
+        "now": 1767225600000,
+        "principal": {
+          "identity": {
+            "id": "role_admin",
+            "name": "Admin role"
+          },
+          "session": {
+            "kind": "role",
+            "mfa": false,
+            "roleId": "role_admin"
+          }
+        },
+        "groupIds": [
+          "grp_b",
+          "grp_a"
+        ],
+        "roleIds": [
+          "role_x",
+          "role_a",
+          "role_x"
+        ],
+        "request": {
+          "tenantId": "tnt_01",
+          "audience": "svc"
+        }
+      },
+      "output": {
+        "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJodHRwczovL2lhbS5leGFtcGxlLmNvbSIsInN1YiI6InJvbGVfYWRtaW4iLCJhdWQiOiJzdmMiLCJpYXQiOjE3NjcyMjU2MDAsImV4cCI6MTc2NzIyNTkwMCwianRpIjoiMDgyYzllNjAtZjFlOS00ZGNhLWEyMzQtMTM4ZWE0ZGEzNzcwIiwidGlkIjoidG50XzAxIiwia2luZCI6InJvbGUiLCJtZmEiOmZhbHNlLCJuYW1lIjoiQWRtaW4gcm9sZSIsInJvbGVzIjpbInJvbGVfYWRtaW4iXSwiZ3JvdXBzIjpbXX0.HH5xZVA5-CzP5L-pIap____nYp268d2bVg5DHDLsN9Q",
+        "expiresAt": 1767225900000,
+        "claims": {
+          "iss": "https://iam.example.com",
+          "sub": "role_admin",
+          "aud": "svc",
+          "iat": 1767225600,
+          "exp": 1767225900,
+          "jti": "082c9e60-f1e9-4dca-a234-138ea4da3770",
+          "tid": "tnt_01",
+          "kind": "role",
+          "mfa": false,
+          "name": "Admin role",
+          "roles": [
+            "role_admin"
+          ],
+          "groups": []
+        }
+      }
+    },
+    {
+      "name": "issue for impersonation",
+      "input": {
+        "baseURL": "https://iam.example.com",
+        "now": 1767225600000,
+        "principal": {
+          "identity": {
+            "id": "idn_02",
+            "name": "Member"
+          },
+          "session": {
+            "kind": "user",
+            "mfa": true,
+            "impersonatorId": "idn_root"
+          }
+        },
+        "groupIds": [
+          "grp_b",
+          "grp_a"
+        ],
+        "roleIds": [
+          "role_x",
+          "role_a",
+          "role_x"
+        ],
+        "request": {
+          "tenantId": "tnt_01",
+          "audience": "svc"
+        }
+      },
+      "output": {
+        "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJodHRwczovL2lhbS5leGFtcGxlLmNvbSIsInN1YiI6Imlkbl8wMiIsImF1ZCI6InN2YyIsImlhdCI6MTc2NzIyNTYwMCwiZXhwIjoxNzY3MjI1OTAwLCJqdGkiOiJhN2I2MzE3Ny0xZGE3LTQ4MTUtODI1Ni1lNmI5YWM1YjI2OWIiLCJ0aWQiOiJ0bnRfMDEiLCJraW5kIjoidXNlciIsIm1mYSI6dHJ1ZSwibmFtZSI6Ik1lbWJlciIsInJvbGVzIjpbInJvbGVfYSIsInJvbGVfeCJdLCJncm91cHMiOlsiZ3JwX2EiLCJncnBfYiJdLCJpbXBlcnNvbmF0b3JJZCI6Imlkbl9yb290In0.XnNoETiT4iWIXPu3N3LwP3sYDQ9KyA2asgHv_4BCr24",
+        "expiresAt": 1767225900000,
+        "claims": {
+          "iss": "https://iam.example.com",
+          "sub": "idn_02",
+          "aud": "svc",
+          "iat": 1767225600,
+          "exp": 1767225900,
+          "jti": "a7b63177-1da7-4815-8256-e6b9ac5b269b",
+          "tid": "tnt_01",
+          "kind": "user",
+          "mfa": true,
+          "name": "Member",
+          "roles": [
+            "role_a",
+            "role_x"
+          ],
+          "groups": [
+            "grp_a",
+            "grp_b"
+          ],
+          "impersonatorId": "idn_root"
+        }
+      }
+    },
+    {
+      "name": "issue ttl below minimum",
+      "input": {
+        "baseURL": "https://iam.example.com",
+        "now": 1767225600000,
+        "principal": {
+          "identity": {
+            "id": "idn_01",
+            "name": "Ada Lovelace",
+            "email": "ada@example.com"
+          },
+          "session": {
+            "kind": "user",
+            "mfa": true,
+            "method": "password"
+          }
+        },
+        "groupIds": [
+          "grp_b",
+          "grp_a"
+        ],
+        "roleIds": [
+          "role_x",
+          "role_a",
+          "role_x"
+        ],
+        "request": {
+          "tenantId": "tnt_01",
+          "audience": "svc",
+          "ttlSeconds": 5
+        }
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "INVALID_INPUT",
+          "status": 400,
+          "message": "Invalid ttlSeconds"
+        }
+      }
+    },
+    {
+      "name": "issue ttl above maximum",
+      "input": {
+        "baseURL": "https://iam.example.com",
+        "now": 1767225600000,
+        "principal": {
+          "identity": {
+            "id": "idn_01",
+            "name": "Ada Lovelace",
+            "email": "ada@example.com"
+          },
+          "session": {
+            "kind": "user",
+            "mfa": true,
+            "method": "password"
+          }
+        },
+        "groupIds": [
+          "grp_b",
+          "grp_a"
+        ],
+        "roleIds": [
+          "role_x",
+          "role_a",
+          "role_x"
+        ],
+        "request": {
+          "tenantId": "tnt_01",
+          "audience": "svc",
+          "ttlSeconds": 3601
+        }
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "INVALID_INPUT",
+          "status": 400,
+          "message": "Invalid ttlSeconds"
+        }
+      }
+    },
+    {
+      "name": "issue invalid audience",
+      "input": {
+        "baseURL": "https://iam.example.com",
+        "now": 1767225600000,
+        "principal": {
+          "identity": {
+            "id": "idn_01",
+            "name": "Ada Lovelace",
+            "email": "ada@example.com"
+          },
+          "session": {
+            "kind": "user",
+            "mfa": true,
+            "method": "password"
+          }
+        },
+        "groupIds": [
+          "grp_b",
+          "grp_a"
+        ],
+        "roleIds": [
+          "role_x",
+          "role_a",
+          "role_x"
+        ],
+        "request": {
+          "tenantId": "tnt_01",
+          "audience": "has space"
+        }
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "INVALID_INPUT",
+          "status": 400,
+          "message": "audience must be a URL-safe identifier"
+        }
+      }
+    },
+    {
+      "name": "issue claims redefining sub",
+      "input": {
+        "baseURL": "https://iam.example.com",
+        "now": 1767225600000,
+        "principal": {
+          "identity": {
+            "id": "idn_01",
+            "name": "Ada Lovelace",
+            "email": "ada@example.com"
+          },
+          "session": {
+            "kind": "user",
+            "mfa": true,
+            "method": "password"
+          }
+        },
+        "groupIds": [
+          "grp_b",
+          "grp_a"
+        ],
+        "roleIds": [
+          "role_x",
+          "role_a",
+          "role_x"
+        ],
+        "request": {
+          "tenantId": "tnt_01",
+          "audience": "svc",
+          "claims": {
+            "sub": "x"
+          }
+        }
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "INVALID_INPUT",
+          "status": 400,
+          "message": "claims cannot redefine sub"
+        }
+      }
+    },
+    {
+      "name": "issue claims too large",
+      "input": {
+        "baseURL": "https://iam.example.com",
+        "now": 1767225600000,
+        "principal": {
+          "identity": {
+            "id": "idn_01",
+            "name": "Ada Lovelace",
+            "email": "ada@example.com"
+          },
+          "session": {
+            "kind": "user",
+            "mfa": true,
+            "method": "password"
+          }
+        },
+        "groupIds": [
+          "grp_b",
+          "grp_a"
+        ],
+        "roleIds": [
+          "role_x",
+          "role_a",
+          "role_x"
+        ],
+        "request": {
+          "tenantId": "tnt_01",
+          "audience": "svc",
+          "claims": {
+            "big": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+          }
+        }
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "INVALID_INPUT",
+          "status": 400,
+          "message": "claims must serialize to at most 4 KiB"
+        }
+      }
+    },
+    {
+      "name": "issue scoped session token",
+      "input": {
+        "baseURL": "https://iam.example.com",
+        "now": 1767225600000,
+        "principal": {
+          "identity": {
+            "id": "idn_01",
+            "name": "Ada Lovelace",
+            "email": "ada@example.com"
+          },
+          "session": {
+            "kind": "session-token",
+            "mfa": true,
+            "method": "password",
+            "policy": {
+              "version": 1,
+              "statements": []
+            }
+          }
+        },
+        "groupIds": [
+          "grp_b",
+          "grp_a"
+        ],
+        "roleIds": [
+          "role_x",
+          "role_a",
+          "role_x"
+        ],
+        "request": {
+          "tenantId": "tnt_01",
+          "audience": "svc"
+        }
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "ACCESS_DENIED",
+          "status": 403,
+          "message": "Scoped session tokens cannot obtain assertions"
+        }
+      }
+    },
+    {
+      "name": "issue delegated session",
+      "input": {
+        "baseURL": "https://iam.example.com",
+        "now": 1767225600000,
+        "principal": {
+          "identity": {
+            "id": "idn_01",
+            "name": "Ada Lovelace",
+            "email": "ada@example.com"
+          },
+          "session": {
+            "kind": "delegated",
+            "mfa": false
+          }
+        },
+        "groupIds": [
+          "grp_b",
+          "grp_a"
+        ],
+        "roleIds": [
+          "role_x",
+          "role_a",
+          "role_x"
+        ],
+        "request": {
+          "tenantId": "tnt_01",
+          "audience": "svc"
+        }
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "ACCESS_DENIED",
+          "status": 403,
+          "message": "Delegated agent sessions cannot obtain assertions"
+        }
+      }
+    },
+    {
+      "name": "verify valid",
+      "input": {
+        "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJodHRwczovL2lhbS5leGFtcGxlLmNvbSIsInN1YiI6Imlkbl8wMSIsImF1ZCI6Imh0dHBzOi8vYXBpLmV4YW1wbGUuY29tIiwiaWF0IjoxNzY3MjI1NjAwLCJleHAiOjE3NjcyMjU5MDAsImp0aSI6ImFmYWY4MTBjLTI0ZjItNDNkNi1hMThlLTRmNGNlOTdmY2ExNiIsInRpZCI6InRudF8wMSIsImtpbmQiOiJ1c2VyIiwibWZhIjp0cnVlLCJuYW1lIjoiQWRhIExvdmVsYWNlIiwicm9sZXMiOlsicm9sZV9hIiwicm9sZV94Il0sImdyb3VwcyI6WyJncnBfYSIsImdycF9iIl0sIm1ldGhvZCI6InBhc3N3b3JkIiwiZW1haWwiOiJhZGFAZXhhbXBsZS5jb20ifQ.76WqETIkeUjIVQQKKE_AHy1nex86ybEhgiRxrdX6tC4",
+        "options": {
+          "key": "5b723b4d5bbce2a9a11ebf9a32e9c6a74de963d5a432cb557be6167f2e0c35be",
+          "audience": "https://api.example.com",
+          "now": 1767225600000
+        }
+      },
+      "output": {
+        "iss": "https://iam.example.com",
+        "sub": "idn_01",
+        "aud": "https://api.example.com",
+        "iat": 1767225600,
+        "exp": 1767225900,
+        "jti": "afaf810c-24f2-43d6-a18e-4f4ce97fca16",
+        "tid": "tnt_01",
+        "kind": "user",
+        "mfa": true,
+        "name": "Ada Lovelace",
+        "roles": [
+          "role_a",
+          "role_x"
+        ],
+        "groups": [
+          "grp_a",
+          "grp_b"
+        ],
+        "method": "password",
+        "email": "ada@example.com"
+      }
+    },
+    {
+      "name": "verify with key list (rotation)",
+      "input": {
+        "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJodHRwczovL2lhbS5leGFtcGxlLmNvbSIsInN1YiI6Imlkbl8wMSIsImF1ZCI6Imh0dHBzOi8vYXBpLmV4YW1wbGUuY29tIiwiaWF0IjoxNzY3MjI1NjAwLCJleHAiOjE3NjcyMjU5MDAsImp0aSI6ImFmYWY4MTBjLTI0ZjItNDNkNi1hMThlLTRmNGNlOTdmY2ExNiIsInRpZCI6InRudF8wMSIsImtpbmQiOiJ1c2VyIiwibWZhIjp0cnVlLCJuYW1lIjoiQWRhIExvdmVsYWNlIiwicm9sZXMiOlsicm9sZV9hIiwicm9sZV94Il0sImdyb3VwcyI6WyJncnBfYSIsImdycF9iIl0sIm1ldGhvZCI6InBhc3N3b3JkIiwiZW1haWwiOiJhZGFAZXhhbXBsZS5jb20ifQ.76WqETIkeUjIVQQKKE_AHy1nex86ybEhgiRxrdX6tC4",
+        "options": {
+          "key": [
+            "a6db4dc7752b9651e0a6858249e3cd2822b9c50276903c45dd2747f427a68415",
+            "5b723b4d5bbce2a9a11ebf9a32e9c6a74de963d5a432cb557be6167f2e0c35be"
+          ],
+          "audience": "https://api.example.com",
+          "now": 1767225600000
+        }
+      },
+      "output": {
+        "iss": "https://iam.example.com",
+        "sub": "idn_01",
+        "aud": "https://api.example.com",
+        "iat": 1767225600,
+        "exp": 1767225900,
+        "jti": "afaf810c-24f2-43d6-a18e-4f4ce97fca16",
+        "tid": "tnt_01",
+        "kind": "user",
+        "mfa": true,
+        "name": "Ada Lovelace",
+        "roles": [
+          "role_a",
+          "role_x"
+        ],
+        "groups": [
+          "grp_a",
+          "grp_b"
+        ],
+        "method": "password",
+        "email": "ada@example.com"
+      }
+    },
+    {
+      "name": "verify with issuer",
+      "input": {
+        "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJodHRwczovL2lhbS5leGFtcGxlLmNvbSIsInN1YiI6Imlkbl8wMSIsImF1ZCI6Imh0dHBzOi8vYXBpLmV4YW1wbGUuY29tIiwiaWF0IjoxNzY3MjI1NjAwLCJleHAiOjE3NjcyMjU5MDAsImp0aSI6ImFmYWY4MTBjLTI0ZjItNDNkNi1hMThlLTRmNGNlOTdmY2ExNiIsInRpZCI6InRudF8wMSIsImtpbmQiOiJ1c2VyIiwibWZhIjp0cnVlLCJuYW1lIjoiQWRhIExvdmVsYWNlIiwicm9sZXMiOlsicm9sZV9hIiwicm9sZV94Il0sImdyb3VwcyI6WyJncnBfYSIsImdycF9iIl0sIm1ldGhvZCI6InBhc3N3b3JkIiwiZW1haWwiOiJhZGFAZXhhbXBsZS5jb20ifQ.76WqETIkeUjIVQQKKE_AHy1nex86ybEhgiRxrdX6tC4",
+        "options": {
+          "key": "5b723b4d5bbce2a9a11ebf9a32e9c6a74de963d5a432cb557be6167f2e0c35be",
+          "audience": "https://api.example.com",
+          "issuer": "https://iam.example.com",
+          "now": 1767225600000
+        }
+      },
+      "output": {
+        "iss": "https://iam.example.com",
+        "sub": "idn_01",
+        "aud": "https://api.example.com",
+        "iat": 1767225600,
+        "exp": 1767225900,
+        "jti": "afaf810c-24f2-43d6-a18e-4f4ce97fca16",
+        "tid": "tnt_01",
+        "kind": "user",
+        "mfa": true,
+        "name": "Ada Lovelace",
+        "roles": [
+          "role_a",
+          "role_x"
+        ],
+        "groups": [
+          "grp_a",
+          "grp_b"
+        ],
+        "method": "password",
+        "email": "ada@example.com"
+      }
+    },
+    {
+      "name": "verify wrong issuer",
+      "input": {
+        "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJodHRwczovL2lhbS5leGFtcGxlLmNvbSIsInN1YiI6Imlkbl8wMSIsImF1ZCI6Imh0dHBzOi8vYXBpLmV4YW1wbGUuY29tIiwiaWF0IjoxNzY3MjI1NjAwLCJleHAiOjE3NjcyMjU5MDAsImp0aSI6ImFmYWY4MTBjLTI0ZjItNDNkNi1hMThlLTRmNGNlOTdmY2ExNiIsInRpZCI6InRudF8wMSIsImtpbmQiOiJ1c2VyIiwibWZhIjp0cnVlLCJuYW1lIjoiQWRhIExvdmVsYWNlIiwicm9sZXMiOlsicm9sZV9hIiwicm9sZV94Il0sImdyb3VwcyI6WyJncnBfYSIsImdycF9iIl0sIm1ldGhvZCI6InBhc3N3b3JkIiwiZW1haWwiOiJhZGFAZXhhbXBsZS5jb20ifQ.76WqETIkeUjIVQQKKE_AHy1nex86ybEhgiRxrdX6tC4",
+        "options": {
+          "key": "5b723b4d5bbce2a9a11ebf9a32e9c6a74de963d5a432cb557be6167f2e0c35be",
+          "audience": "https://api.example.com",
+          "issuer": "https://other.example.com",
+          "now": 1767225600000
+        }
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "INVALID_ASSERTION",
+          "status": 401,
+          "message": "Issuer mismatch"
+        }
+      }
+    },
+    {
+      "name": "verify wrong audience",
+      "input": {
+        "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJodHRwczovL2lhbS5leGFtcGxlLmNvbSIsInN1YiI6Imlkbl8wMSIsImF1ZCI6Imh0dHBzOi8vYXBpLmV4YW1wbGUuY29tIiwiaWF0IjoxNzY3MjI1NjAwLCJleHAiOjE3NjcyMjU5MDAsImp0aSI6ImFmYWY4MTBjLTI0ZjItNDNkNi1hMThlLTRmNGNlOTdmY2ExNiIsInRpZCI6InRudF8wMSIsImtpbmQiOiJ1c2VyIiwibWZhIjp0cnVlLCJuYW1lIjoiQWRhIExvdmVsYWNlIiwicm9sZXMiOlsicm9sZV9hIiwicm9sZV94Il0sImdyb3VwcyI6WyJncnBfYSIsImdycF9iIl0sIm1ldGhvZCI6InBhc3N3b3JkIiwiZW1haWwiOiJhZGFAZXhhbXBsZS5jb20ifQ.76WqETIkeUjIVQQKKE_AHy1nex86ybEhgiRxrdX6tC4",
+        "options": {
+          "key": "5b723b4d5bbce2a9a11ebf9a32e9c6a74de963d5a432cb557be6167f2e0c35be",
+          "audience": "svc",
+          "now": 1767225600000
+        }
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "INVALID_ASSERTION",
+          "status": 401,
+          "message": "Audience mismatch"
+        }
+      }
+    },
+    {
+      "name": "verify wrong key",
+      "input": {
+        "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJodHRwczovL2lhbS5leGFtcGxlLmNvbSIsInN1YiI6Imlkbl8wMSIsImF1ZCI6Imh0dHBzOi8vYXBpLmV4YW1wbGUuY29tIiwiaWF0IjoxNzY3MjI1NjAwLCJleHAiOjE3NjcyMjU5MDAsImp0aSI6ImFmYWY4MTBjLTI0ZjItNDNkNi1hMThlLTRmNGNlOTdmY2ExNiIsInRpZCI6InRudF8wMSIsImtpbmQiOiJ1c2VyIiwibWZhIjp0cnVlLCJuYW1lIjoiQWRhIExvdmVsYWNlIiwicm9sZXMiOlsicm9sZV9hIiwicm9sZV94Il0sImdyb3VwcyI6WyJncnBfYSIsImdycF9iIl0sIm1ldGhvZCI6InBhc3N3b3JkIiwiZW1haWwiOiJhZGFAZXhhbXBsZS5jb20ifQ.76WqETIkeUjIVQQKKE_AHy1nex86ybEhgiRxrdX6tC4",
+        "options": {
+          "key": "a6db4dc7752b9651e0a6858249e3cd2822b9c50276903c45dd2747f427a68415",
+          "audience": "https://api.example.com",
+          "now": 1767225600000
+        }
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "INVALID_ASSERTION",
+          "status": 401,
+          "message": "Invalid signature"
+        }
+      }
+    },
+    {
+      "name": "verify malformed key",
+      "input": {
+        "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJodHRwczovL2lhbS5leGFtcGxlLmNvbSIsInN1YiI6Imlkbl8wMSIsImF1ZCI6Imh0dHBzOi8vYXBpLmV4YW1wbGUuY29tIiwiaWF0IjoxNzY3MjI1NjAwLCJleHAiOjE3NjcyMjU5MDAsImp0aSI6ImFmYWY4MTBjLTI0ZjItNDNkNi1hMThlLTRmNGNlOTdmY2ExNiIsInRpZCI6InRudF8wMSIsImtpbmQiOiJ1c2VyIiwibWZhIjp0cnVlLCJuYW1lIjoiQWRhIExvdmVsYWNlIiwicm9sZXMiOlsicm9sZV9hIiwicm9sZV94Il0sImdyb3VwcyI6WyJncnBfYSIsImdycF9iIl0sIm1ldGhvZCI6InBhc3N3b3JkIiwiZW1haWwiOiJhZGFAZXhhbXBsZS5jb20ifQ.76WqETIkeUjIVQQKKE_AHy1nex86ybEhgiRxrdX6tC4",
+        "options": {
+          "key": "abc",
+          "audience": "https://api.example.com",
+          "now": 1767225600000
+        }
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "INVALID_ASSERTION",
+          "status": 401,
+          "message": "Invalid verification key"
+        }
+      }
+    },
+    {
+      "name": "verify empty key list",
+      "input": {
+        "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJodHRwczovL2lhbS5leGFtcGxlLmNvbSIsInN1YiI6Imlkbl8wMSIsImF1ZCI6Imh0dHBzOi8vYXBpLmV4YW1wbGUuY29tIiwiaWF0IjoxNzY3MjI1NjAwLCJleHAiOjE3NjcyMjU5MDAsImp0aSI6ImFmYWY4MTBjLTI0ZjItNDNkNi1hMThlLTRmNGNlOTdmY2ExNiIsInRpZCI6InRudF8wMSIsImtpbmQiOiJ1c2VyIiwibWZhIjp0cnVlLCJuYW1lIjoiQWRhIExvdmVsYWNlIiwicm9sZXMiOlsicm9sZV9hIiwicm9sZV94Il0sImdyb3VwcyI6WyJncnBfYSIsImdycF9iIl0sIm1ldGhvZCI6InBhc3N3b3JkIiwiZW1haWwiOiJhZGFAZXhhbXBsZS5jb20ifQ.76WqETIkeUjIVQQKKE_AHy1nex86ybEhgiRxrdX6tC4",
+        "options": {
+          "key": [],
+          "audience": "https://api.example.com",
+          "now": 1767225600000
+        }
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "INVALID_ASSERTION",
+          "status": 401,
+          "message": "Invalid verification key"
+        }
+      }
+    },
+    {
+      "name": "verify at expiry within tolerance",
+      "input": {
+        "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJodHRwczovL2lhbS5leGFtcGxlLmNvbSIsInN1YiI6Imlkbl8wMSIsImF1ZCI6Imh0dHBzOi8vYXBpLmV4YW1wbGUuY29tIiwiaWF0IjoxNzY3MjI1NjAwLCJleHAiOjE3NjcyMjU5MDAsImp0aSI6ImFmYWY4MTBjLTI0ZjItNDNkNi1hMThlLTRmNGNlOTdmY2ExNiIsInRpZCI6InRudF8wMSIsImtpbmQiOiJ1c2VyIiwibWZhIjp0cnVlLCJuYW1lIjoiQWRhIExvdmVsYWNlIiwicm9sZXMiOlsicm9sZV9hIiwicm9sZV94Il0sImdyb3VwcyI6WyJncnBfYSIsImdycF9iIl0sIm1ldGhvZCI6InBhc3N3b3JkIiwiZW1haWwiOiJhZGFAZXhhbXBsZS5jb20ifQ.76WqETIkeUjIVQQKKE_AHy1nex86ybEhgiRxrdX6tC4",
+        "options": {
+          "key": "5b723b4d5bbce2a9a11ebf9a32e9c6a74de963d5a432cb557be6167f2e0c35be",
+          "audience": "https://api.example.com",
+          "now": 1767225929000
+        }
+      },
+      "output": {
+        "iss": "https://iam.example.com",
+        "sub": "idn_01",
+        "aud": "https://api.example.com",
+        "iat": 1767225600,
+        "exp": 1767225900,
+        "jti": "afaf810c-24f2-43d6-a18e-4f4ce97fca16",
+        "tid": "tnt_01",
+        "kind": "user",
+        "mfa": true,
+        "name": "Ada Lovelace",
+        "roles": [
+          "role_a",
+          "role_x"
+        ],
+        "groups": [
+          "grp_a",
+          "grp_b"
+        ],
+        "method": "password",
+        "email": "ada@example.com"
+      }
+    },
+    {
+      "name": "verify expired",
+      "input": {
+        "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJodHRwczovL2lhbS5leGFtcGxlLmNvbSIsInN1YiI6Imlkbl8wMSIsImF1ZCI6Imh0dHBzOi8vYXBpLmV4YW1wbGUuY29tIiwiaWF0IjoxNzY3MjI1NjAwLCJleHAiOjE3NjcyMjU5MDAsImp0aSI6ImFmYWY4MTBjLTI0ZjItNDNkNi1hMThlLTRmNGNlOTdmY2ExNiIsInRpZCI6InRudF8wMSIsImtpbmQiOiJ1c2VyIiwibWZhIjp0cnVlLCJuYW1lIjoiQWRhIExvdmVsYWNlIiwicm9sZXMiOlsicm9sZV9hIiwicm9sZV94Il0sImdyb3VwcyI6WyJncnBfYSIsImdycF9iIl0sIm1ldGhvZCI6InBhc3N3b3JkIiwiZW1haWwiOiJhZGFAZXhhbXBsZS5jb20ifQ.76WqETIkeUjIVQQKKE_AHy1nex86ybEhgiRxrdX6tC4",
+        "options": {
+          "key": "5b723b4d5bbce2a9a11ebf9a32e9c6a74de963d5a432cb557be6167f2e0c35be",
+          "audience": "https://api.example.com",
+          "now": 1767225930000
+        }
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "INVALID_ASSERTION",
+          "status": 401,
+          "message": "Assertion expired"
+        }
+      }
+    },
+    {
+      "name": "verify expired with tolerance 0",
+      "input": {
+        "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJodHRwczovL2lhbS5leGFtcGxlLmNvbSIsInN1YiI6Imlkbl8wMSIsImF1ZCI6Imh0dHBzOi8vYXBpLmV4YW1wbGUuY29tIiwiaWF0IjoxNzY3MjI1NjAwLCJleHAiOjE3NjcyMjU5MDAsImp0aSI6ImFmYWY4MTBjLTI0ZjItNDNkNi1hMThlLTRmNGNlOTdmY2ExNiIsInRpZCI6InRudF8wMSIsImtpbmQiOiJ1c2VyIiwibWZhIjp0cnVlLCJuYW1lIjoiQWRhIExvdmVsYWNlIiwicm9sZXMiOlsicm9sZV9hIiwicm9sZV94Il0sImdyb3VwcyI6WyJncnBfYSIsImdycF9iIl0sIm1ldGhvZCI6InBhc3N3b3JkIiwiZW1haWwiOiJhZGFAZXhhbXBsZS5jb20ifQ.76WqETIkeUjIVQQKKE_AHy1nex86ybEhgiRxrdX6tC4",
+        "options": {
+          "key": "5b723b4d5bbce2a9a11ebf9a32e9c6a74de963d5a432cb557be6167f2e0c35be",
+          "audience": "https://api.example.com",
+          "now": 1767225900000,
+          "toleranceSeconds": 0
+        }
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "INVALID_ASSERTION",
+          "status": 401,
+          "message": "Assertion expired"
+        }
+      }
+    },
+    {
+      "name": "verify not yet valid",
+      "input": {
+        "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJodHRwczovL2lhbS5leGFtcGxlLmNvbSIsInN1YiI6Imlkbl8wMSIsImF1ZCI6Imh0dHBzOi8vYXBpLmV4YW1wbGUuY29tIiwiaWF0IjoxNzY3MjI1NjAwLCJleHAiOjE3NjcyMjU5MDAsImp0aSI6ImFmYWY4MTBjLTI0ZjItNDNkNi1hMThlLTRmNGNlOTdmY2ExNiIsInRpZCI6InRudF8wMSIsImtpbmQiOiJ1c2VyIiwibWZhIjp0cnVlLCJuYW1lIjoiQWRhIExvdmVsYWNlIiwicm9sZXMiOlsicm9sZV9hIiwicm9sZV94Il0sImdyb3VwcyI6WyJncnBfYSIsImdycF9iIl0sIm1ldGhvZCI6InBhc3N3b3JkIiwiZW1haWwiOiJhZGFAZXhhbXBsZS5jb20ifQ.76WqETIkeUjIVQQKKE_AHy1nex86ybEhgiRxrdX6tC4",
+        "options": {
+          "key": "5b723b4d5bbce2a9a11ebf9a32e9c6a74de963d5a432cb557be6167f2e0c35be",
+          "audience": "https://api.example.com",
+          "now": 1767225569000
+        }
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "INVALID_ASSERTION",
+          "status": 401,
+          "message": "Assertion not yet valid"
+        }
+      }
+    },
+    {
+      "name": "verify tampered payload",
+      "input": {
+        "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJodHRwczovL2lhbS5leGFtcGxlLmNvbSIsInN1YiI6Imlkbl85OSIsImF1ZCI6Imh0dHBzOi8vYXBpLmV4YW1wbGUuY29tIiwiaWF0IjoxNzY3MjI1NjAwLCJleHAiOjE3NjcyMjU5MDAsImp0aSI6ImFmYWY4MTBjLTI0ZjItNDNkNi1hMThlLTRmNGNlOTdmY2ExNiIsInRpZCI6InRudF8wMSIsImtpbmQiOiJ1c2VyIiwibWZhIjp0cnVlLCJuYW1lIjoiQWRhIExvdmVsYWNlIiwicm9sZXMiOlsicm9sZV9hIiwicm9sZV94Il0sImdyb3VwcyI6WyJncnBfYSIsImdycF9iIl0sIm1ldGhvZCI6InBhc3N3b3JkIiwiZW1haWwiOiJhZGFAZXhhbXBsZS5jb20ifQ.76WqETIkeUjIVQQKKE_AHy1nex86ybEhgiRxrdX6tC4",
+        "options": {
+          "key": "5b723b4d5bbce2a9a11ebf9a32e9c6a74de963d5a432cb557be6167f2e0c35be",
+          "audience": "https://api.example.com",
+          "now": 1767225600000
+        }
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "INVALID_ASSERTION",
+          "status": 401,
+          "message": "Invalid signature"
+        }
+      }
+    },
+    {
+      "name": "verify non-canonical signature spelling",
+      "input": {
+        "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJodHRwczovL2lhbS5leGFtcGxlLmNvbSIsInN1YiI6Imlkbl8wMSIsImF1ZCI6Imh0dHBzOi8vYXBpLmV4YW1wbGUuY29tIiwiaWF0IjoxNzY3MjI1NjAwLCJleHAiOjE3NjcyMjU5MDAsImp0aSI6ImFmYWY4MTBjLTI0ZjItNDNkNi1hMThlLTRmNGNlOTdmY2ExNiIsInRpZCI6InRudF8wMSIsImtpbmQiOiJ1c2VyIiwibWZhIjp0cnVlLCJuYW1lIjoiQWRhIExvdmVsYWNlIiwicm9sZXMiOlsicm9sZV9hIiwicm9sZV94Il0sImdyb3VwcyI6WyJncnBfYSIsImdycF9iIl0sIm1ldGhvZCI6InBhc3N3b3JkIiwiZW1haWwiOiJhZGFAZXhhbXBsZS5jb20ifQ.76WqETIkeUjIVQQKKE_AHy1nex86ybEhgiRxrdX6tC4A",
+        "options": {
+          "key": "5b723b4d5bbce2a9a11ebf9a32e9c6a74de963d5a432cb557be6167f2e0c35be",
+          "audience": "https://api.example.com",
+          "now": 1767225600000
+        }
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "INVALID_ASSERTION",
+          "status": 401,
+          "message": "Invalid signature"
+        }
+      }
+    },
+    {
+      "name": "verify other header",
+      "input": {
+        "token": "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJodHRwczovL2lhbS5leGFtcGxlLmNvbSIsInN1YiI6Imlkbl8wMSIsImF1ZCI6Imh0dHBzOi8vYXBpLmV4YW1wbGUuY29tIiwiaWF0IjoxNzY3MjI1NjAwLCJleHAiOjE3NjcyMjU5MDAsImp0aSI6ImFmYWY4MTBjLTI0ZjItNDNkNi1hMThlLTRmNGNlOTdmY2ExNiIsInRpZCI6InRudF8wMSIsImtpbmQiOiJ1c2VyIiwibWZhIjp0cnVlLCJuYW1lIjoiQWRhIExvdmVsYWNlIiwicm9sZXMiOlsicm9sZV9hIiwicm9sZV94Il0sImdyb3VwcyI6WyJncnBfYSIsImdycF9iIl0sIm1ldGhvZCI6InBhc3N3b3JkIiwiZW1haWwiOiJhZGFAZXhhbXBsZS5jb20ifQ.76WqETIkeUjIVQQKKE_AHy1nex86ybEhgiRxrdX6tC4",
+        "options": {
+          "key": "5b723b4d5bbce2a9a11ebf9a32e9c6a74de963d5a432cb557be6167f2e0c35be",
+          "audience": "https://api.example.com",
+          "now": 1767225600000
+        }
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "INVALID_ASSERTION",
+          "status": 401,
+          "message": "Malformed assertion"
+        }
+      }
+    },
+    {
+      "name": "verify two parts",
+      "input": {
+        "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJodHRwczovL2lhbS5leGFtcGxlLmNvbSIsInN1YiI6Imlkbl8wMSIsImF1ZCI6Imh0dHBzOi8vYXBpLmV4YW1wbGUuY29tIiwiaWF0IjoxNzY3MjI1NjAwLCJleHAiOjE3NjcyMjU5MDAsImp0aSI6ImFmYWY4MTBjLTI0ZjItNDNkNi1hMThlLTRmNGNlOTdmY2ExNiIsInRpZCI6InRudF8wMSIsImtpbmQiOiJ1c2VyIiwibWZhIjp0cnVlLCJuYW1lIjoiQWRhIExvdmVsYWNlIiwicm9sZXMiOlsicm9sZV9hIiwicm9sZV94Il0sImdyb3VwcyI6WyJncnBfYSIsImdycF9iIl0sIm1ldGhvZCI6InBhc3N3b3JkIiwiZW1haWwiOiJhZGFAZXhhbXBsZS5jb20ifQ",
+        "options": {
+          "key": "5b723b4d5bbce2a9a11ebf9a32e9c6a74de963d5a432cb557be6167f2e0c35be",
+          "audience": "https://api.example.com",
+          "now": 1767225600000
+        }
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "INVALID_ASSERTION",
+          "status": 401,
+          "message": "Malformed assertion"
+        }
+      }
+    },
+    {
+      "name": "verify too long",
+      "input": {
+        "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA.76WqETIkeUjIVQQKKE_AHy1nex86ybEhgiRxrdX6tC4",
+        "options": {
+          "key": "5b723b4d5bbce2a9a11ebf9a32e9c6a74de963d5a432cb557be6167f2e0c35be",
+          "audience": "https://api.example.com",
+          "now": 1767225600000
+        }
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "INVALID_ASSERTION",
+          "status": 401,
+          "message": "Malformed assertion"
+        }
+      }
+    }
+  ]
+}

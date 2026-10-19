@@ -1,0 +1,1117 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://better-iam.dev/schemas/better-iam.json",
+  "title": "better-iam standalone server configuration (better-iam.json)",
+  "description": "Every JSON-representable BetterIamOptions member (packages/server/src/options.ts), plus `store`, `delivery` and `resolveResource`, which replace the function- and object-valued options a JSON file cannot carry. The TypeScript, Rust and Go servers read this exact format; see CONFIG.md. Value ranges are validated by the server itself (INVALID_CONFIG), exactly as for in-process options; this schema states shapes.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["secret", "baseURL"],
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "store": {
+      "$ref": "#/$defs/store"
+    },
+    "secret": {
+      "$ref": "#/$defs/secretValue",
+      "description": "Deployment secret (at least 32 characters)."
+    },
+    "previousSecrets": {
+      "type": "array",
+      "maxItems": 5,
+      "items": {
+        "$ref": "#/$defs/secretValue"
+      },
+      "description": "Secrets being rotated out; values they sealed or signed keep working."
+    },
+    "baseURL": {
+      "type": "string",
+      "description": "Public origin of the deployment; https outside localhost."
+    },
+    "basePath": {
+      "type": "string",
+      "pattern": "^/[\\w/-]+$",
+      "description": "Default /api/iam; no trailing slash."
+    },
+    "trustedOrigins": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "authentication": {
+      "$ref": "#/$defs/authentication"
+    },
+    "delivery": {
+      "$ref": "#/$defs/delivery"
+    },
+    "resolveResource": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind"],
+          "properties": {
+            "kind": {
+              "const": "echo",
+              "description": "Trust the reference as given (the in-process `async (reference) => reference`)."
+            }
+          }
+        },
+        {
+          "$ref": "#/$defs/scripted"
+        }
+      ]
+    },
+    "resolveContext": {
+      "$ref": "#/$defs/scripted",
+      "description": "`resolveContext(principal, request)`: only as a scripted callback."
+    },
+    "hierarchy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["types"],
+      "properties": {
+        "types": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["allowedChildren"],
+            "properties": {
+              "allowedChildren": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "maxDepth": {
+          "type": "integer"
+        }
+      }
+    },
+    "permissions": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "enum": ["catalog", "tenant-defined"]
+        },
+        "actions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "resourceTypes": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "description": {
+                "type": "string"
+              },
+              "actions": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "attributes": {
+                "type": "object",
+                "additionalProperties": {
+                  "$ref": "#/$defs/attributeType"
+                }
+              },
+              "parent": {
+                "type": "string"
+              },
+              "managed": {
+                "type": "boolean"
+              },
+              "relations": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "identityAttributes": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/attributeType"
+          }
+        }
+      }
+    },
+    "onboarding": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "enum": ["invitation", "linked"]
+        },
+        "invitationLifetimeMs": {
+          "type": "integer"
+        }
+      }
+    },
+    "events": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "`onEvent` and `deliverWebhook` are the `events` and `webhook` delivery channels.",
+      "properties": {
+        "webhookTimeoutMs": {
+          "type": "integer"
+        },
+        "allowPrivateNetworks": {
+          "type": "boolean"
+        }
+      }
+    },
+    "accessRequests": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "lifetimeMs": {
+          "type": "integer"
+        },
+        "maxDurationSeconds": {
+          "type": "integer"
+        }
+      }
+    },
+    "observability": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "`onSpan` has no JSON form.",
+      "properties": {
+        "metrics": {
+          "oneOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "buckets": {
+                  "type": "array",
+                  "items": {
+                    "type": "number"
+                  }
+                },
+                "bearerToken": {
+                  "type": "string"
+                },
+                "maxSeries": {
+                  "type": "integer"
+                },
+                "gauges": {
+                  "type": "boolean"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "accessUsage": {
+      "oneOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "flushIntervalMs": {
+              "type": "integer"
+            },
+            "maxBuffered": {
+              "type": "integer"
+            }
+          }
+        }
+      ]
+    },
+    "inference": {
+      "oneOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "allowCustomBaseUrls": {
+              "type": "boolean"
+            },
+            "usageRetentionDays": {
+              "type": "integer"
+            },
+            "allowInsecureLocalhost": {
+              "type": "boolean"
+            },
+            "allowPrivateNetworks": {
+              "type": "boolean"
+            }
+          }
+        }
+      ]
+    },
+    "a2a": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["signingKeys"],
+      "properties": {
+        "signingKeys": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/jwk"
+          }
+        },
+        "activeKeyId": {
+          "type": "string"
+        },
+        "verificationKeys": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/jwk"
+          }
+        },
+        "jwksUrl": {
+          "type": "string"
+        },
+        "cardLifetimeSeconds": {
+          "type": "integer"
+        },
+        "issuer": {
+          "type": "string"
+        }
+      }
+    },
+    "billing": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "currency": {
+          "type": "string"
+        },
+        "timeZone": {
+          "type": "string"
+        },
+        "usageRetentionDays": {
+          "type": "integer"
+        },
+        "teamAttribution": {
+          "enum": ["split", "primary", "full"]
+        },
+        "paymentTermsDays": {
+          "type": "integer"
+        },
+        "statementPrefix": {
+          "type": "string"
+        },
+        "issuer": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name"],
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "address": {
+              "type": "string"
+            },
+            "taxId": {
+              "type": "string"
+            },
+            "email": {
+              "type": "string"
+            },
+            "url": {
+              "type": "string"
+            },
+            "paymentInstructions": {
+              "type": "string"
+            }
+          }
+        },
+        "paymentReminderDays": {
+          "type": "array",
+          "items": {
+            "type": "integer"
+          }
+        },
+        "autoFinalize": {
+          "type": "boolean"
+        }
+      }
+    },
+    "ssh": {
+      "oneOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "maxUserCertificateMs": {
+              "type": "integer"
+            },
+            "hostCertificateMs": {
+              "type": "integer"
+            },
+            "clockSkewMs": {
+              "type": "integer"
+            },
+            "maxHostsPerCertificate": {
+              "type": "integer"
+            },
+            "recordRetentionDays": {
+              "type": "integer"
+            },
+            "joinTokenMs": {
+              "type": "integer"
+            },
+            "issuanceLimit": {
+              "type": "integer"
+            }
+          }
+        }
+      ]
+    },
+    "verifiableCredentials": {
+      "oneOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "maxLifetimeMs": {
+              "type": "integer"
+            },
+            "statusListSize": {
+              "type": "integer"
+            },
+            "offerLifetimeMs": {
+              "type": "integer"
+            },
+            "statusListLifetimeMs": {
+              "type": "integer"
+            },
+            "statusListTtlSeconds": {
+              "type": "integer"
+            },
+            "recordRetentionDays": {
+              "type": "integer"
+            }
+          }
+        }
+      ]
+    },
+    "clearances": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "appliesToRoot": {
+          "type": "boolean"
+        }
+      }
+    },
+    "vault": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Rotators and dynamic secret engines only as scripted callbacks (conformance mode).",
+      "properties": {
+        "maxValueBytes": {
+          "type": "integer"
+        },
+        "maxSecretsPerTenant": {
+          "type": "integer"
+        },
+        "accessRetentionDays": {
+          "type": "integer"
+        },
+        "callTimeoutMs": {
+          "type": "integer"
+        },
+        "rotators": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["rotate"],
+            "properties": {
+              "rotate": {
+                "$ref": "#/$defs/scripted"
+              }
+            }
+          }
+        },
+        "engines": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "issue": {
+                "$ref": "#/$defs/scripted"
+              },
+              "revoke": {
+                "$ref": "#/$defs/scripted"
+              },
+              "renew": {
+                "$ref": "#/$defs/scripted"
+              }
+            }
+          }
+        }
+      }
+    },
+    "http": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "cookieSameSite": {
+          "enum": ["lax", "strict"]
+        },
+        "persistentCookies": {
+          "type": "boolean"
+        },
+        "clientInfo": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "JSON form of `http.clientInfo(request)`: the client recorded on sessions, read from request headers. Absent: the User-Agent only (the default).",
+          "properties": {
+            "userAgent": {
+              "type": "boolean",
+              "default": true
+            },
+            "ipHeader": {
+              "type": "string",
+              "description": "Header holding the client IP (first comma-separated entry); only behind a proxy you control."
+            },
+            "labelHeader": {
+              "type": "string",
+              "description": "Header holding a device label."
+            },
+            "ipValue": {
+              "enum": ["first", "whole"],
+              "default": "first",
+              "description": "first: the first comma-separated entry, trimmed; whole: the header as sent."
+            }
+          }
+        }
+      }
+    },
+    "tenantDefaults": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "limits": {
+          "$ref": "#/$defs/tenantLimits"
+        },
+        "authPolicy": {
+          "$ref": "#/$defs/tenantAuthPolicy"
+        }
+      }
+    },
+    "domains": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "`resolveTxt` only as a scripted callback (otherwise DNS is used).",
+      "properties": {
+        "recordName": {
+          "type": "string"
+        },
+        "blockedDomains": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "resolveTxt": {
+          "$ref": "#/$defs/scripted"
+        }
+      }
+    },
+    "hosts": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "patterns": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "customHostnames": {
+          "type": "boolean"
+        },
+        "cnameTarget": {
+          "type": "string"
+        },
+        "signInPath": {
+          "type": "string"
+        },
+        "forwardedHost": {
+          "type": "boolean"
+        }
+      }
+    },
+    "regions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["current", "regions"],
+      "description": "`locate` only as a scripted callback.",
+      "properties": {
+        "current": {
+          "type": "string"
+        },
+        "regions": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "baseURL": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "locate": {
+          "$ref": "#/$defs/scripted"
+        }
+      }
+    },
+    "sts": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "maxRoleSessionSeconds": {
+          "type": "integer"
+        },
+        "maxSessionTokenSeconds": {
+          "type": "integer"
+        },
+        "maxSessionTokensPerIdentity": {
+          "type": "integer"
+        },
+        "jwt": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["signingKeys"],
+          "properties": {
+            "signingKeys": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/jwk"
+              }
+            },
+            "activeKeyId": {
+              "type": "string"
+            },
+            "verificationKeys": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/jwk"
+              }
+            },
+            "issuer": {
+              "type": "string"
+            },
+            "audiences": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "maxLifetimeSeconds": {
+              "type": "integer"
+            }
+          }
+        },
+        "webIdentity": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "`fetchJson` only as a scripted callback (otherwise the guarded fetch is used).",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "allowedIssuers": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "jwksCacheSeconds": {
+              "type": "integer"
+            },
+            "fetchTimeoutMs": {
+              "type": "integer"
+            },
+            "maxJwksBytes": {
+              "type": "integer"
+            },
+            "maxExchangesPerWindow": {
+              "type": "integer"
+            },
+            "maxSessionsPerTrust": {
+              "type": "integer"
+            },
+            "allowPrivateNetworks": {
+              "type": "boolean"
+            },
+            "allowInsecureLocalhost": {
+              "type": "boolean"
+            },
+            "fetchJson": {
+              "$ref": "#/$defs/scripted"
+            }
+          }
+        }
+      }
+    },
+    "signals": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "allowPrivateNetworks": {
+          "type": "boolean"
+        },
+        "allowInsecureLocalhost": {
+          "type": "boolean"
+        },
+        "pushPath": {
+          "type": "string"
+        }
+      }
+    },
+    "auditArchive": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["write"],
+      "description": "`AuditArchiveOptions`; `write` only as a scripted callback (conformance mode).",
+      "properties": {
+        "write": {
+          "$ref": "#/$defs/scripted"
+        },
+        "batchSize": {
+          "type": "integer"
+        },
+        "leaseMs": {
+          "type": "integer"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "secretValue": {
+      "oneOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["env"],
+          "properties": {
+            "env": {
+              "type": "string",
+              "description": "Read the value from this environment variable."
+            }
+          }
+        }
+      ]
+    },
+    "store": {
+      "description": "The database. Default: in-memory SQLite.",
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind"],
+          "properties": {
+            "kind": {
+              "const": "sqlite"
+            },
+            "path": {
+              "type": "string",
+              "default": ":memory:",
+              "description": "A file path or :memory:."
+            },
+            "busyTimeoutMs": {
+              "type": "integer"
+            },
+            "journalMode": {
+              "enum": ["wal", "delete"]
+            },
+            "durability": {
+              "enum": ["full", "normal"]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "url"],
+          "properties": {
+            "kind": {
+              "const": "postgres"
+            },
+            "url": {
+              "$ref": "#/$defs/secretValue",
+              "description": "postgres:// connection string."
+            },
+            "poolSize": {
+              "type": "integer"
+            },
+            "lockTimeoutMs": {
+              "type": "integer"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "url"],
+          "properties": {
+            "kind": {
+              "const": "libsql"
+            },
+            "url": {
+              "$ref": "#/$defs/secretValue",
+              "description": ":memory:, file:, libsql:, https: or wss: URL."
+            },
+            "authToken": {
+              "$ref": "#/$defs/secretValue"
+            },
+            "encryptionKey": {
+              "$ref": "#/$defs/secretValue"
+            },
+            "syncUrl": {
+              "type": "string"
+            },
+            "syncInterval": {
+              "type": "number"
+            }
+          }
+        }
+      ]
+    },
+    "transport": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind"],
+          "properties": {
+            "kind": {
+              "const": "capture",
+              "description": "Keep deliveries in memory for the /__conformance/ control endpoints (conformance mode only)."
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind"],
+          "properties": {
+            "kind": {
+              "const": "log",
+              "description": "Write each delivery as a JSON line to stdout."
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "url"],
+          "properties": {
+            "kind": {
+              "const": "http",
+              "description": "POST {\"kind\", \"message\"} as JSON; a non-2xx answer is a failed delivery (retried by the outbox)."
+            },
+            "url": {
+              "type": "string"
+            },
+            "headers": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              }
+            },
+            "timeoutMs": {
+              "type": "integer",
+              "default": 10000
+            }
+          }
+        }
+      ]
+    },
+    "delivery": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Transports for the callbacks a JSON file cannot hold. An absent channel is not configured (email/SMS flows then fail with FEATURE_DISABLED; webhooks use the built-in HTTPS transport; no onEvent consumer).",
+      "properties": {
+        "email": {
+          "$ref": "#/$defs/transport",
+          "description": "authentication.sendEmail"
+        },
+        "sms": {
+          "$ref": "#/$defs/transport",
+          "description": "authentication.sendSms"
+        },
+        "webhook": {
+          "$ref": "#/$defs/transport",
+          "description": "events.deliverWebhook (replaces the built-in HTTPS transport)"
+        },
+        "events": {
+          "$ref": "#/$defs/transport",
+          "description": "events.onEvent (every committed audit event)"
+        }
+      }
+    },
+    "authentication": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "AuthOptions without store/secret/baseURL/trustedOrigins (top level), the callbacks (`delivery`), `now` (the server clock) and `rateLimits.limiter` (code); `requireMfa` and `passwordPolicy.isBreached|check` only as scripted callbacks.",
+      "properties": {
+        "appName": {
+          "type": "string"
+        },
+        "signUpEnabled": {
+          "type": "boolean"
+        },
+        "requireEmailVerification": {
+          "type": "boolean"
+        },
+        "emailPassword": {
+          "type": "boolean"
+        },
+        "passwordlessEmail": {
+          "type": "boolean"
+        },
+        "passwordlessSms": {
+          "type": "boolean"
+        },
+        "maxDeliveryAttempts": {
+          "type": "integer"
+        },
+        "sessionLifetimeMs": {
+          "type": "integer"
+        },
+        "sessionIdleTimeoutMs": {
+          "type": "integer"
+        },
+        "recentAuthenticationMs": {
+          "type": "integer"
+        },
+        "trustedDeviceLifetimeMs": {
+          "type": "integer"
+        },
+        "signInNotifications": {
+          "type": "boolean"
+        },
+        "mfaEmailCodes": {
+          "type": "boolean"
+        },
+        "failedSignInAlerts": {
+          "type": "integer"
+        },
+        "rateLimits": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "attempts": {
+              "type": "integer"
+            },
+            "sensitiveAttempts": {
+              "type": "integer"
+            },
+            "windowMs": {
+              "type": "integer"
+            },
+            "ipAttempts": {
+              "type": "integer"
+            }
+          }
+        },
+        "passkeys": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["rpID"],
+          "properties": {
+            "rpID": {
+              "type": "string"
+            },
+            "rpName": {
+              "type": "string"
+            }
+          }
+        },
+        "passwordPolicy": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "blockCommonPasswords": {
+              "type": "boolean"
+            },
+            "isBreached": {
+              "$ref": "#/$defs/scripted"
+            },
+            "check": {
+              "$ref": "#/$defs/scripted"
+            }
+          }
+        },
+        "requireMfa": {
+          "$ref": "#/$defs/scripted"
+        }
+      }
+    },
+    "attributeType": {
+      "enum": ["string", "number", "boolean"]
+    },
+    "jwk": {
+      "type": "object",
+      "description": "A JSON Web Key (RFC 7517) as given to the in-process option.",
+      "required": ["kty"],
+      "properties": {
+        "kty": {
+          "type": "string"
+        },
+        "kid": {
+          "type": "string"
+        },
+        "alg": {
+          "type": "string"
+        }
+      }
+    },
+    "tenantLimits": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "identities": {
+          "type": "integer"
+        },
+        "serviceAccounts": {
+          "type": "integer"
+        },
+        "agents": {
+          "type": "integer"
+        },
+        "groups": {
+          "type": "integer"
+        },
+        "roles": {
+          "type": "integer"
+        },
+        "policies": {
+          "type": "integer"
+        },
+        "resources": {
+          "type": "integer"
+        },
+        "webhooks": {
+          "type": "integer"
+        }
+      }
+    },
+    "tenantAuthPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "requireMfa": {
+          "type": "boolean"
+        },
+        "allowedMethods": {
+          "type": "array",
+          "items": {
+            "enum": ["password", "passwordless-email", "passwordless-sms", "passkey", "federated"]
+          }
+        },
+        "sessionLifetimeMs": {
+          "type": "integer"
+        },
+        "sessionIdleTimeoutMs": {
+          "type": "integer"
+        },
+        "maxAttempts": {
+          "type": "integer"
+        },
+        "minPasswordLength": {
+          "type": "integer"
+        },
+        "maxSessions": {
+          "type": "integer"
+        },
+        "allowImpersonation": {
+          "type": "boolean"
+        },
+        "trustedDeviceDays": {
+          "type": "integer"
+        },
+        "passwordHistory": {
+          "type": "integer"
+        },
+        "passwordMaxAgeDays": {
+          "type": "integer"
+        },
+        "passwordMinClasses": {
+          "type": "integer"
+        },
+        "passwordRejectPersonalInfo": {
+          "type": "boolean"
+        },
+        "notifyNewSignIn": {
+          "type": "boolean"
+        },
+        "allowedIpRanges": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "mfaEmailCodes": {
+          "type": "boolean"
+        },
+        "requireMfaForOwners": {
+          "type": "boolean"
+        },
+        "bindSessionsToIp": {
+          "type": "boolean"
+        }
+      }
+    },
+    "scripted": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["$scripted"],
+      "properties": {
+        "$scripted": {
+          "const": true
+        }
+      },
+      "description": "Conformance mode only: the callback answers what the recording answered (CONTROL.md, Script)."
+    }
+  }
+}

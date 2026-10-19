@@ -1,0 +1,105 @@
+{
+  "source": "packages/core/src/sql.ts schemaMigrations / applyMigrations",
+  "names": [
+    "0001_records",
+    "0002_query_indexes",
+    "0003_ordered_indexes",
+    "0004_expiry_indexes",
+    "0005_lookup_indexes",
+    "0006_protection_indexes"
+  ],
+  "dialects": {
+    "postgres": {
+      "adapter": "@better-iam/adapter-postgres",
+      "sqlDialect": "postgres",
+      "placeholders": "$1, $2, ..."
+    },
+    "sqlite": {
+      "adapter": "@better-iam/adapter-sqlite",
+      "sqlDialect": "sqlite",
+      "placeholders": "?"
+    },
+    "libsql": {
+      "adapter": "@better-iam/adapter-libsql",
+      "sqlDialect": "sqlite",
+      "placeholders": "?"
+    }
+  },
+  "statements": {
+    "postgres": {
+      "0001_records": [
+        "CREATE TABLE IF NOT EXISTS iam_records (collection TEXT COLLATE \"C\" NOT NULL, id TEXT COLLATE \"C\" NOT NULL, tenant_id TEXT COLLATE \"C\" NOT NULL, unique_key TEXT COLLATE \"C\", data TEXT NOT NULL, PRIMARY KEY (collection, id), UNIQUE (collection, tenant_id, unique_key))",
+        "CREATE INDEX IF NOT EXISTS iam_records_tenant ON iam_records (collection, tenant_id)"
+      ],
+      "0002_query_indexes": [
+        "CREATE INDEX IF NOT EXISTS iam_records_tenant_id ON iam_records (collection, tenant_id, id)",
+        "CREATE INDEX IF NOT EXISTS iam_records_unique_key ON iam_records (collection, unique_key, id) WHERE unique_key IS NOT NULL",
+        "CREATE INDEX IF NOT EXISTS iam_records_document ON iam_records USING gin ((data::jsonb) jsonb_path_ops)"
+      ],
+      "0003_ordered_indexes": [
+        "CREATE INDEX IF NOT EXISTS iam_records_order_timestamp ON iam_records (collection, tenant_id, ((data::jsonb) -> 'timestamp'), id) WHERE jsonb_typeof((data::jsonb) -> 'timestamp') = 'number'",
+        "CREATE INDEX IF NOT EXISTS iam_records_order_sequence ON iam_records (collection, tenant_id, ((data::jsonb) -> 'sequence'), id) WHERE jsonb_typeof((data::jsonb) -> 'sequence') = 'number'"
+      ],
+      "0004_expiry_indexes": [
+        "CREATE INDEX IF NOT EXISTS iam_records_expiry_expiresAt ON iam_records (collection, ((data::jsonb) -> 'expiresAt'), id) WHERE jsonb_typeof((data::jsonb) -> 'expiresAt') = 'number'",
+        "CREATE INDEX IF NOT EXISTS iam_records_expiry_deliveredAt ON iam_records (collection, ((data::jsonb) -> 'deliveredAt'), id) WHERE jsonb_typeof((data::jsonb) -> 'deliveredAt') = 'number'",
+        "CREATE INDEX IF NOT EXISTS iam_records_expiry_failedAt ON iam_records (collection, ((data::jsonb) -> 'failedAt'), id) WHERE jsonb_typeof((data::jsonb) -> 'failedAt') = 'number'"
+      ],
+      "0005_lookup_indexes": [],
+      "0006_protection_indexes": []
+    },
+    "sqlite": {
+      "0001_records": [
+        "CREATE TABLE IF NOT EXISTS iam_records (collection TEXT NOT NULL, id TEXT NOT NULL, tenant_id TEXT NOT NULL, unique_key TEXT, data TEXT NOT NULL, PRIMARY KEY (collection, id), UNIQUE (collection, tenant_id, unique_key))",
+        "CREATE INDEX IF NOT EXISTS iam_records_tenant ON iam_records (collection, tenant_id)"
+      ],
+      "0002_query_indexes": [
+        "CREATE INDEX IF NOT EXISTS iam_records_tenant_id ON iam_records (collection, tenant_id, id)",
+        "CREATE INDEX IF NOT EXISTS iam_records_unique_key ON iam_records (collection, unique_key, id) WHERE unique_key IS NOT NULL",
+        "CREATE INDEX IF NOT EXISTS iam_records_field_tokenHash ON iam_records (collection, json_extract(data, '$.\"tokenHash\"'), id) WHERE json_extract(data, '$.\"tokenHash\"') IS NOT NULL",
+        "CREATE INDEX IF NOT EXISTS iam_records_field_identityId ON iam_records (collection, json_extract(data, '$.\"identityId\"'), id) WHERE json_extract(data, '$.\"identityId\"') IS NOT NULL",
+        "CREATE INDEX IF NOT EXISTS iam_records_field_email ON iam_records (collection, json_extract(data, '$.\"email\"'), id) WHERE json_extract(data, '$.\"email\"') IS NOT NULL",
+        "CREATE INDEX IF NOT EXISTS iam_records_field_parentId ON iam_records (collection, json_extract(data, '$.\"parentId\"'), id) WHERE json_extract(data, '$.\"parentId\"') IS NOT NULL",
+        "CREATE INDEX IF NOT EXISTS iam_records_field_subjectId ON iam_records (collection, json_extract(data, '$.\"subjectId\"'), id) WHERE json_extract(data, '$.\"subjectId\"') IS NOT NULL",
+        "CREATE INDEX IF NOT EXISTS iam_records_field_groupId ON iam_records (collection, json_extract(data, '$.\"groupId\"'), id) WHERE json_extract(data, '$.\"groupId\"') IS NOT NULL",
+        "CREATE INDEX IF NOT EXISTS iam_records_field_roleId ON iam_records (collection, json_extract(data, '$.\"roleId\"'), id) WHERE json_extract(data, '$.\"roleId\"') IS NOT NULL",
+        "CREATE INDEX IF NOT EXISTS iam_records_field_credentialId ON iam_records (collection, json_extract(data, '$.\"credentialId\"'), id) WHERE json_extract(data, '$.\"credentialId\"') IS NOT NULL",
+        "CREATE INDEX IF NOT EXISTS iam_records_field_originalIdentityId ON iam_records (collection, json_extract(data, '$.\"originalIdentityId\"'), id) WHERE json_extract(data, '$.\"originalIdentityId\"') IS NOT NULL",
+        "CREATE INDEX IF NOT EXISTS iam_records_field_impersonatorSessionId ON iam_records (collection, json_extract(data, '$.\"impersonatorSessionId\"'), id) WHERE json_extract(data, '$.\"impersonatorSessionId\"') IS NOT NULL",
+        "CREATE INDEX IF NOT EXISTS iam_records_field_accountId ON iam_records (collection, json_extract(data, '$.\"accountId\"'), id) WHERE json_extract(data, '$.\"accountId\"') IS NOT NULL",
+        "CREATE INDEX IF NOT EXISTS iam_records_field_clientId ON iam_records (collection, json_extract(data, '$.\"clientId\"'), id) WHERE json_extract(data, '$.\"clientId\"') IS NOT NULL",
+        "CREATE INDEX IF NOT EXISTS iam_records_field_uidHash ON iam_records (collection, json_extract(data, '$.\"uidHash\"'), id) WHERE json_extract(data, '$.\"uidHash\"') IS NOT NULL",
+        "CREATE INDEX IF NOT EXISTS iam_records_field_userCodeHash ON iam_records (collection, json_extract(data, '$.\"userCodeHash\"'), id) WHERE json_extract(data, '$.\"userCodeHash\"') IS NOT NULL",
+        "CREATE INDEX IF NOT EXISTS iam_records_field_grantIdHash ON iam_records (collection, json_extract(data, '$.\"grantIdHash\"'), id) WHERE json_extract(data, '$.\"grantIdHash\"') IS NOT NULL",
+        "CREATE INDEX IF NOT EXISTS iam_records_field_connectionId ON iam_records (collection, json_extract(data, '$.\"connectionId\"'), id) WHERE json_extract(data, '$.\"connectionId\"') IS NOT NULL",
+        "CREATE INDEX IF NOT EXISTS iam_records_field_targetId ON iam_records (collection, json_extract(data, '$.\"targetId\"'), id) WHERE json_extract(data, '$.\"targetId\"') IS NOT NULL",
+        "CREATE INDEX IF NOT EXISTS iam_records_field_streamId ON iam_records (collection, json_extract(data, '$.\"streamId\"'), id) WHERE json_extract(data, '$.\"streamId\"') IS NOT NULL",
+        "CREATE INDEX IF NOT EXISTS iam_records_field_jti ON iam_records (collection, json_extract(data, '$.\"jti\"'), id) WHERE json_extract(data, '$.\"jti\"') IS NOT NULL"
+      ],
+      "0003_ordered_indexes": [
+        "CREATE INDEX IF NOT EXISTS iam_records_order_timestamp ON iam_records (collection, tenant_id, json_extract(data, '$.\"timestamp\"'), id) WHERE json_extract(data, '$.\"timestamp\"') IS NOT NULL",
+        "CREATE INDEX IF NOT EXISTS iam_records_order_sequence ON iam_records (collection, tenant_id, json_extract(data, '$.\"sequence\"'), id) WHERE json_extract(data, '$.\"sequence\"') IS NOT NULL"
+      ],
+      "0004_expiry_indexes": [
+        "CREATE INDEX IF NOT EXISTS iam_records_expiry_expiresAt ON iam_records (collection, json_extract(data, '$.\"expiresAt\"'), id) WHERE json_extract(data, '$.\"expiresAt\"') IS NOT NULL",
+        "CREATE INDEX IF NOT EXISTS iam_records_expiry_deliveredAt ON iam_records (collection, json_extract(data, '$.\"deliveredAt\"'), id) WHERE json_extract(data, '$.\"deliveredAt\"') IS NOT NULL",
+        "CREATE INDEX IF NOT EXISTS iam_records_expiry_failedAt ON iam_records (collection, json_extract(data, '$.\"failedAt\"'), id) WHERE json_extract(data, '$.\"failedAt\"') IS NOT NULL"
+      ],
+      "0005_lookup_indexes": [
+        "CREATE INDEX IF NOT EXISTS iam_records_field_sourceSessionId ON iam_records (collection, json_extract(data, '$.\"sourceSessionId\"'), id) WHERE json_extract(data, '$.\"sourceSessionId\"') IS NOT NULL",
+        "CREATE INDEX IF NOT EXISTS iam_records_field_trustId ON iam_records (collection, json_extract(data, '$.\"trustId\"'), id) WHERE json_extract(data, '$.\"trustId\"') IS NOT NULL"
+      ],
+      "0006_protection_indexes": [
+        "CREATE INDEX IF NOT EXISTS iam_records_field_fingerprint ON iam_records (collection, json_extract(data, '$.\"fingerprint\"'), id) WHERE json_extract(data, '$.\"fingerprint\"') IS NOT NULL"
+      ]
+    }
+  },
+  "rules": [
+    "applyMigrations runs inside the adapter write transaction: create iam_schema_version, refuse any version other than 1 (SCHEMA_VERSION 500), create iam_migrations, then for each migration not yet recorded run its statements and insert (name, applied_at), and finally insert the schema version row (ON CONFLICT DO NOTHING).",
+    "PostgreSQL runs encodeLegacyPostgresRows before 0002_query_indexes (rewrites legacy rows jsonb cannot hold).",
+    "A released migration never changes; new schema work is a new step.",
+    "SQLite adapter connection setup (better-sqlite3, busy timeout busyTimeoutMs default 5000): PRAGMA foreign_keys = ON; for a file database PRAGMA journal_mode = WAL (DELETE with journalMode: 'delete'); PRAGMA synchronous = FULL (NORMAL with durability: 'normal'). Every write transaction starts with BEGIN IMMEDIATE and ends with COMMIT or ROLLBACK.",
+    "PostgreSQL adapter: every transaction is start transaction isolation level read committed, SELECT set_config('lock_timeout', '<ms>ms', true) (lockTimeoutMs, default 5000; migrations 600000), SELECT pg_advisory_xact_lock(1647206759, 1), then the work and commit.",
+    "libSQL adapter: client.transaction('write') (BEGIN IMMEDIATE on local databases); the shared migration runner uses the sqlite dialect."
+  ]
+}

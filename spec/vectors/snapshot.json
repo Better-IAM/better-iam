@@ -1,0 +1,474 @@
+{
+  "description": "Store snapshots (JSON Lines): a header {\"format\":\"better-iam-store\",\"version\":1,\"createdAt\":<ISO time>,\"collections\":[sorted names]}, one {\"c\":collection,\"r\":record} line per record (collections in order, records by id in code-point order), and a trailer {\"end\":true,\"records\":n,\"collections\":{name:count}}. importStore loads a snapshot into an empty store in one transaction and refuses malformed input.",
+  "source": "packages/core/src/snapshot.ts#exportStore,importStore",
+  "notes": {
+    "format": "better-iam-store",
+    "version": 1
+  },
+  "cases": [
+    {
+      "name": "export all collections",
+      "input": {
+        "records": {
+          "tenants": [
+            {
+              "id": "tnt_b",
+              "tenantId": "tnt_b",
+              "name": "B"
+            },
+            {
+              "id": "tnt_a",
+              "tenantId": "tnt_a",
+              "name": "A",
+              "uniqueKey": "a"
+            }
+          ],
+          "identities": [
+            {
+              "id": "idn_2",
+              "tenantId": "tnt_a",
+              "email": "b@example.com"
+            },
+            {
+              "id": "idn_10",
+              "tenantId": "tnt_a",
+              "email": "a@example.com",
+              "attributes": {
+                "team": "eng"
+              }
+            },
+            {
+              "id": "idn_😀",
+              "tenantId": "tnt_a",
+              "email": "c@example.com"
+            }
+          ],
+          "auditChains": [
+            {
+              "id": "tnt_a",
+              "tenantId": "tnt_a",
+              "sequence": 2,
+              "hash": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+              "updatedAt": 1767225600000
+            }
+          ]
+        }
+      },
+      "output": {
+        "lines": [
+          "{\"format\":\"better-iam-store\",\"version\":1,\"createdAt\":\"2026-01-01T00:00:00.000Z\",\"collections\":[\"auditChains\",\"identities\",\"tenants\"]}",
+          "{\"c\":\"auditChains\",\"r\":{\"id\":\"tnt_a\",\"tenantId\":\"tnt_a\",\"sequence\":2,\"hash\":\"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\",\"updatedAt\":1767225600000}}",
+          "{\"c\":\"identities\",\"r\":{\"id\":\"idn_10\",\"tenantId\":\"tnt_a\",\"email\":\"a@example.com\",\"attributes\":{\"team\":\"eng\"}}}",
+          "{\"c\":\"identities\",\"r\":{\"id\":\"idn_2\",\"tenantId\":\"tnt_a\",\"email\":\"b@example.com\"}}",
+          "{\"c\":\"identities\",\"r\":{\"id\":\"idn_😀\",\"tenantId\":\"tnt_a\",\"email\":\"c@example.com\"}}",
+          "{\"c\":\"tenants\",\"r\":{\"id\":\"tnt_a\",\"tenantId\":\"tnt_a\",\"name\":\"A\",\"uniqueKey\":\"a\"}}",
+          "{\"c\":\"tenants\",\"r\":{\"id\":\"tnt_b\",\"tenantId\":\"tnt_b\",\"name\":\"B\"}}",
+          "{\"end\":true,\"records\":6,\"collections\":{\"auditChains\":1,\"identities\":3,\"tenants\":2}}"
+        ],
+        "summary": {
+          "records": 6,
+          "collections": {
+            "auditChains": 1,
+            "identities": 3,
+            "tenants": 2
+          }
+        }
+      }
+    },
+    {
+      "name": "export selected collections with small pages",
+      "input": {
+        "records": {
+          "tenants": [
+            {
+              "id": "tnt_b",
+              "tenantId": "tnt_b",
+              "name": "B"
+            },
+            {
+              "id": "tnt_a",
+              "tenantId": "tnt_a",
+              "name": "A",
+              "uniqueKey": "a"
+            }
+          ],
+          "identities": [
+            {
+              "id": "idn_2",
+              "tenantId": "tnt_a",
+              "email": "b@example.com"
+            },
+            {
+              "id": "idn_10",
+              "tenantId": "tnt_a",
+              "email": "a@example.com",
+              "attributes": {
+                "team": "eng"
+              }
+            },
+            {
+              "id": "idn_😀",
+              "tenantId": "tnt_a",
+              "email": "c@example.com"
+            }
+          ],
+          "auditChains": [
+            {
+              "id": "tnt_a",
+              "tenantId": "tnt_a",
+              "sequence": 2,
+              "hash": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+              "updatedAt": 1767225600000
+            }
+          ]
+        },
+        "options": {
+          "collections": [
+            "identities",
+            "tenants",
+            "identities"
+          ],
+          "pageSize": 1
+        }
+      },
+      "output": {
+        "lines": [
+          "{\"format\":\"better-iam-store\",\"version\":1,\"createdAt\":\"2026-01-01T00:00:00.000Z\",\"collections\":[\"identities\",\"tenants\"]}",
+          "{\"c\":\"identities\",\"r\":{\"id\":\"idn_10\",\"tenantId\":\"tnt_a\",\"email\":\"a@example.com\",\"attributes\":{\"team\":\"eng\"}}}",
+          "{\"c\":\"identities\",\"r\":{\"id\":\"idn_2\",\"tenantId\":\"tnt_a\",\"email\":\"b@example.com\"}}",
+          "{\"c\":\"identities\",\"r\":{\"id\":\"idn_😀\",\"tenantId\":\"tnt_a\",\"email\":\"c@example.com\"}}",
+          "{\"c\":\"tenants\",\"r\":{\"id\":\"tnt_a\",\"tenantId\":\"tnt_a\",\"name\":\"A\",\"uniqueKey\":\"a\"}}",
+          "{\"c\":\"tenants\",\"r\":{\"id\":\"tnt_b\",\"tenantId\":\"tnt_b\",\"name\":\"B\"}}",
+          "{\"end\":true,\"records\":5,\"collections\":{\"identities\":3,\"tenants\":2}}"
+        ],
+        "summary": {
+          "records": 5,
+          "collections": {
+            "identities": 3,
+            "tenants": 2
+          }
+        }
+      }
+    },
+    {
+      "name": "export invalid page size",
+      "input": {
+        "records": {
+          "tenants": [
+            {
+              "id": "tnt_b",
+              "tenantId": "tnt_b",
+              "name": "B"
+            },
+            {
+              "id": "tnt_a",
+              "tenantId": "tnt_a",
+              "name": "A",
+              "uniqueKey": "a"
+            }
+          ],
+          "identities": [
+            {
+              "id": "idn_2",
+              "tenantId": "tnt_a",
+              "email": "b@example.com"
+            },
+            {
+              "id": "idn_10",
+              "tenantId": "tnt_a",
+              "email": "a@example.com",
+              "attributes": {
+                "team": "eng"
+              }
+            },
+            {
+              "id": "idn_😀",
+              "tenantId": "tnt_a",
+              "email": "c@example.com"
+            }
+          ],
+          "auditChains": [
+            {
+              "id": "tnt_a",
+              "tenantId": "tnt_a",
+              "sequence": 2,
+              "hash": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+              "updatedAt": 1767225600000
+            }
+          ]
+        },
+        "options": {
+          "pageSize": 0
+        }
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "INVALID_INPUT",
+          "status": 400,
+          "message": "pageSize must be between 1 and 100000"
+        }
+      }
+    },
+    {
+      "name": "import exported snapshot",
+      "input": {
+        "lines": [
+          "{\"format\":\"better-iam-store\",\"version\":1,\"createdAt\":\"2026-01-01T00:00:00.000Z\",\"collections\":[\"auditChains\",\"identities\",\"tenants\"]}",
+          "{\"c\":\"auditChains\",\"r\":{\"id\":\"tnt_a\",\"tenantId\":\"tnt_a\",\"sequence\":2,\"hash\":\"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\",\"updatedAt\":1767225600000}}",
+          "{\"c\":\"identities\",\"r\":{\"id\":\"idn_10\",\"tenantId\":\"tnt_a\",\"email\":\"a@example.com\",\"attributes\":{\"team\":\"eng\"}}}",
+          "{\"c\":\"identities\",\"r\":{\"id\":\"idn_2\",\"tenantId\":\"tnt_a\",\"email\":\"b@example.com\"}}",
+          "{\"c\":\"identities\",\"r\":{\"id\":\"idn_😀\",\"tenantId\":\"tnt_a\",\"email\":\"c@example.com\"}}",
+          "{\"c\":\"tenants\",\"r\":{\"id\":\"tnt_a\",\"tenantId\":\"tnt_a\",\"name\":\"A\",\"uniqueKey\":\"a\"}}",
+          "{\"c\":\"tenants\",\"r\":{\"id\":\"tnt_b\",\"tenantId\":\"tnt_b\",\"name\":\"B\"}}",
+          "{\"end\":true,\"records\":6,\"collections\":{\"auditChains\":1,\"identities\":3,\"tenants\":2}}"
+        ]
+      },
+      "output": {
+        "summary": {
+          "records": 6,
+          "collections": {
+            "auditChains": 1,
+            "identities": 3,
+            "tenants": 2
+          }
+        },
+        "stored": {
+          "auditChains": [
+            "tnt_a"
+          ],
+          "identities": [
+            "idn_10",
+            "idn_2",
+            "idn_😀"
+          ],
+          "tenants": [
+            "tnt_a",
+            "tnt_b"
+          ]
+        }
+      }
+    },
+    {
+      "name": "import without trailer",
+      "input": {
+        "lines": [
+          "{\"format\":\"better-iam-store\",\"version\":1,\"createdAt\":\"2026-01-01T00:00:00.000Z\",\"collections\":[\"auditChains\",\"identities\",\"tenants\"]}",
+          "{\"c\":\"auditChains\",\"r\":{\"id\":\"tnt_a\",\"tenantId\":\"tnt_a\",\"sequence\":2,\"hash\":\"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\",\"updatedAt\":1767225600000}}",
+          "{\"c\":\"identities\",\"r\":{\"id\":\"idn_10\",\"tenantId\":\"tnt_a\",\"email\":\"a@example.com\",\"attributes\":{\"team\":\"eng\"}}}",
+          "{\"c\":\"identities\",\"r\":{\"id\":\"idn_2\",\"tenantId\":\"tnt_a\",\"email\":\"b@example.com\"}}",
+          "{\"c\":\"identities\",\"r\":{\"id\":\"idn_😀\",\"tenantId\":\"tnt_a\",\"email\":\"c@example.com\"}}",
+          "{\"c\":\"tenants\",\"r\":{\"id\":\"tnt_a\",\"tenantId\":\"tnt_a\",\"name\":\"A\",\"uniqueKey\":\"a\"}}",
+          "{\"c\":\"tenants\",\"r\":{\"id\":\"tnt_b\",\"tenantId\":\"tnt_b\",\"name\":\"B\"}}"
+        ]
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "SNAPSHOT_TRUNCATED",
+          "status": 400,
+          "message": "The snapshot has no trailer; nothing was imported"
+        }
+      }
+    },
+    {
+      "name": "import with wrong count",
+      "input": {
+        "lines": [
+          "{\"format\":\"better-iam-store\",\"version\":1,\"createdAt\":\"2026-01-01T00:00:00.000Z\",\"collections\":[\"auditChains\",\"identities\",\"tenants\"]}",
+          "{\"c\":\"auditChains\",\"r\":{\"id\":\"tnt_a\",\"tenantId\":\"tnt_a\",\"sequence\":2,\"hash\":\"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\",\"updatedAt\":1767225600000}}",
+          "{\"c\":\"identities\",\"r\":{\"id\":\"idn_10\",\"tenantId\":\"tnt_a\",\"email\":\"a@example.com\",\"attributes\":{\"team\":\"eng\"}}}",
+          "{\"c\":\"identities\",\"r\":{\"id\":\"idn_2\",\"tenantId\":\"tnt_a\",\"email\":\"b@example.com\"}}",
+          "{\"c\":\"identities\",\"r\":{\"id\":\"idn_😀\",\"tenantId\":\"tnt_a\",\"email\":\"c@example.com\"}}",
+          "{\"c\":\"tenants\",\"r\":{\"id\":\"tnt_a\",\"tenantId\":\"tnt_a\",\"name\":\"A\",\"uniqueKey\":\"a\"}}",
+          "{\"c\":\"tenants\",\"r\":{\"id\":\"tnt_b\",\"tenantId\":\"tnt_b\",\"name\":\"B\"}}",
+          "{\"end\":true,\"records\":99,\"collections\":{}}"
+        ]
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "SNAPSHOT_TRUNCATED",
+          "status": 400,
+          "message": "Record counts do not match the snapshot trailer; nothing was imported"
+        }
+      }
+    },
+    {
+      "name": "import wrong format",
+      "input": {
+        "lines": [
+          "{\"format\":\"other\",\"version\":1,\"collections\":[]}",
+          "{\"end\":true,\"records\":0,\"collections\":{}}"
+        ]
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "SNAPSHOT_INVALID",
+          "status": 400,
+          "message": "Not a better-iam-store version 1 snapshot"
+        }
+      }
+    },
+    {
+      "name": "import wrong version",
+      "input": {
+        "lines": [
+          "{\"format\":\"better-iam-store\",\"version\":2,\"createdAt\":\"2026-01-01T00:00:00.000Z\",\"collections\":[]}",
+          "{\"end\":true,\"records\":0,\"collections\":{}}"
+        ]
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "SNAPSHOT_INVALID",
+          "status": 400,
+          "message": "Not a better-iam-store version 1 snapshot"
+        }
+      }
+    },
+    {
+      "name": "import malformed line",
+      "input": {
+        "lines": [
+          "{\"format\":\"better-iam-store\",\"version\":1,\"createdAt\":\"2026-01-01T00:00:00.000Z\",\"collections\":[\"auditChains\",\"identities\",\"tenants\"]}",
+          "{not json",
+          "{\"end\":true,\"records\":6,\"collections\":{\"auditChains\":1,\"identities\":3,\"tenants\":2}}"
+        ]
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "SNAPSHOT_INVALID",
+          "status": 400,
+          "message": "Line 2 is not JSON"
+        }
+      }
+    },
+    {
+      "name": "import record of undeclared collection",
+      "input": {
+        "lines": [
+          "{\"format\":\"better-iam-store\",\"version\":1,\"createdAt\":\"2026-01-01T00:00:00.000Z\",\"collections\":[\"auditChains\",\"identities\",\"tenants\"]}",
+          "{\"c\":\"roles\",\"r\":{\"id\":\"r\",\"tenantId\":\"t\"}}",
+          "{\"end\":true,\"records\":6,\"collections\":{\"auditChains\":1,\"identities\":3,\"tenants\":2}}"
+        ]
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "SNAPSHOT_TRUNCATED",
+          "status": 400,
+          "message": "Record counts do not match the snapshot trailer; nothing was imported"
+        }
+      }
+    },
+    {
+      "name": "import line after trailer",
+      "input": {
+        "lines": [
+          "{\"format\":\"better-iam-store\",\"version\":1,\"createdAt\":\"2026-01-01T00:00:00.000Z\",\"collections\":[\"auditChains\",\"identities\",\"tenants\"]}",
+          "{\"c\":\"auditChains\",\"r\":{\"id\":\"tnt_a\",\"tenantId\":\"tnt_a\",\"sequence\":2,\"hash\":\"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\",\"updatedAt\":1767225600000}}",
+          "{\"c\":\"identities\",\"r\":{\"id\":\"idn_10\",\"tenantId\":\"tnt_a\",\"email\":\"a@example.com\",\"attributes\":{\"team\":\"eng\"}}}",
+          "{\"c\":\"identities\",\"r\":{\"id\":\"idn_2\",\"tenantId\":\"tnt_a\",\"email\":\"b@example.com\"}}",
+          "{\"c\":\"identities\",\"r\":{\"id\":\"idn_😀\",\"tenantId\":\"tnt_a\",\"email\":\"c@example.com\"}}",
+          "{\"c\":\"tenants\",\"r\":{\"id\":\"tnt_a\",\"tenantId\":\"tnt_a\",\"name\":\"A\",\"uniqueKey\":\"a\"}}",
+          "{\"c\":\"tenants\",\"r\":{\"id\":\"tnt_b\",\"tenantId\":\"tnt_b\",\"name\":\"B\"}}",
+          "{\"end\":true,\"records\":6,\"collections\":{\"auditChains\":1,\"identities\":3,\"tenants\":2}}",
+          "{\"c\":\"auditChains\",\"r\":{\"id\":\"tnt_a\",\"tenantId\":\"tnt_a\",\"sequence\":2,\"hash\":\"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\",\"updatedAt\":1767225600000}}"
+        ]
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "SNAPSHOT_INVALID",
+          "status": 400,
+          "message": "Content after the trailer on line 9"
+        }
+      }
+    },
+    {
+      "name": "import empty",
+      "input": {
+        "lines": []
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "SNAPSHOT_INVALID",
+          "status": 400,
+          "message": "The snapshot is empty"
+        }
+      }
+    },
+    {
+      "name": "import into non-empty store",
+      "input": {
+        "lines": [
+          "{\"format\":\"better-iam-store\",\"version\":1,\"createdAt\":\"2026-01-01T00:00:00.000Z\",\"collections\":[\"auditChains\",\"identities\",\"tenants\"]}",
+          "{\"c\":\"auditChains\",\"r\":{\"id\":\"tnt_a\",\"tenantId\":\"tnt_a\",\"sequence\":2,\"hash\":\"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\",\"updatedAt\":1767225600000}}",
+          "{\"c\":\"identities\",\"r\":{\"id\":\"idn_10\",\"tenantId\":\"tnt_a\",\"email\":\"a@example.com\",\"attributes\":{\"team\":\"eng\"}}}",
+          "{\"c\":\"identities\",\"r\":{\"id\":\"idn_2\",\"tenantId\":\"tnt_a\",\"email\":\"b@example.com\"}}",
+          "{\"c\":\"identities\",\"r\":{\"id\":\"idn_😀\",\"tenantId\":\"tnt_a\",\"email\":\"c@example.com\"}}",
+          "{\"c\":\"tenants\",\"r\":{\"id\":\"tnt_a\",\"tenantId\":\"tnt_a\",\"name\":\"A\",\"uniqueKey\":\"a\"}}",
+          "{\"c\":\"tenants\",\"r\":{\"id\":\"tnt_b\",\"tenantId\":\"tnt_b\",\"name\":\"B\"}}",
+          "{\"end\":true,\"records\":6,\"collections\":{\"auditChains\":1,\"identities\":3,\"tenants\":2}}"
+        ],
+        "existing": {
+          "id": "tnt_x",
+          "tenantId": "tnt_x"
+        }
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "STORE_NOT_EMPTY",
+          "status": 409,
+          "message": "The target store already holds records (tenants); import into an empty, migrated database"
+        }
+      }
+    },
+    {
+      "name": "import blank lines",
+      "input": {
+        "lines": [
+          "",
+          "{\"format\":\"better-iam-store\",\"version\":1,\"createdAt\":\"2026-01-01T00:00:00.000Z\",\"collections\":[\"auditChains\",\"identities\",\"tenants\"]}",
+          "   ",
+          "{\"c\":\"auditChains\",\"r\":{\"id\":\"tnt_a\",\"tenantId\":\"tnt_a\",\"sequence\":2,\"hash\":\"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\",\"updatedAt\":1767225600000}}",
+          "{\"c\":\"identities\",\"r\":{\"id\":\"idn_10\",\"tenantId\":\"tnt_a\",\"email\":\"a@example.com\",\"attributes\":{\"team\":\"eng\"}}}",
+          "{\"c\":\"identities\",\"r\":{\"id\":\"idn_2\",\"tenantId\":\"tnt_a\",\"email\":\"b@example.com\"}}",
+          "{\"c\":\"identities\",\"r\":{\"id\":\"idn_😀\",\"tenantId\":\"tnt_a\",\"email\":\"c@example.com\"}}",
+          "{\"c\":\"tenants\",\"r\":{\"id\":\"tnt_a\",\"tenantId\":\"tnt_a\",\"name\":\"A\",\"uniqueKey\":\"a\"}}",
+          "{\"c\":\"tenants\",\"r\":{\"id\":\"tnt_b\",\"tenantId\":\"tnt_b\",\"name\":\"B\"}}",
+          "{\"end\":true,\"records\":6,\"collections\":{\"auditChains\":1,\"identities\":3,\"tenants\":2}}"
+        ]
+      },
+      "output": {
+        "summary": {
+          "records": 6,
+          "collections": {
+            "auditChains": 1,
+            "identities": 3,
+            "tenants": 2
+          }
+        },
+        "stored": {
+          "auditChains": [
+            "tnt_a"
+          ],
+          "identities": [
+            "idn_10",
+            "idn_2",
+            "idn_😀"
+          ],
+          "tenants": [
+            "tnt_a",
+            "tnt_b"
+          ]
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,247 @@
+{
+  "adapter": "@better-iam/adapter-postgres",
+  "dialect": "postgres",
+  "description": "Everything the adapter sends while migrate() runs, in order, captured from the real adapter (adapter construction included). `fresh` is an empty database; `current` one where every migration ran already. applied_at is the clock at migrate() time (fixed here).",
+  "appliedAtClock": 1767225600000,
+  "migrations": [
+    {
+      "name": "0001_records",
+      "statements": 2
+    },
+    {
+      "name": "0002_query_indexes",
+      "statements": 3
+    },
+    {
+      "name": "0003_ordered_indexes",
+      "statements": 2
+    },
+    {
+      "name": "0004_expiry_indexes",
+      "statements": 3
+    },
+    {
+      "name": "0005_lookup_indexes",
+      "statements": 0
+    },
+    {
+      "name": "0006_protection_indexes",
+      "statements": 0
+    }
+  ],
+  "fresh": [
+    {
+      "event": "pool",
+      "config": {
+        "max": 10,
+        "connectionTimeoutMillis": 5000
+      }
+    },
+    {
+      "sql": "start transaction isolation level read committed",
+      "params": [],
+      "kind": "adapter"
+    },
+    {
+      "sql": "SELECT set_config('lock_timeout', $1, true)",
+      "params": [
+        "600000ms"
+      ],
+      "kind": "adapter"
+    },
+    {
+      "sql": "SELECT pg_advisory_xact_lock(1647206759, 1)",
+      "params": [],
+      "kind": "adapter"
+    },
+    {
+      "sql": "CREATE TABLE IF NOT EXISTS iam_schema_version (id INTEGER PRIMARY KEY CHECK (id = 1), version INTEGER NOT NULL)",
+      "params": [],
+      "kind": "bookkeeping"
+    },
+    {
+      "sql": "SELECT version FROM iam_schema_version WHERE id = 1",
+      "params": [],
+      "kind": "bookkeeping"
+    },
+    {
+      "sql": "CREATE TABLE IF NOT EXISTS iam_migrations (name TEXT PRIMARY KEY, applied_at BIGINT NOT NULL)",
+      "params": [],
+      "kind": "bookkeeping"
+    },
+    {
+      "sql": "SELECT name FROM iam_migrations",
+      "params": [],
+      "kind": "bookkeeping"
+    },
+    {
+      "sql": "CREATE TABLE IF NOT EXISTS iam_records (collection TEXT COLLATE \"C\" NOT NULL, id TEXT COLLATE \"C\" NOT NULL, tenant_id TEXT COLLATE \"C\" NOT NULL, unique_key TEXT COLLATE \"C\", data TEXT NOT NULL, PRIMARY KEY (collection, id), UNIQUE (collection, tenant_id, unique_key))",
+      "params": [],
+      "kind": "migration"
+    },
+    {
+      "sql": "CREATE INDEX IF NOT EXISTS iam_records_tenant ON iam_records (collection, tenant_id)",
+      "params": [],
+      "kind": "migration"
+    },
+    {
+      "sql": "INSERT INTO iam_migrations (name, applied_at) VALUES ($1, $2)",
+      "params": [
+        "0001_records",
+        1767225600000
+      ],
+      "kind": "bookkeeping"
+    },
+    {
+      "sql": "SELECT collection, id, data FROM iam_records WHERE strpos(data, '\\u0000') > 0 OR data ~* '\\\\ud[89a-f]'",
+      "params": [],
+      "kind": "adapter"
+    },
+    {
+      "sql": "CREATE INDEX IF NOT EXISTS iam_records_tenant_id ON iam_records (collection, tenant_id, id)",
+      "params": [],
+      "kind": "migration"
+    },
+    {
+      "sql": "CREATE INDEX IF NOT EXISTS iam_records_unique_key ON iam_records (collection, unique_key, id) WHERE unique_key IS NOT NULL",
+      "params": [],
+      "kind": "migration"
+    },
+    {
+      "sql": "CREATE INDEX IF NOT EXISTS iam_records_document ON iam_records USING gin ((data::jsonb) jsonb_path_ops)",
+      "params": [],
+      "kind": "migration"
+    },
+    {
+      "sql": "INSERT INTO iam_migrations (name, applied_at) VALUES ($1, $2)",
+      "params": [
+        "0002_query_indexes",
+        1767225600000
+      ],
+      "kind": "bookkeeping"
+    },
+    {
+      "sql": "CREATE INDEX IF NOT EXISTS iam_records_order_timestamp ON iam_records (collection, tenant_id, ((data::jsonb) -> 'timestamp'), id) WHERE jsonb_typeof((data::jsonb) -> 'timestamp') = 'number'",
+      "params": [],
+      "kind": "migration"
+    },
+    {
+      "sql": "CREATE INDEX IF NOT EXISTS iam_records_order_sequence ON iam_records (collection, tenant_id, ((data::jsonb) -> 'sequence'), id) WHERE jsonb_typeof((data::jsonb) -> 'sequence') = 'number'",
+      "params": [],
+      "kind": "migration"
+    },
+    {
+      "sql": "INSERT INTO iam_migrations (name, applied_at) VALUES ($1, $2)",
+      "params": [
+        "0003_ordered_indexes",
+        1767225600000
+      ],
+      "kind": "bookkeeping"
+    },
+    {
+      "sql": "CREATE INDEX IF NOT EXISTS iam_records_expiry_expiresAt ON iam_records (collection, ((data::jsonb) -> 'expiresAt'), id) WHERE jsonb_typeof((data::jsonb) -> 'expiresAt') = 'number'",
+      "params": [],
+      "kind": "migration"
+    },
+    {
+      "sql": "CREATE INDEX IF NOT EXISTS iam_records_expiry_deliveredAt ON iam_records (collection, ((data::jsonb) -> 'deliveredAt'), id) WHERE jsonb_typeof((data::jsonb) -> 'deliveredAt') = 'number'",
+      "params": [],
+      "kind": "migration"
+    },
+    {
+      "sql": "CREATE INDEX IF NOT EXISTS iam_records_expiry_failedAt ON iam_records (collection, ((data::jsonb) -> 'failedAt'), id) WHERE jsonb_typeof((data::jsonb) -> 'failedAt') = 'number'",
+      "params": [],
+      "kind": "migration"
+    },
+    {
+      "sql": "INSERT INTO iam_migrations (name, applied_at) VALUES ($1, $2)",
+      "params": [
+        "0004_expiry_indexes",
+        1767225600000
+      ],
+      "kind": "bookkeeping"
+    },
+    {
+      "sql": "INSERT INTO iam_migrations (name, applied_at) VALUES ($1, $2)",
+      "params": [
+        "0005_lookup_indexes",
+        1767225600000
+      ],
+      "kind": "bookkeeping"
+    },
+    {
+      "sql": "INSERT INTO iam_migrations (name, applied_at) VALUES ($1, $2)",
+      "params": [
+        "0006_protection_indexes",
+        1767225600000
+      ],
+      "kind": "bookkeeping"
+    },
+    {
+      "sql": "INSERT INTO iam_schema_version (id, version) VALUES (1, 1) ON CONFLICT (id) DO NOTHING",
+      "params": [],
+      "kind": "bookkeeping"
+    },
+    {
+      "sql": "commit",
+      "params": [],
+      "kind": "adapter"
+    }
+  ],
+  "current": [
+    {
+      "event": "pool",
+      "config": {
+        "max": 10,
+        "connectionTimeoutMillis": 5000
+      }
+    },
+    {
+      "sql": "start transaction isolation level read committed",
+      "params": [],
+      "kind": "adapter"
+    },
+    {
+      "sql": "SELECT set_config('lock_timeout', $1, true)",
+      "params": [
+        "600000ms"
+      ],
+      "kind": "adapter"
+    },
+    {
+      "sql": "SELECT pg_advisory_xact_lock(1647206759, 1)",
+      "params": [],
+      "kind": "adapter"
+    },
+    {
+      "sql": "CREATE TABLE IF NOT EXISTS iam_schema_version (id INTEGER PRIMARY KEY CHECK (id = 1), version INTEGER NOT NULL)",
+      "params": [],
+      "kind": "bookkeeping"
+    },
+    {
+      "sql": "SELECT version FROM iam_schema_version WHERE id = 1",
+      "params": [],
+      "kind": "bookkeeping"
+    },
+    {
+      "sql": "CREATE TABLE IF NOT EXISTS iam_migrations (name TEXT PRIMARY KEY, applied_at BIGINT NOT NULL)",
+      "params": [],
+      "kind": "bookkeeping"
+    },
+    {
+      "sql": "SELECT name FROM iam_migrations",
+      "params": [],
+      "kind": "bookkeeping"
+    },
+    {
+      "sql": "INSERT INTO iam_schema_version (id, version) VALUES (1, 1) ON CONFLICT (id) DO NOTHING",
+      "params": [],
+      "kind": "bookkeeping"
+    },
+    {
+      "sql": "commit",
+      "params": [],
+      "kind": "adapter"
+    }
+  ]
+}

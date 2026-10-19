@@ -1,0 +1,4520 @@
+{
+  "description": "evaluatePolicy: grants form a union, every boundary is an independent ceiling, any matching deny (grant or boundary) refuses. reason is explicit-deny, no-grant, boundary-deny, allowed or evaluation-limit; matched lists \"{grant|boundary}:{policyIndex}:{sid or statementIndex}\" in evaluation order (grants first). Invalid requests throw INVALID_REQUEST, invalid documents INVALID_POLICY.",
+  "source": "packages/core/src/policy.ts#evaluatePolicy",
+  "cases": [
+    {
+      "name": "allow exact",
+      "input": {
+        "action": "docs:read",
+        "resource": "doc/123",
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "docs:read"
+                ],
+                "resources": [
+                  "doc/123"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": true,
+        "reason": "allowed",
+        "matched": [
+          "grant:0:0"
+        ]
+      }
+    },
+    {
+      "name": "no grant",
+      "input": {
+        "action": "docs:read",
+        "resource": "doc/123",
+        "grants": []
+      },
+      "output": {
+        "allowed": false,
+        "reason": "no-grant",
+        "matched": []
+      }
+    },
+    {
+      "name": "no matching action",
+      "input": {
+        "action": "docs:read",
+        "resource": "doc/123",
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "docs:write"
+                ],
+                "resources": [
+                  "doc/123"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": false,
+        "reason": "no-grant",
+        "matched": []
+      }
+    },
+    {
+      "name": "no matching resource",
+      "input": {
+        "action": "docs:read",
+        "resource": "doc/123",
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "docs:read"
+                ],
+                "resources": [
+                  "doc/456"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": false,
+        "reason": "no-grant",
+        "matched": []
+      }
+    },
+    {
+      "name": "action wildcard namespace",
+      "input": {
+        "action": "docs:read",
+        "resource": "doc/123",
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "docs:*"
+                ],
+                "resources": [
+                  "doc/123"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": true,
+        "reason": "allowed",
+        "matched": [
+          "grant:0:0"
+        ]
+      }
+    },
+    {
+      "name": "action wildcard all",
+      "input": {
+        "action": "docs:read",
+        "resource": "doc/123",
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "*"
+                ],
+                "resources": [
+                  "*"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": true,
+        "reason": "allowed",
+        "matched": [
+          "grant:0:0"
+        ]
+      }
+    },
+    {
+      "name": "action single-character wildcard",
+      "input": {
+        "action": "docs:read",
+        "resource": "doc/123",
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "docs:re?d"
+                ],
+                "resources": [
+                  "doc/*"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": true,
+        "reason": "allowed",
+        "matched": [
+          "grant:0:0"
+        ]
+      }
+    },
+    {
+      "name": "resource prefix glob",
+      "input": {
+        "action": "docs:read",
+        "resource": "doc/123",
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "docs:read"
+                ],
+                "resources": [
+                  "doc/*"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": true,
+        "reason": "allowed",
+        "matched": [
+          "grant:0:0"
+        ]
+      }
+    },
+    {
+      "name": "resource glob is anchored",
+      "input": {
+        "action": "docs:read",
+        "resource": "doc/123",
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "docs:read"
+                ],
+                "resources": [
+                  "oc/*"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": false,
+        "reason": "no-grant",
+        "matched": []
+      }
+    },
+    {
+      "name": "resource multi-star glob",
+      "input": {
+        "action": "docs:read",
+        "resource": "doc/a-x-b-y-c",
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "docs:read"
+                ],
+                "resources": [
+                  "doc/a*b*c"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": true,
+        "reason": "allowed",
+        "matched": [
+          "grant:0:0"
+        ]
+      }
+    },
+    {
+      "name": "resource multi-star glob no match",
+      "input": {
+        "action": "docs:read",
+        "resource": "doc/a-x-c-y-b",
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "docs:read"
+                ],
+                "resources": [
+                  "doc/a*b*c"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": false,
+        "reason": "no-grant",
+        "matched": []
+      }
+    },
+    {
+      "name": "star matches empty",
+      "input": {
+        "action": "docs:read",
+        "resource": "doc/",
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "docs:read"
+                ],
+                "resources": [
+                  "doc/*"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": true,
+        "reason": "allowed",
+        "matched": [
+          "grant:0:0"
+        ]
+      }
+    },
+    {
+      "name": "explicit deny wins",
+      "input": {
+        "action": "docs:read",
+        "resource": "doc/123",
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "docs:*"
+                ],
+                "resources": [
+                  "*"
+                ]
+              }
+            ]
+          },
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "deny",
+                "actions": [
+                  "docs:read"
+                ],
+                "resources": [
+                  "doc/123"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": false,
+        "reason": "explicit-deny",
+        "matched": [
+          "grant:0:0",
+          "grant:1:0"
+        ]
+      }
+    },
+    {
+      "name": "deny in same document",
+      "input": {
+        "action": "docs:read",
+        "resource": "doc/123",
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "sid": "all",
+                "effect": "allow",
+                "actions": [
+                  "*"
+                ],
+                "resources": [
+                  "*"
+                ]
+              },
+              {
+                "sid": "no-1",
+                "effect": "deny",
+                "actions": [
+                  "docs:read"
+                ],
+                "resources": [
+                  "doc/1*"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": false,
+        "reason": "explicit-deny",
+        "matched": [
+          "grant:0:all",
+          "grant:0:no-1"
+        ]
+      }
+    },
+    {
+      "name": "deny not matching",
+      "input": {
+        "action": "docs:read",
+        "resource": "doc/123",
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "*"
+                ],
+                "resources": [
+                  "*"
+                ]
+              }
+            ]
+          },
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "deny",
+                "actions": [
+                  "docs:write"
+                ],
+                "resources": [
+                  "*"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": true,
+        "reason": "allowed",
+        "matched": [
+          "grant:0:0"
+        ]
+      }
+    },
+    {
+      "name": "boundary allows",
+      "input": {
+        "action": "docs:read",
+        "resource": "doc/123",
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "docs:*"
+                ],
+                "resources": [
+                  "*"
+                ]
+              }
+            ]
+          }
+        ],
+        "boundaries": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "docs:read"
+                ],
+                "resources": [
+                  "doc/*"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": true,
+        "reason": "allowed",
+        "matched": [
+          "grant:0:0",
+          "boundary:0:0"
+        ]
+      }
+    },
+    {
+      "name": "boundary refuses",
+      "input": {
+        "action": "docs:read",
+        "resource": "doc/123",
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "docs:*"
+                ],
+                "resources": [
+                  "*"
+                ]
+              }
+            ]
+          }
+        ],
+        "boundaries": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "docs:write"
+                ],
+                "resources": [
+                  "*"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": false,
+        "reason": "boundary-deny",
+        "matched": [
+          "grant:0:0"
+        ]
+      }
+    },
+    {
+      "name": "every boundary must allow",
+      "input": {
+        "action": "docs:read",
+        "resource": "doc/123",
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "*"
+                ],
+                "resources": [
+                  "*"
+                ]
+              }
+            ]
+          }
+        ],
+        "boundaries": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "*"
+                ],
+                "resources": [
+                  "*"
+                ]
+              }
+            ]
+          },
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "docs:write"
+                ],
+                "resources": [
+                  "*"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": false,
+        "reason": "boundary-deny",
+        "matched": [
+          "grant:0:0",
+          "boundary:0:0"
+        ]
+      }
+    },
+    {
+      "name": "boundary alone grants nothing",
+      "input": {
+        "action": "docs:read",
+        "resource": "doc/123",
+        "grants": [],
+        "boundaries": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "*"
+                ],
+                "resources": [
+                  "*"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": false,
+        "reason": "no-grant",
+        "matched": [
+          "boundary:0:0"
+        ]
+      }
+    },
+    {
+      "name": "deny in boundary",
+      "input": {
+        "action": "docs:read",
+        "resource": "doc/123",
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "*"
+                ],
+                "resources": [
+                  "*"
+                ]
+              }
+            ]
+          }
+        ],
+        "boundaries": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "*"
+                ],
+                "resources": [
+                  "*"
+                ]
+              },
+              {
+                "effect": "deny",
+                "actions": [
+                  "docs:read"
+                ],
+                "resources": [
+                  "*"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": false,
+        "reason": "explicit-deny",
+        "matched": [
+          "grant:0:0",
+          "boundary:0:0",
+          "boundary:0:1"
+        ]
+      }
+    },
+    {
+      "name": "empty boundaries list",
+      "input": {
+        "action": "docs:read",
+        "resource": "doc/123",
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "*"
+                ],
+                "resources": [
+                  "*"
+                ]
+              }
+            ]
+          }
+        ],
+        "boundaries": []
+      },
+      "output": {
+        "allowed": true,
+        "reason": "allowed",
+        "matched": [
+          "grant:0:0"
+        ]
+      }
+    },
+    {
+      "name": "matched with sids and indexes",
+      "input": {
+        "action": "docs:read",
+        "resource": "doc/123",
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "sid": "read-all",
+                "effect": "allow",
+                "actions": [
+                  "docs:read"
+                ],
+                "resources": [
+                  "*"
+                ]
+              },
+              {
+                "effect": "allow",
+                "actions": [
+                  "*"
+                ],
+                "resources": [
+                  "doc/*"
+                ]
+              }
+            ]
+          },
+          {
+            "version": 1,
+            "statements": [
+              {
+                "sid": "own",
+                "effect": "allow",
+                "actions": [
+                  "docs:*"
+                ],
+                "resources": [
+                  "doc/123"
+                ]
+              }
+            ]
+          }
+        ],
+        "boundaries": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "sid": "ceiling",
+                "effect": "allow",
+                "actions": [
+                  "*"
+                ],
+                "resources": [
+                  "*"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": true,
+        "reason": "allowed",
+        "matched": [
+          "grant:0:read-all",
+          "grant:0:1",
+          "grant:1:own",
+          "boundary:0:ceiling"
+        ]
+      }
+    },
+    {
+      "name": "variable in resource",
+      "input": {
+        "action": "docs:read",
+        "resource": "user/idn_01/profile",
+        "context": {
+          "principal.id": "idn_01"
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "docs:read"
+                ],
+                "resources": [
+                  "user/${principal.id}/*"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": true,
+        "reason": "allowed",
+        "matched": [
+          "grant:0:0"
+        ]
+      }
+    },
+    {
+      "name": "variable in resource other principal",
+      "input": {
+        "action": "docs:read",
+        "resource": "user/idn_02/profile",
+        "context": {
+          "principal.id": "idn_01"
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "docs:read"
+                ],
+                "resources": [
+                  "user/${principal.id}/*"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": false,
+        "reason": "no-grant",
+        "matched": []
+      }
+    },
+    {
+      "name": "unresolved variable never matches",
+      "input": {
+        "action": "docs:read",
+        "resource": "user/idn_01/profile",
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "docs:read"
+                ],
+                "resources": [
+                  "user/${principal.id}/*"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": false,
+        "reason": "no-grant",
+        "matched": []
+      }
+    },
+    {
+      "name": "variable value matches literally",
+      "input": {
+        "action": "docs:read",
+        "resource": "team/eng-x",
+        "context": {
+          "principal.team": "eng-*"
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "docs:read"
+                ],
+                "resources": [
+                  "team/${principal.team}"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": false,
+        "reason": "no-grant",
+        "matched": []
+      }
+    },
+    {
+      "name": "variable with literal star value exact",
+      "input": {
+        "action": "docs:read",
+        "resource": "team/eng-*",
+        "context": {
+          "principal.team": "eng-*"
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "docs:read"
+                ],
+                "resources": [
+                  "team/${principal.team}"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": true,
+        "reason": "allowed",
+        "matched": [
+          "grant:0:0"
+        ]
+      }
+    },
+    {
+      "name": "numeric variable",
+      "input": {
+        "action": "docs:read",
+        "resource": "level/3",
+        "context": {
+          "principal.level": 3
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "docs:read"
+                ],
+                "resources": [
+                  "level/${principal.level}"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": true,
+        "reason": "allowed",
+        "matched": [
+          "grant:0:0"
+        ]
+      }
+    },
+    {
+      "name": "boolean variable",
+      "input": {
+        "action": "docs:read",
+        "resource": "flag/true",
+        "context": {
+          "principal.mfa": true
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "docs:read"
+                ],
+                "resources": [
+                  "flag/${principal.mfa}"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": true,
+        "reason": "allowed",
+        "matched": [
+          "grant:0:0"
+        ]
+      }
+    },
+    {
+      "name": "array variable is unresolved",
+      "input": {
+        "action": "docs:read",
+        "resource": "g/a",
+        "context": {
+          "principal.groups": [
+            "a"
+          ]
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "docs:read"
+                ],
+                "resources": [
+                  "g/${principal.groups}"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": false,
+        "reason": "no-grant",
+        "matched": []
+      }
+    },
+    {
+      "name": "malformed variable treated literally",
+      "input": {
+        "action": "docs:read",
+        "resource": "x/${",
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "docs:read"
+                ],
+                "resources": [
+                  "x/*"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": true,
+        "reason": "allowed",
+        "matched": [
+          "grant:0:0"
+        ]
+      }
+    },
+    {
+      "name": "astral characters and ?",
+      "input": {
+        "action": "docs:read",
+        "resource": "doc/😀",
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "docs:read"
+                ],
+                "resources": [
+                  "doc/?"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": true,
+        "reason": "allowed",
+        "matched": [
+          "grant:0:0"
+        ]
+      }
+    },
+    {
+      "name": "invalid request empty action",
+      "input": {
+        "action": "",
+        "resource": "doc/1",
+        "grants": []
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "INVALID_REQUEST",
+          "status": 400,
+          "message": "Invalid policy evaluation request"
+        }
+      }
+    },
+    {
+      "name": "invalid request long resource",
+      "input": {
+        "action": "a",
+        "resource": "r/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "grants": []
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "INVALID_REQUEST",
+          "status": 400,
+          "message": "Invalid policy evaluation request"
+        }
+      }
+    },
+    {
+      "name": "invalid request control character",
+      "input": {
+        "action": "a\nb",
+        "resource": "r",
+        "grants": []
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "INVALID_REQUEST",
+          "status": 400,
+          "message": "Invalid policy evaluation request"
+        }
+      }
+    },
+    {
+      "name": "invalid request grants not array",
+      "input": {
+        "action": "a",
+        "resource": "r",
+        "grants": "x"
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "INVALID_REQUEST",
+          "status": 400,
+          "message": "Invalid policy evaluation request"
+        }
+      }
+    },
+    {
+      "name": "invalid request context array",
+      "input": {
+        "action": "a",
+        "resource": "r",
+        "grants": [],
+        "context": []
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "INVALID_REQUEST",
+          "status": 400,
+          "message": "Invalid policy evaluation request"
+        }
+      }
+    },
+    {
+      "name": "invalid policy in grants",
+      "input": {
+        "action": "docs:read",
+        "resource": "doc/123",
+        "grants": [
+          {
+            "version": 2,
+            "statements": []
+          }
+        ]
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "INVALID_POLICY",
+          "status": 400,
+          "message": "Expected policy version 1 and at most 128 statements"
+        }
+      }
+    },
+    {
+      "name": "evaluation work limit",
+      "input": {
+        "action": "docs:read",
+        "resource": "doc/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "docs:read"
+                ],
+                "resources": [
+                  "doc/?0-0",
+                  "doc/?0-1",
+                  "doc/?0-2",
+                  "doc/?0-3",
+                  "doc/?0-4",
+                  "doc/?0-5",
+                  "doc/?0-6",
+                  "doc/?0-7",
+                  "doc/?0-8",
+                  "doc/?0-9",
+                  "doc/?0-10",
+                  "doc/?0-11",
+                  "doc/?0-12",
+                  "doc/?0-13",
+                  "doc/?0-14",
+                  "doc/?0-15",
+                  "doc/?0-16",
+                  "doc/?0-17",
+                  "doc/?0-18",
+                  "doc/?0-19",
+                  "doc/?0-20",
+                  "doc/?0-21",
+                  "doc/?0-22",
+                  "doc/?0-23",
+                  "doc/?0-24",
+                  "doc/?0-25",
+                  "doc/?0-26",
+                  "doc/?0-27",
+                  "doc/?0-28",
+                  "doc/?0-29",
+                  "doc/?0-30",
+                  "doc/?0-31",
+                  "doc/?0-32",
+                  "doc/?0-33",
+                  "doc/?0-34",
+                  "doc/?0-35",
+                  "doc/?0-36",
+                  "doc/?0-37",
+                  "doc/?0-38",
+                  "doc/?0-39",
+                  "doc/?0-40",
+                  "doc/?0-41",
+                  "doc/?0-42",
+                  "doc/?0-43",
+                  "doc/?0-44",
+                  "doc/?0-45",
+                  "doc/?0-46",
+                  "doc/?0-47",
+                  "doc/?0-48",
+                  "doc/?0-49",
+                  "doc/?0-50",
+                  "doc/?0-51",
+                  "doc/?0-52",
+                  "doc/?0-53",
+                  "doc/?0-54",
+                  "doc/?0-55",
+                  "doc/?0-56",
+                  "doc/?0-57",
+                  "doc/?0-58",
+                  "doc/?0-59",
+                  "doc/?0-60",
+                  "doc/?0-61",
+                  "doc/?0-62",
+                  "doc/?0-63",
+                  "doc/?0-64",
+                  "doc/?0-65",
+                  "doc/?0-66",
+                  "doc/?0-67",
+                  "doc/?0-68",
+                  "doc/?0-69",
+                  "doc/?0-70",
+                  "doc/?0-71",
+                  "doc/?0-72",
+                  "doc/?0-73",
+                  "doc/?0-74",
+                  "doc/?0-75",
+                  "doc/?0-76",
+                  "doc/?0-77",
+                  "doc/?0-78",
+                  "doc/?0-79",
+                  "doc/?0-80",
+                  "doc/?0-81",
+                  "doc/?0-82",
+                  "doc/?0-83",
+                  "doc/?0-84",
+                  "doc/?0-85",
+                  "doc/?0-86",
+                  "doc/?0-87",
+                  "doc/?0-88",
+                  "doc/?0-89",
+                  "doc/?0-90",
+                  "doc/?0-91",
+                  "doc/?0-92",
+                  "doc/?0-93",
+                  "doc/?0-94",
+                  "doc/?0-95",
+                  "doc/?0-96",
+                  "doc/?0-97",
+                  "doc/?0-98",
+                  "doc/?0-99",
+                  "doc/?0-100",
+                  "doc/?0-101",
+                  "doc/?0-102",
+                  "doc/?0-103",
+                  "doc/?0-104",
+                  "doc/?0-105",
+                  "doc/?0-106",
+                  "doc/?0-107",
+                  "doc/?0-108",
+                  "doc/?0-109",
+                  "doc/?0-110",
+                  "doc/?0-111",
+                  "doc/?0-112",
+                  "doc/?0-113",
+                  "doc/?0-114",
+                  "doc/?0-115",
+                  "doc/?0-116",
+                  "doc/?0-117",
+                  "doc/?0-118",
+                  "doc/?0-119",
+                  "doc/?0-120",
+                  "doc/?0-121",
+                  "doc/?0-122",
+                  "doc/?0-123",
+                  "doc/?0-124",
+                  "doc/?0-125",
+                  "doc/?0-126",
+                  "doc/?0-127"
+                ]
+              },
+              {
+                "effect": "allow",
+                "actions": [
+                  "docs:read"
+                ],
+                "resources": [
+                  "doc/?1-0",
+                  "doc/?1-1",
+                  "doc/?1-2",
+                  "doc/?1-3",
+                  "doc/?1-4",
+                  "doc/?1-5",
+                  "doc/?1-6",
+                  "doc/?1-7",
+                  "doc/?1-8",
+                  "doc/?1-9",
+                  "doc/?1-10",
+                  "doc/?1-11",
+                  "doc/?1-12",
+                  "doc/?1-13",
+                  "doc/?1-14",
+                  "doc/?1-15",
+                  "doc/?1-16",
+                  "doc/?1-17",
+                  "doc/?1-18",
+                  "doc/?1-19",
+                  "doc/?1-20",
+                  "doc/?1-21",
+                  "doc/?1-22",
+                  "doc/?1-23",
+                  "doc/?1-24",
+                  "doc/?1-25",
+                  "doc/?1-26",
+                  "doc/?1-27",
+                  "doc/?1-28",
+                  "doc/?1-29",
+                  "doc/?1-30",
+                  "doc/?1-31",
+                  "doc/?1-32",
+                  "doc/?1-33",
+                  "doc/?1-34",
+                  "doc/?1-35",
+                  "doc/?1-36",
+                  "doc/?1-37",
+                  "doc/?1-38",
+                  "doc/?1-39",
+                  "doc/?1-40",
+                  "doc/?1-41",
+                  "doc/?1-42",
+                  "doc/?1-43",
+                  "doc/?1-44",
+                  "doc/?1-45",
+                  "doc/?1-46",
+                  "doc/?1-47",
+                  "doc/?1-48",
+                  "doc/?1-49",
+                  "doc/?1-50",
+                  "doc/?1-51",
+                  "doc/?1-52",
+                  "doc/?1-53",
+                  "doc/?1-54",
+                  "doc/?1-55",
+                  "doc/?1-56",
+                  "doc/?1-57",
+                  "doc/?1-58",
+                  "doc/?1-59",
+                  "doc/?1-60",
+                  "doc/?1-61",
+                  "doc/?1-62",
+                  "doc/?1-63",
+                  "doc/?1-64",
+                  "doc/?1-65",
+                  "doc/?1-66",
+                  "doc/?1-67",
+                  "doc/?1-68",
+                  "doc/?1-69",
+                  "doc/?1-70",
+                  "doc/?1-71",
+                  "doc/?1-72",
+                  "doc/?1-73",
+                  "doc/?1-74",
+                  "doc/?1-75",
+                  "doc/?1-76",
+                  "doc/?1-77",
+                  "doc/?1-78",
+                  "doc/?1-79",
+                  "doc/?1-80",
+                  "doc/?1-81",
+                  "doc/?1-82",
+                  "doc/?1-83",
+                  "doc/?1-84",
+                  "doc/?1-85",
+                  "doc/?1-86",
+                  "doc/?1-87",
+                  "doc/?1-88",
+                  "doc/?1-89",
+                  "doc/?1-90",
+                  "doc/?1-91",
+                  "doc/?1-92",
+                  "doc/?1-93",
+                  "doc/?1-94",
+                  "doc/?1-95",
+                  "doc/?1-96",
+                  "doc/?1-97",
+                  "doc/?1-98",
+                  "doc/?1-99",
+                  "doc/?1-100",
+                  "doc/?1-101",
+                  "doc/?1-102",
+                  "doc/?1-103",
+                  "doc/?1-104",
+                  "doc/?1-105",
+                  "doc/?1-106",
+                  "doc/?1-107",
+                  "doc/?1-108",
+                  "doc/?1-109",
+                  "doc/?1-110",
+                  "doc/?1-111",
+                  "doc/?1-112",
+                  "doc/?1-113",
+                  "doc/?1-114",
+                  "doc/?1-115",
+                  "doc/?1-116",
+                  "doc/?1-117",
+                  "doc/?1-118",
+                  "doc/?1-119",
+                  "doc/?1-120",
+                  "doc/?1-121",
+                  "doc/?1-122",
+                  "doc/?1-123",
+                  "doc/?1-124",
+                  "doc/?1-125",
+                  "doc/?1-126",
+                  "doc/?1-127"
+                ]
+              },
+              {
+                "effect": "allow",
+                "actions": [
+                  "docs:read"
+                ],
+                "resources": [
+                  "doc/?2-0",
+                  "doc/?2-1",
+                  "doc/?2-2",
+                  "doc/?2-3",
+                  "doc/?2-4",
+                  "doc/?2-5",
+                  "doc/?2-6",
+                  "doc/?2-7",
+                  "doc/?2-8",
+                  "doc/?2-9",
+                  "doc/?2-10",
+                  "doc/?2-11",
+                  "doc/?2-12",
+                  "doc/?2-13",
+                  "doc/?2-14",
+                  "doc/?2-15",
+                  "doc/?2-16",
+                  "doc/?2-17",
+                  "doc/?2-18",
+                  "doc/?2-19",
+                  "doc/?2-20",
+                  "doc/?2-21",
+                  "doc/?2-22",
+                  "doc/?2-23",
+                  "doc/?2-24",
+                  "doc/?2-25",
+                  "doc/?2-26",
+                  "doc/?2-27",
+                  "doc/?2-28",
+                  "doc/?2-29",
+                  "doc/?2-30",
+                  "doc/?2-31",
+                  "doc/?2-32",
+                  "doc/?2-33",
+                  "doc/?2-34",
+                  "doc/?2-35",
+                  "doc/?2-36",
+                  "doc/?2-37",
+                  "doc/?2-38",
+                  "doc/?2-39",
+                  "doc/?2-40",
+                  "doc/?2-41",
+                  "doc/?2-42",
+                  "doc/?2-43",
+                  "doc/?2-44",
+                  "doc/?2-45",
+                  "doc/?2-46",
+                  "doc/?2-47",
+                  "doc/?2-48",
+                  "doc/?2-49",
+                  "doc/?2-50",
+                  "doc/?2-51",
+                  "doc/?2-52",
+                  "doc/?2-53",
+                  "doc/?2-54",
+                  "doc/?2-55",
+                  "doc/?2-56",
+                  "doc/?2-57",
+                  "doc/?2-58",
+                  "doc/?2-59",
+                  "doc/?2-60",
+                  "doc/?2-61",
+                  "doc/?2-62",
+                  "doc/?2-63",
+                  "doc/?2-64",
+                  "doc/?2-65",
+                  "doc/?2-66",
+                  "doc/?2-67",
+                  "doc/?2-68",
+                  "doc/?2-69",
+                  "doc/?2-70",
+                  "doc/?2-71",
+                  "doc/?2-72",
+                  "doc/?2-73",
+                  "doc/?2-74",
+                  "doc/?2-75",
+                  "doc/?2-76",
+                  "doc/?2-77",
+                  "doc/?2-78",
+                  "doc/?2-79",
+                  "doc/?2-80",
+                  "doc/?2-81",
+                  "doc/?2-82",
+                  "doc/?2-83",
+                  "doc/?2-84",
+                  "doc/?2-85",
+                  "doc/?2-86",
+                  "doc/?2-87",
+                  "doc/?2-88",
+                  "doc/?2-89",
+                  "doc/?2-90",
+                  "doc/?2-91",
+                  "doc/?2-92",
+                  "doc/?2-93",
+                  "doc/?2-94",
+                  "doc/?2-95",
+                  "doc/?2-96",
+                  "doc/?2-97",
+                  "doc/?2-98",
+                  "doc/?2-99",
+                  "doc/?2-100",
+                  "doc/?2-101",
+                  "doc/?2-102",
+                  "doc/?2-103",
+                  "doc/?2-104",
+                  "doc/?2-105",
+                  "doc/?2-106",
+                  "doc/?2-107",
+                  "doc/?2-108",
+                  "doc/?2-109",
+                  "doc/?2-110",
+                  "doc/?2-111",
+                  "doc/?2-112",
+                  "doc/?2-113",
+                  "doc/?2-114",
+                  "doc/?2-115",
+                  "doc/?2-116",
+                  "doc/?2-117",
+                  "doc/?2-118",
+                  "doc/?2-119",
+                  "doc/?2-120",
+                  "doc/?2-121",
+                  "doc/?2-122",
+                  "doc/?2-123",
+                  "doc/?2-124",
+                  "doc/?2-125",
+                  "doc/?2-126",
+                  "doc/?2-127"
+                ]
+              },
+              {
+                "effect": "allow",
+                "actions": [
+                  "docs:read"
+                ],
+                "resources": [
+                  "doc/?3-0",
+                  "doc/?3-1",
+                  "doc/?3-2",
+                  "doc/?3-3",
+                  "doc/?3-4",
+                  "doc/?3-5",
+                  "doc/?3-6",
+                  "doc/?3-7",
+                  "doc/?3-8",
+                  "doc/?3-9",
+                  "doc/?3-10",
+                  "doc/?3-11",
+                  "doc/?3-12",
+                  "doc/?3-13",
+                  "doc/?3-14",
+                  "doc/?3-15",
+                  "doc/?3-16",
+                  "doc/?3-17",
+                  "doc/?3-18",
+                  "doc/?3-19",
+                  "doc/?3-20",
+                  "doc/?3-21",
+                  "doc/?3-22",
+                  "doc/?3-23",
+                  "doc/?3-24",
+                  "doc/?3-25",
+                  "doc/?3-26",
+                  "doc/?3-27",
+                  "doc/?3-28",
+                  "doc/?3-29",
+                  "doc/?3-30",
+                  "doc/?3-31",
+                  "doc/?3-32",
+                  "doc/?3-33",
+                  "doc/?3-34",
+                  "doc/?3-35",
+                  "doc/?3-36",
+                  "doc/?3-37",
+                  "doc/?3-38",
+                  "doc/?3-39",
+                  "doc/?3-40",
+                  "doc/?3-41",
+                  "doc/?3-42",
+                  "doc/?3-43",
+                  "doc/?3-44",
+                  "doc/?3-45",
+                  "doc/?3-46",
+                  "doc/?3-47",
+                  "doc/?3-48",
+                  "doc/?3-49",
+                  "doc/?3-50",
+                  "doc/?3-51",
+                  "doc/?3-52",
+                  "doc/?3-53",
+                  "doc/?3-54",
+                  "doc/?3-55",
+                  "doc/?3-56",
+                  "doc/?3-57",
+                  "doc/?3-58",
+                  "doc/?3-59",
+                  "doc/?3-60",
+                  "doc/?3-61",
+                  "doc/?3-62",
+                  "doc/?3-63",
+                  "doc/?3-64",
+                  "doc/?3-65",
+                  "doc/?3-66",
+                  "doc/?3-67",
+                  "doc/?3-68",
+                  "doc/?3-69",
+                  "doc/?3-70",
+                  "doc/?3-71",
+                  "doc/?3-72",
+                  "doc/?3-73",
+                  "doc/?3-74",
+                  "doc/?3-75",
+                  "doc/?3-76",
+                  "doc/?3-77",
+                  "doc/?3-78",
+                  "doc/?3-79",
+                  "doc/?3-80",
+                  "doc/?3-81",
+                  "doc/?3-82",
+                  "doc/?3-83",
+                  "doc/?3-84",
+                  "doc/?3-85",
+                  "doc/?3-86",
+                  "doc/?3-87",
+                  "doc/?3-88",
+                  "doc/?3-89",
+                  "doc/?3-90",
+                  "doc/?3-91",
+                  "doc/?3-92",
+                  "doc/?3-93",
+                  "doc/?3-94",
+                  "doc/?3-95",
+                  "doc/?3-96",
+                  "doc/?3-97",
+                  "doc/?3-98",
+                  "doc/?3-99",
+                  "doc/?3-100",
+                  "doc/?3-101",
+                  "doc/?3-102",
+                  "doc/?3-103",
+                  "doc/?3-104",
+                  "doc/?3-105",
+                  "doc/?3-106",
+                  "doc/?3-107",
+                  "doc/?3-108",
+                  "doc/?3-109",
+                  "doc/?3-110",
+                  "doc/?3-111",
+                  "doc/?3-112",
+                  "doc/?3-113",
+                  "doc/?3-114",
+                  "doc/?3-115",
+                  "doc/?3-116",
+                  "doc/?3-117",
+                  "doc/?3-118",
+                  "doc/?3-119",
+                  "doc/?3-120",
+                  "doc/?3-121",
+                  "doc/?3-122",
+                  "doc/?3-123",
+                  "doc/?3-124",
+                  "doc/?3-125",
+                  "doc/?3-126",
+                  "doc/?3-127"
+                ]
+              },
+              {
+                "effect": "allow",
+                "actions": [
+                  "docs:read"
+                ],
+                "resources": [
+                  "doc/?4-0",
+                  "doc/?4-1",
+                  "doc/?4-2",
+                  "doc/?4-3",
+                  "doc/?4-4",
+                  "doc/?4-5",
+                  "doc/?4-6",
+                  "doc/?4-7",
+                  "doc/?4-8",
+                  "doc/?4-9",
+                  "doc/?4-10",
+                  "doc/?4-11",
+                  "doc/?4-12",
+                  "doc/?4-13",
+                  "doc/?4-14",
+                  "doc/?4-15",
+                  "doc/?4-16",
+                  "doc/?4-17",
+                  "doc/?4-18",
+                  "doc/?4-19",
+                  "doc/?4-20",
+                  "doc/?4-21",
+                  "doc/?4-22",
+                  "doc/?4-23",
+                  "doc/?4-24",
+                  "doc/?4-25",
+                  "doc/?4-26",
+                  "doc/?4-27",
+                  "doc/?4-28",
+                  "doc/?4-29",
+                  "doc/?4-30",
+                  "doc/?4-31",
+                  "doc/?4-32",
+                  "doc/?4-33",
+                  "doc/?4-34",
+                  "doc/?4-35",
+                  "doc/?4-36",
+                  "doc/?4-37",
+                  "doc/?4-38",
+                  "doc/?4-39",
+                  "doc/?4-40",
+                  "doc/?4-41",
+                  "doc/?4-42",
+                  "doc/?4-43",
+                  "doc/?4-44",
+                  "doc/?4-45",
+                  "doc/?4-46",
+                  "doc/?4-47",
+                  "doc/?4-48",
+                  "doc/?4-49",
+                  "doc/?4-50",
+                  "doc/?4-51",
+                  "doc/?4-52",
+                  "doc/?4-53",
+                  "doc/?4-54",
+                  "doc/?4-55",
+                  "doc/?4-56",
+                  "doc/?4-57",
+                  "doc/?4-58",
+                  "doc/?4-59",
+                  "doc/?4-60",
+                  "doc/?4-61",
+                  "doc/?4-62",
+                  "doc/?4-63",
+                  "doc/?4-64",
+                  "doc/?4-65",
+                  "doc/?4-66",
+                  "doc/?4-67",
+                  "doc/?4-68",
+                  "doc/?4-69",
+                  "doc/?4-70",
+                  "doc/?4-71",
+                  "doc/?4-72",
+                  "doc/?4-73",
+                  "doc/?4-74",
+                  "doc/?4-75",
+                  "doc/?4-76",
+                  "doc/?4-77",
+                  "doc/?4-78",
+                  "doc/?4-79",
+                  "doc/?4-80",
+                  "doc/?4-81",
+                  "doc/?4-82",
+                  "doc/?4-83",
+                  "doc/?4-84",
+                  "doc/?4-85",
+                  "doc/?4-86",
+                  "doc/?4-87",
+                  "doc/?4-88",
+                  "doc/?4-89",
+                  "doc/?4-90",
+                  "doc/?4-91",
+                  "doc/?4-92",
+                  "doc/?4-93",
+                  "doc/?4-94",
+                  "doc/?4-95",
+                  "doc/?4-96",
+                  "doc/?4-97",
+                  "doc/?4-98",
+                  "doc/?4-99",
+                  "doc/?4-100",
+                  "doc/?4-101",
+                  "doc/?4-102",
+                  "doc/?4-103",
+                  "doc/?4-104",
+                  "doc/?4-105",
+                  "doc/?4-106",
+                  "doc/?4-107",
+                  "doc/?4-108",
+                  "doc/?4-109",
+                  "doc/?4-110",
+                  "doc/?4-111",
+                  "doc/?4-112",
+                  "doc/?4-113",
+                  "doc/?4-114",
+                  "doc/?4-115",
+                  "doc/?4-116",
+                  "doc/?4-117",
+                  "doc/?4-118",
+                  "doc/?4-119",
+                  "doc/?4-120",
+                  "doc/?4-121",
+                  "doc/?4-122",
+                  "doc/?4-123",
+                  "doc/?4-124",
+                  "doc/?4-125",
+                  "doc/?4-126",
+                  "doc/?4-127"
+                ]
+              },
+              {
+                "effect": "allow",
+                "actions": [
+                  "docs:read"
+                ],
+                "resources": [
+                  "doc/?5-0",
+                  "doc/?5-1",
+                  "doc/?5-2",
+                  "doc/?5-3",
+                  "doc/?5-4",
+                  "doc/?5-5",
+                  "doc/?5-6",
+                  "doc/?5-7",
+                  "doc/?5-8",
+                  "doc/?5-9",
+                  "doc/?5-10",
+                  "doc/?5-11",
+                  "doc/?5-12",
+                  "doc/?5-13",
+                  "doc/?5-14",
+                  "doc/?5-15",
+                  "doc/?5-16",
+                  "doc/?5-17",
+                  "doc/?5-18",
+                  "doc/?5-19",
+                  "doc/?5-20",
+                  "doc/?5-21",
+                  "doc/?5-22",
+                  "doc/?5-23",
+                  "doc/?5-24",
+                  "doc/?5-25",
+                  "doc/?5-26",
+                  "doc/?5-27",
+                  "doc/?5-28",
+                  "doc/?5-29",
+                  "doc/?5-30",
+                  "doc/?5-31",
+                  "doc/?5-32",
+                  "doc/?5-33",
+                  "doc/?5-34",
+                  "doc/?5-35",
+                  "doc/?5-36",
+                  "doc/?5-37",
+                  "doc/?5-38",
+                  "doc/?5-39",
+                  "doc/?5-40",
+                  "doc/?5-41",
+                  "doc/?5-42",
+                  "doc/?5-43",
+                  "doc/?5-44",
+                  "doc/?5-45",
+                  "doc/?5-46",
+                  "doc/?5-47",
+                  "doc/?5-48",
+                  "doc/?5-49",
+                  "doc/?5-50",
+                  "doc/?5-51",
+                  "doc/?5-52",
+                  "doc/?5-53",
+                  "doc/?5-54",
+                  "doc/?5-55",
+                  "doc/?5-56",
+                  "doc/?5-57",
+                  "doc/?5-58",
+                  "doc/?5-59",
+                  "doc/?5-60",
+                  "doc/?5-61",
+                  "doc/?5-62",
+                  "doc/?5-63",
+                  "doc/?5-64",
+                  "doc/?5-65",
+                  "doc/?5-66",
+                  "doc/?5-67",
+                  "doc/?5-68",
+                  "doc/?5-69",
+                  "doc/?5-70",
+                  "doc/?5-71",
+                  "doc/?5-72",
+                  "doc/?5-73",
+                  "doc/?5-74",
+                  "doc/?5-75",
+                  "doc/?5-76",
+                  "doc/?5-77",
+                  "doc/?5-78",
+                  "doc/?5-79",
+                  "doc/?5-80",
+                  "doc/?5-81",
+                  "doc/?5-82",
+                  "doc/?5-83",
+                  "doc/?5-84",
+                  "doc/?5-85",
+                  "doc/?5-86",
+                  "doc/?5-87",
+                  "doc/?5-88",
+                  "doc/?5-89",
+                  "doc/?5-90",
+                  "doc/?5-91",
+                  "doc/?5-92",
+                  "doc/?5-93",
+                  "doc/?5-94",
+                  "doc/?5-95",
+                  "doc/?5-96",
+                  "doc/?5-97",
+                  "doc/?5-98",
+                  "doc/?5-99",
+                  "doc/?5-100",
+                  "doc/?5-101",
+                  "doc/?5-102",
+                  "doc/?5-103",
+                  "doc/?5-104",
+                  "doc/?5-105",
+                  "doc/?5-106",
+                  "doc/?5-107",
+                  "doc/?5-108",
+                  "doc/?5-109",
+                  "doc/?5-110",
+                  "doc/?5-111",
+                  "doc/?5-112",
+                  "doc/?5-113",
+                  "doc/?5-114",
+                  "doc/?5-115",
+                  "doc/?5-116",
+                  "doc/?5-117",
+                  "doc/?5-118",
+                  "doc/?5-119",
+                  "doc/?5-120",
+                  "doc/?5-121",
+                  "doc/?5-122",
+                  "doc/?5-123",
+                  "doc/?5-124",
+                  "doc/?5-125",
+                  "doc/?5-126",
+                  "doc/?5-127"
+                ]
+              },
+              {
+                "effect": "allow",
+                "actions": [
+                  "docs:read"
+                ],
+                "resources": [
+                  "doc/?6-0",
+                  "doc/?6-1",
+                  "doc/?6-2",
+                  "doc/?6-3",
+                  "doc/?6-4",
+                  "doc/?6-5",
+                  "doc/?6-6",
+                  "doc/?6-7",
+                  "doc/?6-8",
+                  "doc/?6-9",
+                  "doc/?6-10",
+                  "doc/?6-11",
+                  "doc/?6-12",
+                  "doc/?6-13",
+                  "doc/?6-14",
+                  "doc/?6-15",
+                  "doc/?6-16",
+                  "doc/?6-17",
+                  "doc/?6-18",
+                  "doc/?6-19",
+                  "doc/?6-20",
+                  "doc/?6-21",
+                  "doc/?6-22",
+                  "doc/?6-23",
+                  "doc/?6-24",
+                  "doc/?6-25",
+                  "doc/?6-26",
+                  "doc/?6-27",
+                  "doc/?6-28",
+                  "doc/?6-29",
+                  "doc/?6-30",
+                  "doc/?6-31",
+                  "doc/?6-32",
+                  "doc/?6-33",
+                  "doc/?6-34",
+                  "doc/?6-35",
+                  "doc/?6-36",
+                  "doc/?6-37",
+                  "doc/?6-38",
+                  "doc/?6-39",
+                  "doc/?6-40",
+                  "doc/?6-41",
+                  "doc/?6-42",
+                  "doc/?6-43",
+                  "doc/?6-44",
+                  "doc/?6-45",
+                  "doc/?6-46",
+                  "doc/?6-47",
+                  "doc/?6-48",
+                  "doc/?6-49",
+                  "doc/?6-50",
+                  "doc/?6-51",
+                  "doc/?6-52",
+                  "doc/?6-53",
+                  "doc/?6-54",
+                  "doc/?6-55",
+                  "doc/?6-56",
+                  "doc/?6-57",
+                  "doc/?6-58",
+                  "doc/?6-59",
+                  "doc/?6-60",
+                  "doc/?6-61",
+                  "doc/?6-62",
+                  "doc/?6-63",
+                  "doc/?6-64",
+                  "doc/?6-65",
+                  "doc/?6-66",
+                  "doc/?6-67",
+                  "doc/?6-68",
+                  "doc/?6-69",
+                  "doc/?6-70",
+                  "doc/?6-71",
+                  "doc/?6-72",
+                  "doc/?6-73",
+                  "doc/?6-74",
+                  "doc/?6-75",
+                  "doc/?6-76",
+                  "doc/?6-77",
+                  "doc/?6-78",
+                  "doc/?6-79",
+                  "doc/?6-80",
+                  "doc/?6-81",
+                  "doc/?6-82",
+                  "doc/?6-83",
+                  "doc/?6-84",
+                  "doc/?6-85",
+                  "doc/?6-86",
+                  "doc/?6-87",
+                  "doc/?6-88",
+                  "doc/?6-89",
+                  "doc/?6-90",
+                  "doc/?6-91",
+                  "doc/?6-92",
+                  "doc/?6-93",
+                  "doc/?6-94",
+                  "doc/?6-95",
+                  "doc/?6-96",
+                  "doc/?6-97",
+                  "doc/?6-98",
+                  "doc/?6-99",
+                  "doc/?6-100",
+                  "doc/?6-101",
+                  "doc/?6-102",
+                  "doc/?6-103",
+                  "doc/?6-104",
+                  "doc/?6-105",
+                  "doc/?6-106",
+                  "doc/?6-107",
+                  "doc/?6-108",
+                  "doc/?6-109",
+                  "doc/?6-110",
+                  "doc/?6-111",
+                  "doc/?6-112",
+                  "doc/?6-113",
+                  "doc/?6-114",
+                  "doc/?6-115",
+                  "doc/?6-116",
+                  "doc/?6-117",
+                  "doc/?6-118",
+                  "doc/?6-119",
+                  "doc/?6-120",
+                  "doc/?6-121",
+                  "doc/?6-122",
+                  "doc/?6-123",
+                  "doc/?6-124",
+                  "doc/?6-125",
+                  "doc/?6-126",
+                  "doc/?6-127"
+                ]
+              },
+              {
+                "effect": "allow",
+                "actions": [
+                  "docs:read"
+                ],
+                "resources": [
+                  "doc/?7-0",
+                  "doc/?7-1",
+                  "doc/?7-2",
+                  "doc/?7-3",
+                  "doc/?7-4",
+                  "doc/?7-5",
+                  "doc/?7-6",
+                  "doc/?7-7",
+                  "doc/?7-8",
+                  "doc/?7-9",
+                  "doc/?7-10",
+                  "doc/?7-11",
+                  "doc/?7-12",
+                  "doc/?7-13",
+                  "doc/?7-14",
+                  "doc/?7-15",
+                  "doc/?7-16",
+                  "doc/?7-17",
+                  "doc/?7-18",
+                  "doc/?7-19",
+                  "doc/?7-20",
+                  "doc/?7-21",
+                  "doc/?7-22",
+                  "doc/?7-23",
+                  "doc/?7-24",
+                  "doc/?7-25",
+                  "doc/?7-26",
+                  "doc/?7-27",
+                  "doc/?7-28",
+                  "doc/?7-29",
+                  "doc/?7-30",
+                  "doc/?7-31",
+                  "doc/?7-32",
+                  "doc/?7-33",
+                  "doc/?7-34",
+                  "doc/?7-35",
+                  "doc/?7-36",
+                  "doc/?7-37",
+                  "doc/?7-38",
+                  "doc/?7-39",
+                  "doc/?7-40",
+                  "doc/?7-41",
+                  "doc/?7-42",
+                  "doc/?7-43",
+                  "doc/?7-44",
+                  "doc/?7-45",
+                  "doc/?7-46",
+                  "doc/?7-47",
+                  "doc/?7-48",
+                  "doc/?7-49",
+                  "doc/?7-50",
+                  "doc/?7-51",
+                  "doc/?7-52",
+                  "doc/?7-53",
+                  "doc/?7-54",
+                  "doc/?7-55",
+                  "doc/?7-56",
+                  "doc/?7-57",
+                  "doc/?7-58",
+                  "doc/?7-59",
+                  "doc/?7-60",
+                  "doc/?7-61",
+                  "doc/?7-62",
+                  "doc/?7-63",
+                  "doc/?7-64",
+                  "doc/?7-65",
+                  "doc/?7-66",
+                  "doc/?7-67",
+                  "doc/?7-68",
+                  "doc/?7-69",
+                  "doc/?7-70",
+                  "doc/?7-71",
+                  "doc/?7-72",
+                  "doc/?7-73",
+                  "doc/?7-74",
+                  "doc/?7-75",
+                  "doc/?7-76",
+                  "doc/?7-77",
+                  "doc/?7-78",
+                  "doc/?7-79",
+                  "doc/?7-80",
+                  "doc/?7-81",
+                  "doc/?7-82",
+                  "doc/?7-83",
+                  "doc/?7-84",
+                  "doc/?7-85",
+                  "doc/?7-86",
+                  "doc/?7-87",
+                  "doc/?7-88",
+                  "doc/?7-89",
+                  "doc/?7-90",
+                  "doc/?7-91",
+                  "doc/?7-92",
+                  "doc/?7-93",
+                  "doc/?7-94",
+                  "doc/?7-95",
+                  "doc/?7-96",
+                  "doc/?7-97",
+                  "doc/?7-98",
+                  "doc/?7-99",
+                  "doc/?7-100",
+                  "doc/?7-101",
+                  "doc/?7-102",
+                  "doc/?7-103",
+                  "doc/?7-104",
+                  "doc/?7-105",
+                  "doc/?7-106",
+                  "doc/?7-107",
+                  "doc/?7-108",
+                  "doc/?7-109",
+                  "doc/?7-110",
+                  "doc/?7-111",
+                  "doc/?7-112",
+                  "doc/?7-113",
+                  "doc/?7-114",
+                  "doc/?7-115",
+                  "doc/?7-116",
+                  "doc/?7-117",
+                  "doc/?7-118",
+                  "doc/?7-119",
+                  "doc/?7-120",
+                  "doc/?7-121",
+                  "doc/?7-122",
+                  "doc/?7-123",
+                  "doc/?7-124",
+                  "doc/?7-125",
+                  "doc/?7-126",
+                  "doc/?7-127"
+                ]
+              },
+              {
+                "effect": "allow",
+                "actions": [
+                  "docs:read"
+                ],
+                "resources": [
+                  "doc/?8-0",
+                  "doc/?8-1",
+                  "doc/?8-2",
+                  "doc/?8-3",
+                  "doc/?8-4",
+                  "doc/?8-5",
+                  "doc/?8-6",
+                  "doc/?8-7",
+                  "doc/?8-8",
+                  "doc/?8-9",
+                  "doc/?8-10",
+                  "doc/?8-11",
+                  "doc/?8-12",
+                  "doc/?8-13",
+                  "doc/?8-14",
+                  "doc/?8-15",
+                  "doc/?8-16",
+                  "doc/?8-17",
+                  "doc/?8-18",
+                  "doc/?8-19",
+                  "doc/?8-20",
+                  "doc/?8-21",
+                  "doc/?8-22",
+                  "doc/?8-23",
+                  "doc/?8-24",
+                  "doc/?8-25",
+                  "doc/?8-26",
+                  "doc/?8-27",
+                  "doc/?8-28",
+                  "doc/?8-29",
+                  "doc/?8-30",
+                  "doc/?8-31",
+                  "doc/?8-32",
+                  "doc/?8-33",
+                  "doc/?8-34",
+                  "doc/?8-35",
+                  "doc/?8-36",
+                  "doc/?8-37",
+                  "doc/?8-38",
+                  "doc/?8-39",
+                  "doc/?8-40",
+                  "doc/?8-41",
+                  "doc/?8-42",
+                  "doc/?8-43",
+                  "doc/?8-44",
+                  "doc/?8-45",
+                  "doc/?8-46",
+                  "doc/?8-47",
+                  "doc/?8-48",
+                  "doc/?8-49",
+                  "doc/?8-50",
+                  "doc/?8-51",
+                  "doc/?8-52",
+                  "doc/?8-53",
+                  "doc/?8-54",
+                  "doc/?8-55",
+                  "doc/?8-56",
+                  "doc/?8-57",
+                  "doc/?8-58",
+                  "doc/?8-59",
+                  "doc/?8-60",
+                  "doc/?8-61",
+                  "doc/?8-62",
+                  "doc/?8-63",
+                  "doc/?8-64",
+                  "doc/?8-65",
+                  "doc/?8-66",
+                  "doc/?8-67",
+                  "doc/?8-68",
+                  "doc/?8-69",
+                  "doc/?8-70",
+                  "doc/?8-71",
+                  "doc/?8-72",
+                  "doc/?8-73",
+                  "doc/?8-74",
+                  "doc/?8-75",
+                  "doc/?8-76",
+                  "doc/?8-77",
+                  "doc/?8-78",
+                  "doc/?8-79",
+                  "doc/?8-80",
+                  "doc/?8-81",
+                  "doc/?8-82",
+                  "doc/?8-83",
+                  "doc/?8-84",
+                  "doc/?8-85",
+                  "doc/?8-86",
+                  "doc/?8-87",
+                  "doc/?8-88",
+                  "doc/?8-89",
+                  "doc/?8-90",
+                  "doc/?8-91",
+                  "doc/?8-92",
+                  "doc/?8-93",
+                  "doc/?8-94",
+                  "doc/?8-95",
+                  "doc/?8-96",
+                  "doc/?8-97",
+                  "doc/?8-98",
+                  "doc/?8-99",
+                  "doc/?8-100",
+                  "doc/?8-101",
+                  "doc/?8-102",
+                  "doc/?8-103",
+                  "doc/?8-104",
+                  "doc/?8-105",
+                  "doc/?8-106",
+                  "doc/?8-107",
+                  "doc/?8-108",
+                  "doc/?8-109",
+                  "doc/?8-110",
+                  "doc/?8-111",
+                  "doc/?8-112",
+                  "doc/?8-113",
+                  "doc/?8-114",
+                  "doc/?8-115",
+                  "doc/?8-116",
+                  "doc/?8-117",
+                  "doc/?8-118",
+                  "doc/?8-119",
+                  "doc/?8-120",
+                  "doc/?8-121",
+                  "doc/?8-122",
+                  "doc/?8-123",
+                  "doc/?8-124",
+                  "doc/?8-125",
+                  "doc/?8-126",
+                  "doc/?8-127"
+                ]
+              },
+              {
+                "effect": "allow",
+                "actions": [
+                  "docs:read"
+                ],
+                "resources": [
+                  "doc/?9-0",
+                  "doc/?9-1",
+                  "doc/?9-2",
+                  "doc/?9-3",
+                  "doc/?9-4",
+                  "doc/?9-5",
+                  "doc/?9-6",
+                  "doc/?9-7",
+                  "doc/?9-8",
+                  "doc/?9-9",
+                  "doc/?9-10",
+                  "doc/?9-11",
+                  "doc/?9-12",
+                  "doc/?9-13",
+                  "doc/?9-14",
+                  "doc/?9-15",
+                  "doc/?9-16",
+                  "doc/?9-17",
+                  "doc/?9-18",
+                  "doc/?9-19",
+                  "doc/?9-20",
+                  "doc/?9-21",
+                  "doc/?9-22",
+                  "doc/?9-23",
+                  "doc/?9-24",
+                  "doc/?9-25",
+                  "doc/?9-26",
+                  "doc/?9-27",
+                  "doc/?9-28",
+                  "doc/?9-29",
+                  "doc/?9-30",
+                  "doc/?9-31",
+                  "doc/?9-32",
+                  "doc/?9-33",
+                  "doc/?9-34",
+                  "doc/?9-35",
+                  "doc/?9-36",
+                  "doc/?9-37",
+                  "doc/?9-38",
+                  "doc/?9-39",
+                  "doc/?9-40",
+                  "doc/?9-41",
+                  "doc/?9-42",
+                  "doc/?9-43",
+                  "doc/?9-44",
+                  "doc/?9-45",
+                  "doc/?9-46",
+                  "doc/?9-47",
+                  "doc/?9-48",
+                  "doc/?9-49",
+                  "doc/?9-50",
+                  "doc/?9-51",
+                  "doc/?9-52",
+                  "doc/?9-53",
+                  "doc/?9-54",
+                  "doc/?9-55",
+                  "doc/?9-56",
+                  "doc/?9-57",
+                  "doc/?9-58",
+                  "doc/?9-59",
+                  "doc/?9-60",
+                  "doc/?9-61",
+                  "doc/?9-62",
+                  "doc/?9-63",
+                  "doc/?9-64",
+                  "doc/?9-65",
+                  "doc/?9-66",
+                  "doc/?9-67",
+                  "doc/?9-68",
+                  "doc/?9-69",
+                  "doc/?9-70",
+                  "doc/?9-71",
+                  "doc/?9-72",
+                  "doc/?9-73",
+                  "doc/?9-74",
+                  "doc/?9-75",
+                  "doc/?9-76",
+                  "doc/?9-77",
+                  "doc/?9-78",
+                  "doc/?9-79",
+                  "doc/?9-80",
+                  "doc/?9-81",
+                  "doc/?9-82",
+                  "doc/?9-83",
+                  "doc/?9-84",
+                  "doc/?9-85",
+                  "doc/?9-86",
+                  "doc/?9-87",
+                  "doc/?9-88",
+                  "doc/?9-89",
+                  "doc/?9-90",
+                  "doc/?9-91",
+                  "doc/?9-92",
+                  "doc/?9-93",
+                  "doc/?9-94",
+                  "doc/?9-95",
+                  "doc/?9-96",
+                  "doc/?9-97",
+                  "doc/?9-98",
+                  "doc/?9-99",
+                  "doc/?9-100",
+                  "doc/?9-101",
+                  "doc/?9-102",
+                  "doc/?9-103",
+                  "doc/?9-104",
+                  "doc/?9-105",
+                  "doc/?9-106",
+                  "doc/?9-107",
+                  "doc/?9-108",
+                  "doc/?9-109",
+                  "doc/?9-110",
+                  "doc/?9-111",
+                  "doc/?9-112",
+                  "doc/?9-113",
+                  "doc/?9-114",
+                  "doc/?9-115",
+                  "doc/?9-116",
+                  "doc/?9-117",
+                  "doc/?9-118",
+                  "doc/?9-119",
+                  "doc/?9-120",
+                  "doc/?9-121",
+                  "doc/?9-122",
+                  "doc/?9-123",
+                  "doc/?9-124",
+                  "doc/?9-125",
+                  "doc/?9-126",
+                  "doc/?9-127"
+                ]
+              },
+              {
+                "effect": "allow",
+                "actions": [
+                  "docs:read"
+                ],
+                "resources": [
+                  "doc/?10-0",
+                  "doc/?10-1",
+                  "doc/?10-2",
+                  "doc/?10-3",
+                  "doc/?10-4",
+                  "doc/?10-5",
+                  "doc/?10-6",
+                  "doc/?10-7",
+                  "doc/?10-8",
+                  "doc/?10-9",
+                  "doc/?10-10",
+                  "doc/?10-11",
+                  "doc/?10-12",
+                  "doc/?10-13",
+                  "doc/?10-14",
+                  "doc/?10-15",
+                  "doc/?10-16",
+                  "doc/?10-17",
+                  "doc/?10-18",
+                  "doc/?10-19",
+                  "doc/?10-20",
+                  "doc/?10-21",
+                  "doc/?10-22",
+                  "doc/?10-23",
+                  "doc/?10-24",
+                  "doc/?10-25",
+                  "doc/?10-26",
+                  "doc/?10-27",
+                  "doc/?10-28",
+                  "doc/?10-29",
+                  "doc/?10-30",
+                  "doc/?10-31",
+                  "doc/?10-32",
+                  "doc/?10-33",
+                  "doc/?10-34",
+                  "doc/?10-35",
+                  "doc/?10-36",
+                  "doc/?10-37",
+                  "doc/?10-38",
+                  "doc/?10-39",
+                  "doc/?10-40",
+                  "doc/?10-41",
+                  "doc/?10-42",
+                  "doc/?10-43",
+                  "doc/?10-44",
+                  "doc/?10-45",
+                  "doc/?10-46",
+                  "doc/?10-47",
+                  "doc/?10-48",
+                  "doc/?10-49",
+                  "doc/?10-50",
+                  "doc/?10-51",
+                  "doc/?10-52",
+                  "doc/?10-53",
+                  "doc/?10-54",
+                  "doc/?10-55",
+                  "doc/?10-56",
+                  "doc/?10-57",
+                  "doc/?10-58",
+                  "doc/?10-59",
+                  "doc/?10-60",
+                  "doc/?10-61",
+                  "doc/?10-62",
+                  "doc/?10-63",
+                  "doc/?10-64",
+                  "doc/?10-65",
+                  "doc/?10-66",
+                  "doc/?10-67",
+                  "doc/?10-68",
+                  "doc/?10-69",
+                  "doc/?10-70",
+                  "doc/?10-71",
+                  "doc/?10-72",
+                  "doc/?10-73",
+                  "doc/?10-74",
+                  "doc/?10-75",
+                  "doc/?10-76",
+                  "doc/?10-77",
+                  "doc/?10-78",
+                  "doc/?10-79",
+                  "doc/?10-80",
+                  "doc/?10-81",
+                  "doc/?10-82",
+                  "doc/?10-83",
+                  "doc/?10-84",
+                  "doc/?10-85",
+                  "doc/?10-86",
+                  "doc/?10-87",
+                  "doc/?10-88",
+                  "doc/?10-89",
+                  "doc/?10-90",
+                  "doc/?10-91",
+                  "doc/?10-92",
+                  "doc/?10-93",
+                  "doc/?10-94",
+                  "doc/?10-95",
+                  "doc/?10-96",
+                  "doc/?10-97",
+                  "doc/?10-98",
+                  "doc/?10-99",
+                  "doc/?10-100",
+                  "doc/?10-101",
+                  "doc/?10-102",
+                  "doc/?10-103",
+                  "doc/?10-104",
+                  "doc/?10-105",
+                  "doc/?10-106",
+                  "doc/?10-107",
+                  "doc/?10-108",
+                  "doc/?10-109",
+                  "doc/?10-110",
+                  "doc/?10-111",
+                  "doc/?10-112",
+                  "doc/?10-113",
+                  "doc/?10-114",
+                  "doc/?10-115",
+                  "doc/?10-116",
+                  "doc/?10-117",
+                  "doc/?10-118",
+                  "doc/?10-119",
+                  "doc/?10-120",
+                  "doc/?10-121",
+                  "doc/?10-122",
+                  "doc/?10-123",
+                  "doc/?10-124",
+                  "doc/?10-125",
+                  "doc/?10-126",
+                  "doc/?10-127"
+                ]
+              },
+              {
+                "effect": "allow",
+                "actions": [
+                  "docs:read"
+                ],
+                "resources": [
+                  "doc/?11-0",
+                  "doc/?11-1",
+                  "doc/?11-2",
+                  "doc/?11-3",
+                  "doc/?11-4",
+                  "doc/?11-5",
+                  "doc/?11-6",
+                  "doc/?11-7",
+                  "doc/?11-8",
+                  "doc/?11-9",
+                  "doc/?11-10",
+                  "doc/?11-11",
+                  "doc/?11-12",
+                  "doc/?11-13",
+                  "doc/?11-14",
+                  "doc/?11-15",
+                  "doc/?11-16",
+                  "doc/?11-17",
+                  "doc/?11-18",
+                  "doc/?11-19",
+                  "doc/?11-20",
+                  "doc/?11-21",
+                  "doc/?11-22",
+                  "doc/?11-23",
+                  "doc/?11-24",
+                  "doc/?11-25",
+                  "doc/?11-26",
+                  "doc/?11-27",
+                  "doc/?11-28",
+                  "doc/?11-29",
+                  "doc/?11-30",
+                  "doc/?11-31",
+                  "doc/?11-32",
+                  "doc/?11-33",
+                  "doc/?11-34",
+                  "doc/?11-35",
+                  "doc/?11-36",
+                  "doc/?11-37",
+                  "doc/?11-38",
+                  "doc/?11-39",
+                  "doc/?11-40",
+                  "doc/?11-41",
+                  "doc/?11-42",
+                  "doc/?11-43",
+                  "doc/?11-44",
+                  "doc/?11-45",
+                  "doc/?11-46",
+                  "doc/?11-47",
+                  "doc/?11-48",
+                  "doc/?11-49",
+                  "doc/?11-50",
+                  "doc/?11-51",
+                  "doc/?11-52",
+                  "doc/?11-53",
+                  "doc/?11-54",
+                  "doc/?11-55",
+                  "doc/?11-56",
+                  "doc/?11-57",
+                  "doc/?11-58",
+                  "doc/?11-59",
+                  "doc/?11-60",
+                  "doc/?11-61",
+                  "doc/?11-62",
+                  "doc/?11-63",
+                  "doc/?11-64",
+                  "doc/?11-65",
+                  "doc/?11-66",
+                  "doc/?11-67",
+                  "doc/?11-68",
+                  "doc/?11-69",
+                  "doc/?11-70",
+                  "doc/?11-71",
+                  "doc/?11-72",
+                  "doc/?11-73",
+                  "doc/?11-74",
+                  "doc/?11-75",
+                  "doc/?11-76",
+                  "doc/?11-77",
+                  "doc/?11-78",
+                  "doc/?11-79",
+                  "doc/?11-80",
+                  "doc/?11-81",
+                  "doc/?11-82",
+                  "doc/?11-83",
+                  "doc/?11-84",
+                  "doc/?11-85",
+                  "doc/?11-86",
+                  "doc/?11-87",
+                  "doc/?11-88",
+                  "doc/?11-89",
+                  "doc/?11-90",
+                  "doc/?11-91",
+                  "doc/?11-92",
+                  "doc/?11-93",
+                  "doc/?11-94",
+                  "doc/?11-95",
+                  "doc/?11-96",
+                  "doc/?11-97",
+                  "doc/?11-98",
+                  "doc/?11-99",
+                  "doc/?11-100",
+                  "doc/?11-101",
+                  "doc/?11-102",
+                  "doc/?11-103",
+                  "doc/?11-104",
+                  "doc/?11-105",
+                  "doc/?11-106",
+                  "doc/?11-107",
+                  "doc/?11-108",
+                  "doc/?11-109",
+                  "doc/?11-110",
+                  "doc/?11-111",
+                  "doc/?11-112",
+                  "doc/?11-113",
+                  "doc/?11-114",
+                  "doc/?11-115",
+                  "doc/?11-116",
+                  "doc/?11-117",
+                  "doc/?11-118",
+                  "doc/?11-119",
+                  "doc/?11-120",
+                  "doc/?11-121",
+                  "doc/?11-122",
+                  "doc/?11-123",
+                  "doc/?11-124",
+                  "doc/?11-125",
+                  "doc/?11-126",
+                  "doc/?11-127"
+                ]
+              },
+              {
+                "effect": "allow",
+                "actions": [
+                  "docs:read"
+                ],
+                "resources": [
+                  "doc/?12-0",
+                  "doc/?12-1",
+                  "doc/?12-2",
+                  "doc/?12-3",
+                  "doc/?12-4",
+                  "doc/?12-5",
+                  "doc/?12-6",
+                  "doc/?12-7",
+                  "doc/?12-8",
+                  "doc/?12-9",
+                  "doc/?12-10",
+                  "doc/?12-11",
+                  "doc/?12-12",
+                  "doc/?12-13",
+                  "doc/?12-14",
+                  "doc/?12-15",
+                  "doc/?12-16",
+                  "doc/?12-17",
+                  "doc/?12-18",
+                  "doc/?12-19",
+                  "doc/?12-20",
+                  "doc/?12-21",
+                  "doc/?12-22",
+                  "doc/?12-23",
+                  "doc/?12-24",
+                  "doc/?12-25",
+                  "doc/?12-26",
+                  "doc/?12-27",
+                  "doc/?12-28",
+                  "doc/?12-29",
+                  "doc/?12-30",
+                  "doc/?12-31",
+                  "doc/?12-32",
+                  "doc/?12-33",
+                  "doc/?12-34",
+                  "doc/?12-35",
+                  "doc/?12-36",
+                  "doc/?12-37",
+                  "doc/?12-38",
+                  "doc/?12-39",
+                  "doc/?12-40",
+                  "doc/?12-41",
+                  "doc/?12-42",
+                  "doc/?12-43",
+                  "doc/?12-44",
+                  "doc/?12-45",
+                  "doc/?12-46",
+                  "doc/?12-47",
+                  "doc/?12-48",
+                  "doc/?12-49",
+                  "doc/?12-50",
+                  "doc/?12-51",
+                  "doc/?12-52",
+                  "doc/?12-53",
+                  "doc/?12-54",
+                  "doc/?12-55",
+                  "doc/?12-56",
+                  "doc/?12-57",
+                  "doc/?12-58",
+                  "doc/?12-59",
+                  "doc/?12-60",
+                  "doc/?12-61",
+                  "doc/?12-62",
+                  "doc/?12-63",
+                  "doc/?12-64",
+                  "doc/?12-65",
+                  "doc/?12-66",
+                  "doc/?12-67",
+                  "doc/?12-68",
+                  "doc/?12-69",
+                  "doc/?12-70",
+                  "doc/?12-71",
+                  "doc/?12-72",
+                  "doc/?12-73",
+                  "doc/?12-74",
+                  "doc/?12-75",
+                  "doc/?12-76",
+                  "doc/?12-77",
+                  "doc/?12-78",
+                  "doc/?12-79",
+                  "doc/?12-80",
+                  "doc/?12-81",
+                  "doc/?12-82",
+                  "doc/?12-83",
+                  "doc/?12-84",
+                  "doc/?12-85",
+                  "doc/?12-86",
+                  "doc/?12-87",
+                  "doc/?12-88",
+                  "doc/?12-89",
+                  "doc/?12-90",
+                  "doc/?12-91",
+                  "doc/?12-92",
+                  "doc/?12-93",
+                  "doc/?12-94",
+                  "doc/?12-95",
+                  "doc/?12-96",
+                  "doc/?12-97",
+                  "doc/?12-98",
+                  "doc/?12-99",
+                  "doc/?12-100",
+                  "doc/?12-101",
+                  "doc/?12-102",
+                  "doc/?12-103",
+                  "doc/?12-104",
+                  "doc/?12-105",
+                  "doc/?12-106",
+                  "doc/?12-107",
+                  "doc/?12-108",
+                  "doc/?12-109",
+                  "doc/?12-110",
+                  "doc/?12-111",
+                  "doc/?12-112",
+                  "doc/?12-113",
+                  "doc/?12-114",
+                  "doc/?12-115",
+                  "doc/?12-116",
+                  "doc/?12-117",
+                  "doc/?12-118",
+                  "doc/?12-119",
+                  "doc/?12-120",
+                  "doc/?12-121",
+                  "doc/?12-122",
+                  "doc/?12-123",
+                  "doc/?12-124",
+                  "doc/?12-125",
+                  "doc/?12-126",
+                  "doc/?12-127"
+                ]
+              },
+              {
+                "effect": "allow",
+                "actions": [
+                  "docs:read"
+                ],
+                "resources": [
+                  "doc/?13-0",
+                  "doc/?13-1",
+                  "doc/?13-2",
+                  "doc/?13-3",
+                  "doc/?13-4",
+                  "doc/?13-5",
+                  "doc/?13-6",
+                  "doc/?13-7",
+                  "doc/?13-8",
+                  "doc/?13-9",
+                  "doc/?13-10",
+                  "doc/?13-11",
+                  "doc/?13-12",
+                  "doc/?13-13",
+                  "doc/?13-14",
+                  "doc/?13-15",
+                  "doc/?13-16",
+                  "doc/?13-17",
+                  "doc/?13-18",
+                  "doc/?13-19",
+                  "doc/?13-20",
+                  "doc/?13-21",
+                  "doc/?13-22",
+                  "doc/?13-23",
+                  "doc/?13-24",
+                  "doc/?13-25",
+                  "doc/?13-26",
+                  "doc/?13-27",
+                  "doc/?13-28",
+                  "doc/?13-29",
+                  "doc/?13-30",
+                  "doc/?13-31",
+                  "doc/?13-32",
+                  "doc/?13-33",
+                  "doc/?13-34",
+                  "doc/?13-35",
+                  "doc/?13-36",
+                  "doc/?13-37",
+                  "doc/?13-38",
+                  "doc/?13-39",
+                  "doc/?13-40",
+                  "doc/?13-41",
+                  "doc/?13-42",
+                  "doc/?13-43",
+                  "doc/?13-44",
+                  "doc/?13-45",
+                  "doc/?13-46",
+                  "doc/?13-47",
+                  "doc/?13-48",
+                  "doc/?13-49",
+                  "doc/?13-50",
+                  "doc/?13-51",
+                  "doc/?13-52",
+                  "doc/?13-53",
+                  "doc/?13-54",
+                  "doc/?13-55",
+                  "doc/?13-56",
+                  "doc/?13-57",
+                  "doc/?13-58",
+                  "doc/?13-59",
+                  "doc/?13-60",
+                  "doc/?13-61",
+                  "doc/?13-62",
+                  "doc/?13-63",
+                  "doc/?13-64",
+                  "doc/?13-65",
+                  "doc/?13-66",
+                  "doc/?13-67",
+                  "doc/?13-68",
+                  "doc/?13-69",
+                  "doc/?13-70",
+                  "doc/?13-71",
+                  "doc/?13-72",
+                  "doc/?13-73",
+                  "doc/?13-74",
+                  "doc/?13-75",
+                  "doc/?13-76",
+                  "doc/?13-77",
+                  "doc/?13-78",
+                  "doc/?13-79",
+                  "doc/?13-80",
+                  "doc/?13-81",
+                  "doc/?13-82",
+                  "doc/?13-83",
+                  "doc/?13-84",
+                  "doc/?13-85",
+                  "doc/?13-86",
+                  "doc/?13-87",
+                  "doc/?13-88",
+                  "doc/?13-89",
+                  "doc/?13-90",
+                  "doc/?13-91",
+                  "doc/?13-92",
+                  "doc/?13-93",
+                  "doc/?13-94",
+                  "doc/?13-95",
+                  "doc/?13-96",
+                  "doc/?13-97",
+                  "doc/?13-98",
+                  "doc/?13-99",
+                  "doc/?13-100",
+                  "doc/?13-101",
+                  "doc/?13-102",
+                  "doc/?13-103",
+                  "doc/?13-104",
+                  "doc/?13-105",
+                  "doc/?13-106",
+                  "doc/?13-107",
+                  "doc/?13-108",
+                  "doc/?13-109",
+                  "doc/?13-110",
+                  "doc/?13-111",
+                  "doc/?13-112",
+                  "doc/?13-113",
+                  "doc/?13-114",
+                  "doc/?13-115",
+                  "doc/?13-116",
+                  "doc/?13-117",
+                  "doc/?13-118",
+                  "doc/?13-119",
+                  "doc/?13-120",
+                  "doc/?13-121",
+                  "doc/?13-122",
+                  "doc/?13-123",
+                  "doc/?13-124",
+                  "doc/?13-125",
+                  "doc/?13-126",
+                  "doc/?13-127"
+                ]
+              },
+              {
+                "effect": "allow",
+                "actions": [
+                  "docs:read"
+                ],
+                "resources": [
+                  "doc/?14-0",
+                  "doc/?14-1",
+                  "doc/?14-2",
+                  "doc/?14-3",
+                  "doc/?14-4",
+                  "doc/?14-5",
+                  "doc/?14-6",
+                  "doc/?14-7",
+                  "doc/?14-8",
+                  "doc/?14-9",
+                  "doc/?14-10",
+                  "doc/?14-11",
+                  "doc/?14-12",
+                  "doc/?14-13",
+                  "doc/?14-14",
+                  "doc/?14-15",
+                  "doc/?14-16",
+                  "doc/?14-17",
+                  "doc/?14-18",
+                  "doc/?14-19",
+                  "doc/?14-20",
+                  "doc/?14-21",
+                  "doc/?14-22",
+                  "doc/?14-23",
+                  "doc/?14-24",
+                  "doc/?14-25",
+                  "doc/?14-26",
+                  "doc/?14-27",
+                  "doc/?14-28",
+                  "doc/?14-29",
+                  "doc/?14-30",
+                  "doc/?14-31",
+                  "doc/?14-32",
+                  "doc/?14-33",
+                  "doc/?14-34",
+                  "doc/?14-35",
+                  "doc/?14-36",
+                  "doc/?14-37",
+                  "doc/?14-38",
+                  "doc/?14-39",
+                  "doc/?14-40",
+                  "doc/?14-41",
+                  "doc/?14-42",
+                  "doc/?14-43",
+                  "doc/?14-44",
+                  "doc/?14-45",
+                  "doc/?14-46",
+                  "doc/?14-47",
+                  "doc/?14-48",
+                  "doc/?14-49",
+                  "doc/?14-50",
+                  "doc/?14-51",
+                  "doc/?14-52",
+                  "doc/?14-53",
+                  "doc/?14-54",
+                  "doc/?14-55",
+                  "doc/?14-56",
+                  "doc/?14-57",
+                  "doc/?14-58",
+                  "doc/?14-59",
+                  "doc/?14-60",
+                  "doc/?14-61",
+                  "doc/?14-62",
+                  "doc/?14-63",
+                  "doc/?14-64",
+                  "doc/?14-65",
+                  "doc/?14-66",
+                  "doc/?14-67",
+                  "doc/?14-68",
+                  "doc/?14-69",
+                  "doc/?14-70",
+                  "doc/?14-71",
+                  "doc/?14-72",
+                  "doc/?14-73",
+                  "doc/?14-74",
+                  "doc/?14-75",
+                  "doc/?14-76",
+                  "doc/?14-77",
+                  "doc/?14-78",
+                  "doc/?14-79",
+                  "doc/?14-80",
+                  "doc/?14-81",
+                  "doc/?14-82",
+                  "doc/?14-83",
+                  "doc/?14-84",
+                  "doc/?14-85",
+                  "doc/?14-86",
+                  "doc/?14-87",
+                  "doc/?14-88",
+                  "doc/?14-89",
+                  "doc/?14-90",
+                  "doc/?14-91",
+                  "doc/?14-92",
+                  "doc/?14-93",
+                  "doc/?14-94",
+                  "doc/?14-95",
+                  "doc/?14-96",
+                  "doc/?14-97",
+                  "doc/?14-98",
+                  "doc/?14-99",
+                  "doc/?14-100",
+                  "doc/?14-101",
+                  "doc/?14-102",
+                  "doc/?14-103",
+                  "doc/?14-104",
+                  "doc/?14-105",
+                  "doc/?14-106",
+                  "doc/?14-107",
+                  "doc/?14-108",
+                  "doc/?14-109",
+                  "doc/?14-110",
+                  "doc/?14-111",
+                  "doc/?14-112",
+                  "doc/?14-113",
+                  "doc/?14-114",
+                  "doc/?14-115",
+                  "doc/?14-116",
+                  "doc/?14-117",
+                  "doc/?14-118",
+                  "doc/?14-119",
+                  "doc/?14-120",
+                  "doc/?14-121",
+                  "doc/?14-122",
+                  "doc/?14-123",
+                  "doc/?14-124",
+                  "doc/?14-125",
+                  "doc/?14-126",
+                  "doc/?14-127"
+                ]
+              },
+              {
+                "effect": "allow",
+                "actions": [
+                  "docs:read"
+                ],
+                "resources": [
+                  "doc/?15-0",
+                  "doc/?15-1",
+                  "doc/?15-2",
+                  "doc/?15-3",
+                  "doc/?15-4",
+                  "doc/?15-5",
+                  "doc/?15-6",
+                  "doc/?15-7",
+                  "doc/?15-8",
+                  "doc/?15-9",
+                  "doc/?15-10",
+                  "doc/?15-11",
+                  "doc/?15-12",
+                  "doc/?15-13",
+                  "doc/?15-14",
+                  "doc/?15-15",
+                  "doc/?15-16",
+                  "doc/?15-17",
+                  "doc/?15-18",
+                  "doc/?15-19",
+                  "doc/?15-20",
+                  "doc/?15-21",
+                  "doc/?15-22",
+                  "doc/?15-23",
+                  "doc/?15-24",
+                  "doc/?15-25",
+                  "doc/?15-26",
+                  "doc/?15-27",
+                  "doc/?15-28",
+                  "doc/?15-29",
+                  "doc/?15-30",
+                  "doc/?15-31",
+                  "doc/?15-32",
+                  "doc/?15-33",
+                  "doc/?15-34",
+                  "doc/?15-35",
+                  "doc/?15-36",
+                  "doc/?15-37",
+                  "doc/?15-38",
+                  "doc/?15-39",
+                  "doc/?15-40",
+                  "doc/?15-41",
+                  "doc/?15-42",
+                  "doc/?15-43",
+                  "doc/?15-44",
+                  "doc/?15-45",
+                  "doc/?15-46",
+                  "doc/?15-47",
+                  "doc/?15-48",
+                  "doc/?15-49",
+                  "doc/?15-50",
+                  "doc/?15-51",
+                  "doc/?15-52",
+                  "doc/?15-53",
+                  "doc/?15-54",
+                  "doc/?15-55",
+                  "doc/?15-56",
+                  "doc/?15-57",
+                  "doc/?15-58",
+                  "doc/?15-59",
+                  "doc/?15-60",
+                  "doc/?15-61",
+                  "doc/?15-62",
+                  "doc/?15-63",
+                  "doc/?15-64",
+                  "doc/?15-65",
+                  "doc/?15-66",
+                  "doc/?15-67",
+                  "doc/?15-68",
+                  "doc/?15-69",
+                  "doc/?15-70",
+                  "doc/?15-71",
+                  "doc/?15-72",
+                  "doc/?15-73",
+                  "doc/?15-74",
+                  "doc/?15-75",
+                  "doc/?15-76",
+                  "doc/?15-77",
+                  "doc/?15-78",
+                  "doc/?15-79",
+                  "doc/?15-80",
+                  "doc/?15-81",
+                  "doc/?15-82",
+                  "doc/?15-83",
+                  "doc/?15-84",
+                  "doc/?15-85",
+                  "doc/?15-86",
+                  "doc/?15-87",
+                  "doc/?15-88",
+                  "doc/?15-89",
+                  "doc/?15-90",
+                  "doc/?15-91",
+                  "doc/?15-92",
+                  "doc/?15-93",
+                  "doc/?15-94",
+                  "doc/?15-95",
+                  "doc/?15-96",
+                  "doc/?15-97",
+                  "doc/?15-98",
+                  "doc/?15-99",
+                  "doc/?15-100",
+                  "doc/?15-101",
+                  "doc/?15-102",
+                  "doc/?15-103",
+                  "doc/?15-104",
+                  "doc/?15-105",
+                  "doc/?15-106",
+                  "doc/?15-107",
+                  "doc/?15-108",
+                  "doc/?15-109",
+                  "doc/?15-110",
+                  "doc/?15-111",
+                  "doc/?15-112",
+                  "doc/?15-113",
+                  "doc/?15-114",
+                  "doc/?15-115",
+                  "doc/?15-116",
+                  "doc/?15-117",
+                  "doc/?15-118",
+                  "doc/?15-119",
+                  "doc/?15-120",
+                  "doc/?15-121",
+                  "doc/?15-122",
+                  "doc/?15-123",
+                  "doc/?15-124",
+                  "doc/?15-125",
+                  "doc/?15-126",
+                  "doc/?15-127"
+                ]
+              },
+              {
+                "effect": "allow",
+                "actions": [
+                  "docs:read"
+                ],
+                "resources": [
+                  "doc/?16-0",
+                  "doc/?16-1",
+                  "doc/?16-2",
+                  "doc/?16-3",
+                  "doc/?16-4",
+                  "doc/?16-5",
+                  "doc/?16-6",
+                  "doc/?16-7",
+                  "doc/?16-8",
+                  "doc/?16-9",
+                  "doc/?16-10",
+                  "doc/?16-11",
+                  "doc/?16-12",
+                  "doc/?16-13",
+                  "doc/?16-14",
+                  "doc/?16-15",
+                  "doc/?16-16",
+                  "doc/?16-17",
+                  "doc/?16-18",
+                  "doc/?16-19",
+                  "doc/?16-20",
+                  "doc/?16-21",
+                  "doc/?16-22",
+                  "doc/?16-23",
+                  "doc/?16-24",
+                  "doc/?16-25",
+                  "doc/?16-26",
+                  "doc/?16-27",
+                  "doc/?16-28",
+                  "doc/?16-29",
+                  "doc/?16-30",
+                  "doc/?16-31",
+                  "doc/?16-32",
+                  "doc/?16-33",
+                  "doc/?16-34",
+                  "doc/?16-35",
+                  "doc/?16-36",
+                  "doc/?16-37",
+                  "doc/?16-38",
+                  "doc/?16-39",
+                  "doc/?16-40",
+                  "doc/?16-41",
+                  "doc/?16-42",
+                  "doc/?16-43",
+                  "doc/?16-44",
+                  "doc/?16-45",
+                  "doc/?16-46",
+                  "doc/?16-47",
+                  "doc/?16-48",
+                  "doc/?16-49",
+                  "doc/?16-50",
+                  "doc/?16-51",
+                  "doc/?16-52",
+                  "doc/?16-53",
+                  "doc/?16-54",
+                  "doc/?16-55",
+                  "doc/?16-56",
+                  "doc/?16-57",
+                  "doc/?16-58",
+                  "doc/?16-59",
+                  "doc/?16-60",
+                  "doc/?16-61",
+                  "doc/?16-62",
+                  "doc/?16-63",
+                  "doc/?16-64",
+                  "doc/?16-65",
+                  "doc/?16-66",
+                  "doc/?16-67",
+                  "doc/?16-68",
+                  "doc/?16-69",
+                  "doc/?16-70",
+                  "doc/?16-71",
+                  "doc/?16-72",
+                  "doc/?16-73",
+                  "doc/?16-74",
+                  "doc/?16-75",
+                  "doc/?16-76",
+                  "doc/?16-77",
+                  "doc/?16-78",
+                  "doc/?16-79",
+                  "doc/?16-80",
+                  "doc/?16-81",
+                  "doc/?16-82",
+                  "doc/?16-83",
+                  "doc/?16-84",
+                  "doc/?16-85",
+                  "doc/?16-86",
+                  "doc/?16-87",
+                  "doc/?16-88",
+                  "doc/?16-89",
+                  "doc/?16-90",
+                  "doc/?16-91",
+                  "doc/?16-92",
+                  "doc/?16-93",
+                  "doc/?16-94",
+                  "doc/?16-95",
+                  "doc/?16-96",
+                  "doc/?16-97",
+                  "doc/?16-98",
+                  "doc/?16-99",
+                  "doc/?16-100",
+                  "doc/?16-101",
+                  "doc/?16-102",
+                  "doc/?16-103",
+                  "doc/?16-104",
+                  "doc/?16-105",
+                  "doc/?16-106",
+                  "doc/?16-107",
+                  "doc/?16-108",
+                  "doc/?16-109",
+                  "doc/?16-110",
+                  "doc/?16-111",
+                  "doc/?16-112",
+                  "doc/?16-113",
+                  "doc/?16-114",
+                  "doc/?16-115",
+                  "doc/?16-116",
+                  "doc/?16-117",
+                  "doc/?16-118",
+                  "doc/?16-119",
+                  "doc/?16-120",
+                  "doc/?16-121",
+                  "doc/?16-122",
+                  "doc/?16-123",
+                  "doc/?16-124",
+                  "doc/?16-125",
+                  "doc/?16-126",
+                  "doc/?16-127"
+                ]
+              },
+              {
+                "effect": "allow",
+                "actions": [
+                  "docs:read"
+                ],
+                "resources": [
+                  "doc/?17-0",
+                  "doc/?17-1",
+                  "doc/?17-2",
+                  "doc/?17-3",
+                  "doc/?17-4",
+                  "doc/?17-5",
+                  "doc/?17-6",
+                  "doc/?17-7",
+                  "doc/?17-8",
+                  "doc/?17-9",
+                  "doc/?17-10",
+                  "doc/?17-11",
+                  "doc/?17-12",
+                  "doc/?17-13",
+                  "doc/?17-14",
+                  "doc/?17-15",
+                  "doc/?17-16",
+                  "doc/?17-17",
+                  "doc/?17-18",
+                  "doc/?17-19",
+                  "doc/?17-20",
+                  "doc/?17-21",
+                  "doc/?17-22",
+                  "doc/?17-23",
+                  "doc/?17-24",
+                  "doc/?17-25",
+                  "doc/?17-26",
+                  "doc/?17-27",
+                  "doc/?17-28",
+                  "doc/?17-29",
+                  "doc/?17-30",
+                  "doc/?17-31",
+                  "doc/?17-32",
+                  "doc/?17-33",
+                  "doc/?17-34",
+                  "doc/?17-35",
+                  "doc/?17-36",
+                  "doc/?17-37",
+                  "doc/?17-38",
+                  "doc/?17-39",
+                  "doc/?17-40",
+                  "doc/?17-41",
+                  "doc/?17-42",
+                  "doc/?17-43",
+                  "doc/?17-44",
+                  "doc/?17-45",
+                  "doc/?17-46",
+                  "doc/?17-47",
+                  "doc/?17-48",
+                  "doc/?17-49",
+                  "doc/?17-50",
+                  "doc/?17-51",
+                  "doc/?17-52",
+                  "doc/?17-53",
+                  "doc/?17-54",
+                  "doc/?17-55",
+                  "doc/?17-56",
+                  "doc/?17-57",
+                  "doc/?17-58",
+                  "doc/?17-59",
+                  "doc/?17-60",
+                  "doc/?17-61",
+                  "doc/?17-62",
+                  "doc/?17-63",
+                  "doc/?17-64",
+                  "doc/?17-65",
+                  "doc/?17-66",
+                  "doc/?17-67",
+                  "doc/?17-68",
+                  "doc/?17-69",
+                  "doc/?17-70",
+                  "doc/?17-71",
+                  "doc/?17-72",
+                  "doc/?17-73",
+                  "doc/?17-74",
+                  "doc/?17-75",
+                  "doc/?17-76",
+                  "doc/?17-77",
+                  "doc/?17-78",
+                  "doc/?17-79",
+                  "doc/?17-80",
+                  "doc/?17-81",
+                  "doc/?17-82",
+                  "doc/?17-83",
+                  "doc/?17-84",
+                  "doc/?17-85",
+                  "doc/?17-86",
+                  "doc/?17-87",
+                  "doc/?17-88",
+                  "doc/?17-89",
+                  "doc/?17-90",
+                  "doc/?17-91",
+                  "doc/?17-92",
+                  "doc/?17-93",
+                  "doc/?17-94",
+                  "doc/?17-95",
+                  "doc/?17-96",
+                  "doc/?17-97",
+                  "doc/?17-98",
+                  "doc/?17-99",
+                  "doc/?17-100",
+                  "doc/?17-101",
+                  "doc/?17-102",
+                  "doc/?17-103",
+                  "doc/?17-104",
+                  "doc/?17-105",
+                  "doc/?17-106",
+                  "doc/?17-107",
+                  "doc/?17-108",
+                  "doc/?17-109",
+                  "doc/?17-110",
+                  "doc/?17-111",
+                  "doc/?17-112",
+                  "doc/?17-113",
+                  "doc/?17-114",
+                  "doc/?17-115",
+                  "doc/?17-116",
+                  "doc/?17-117",
+                  "doc/?17-118",
+                  "doc/?17-119",
+                  "doc/?17-120",
+                  "doc/?17-121",
+                  "doc/?17-122",
+                  "doc/?17-123",
+                  "doc/?17-124",
+                  "doc/?17-125",
+                  "doc/?17-126",
+                  "doc/?17-127"
+                ]
+              },
+              {
+                "effect": "allow",
+                "actions": [
+                  "docs:read"
+                ],
+                "resources": [
+                  "doc/?18-0",
+                  "doc/?18-1",
+                  "doc/?18-2",
+                  "doc/?18-3",
+                  "doc/?18-4",
+                  "doc/?18-5",
+                  "doc/?18-6",
+                  "doc/?18-7",
+                  "doc/?18-8",
+                  "doc/?18-9",
+                  "doc/?18-10",
+                  "doc/?18-11",
+                  "doc/?18-12",
+                  "doc/?18-13",
+                  "doc/?18-14",
+                  "doc/?18-15",
+                  "doc/?18-16",
+                  "doc/?18-17",
+                  "doc/?18-18",
+                  "doc/?18-19",
+                  "doc/?18-20",
+                  "doc/?18-21",
+                  "doc/?18-22",
+                  "doc/?18-23",
+                  "doc/?18-24",
+                  "doc/?18-25",
+                  "doc/?18-26",
+                  "doc/?18-27",
+                  "doc/?18-28",
+                  "doc/?18-29",
+                  "doc/?18-30",
+                  "doc/?18-31",
+                  "doc/?18-32",
+                  "doc/?18-33",
+                  "doc/?18-34",
+                  "doc/?18-35",
+                  "doc/?18-36",
+                  "doc/?18-37",
+                  "doc/?18-38",
+                  "doc/?18-39",
+                  "doc/?18-40",
+                  "doc/?18-41",
+                  "doc/?18-42",
+                  "doc/?18-43",
+                  "doc/?18-44",
+                  "doc/?18-45",
+                  "doc/?18-46",
+                  "doc/?18-47",
+                  "doc/?18-48",
+                  "doc/?18-49",
+                  "doc/?18-50",
+                  "doc/?18-51",
+                  "doc/?18-52",
+                  "doc/?18-53",
+                  "doc/?18-54",
+                  "doc/?18-55",
+                  "doc/?18-56",
+                  "doc/?18-57",
+                  "doc/?18-58",
+                  "doc/?18-59",
+                  "doc/?18-60",
+                  "doc/?18-61",
+                  "doc/?18-62",
+                  "doc/?18-63",
+                  "doc/?18-64",
+                  "doc/?18-65",
+                  "doc/?18-66",
+                  "doc/?18-67",
+                  "doc/?18-68",
+                  "doc/?18-69",
+                  "doc/?18-70",
+                  "doc/?18-71",
+                  "doc/?18-72",
+                  "doc/?18-73",
+                  "doc/?18-74",
+                  "doc/?18-75",
+                  "doc/?18-76",
+                  "doc/?18-77",
+                  "doc/?18-78",
+                  "doc/?18-79",
+                  "doc/?18-80",
+                  "doc/?18-81",
+                  "doc/?18-82",
+                  "doc/?18-83",
+                  "doc/?18-84",
+                  "doc/?18-85",
+                  "doc/?18-86",
+                  "doc/?18-87",
+                  "doc/?18-88",
+                  "doc/?18-89",
+                  "doc/?18-90",
+                  "doc/?18-91",
+                  "doc/?18-92",
+                  "doc/?18-93",
+                  "doc/?18-94",
+                  "doc/?18-95",
+                  "doc/?18-96",
+                  "doc/?18-97",
+                  "doc/?18-98",
+                  "doc/?18-99",
+                  "doc/?18-100",
+                  "doc/?18-101",
+                  "doc/?18-102",
+                  "doc/?18-103",
+                  "doc/?18-104",
+                  "doc/?18-105",
+                  "doc/?18-106",
+                  "doc/?18-107",
+                  "doc/?18-108",
+                  "doc/?18-109",
+                  "doc/?18-110",
+                  "doc/?18-111",
+                  "doc/?18-112",
+                  "doc/?18-113",
+                  "doc/?18-114",
+                  "doc/?18-115",
+                  "doc/?18-116",
+                  "doc/?18-117",
+                  "doc/?18-118",
+                  "doc/?18-119",
+                  "doc/?18-120",
+                  "doc/?18-121",
+                  "doc/?18-122",
+                  "doc/?18-123",
+                  "doc/?18-124",
+                  "doc/?18-125",
+                  "doc/?18-126",
+                  "doc/?18-127"
+                ]
+              },
+              {
+                "effect": "allow",
+                "actions": [
+                  "docs:read"
+                ],
+                "resources": [
+                  "doc/?19-0",
+                  "doc/?19-1",
+                  "doc/?19-2",
+                  "doc/?19-3",
+                  "doc/?19-4",
+                  "doc/?19-5",
+                  "doc/?19-6",
+                  "doc/?19-7",
+                  "doc/?19-8",
+                  "doc/?19-9",
+                  "doc/?19-10",
+                  "doc/?19-11",
+                  "doc/?19-12",
+                  "doc/?19-13",
+                  "doc/?19-14",
+                  "doc/?19-15",
+                  "doc/?19-16",
+                  "doc/?19-17",
+                  "doc/?19-18",
+                  "doc/?19-19",
+                  "doc/?19-20",
+                  "doc/?19-21",
+                  "doc/?19-22",
+                  "doc/?19-23",
+                  "doc/?19-24",
+                  "doc/?19-25",
+                  "doc/?19-26",
+                  "doc/?19-27",
+                  "doc/?19-28",
+                  "doc/?19-29",
+                  "doc/?19-30",
+                  "doc/?19-31",
+                  "doc/?19-32",
+                  "doc/?19-33",
+                  "doc/?19-34",
+                  "doc/?19-35",
+                  "doc/?19-36",
+                  "doc/?19-37",
+                  "doc/?19-38",
+                  "doc/?19-39",
+                  "doc/?19-40",
+                  "doc/?19-41",
+                  "doc/?19-42",
+                  "doc/?19-43",
+                  "doc/?19-44",
+                  "doc/?19-45",
+                  "doc/?19-46",
+                  "doc/?19-47",
+                  "doc/?19-48",
+                  "doc/?19-49",
+                  "doc/?19-50",
+                  "doc/?19-51",
+                  "doc/?19-52",
+                  "doc/?19-53",
+                  "doc/?19-54",
+                  "doc/?19-55",
+                  "doc/?19-56",
+                  "doc/?19-57",
+                  "doc/?19-58",
+                  "doc/?19-59",
+                  "doc/?19-60",
+                  "doc/?19-61",
+                  "doc/?19-62",
+                  "doc/?19-63",
+                  "doc/?19-64",
+                  "doc/?19-65",
+                  "doc/?19-66",
+                  "doc/?19-67",
+                  "doc/?19-68",
+                  "doc/?19-69",
+                  "doc/?19-70",
+                  "doc/?19-71",
+                  "doc/?19-72",
+                  "doc/?19-73",
+                  "doc/?19-74",
+                  "doc/?19-75",
+                  "doc/?19-76",
+                  "doc/?19-77",
+                  "doc/?19-78",
+                  "doc/?19-79",
+                  "doc/?19-80",
+                  "doc/?19-81",
+                  "doc/?19-82",
+                  "doc/?19-83",
+                  "doc/?19-84",
+                  "doc/?19-85",
+                  "doc/?19-86",
+                  "doc/?19-87",
+                  "doc/?19-88",
+                  "doc/?19-89",
+                  "doc/?19-90",
+                  "doc/?19-91",
+                  "doc/?19-92",
+                  "doc/?19-93",
+                  "doc/?19-94",
+                  "doc/?19-95",
+                  "doc/?19-96",
+                  "doc/?19-97",
+                  "doc/?19-98",
+                  "doc/?19-99",
+                  "doc/?19-100",
+                  "doc/?19-101",
+                  "doc/?19-102",
+                  "doc/?19-103",
+                  "doc/?19-104",
+                  "doc/?19-105",
+                  "doc/?19-106",
+                  "doc/?19-107",
+                  "doc/?19-108",
+                  "doc/?19-109",
+                  "doc/?19-110",
+                  "doc/?19-111",
+                  "doc/?19-112",
+                  "doc/?19-113",
+                  "doc/?19-114",
+                  "doc/?19-115",
+                  "doc/?19-116",
+                  "doc/?19-117",
+                  "doc/?19-118",
+                  "doc/?19-119",
+                  "doc/?19-120",
+                  "doc/?19-121",
+                  "doc/?19-122",
+                  "doc/?19-123",
+                  "doc/?19-124",
+                  "doc/?19-125",
+                  "doc/?19-126",
+                  "doc/?19-127"
+                ]
+              },
+              {
+                "effect": "allow",
+                "actions": [
+                  "docs:read"
+                ],
+                "resources": [
+                  "doc/?20-0",
+                  "doc/?20-1",
+                  "doc/?20-2",
+                  "doc/?20-3",
+                  "doc/?20-4",
+                  "doc/?20-5",
+                  "doc/?20-6",
+                  "doc/?20-7",
+                  "doc/?20-8",
+                  "doc/?20-9",
+                  "doc/?20-10",
+                  "doc/?20-11",
+                  "doc/?20-12",
+                  "doc/?20-13",
+                  "doc/?20-14",
+                  "doc/?20-15",
+                  "doc/?20-16",
+                  "doc/?20-17",
+                  "doc/?20-18",
+                  "doc/?20-19",
+                  "doc/?20-20",
+                  "doc/?20-21",
+                  "doc/?20-22",
+                  "doc/?20-23",
+                  "doc/?20-24",
+                  "doc/?20-25",
+                  "doc/?20-26",
+                  "doc/?20-27",
+                  "doc/?20-28",
+                  "doc/?20-29",
+                  "doc/?20-30",
+                  "doc/?20-31",
+                  "doc/?20-32",
+                  "doc/?20-33",
+                  "doc/?20-34",
+                  "doc/?20-35",
+                  "doc/?20-36",
+                  "doc/?20-37",
+                  "doc/?20-38",
+                  "doc/?20-39",
+                  "doc/?20-40",
+                  "doc/?20-41",
+                  "doc/?20-42",
+                  "doc/?20-43",
+                  "doc/?20-44",
+                  "doc/?20-45",
+                  "doc/?20-46",
+                  "doc/?20-47",
+                  "doc/?20-48",
+                  "doc/?20-49",
+                  "doc/?20-50",
+                  "doc/?20-51",
+                  "doc/?20-52",
+                  "doc/?20-53",
+                  "doc/?20-54",
+                  "doc/?20-55",
+                  "doc/?20-56",
+                  "doc/?20-57",
+                  "doc/?20-58",
+                  "doc/?20-59",
+                  "doc/?20-60",
+                  "doc/?20-61",
+                  "doc/?20-62",
+                  "doc/?20-63",
+                  "doc/?20-64",
+                  "doc/?20-65",
+                  "doc/?20-66",
+                  "doc/?20-67",
+                  "doc/?20-68",
+                  "doc/?20-69",
+                  "doc/?20-70",
+                  "doc/?20-71",
+                  "doc/?20-72",
+                  "doc/?20-73",
+                  "doc/?20-74",
+                  "doc/?20-75",
+                  "doc/?20-76",
+                  "doc/?20-77",
+                  "doc/?20-78",
+                  "doc/?20-79",
+                  "doc/?20-80",
+                  "doc/?20-81",
+                  "doc/?20-82",
+                  "doc/?20-83",
+                  "doc/?20-84",
+                  "doc/?20-85",
+                  "doc/?20-86",
+                  "doc/?20-87",
+                  "doc/?20-88",
+                  "doc/?20-89",
+                  "doc/?20-90",
+                  "doc/?20-91",
+                  "doc/?20-92",
+                  "doc/?20-93",
+                  "doc/?20-94",
+                  "doc/?20-95",
+                  "doc/?20-96",
+                  "doc/?20-97",
+                  "doc/?20-98",
+                  "doc/?20-99",
+                  "doc/?20-100",
+                  "doc/?20-101",
+                  "doc/?20-102",
+                  "doc/?20-103",
+                  "doc/?20-104",
+                  "doc/?20-105",
+                  "doc/?20-106",
+                  "doc/?20-107",
+                  "doc/?20-108",
+                  "doc/?20-109",
+                  "doc/?20-110",
+                  "doc/?20-111",
+                  "doc/?20-112",
+                  "doc/?20-113",
+                  "doc/?20-114",
+                  "doc/?20-115",
+                  "doc/?20-116",
+                  "doc/?20-117",
+                  "doc/?20-118",
+                  "doc/?20-119",
+                  "doc/?20-120",
+                  "doc/?20-121",
+                  "doc/?20-122",
+                  "doc/?20-123",
+                  "doc/?20-124",
+                  "doc/?20-125",
+                  "doc/?20-126",
+                  "doc/?20-127"
+                ]
+              },
+              {
+                "effect": "allow",
+                "actions": [
+                  "docs:read"
+                ],
+                "resources": [
+                  "doc/?21-0",
+                  "doc/?21-1",
+                  "doc/?21-2",
+                  "doc/?21-3",
+                  "doc/?21-4",
+                  "doc/?21-5",
+                  "doc/?21-6",
+                  "doc/?21-7",
+                  "doc/?21-8",
+                  "doc/?21-9",
+                  "doc/?21-10",
+                  "doc/?21-11",
+                  "doc/?21-12",
+                  "doc/?21-13",
+                  "doc/?21-14",
+                  "doc/?21-15",
+                  "doc/?21-16",
+                  "doc/?21-17",
+                  "doc/?21-18",
+                  "doc/?21-19",
+                  "doc/?21-20",
+                  "doc/?21-21",
+                  "doc/?21-22",
+                  "doc/?21-23",
+                  "doc/?21-24",
+                  "doc/?21-25",
+                  "doc/?21-26",
+                  "doc/?21-27",
+                  "doc/?21-28",
+                  "doc/?21-29",
+                  "doc/?21-30",
+                  "doc/?21-31",
+                  "doc/?21-32",
+                  "doc/?21-33",
+                  "doc/?21-34",
+                  "doc/?21-35",
+                  "doc/?21-36",
+                  "doc/?21-37",
+                  "doc/?21-38",
+                  "doc/?21-39",
+                  "doc/?21-40",
+                  "doc/?21-41",
+                  "doc/?21-42",
+                  "doc/?21-43",
+                  "doc/?21-44",
+                  "doc/?21-45",
+                  "doc/?21-46",
+                  "doc/?21-47",
+                  "doc/?21-48",
+                  "doc/?21-49",
+                  "doc/?21-50",
+                  "doc/?21-51",
+                  "doc/?21-52",
+                  "doc/?21-53",
+                  "doc/?21-54",
+                  "doc/?21-55",
+                  "doc/?21-56",
+                  "doc/?21-57",
+                  "doc/?21-58",
+                  "doc/?21-59",
+                  "doc/?21-60",
+                  "doc/?21-61",
+                  "doc/?21-62",
+                  "doc/?21-63",
+                  "doc/?21-64",
+                  "doc/?21-65",
+                  "doc/?21-66",
+                  "doc/?21-67",
+                  "doc/?21-68",
+                  "doc/?21-69",
+                  "doc/?21-70",
+                  "doc/?21-71",
+                  "doc/?21-72",
+                  "doc/?21-73",
+                  "doc/?21-74",
+                  "doc/?21-75",
+                  "doc/?21-76",
+                  "doc/?21-77",
+                  "doc/?21-78",
+                  "doc/?21-79",
+                  "doc/?21-80",
+                  "doc/?21-81",
+                  "doc/?21-82",
+                  "doc/?21-83",
+                  "doc/?21-84",
+                  "doc/?21-85",
+                  "doc/?21-86",
+                  "doc/?21-87",
+                  "doc/?21-88",
+                  "doc/?21-89",
+                  "doc/?21-90",
+                  "doc/?21-91",
+                  "doc/?21-92",
+                  "doc/?21-93",
+                  "doc/?21-94",
+                  "doc/?21-95",
+                  "doc/?21-96",
+                  "doc/?21-97",
+                  "doc/?21-98",
+                  "doc/?21-99",
+                  "doc/?21-100",
+                  "doc/?21-101",
+                  "doc/?21-102",
+                  "doc/?21-103",
+                  "doc/?21-104",
+                  "doc/?21-105",
+                  "doc/?21-106",
+                  "doc/?21-107",
+                  "doc/?21-108",
+                  "doc/?21-109",
+                  "doc/?21-110",
+                  "doc/?21-111",
+                  "doc/?21-112",
+                  "doc/?21-113",
+                  "doc/?21-114",
+                  "doc/?21-115",
+                  "doc/?21-116",
+                  "doc/?21-117",
+                  "doc/?21-118",
+                  "doc/?21-119",
+                  "doc/?21-120",
+                  "doc/?21-121",
+                  "doc/?21-122",
+                  "doc/?21-123",
+                  "doc/?21-124",
+                  "doc/?21-125",
+                  "doc/?21-126",
+                  "doc/?21-127"
+                ]
+              },
+              {
+                "effect": "allow",
+                "actions": [
+                  "docs:read"
+                ],
+                "resources": [
+                  "doc/?22-0",
+                  "doc/?22-1",
+                  "doc/?22-2",
+                  "doc/?22-3",
+                  "doc/?22-4",
+                  "doc/?22-5",
+                  "doc/?22-6",
+                  "doc/?22-7",
+                  "doc/?22-8",
+                  "doc/?22-9",
+                  "doc/?22-10",
+                  "doc/?22-11",
+                  "doc/?22-12",
+                  "doc/?22-13",
+                  "doc/?22-14",
+                  "doc/?22-15",
+                  "doc/?22-16",
+                  "doc/?22-17",
+                  "doc/?22-18",
+                  "doc/?22-19",
+                  "doc/?22-20",
+                  "doc/?22-21",
+                  "doc/?22-22",
+                  "doc/?22-23",
+                  "doc/?22-24",
+                  "doc/?22-25",
+                  "doc/?22-26",
+                  "doc/?22-27",
+                  "doc/?22-28",
+                  "doc/?22-29",
+                  "doc/?22-30",
+                  "doc/?22-31",
+                  "doc/?22-32",
+                  "doc/?22-33",
+                  "doc/?22-34",
+                  "doc/?22-35",
+                  "doc/?22-36",
+                  "doc/?22-37",
+                  "doc/?22-38",
+                  "doc/?22-39",
+                  "doc/?22-40",
+                  "doc/?22-41",
+                  "doc/?22-42",
+                  "doc/?22-43",
+                  "doc/?22-44",
+                  "doc/?22-45",
+                  "doc/?22-46",
+                  "doc/?22-47",
+                  "doc/?22-48",
+                  "doc/?22-49",
+                  "doc/?22-50",
+                  "doc/?22-51",
+                  "doc/?22-52",
+                  "doc/?22-53",
+                  "doc/?22-54",
+                  "doc/?22-55",
+                  "doc/?22-56",
+                  "doc/?22-57",
+                  "doc/?22-58",
+                  "doc/?22-59",
+                  "doc/?22-60",
+                  "doc/?22-61",
+                  "doc/?22-62",
+                  "doc/?22-63",
+                  "doc/?22-64",
+                  "doc/?22-65",
+                  "doc/?22-66",
+                  "doc/?22-67",
+                  "doc/?22-68",
+                  "doc/?22-69",
+                  "doc/?22-70",
+                  "doc/?22-71",
+                  "doc/?22-72",
+                  "doc/?22-73",
+                  "doc/?22-74",
+                  "doc/?22-75",
+                  "doc/?22-76",
+                  "doc/?22-77",
+                  "doc/?22-78",
+                  "doc/?22-79",
+                  "doc/?22-80",
+                  "doc/?22-81",
+                  "doc/?22-82",
+                  "doc/?22-83",
+                  "doc/?22-84",
+                  "doc/?22-85",
+                  "doc/?22-86",
+                  "doc/?22-87",
+                  "doc/?22-88",
+                  "doc/?22-89",
+                  "doc/?22-90",
+                  "doc/?22-91",
+                  "doc/?22-92",
+                  "doc/?22-93",
+                  "doc/?22-94",
+                  "doc/?22-95",
+                  "doc/?22-96",
+                  "doc/?22-97",
+                  "doc/?22-98",
+                  "doc/?22-99",
+                  "doc/?22-100",
+                  "doc/?22-101",
+                  "doc/?22-102",
+                  "doc/?22-103",
+                  "doc/?22-104",
+                  "doc/?22-105",
+                  "doc/?22-106",
+                  "doc/?22-107",
+                  "doc/?22-108",
+                  "doc/?22-109",
+                  "doc/?22-110",
+                  "doc/?22-111",
+                  "doc/?22-112",
+                  "doc/?22-113",
+                  "doc/?22-114",
+                  "doc/?22-115",
+                  "doc/?22-116",
+                  "doc/?22-117",
+                  "doc/?22-118",
+                  "doc/?22-119",
+                  "doc/?22-120",
+                  "doc/?22-121",
+                  "doc/?22-122",
+                  "doc/?22-123",
+                  "doc/?22-124",
+                  "doc/?22-125",
+                  "doc/?22-126",
+                  "doc/?22-127"
+                ]
+              },
+              {
+                "effect": "allow",
+                "actions": [
+                  "docs:read"
+                ],
+                "resources": [
+                  "doc/?23-0",
+                  "doc/?23-1",
+                  "doc/?23-2",
+                  "doc/?23-3",
+                  "doc/?23-4",
+                  "doc/?23-5",
+                  "doc/?23-6",
+                  "doc/?23-7",
+                  "doc/?23-8",
+                  "doc/?23-9",
+                  "doc/?23-10",
+                  "doc/?23-11",
+                  "doc/?23-12",
+                  "doc/?23-13",
+                  "doc/?23-14",
+                  "doc/?23-15",
+                  "doc/?23-16",
+                  "doc/?23-17",
+                  "doc/?23-18",
+                  "doc/?23-19",
+                  "doc/?23-20",
+                  "doc/?23-21",
+                  "doc/?23-22",
+                  "doc/?23-23",
+                  "doc/?23-24",
+                  "doc/?23-25",
+                  "doc/?23-26",
+                  "doc/?23-27",
+                  "doc/?23-28",
+                  "doc/?23-29",
+                  "doc/?23-30",
+                  "doc/?23-31",
+                  "doc/?23-32",
+                  "doc/?23-33",
+                  "doc/?23-34",
+                  "doc/?23-35",
+                  "doc/?23-36",
+                  "doc/?23-37",
+                  "doc/?23-38",
+                  "doc/?23-39",
+                  "doc/?23-40",
+                  "doc/?23-41",
+                  "doc/?23-42",
+                  "doc/?23-43",
+                  "doc/?23-44",
+                  "doc/?23-45",
+                  "doc/?23-46",
+                  "doc/?23-47",
+                  "doc/?23-48",
+                  "doc/?23-49",
+                  "doc/?23-50",
+                  "doc/?23-51",
+                  "doc/?23-52",
+                  "doc/?23-53",
+                  "doc/?23-54",
+                  "doc/?23-55",
+                  "doc/?23-56",
+                  "doc/?23-57",
+                  "doc/?23-58",
+                  "doc/?23-59",
+                  "doc/?23-60",
+                  "doc/?23-61",
+                  "doc/?23-62",
+                  "doc/?23-63",
+                  "doc/?23-64",
+                  "doc/?23-65",
+                  "doc/?23-66",
+                  "doc/?23-67",
+                  "doc/?23-68",
+                  "doc/?23-69",
+                  "doc/?23-70",
+                  "doc/?23-71",
+                  "doc/?23-72",
+                  "doc/?23-73",
+                  "doc/?23-74",
+                  "doc/?23-75",
+                  "doc/?23-76",
+                  "doc/?23-77",
+                  "doc/?23-78",
+                  "doc/?23-79",
+                  "doc/?23-80",
+                  "doc/?23-81",
+                  "doc/?23-82",
+                  "doc/?23-83",
+                  "doc/?23-84",
+                  "doc/?23-85",
+                  "doc/?23-86",
+                  "doc/?23-87",
+                  "doc/?23-88",
+                  "doc/?23-89",
+                  "doc/?23-90",
+                  "doc/?23-91",
+                  "doc/?23-92",
+                  "doc/?23-93",
+                  "doc/?23-94",
+                  "doc/?23-95",
+                  "doc/?23-96",
+                  "doc/?23-97",
+                  "doc/?23-98",
+                  "doc/?23-99",
+                  "doc/?23-100",
+                  "doc/?23-101",
+                  "doc/?23-102",
+                  "doc/?23-103",
+                  "doc/?23-104",
+                  "doc/?23-105",
+                  "doc/?23-106",
+                  "doc/?23-107",
+                  "doc/?23-108",
+                  "doc/?23-109",
+                  "doc/?23-110",
+                  "doc/?23-111",
+                  "doc/?23-112",
+                  "doc/?23-113",
+                  "doc/?23-114",
+                  "doc/?23-115",
+                  "doc/?23-116",
+                  "doc/?23-117",
+                  "doc/?23-118",
+                  "doc/?23-119",
+                  "doc/?23-120",
+                  "doc/?23-121",
+                  "doc/?23-122",
+                  "doc/?23-123",
+                  "doc/?23-124",
+                  "doc/?23-125",
+                  "doc/?23-126",
+                  "doc/?23-127"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": false,
+        "reason": "evaluation-limit",
+        "matched": []
+      }
+    }
+  ]
+}

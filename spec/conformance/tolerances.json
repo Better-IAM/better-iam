@@ -1,0 +1,162 @@
+{
+  "$comment": "Known nondeterminism of the reference (TypeScript) implementation: what the replay runner does not compare, by trace id and step name (globs, as the runner prints them) and JSON path (globs; [*] is any index). Every entry says why the recorded value cannot be reproduced by any implementation. See FORMAT.md, Tolerances.",
+  "format": 1,
+  "tolerances": [
+    {
+      "step": "roleMining/suggest",
+      "paths": ["$.data.suggestions[*].title"],
+      "reason": "Titles list role names in the order of their (random) role IDs."
+    },
+    {
+      "step": "links/create",
+      "paths": ["$.data.tenantId", "$.data.uniqueKey", "$.data.left*", "$.data.right*"],
+      "reason": "A link stores its two sides ordered by (random) identity ID, so which account is left differs per run."
+    },
+    {
+      "step": "call features.evaluate",
+      "paths": ["$.data[*].value"],
+      "reason": "Percentage rollouts bucket tenants by a hash of the flag key and the (random) tenant ID."
+    },
+    {
+      "step": "features/evaluate",
+      "paths": ["$.data[*].value", "$.data.flags[*].value"],
+      "reason": "Percentage rollouts bucket tenants by a hash of the flag key and the (random) tenant ID."
+    },
+    {
+      "test": "*claimant who arrives in the same millisecond*",
+      "step": "licenses/*",
+      "paths": [
+        "$.data.seats[*].identity*",
+        "$.data.seats[*].id",
+        "$.data.seats[*].rank",
+        "$.data.seats[*].state"
+      ],
+      "reason": "Two claimants race for one seat in the same millisecond; which one wins is up to scheduling."
+    },
+    {
+      "test": "*stops at the daily brake*",
+      "step": "audit/list",
+      "paths": ["$.data[*].metadata.identityId", "$.data[*].resourceId"],
+      "reason": "Which people a workflow reaches before its daily brake follows (random) identity IDs."
+    },
+    {
+      "step": "call billing.closePeriod",
+      "paths": ["$.data.issued[*].number"],
+      "reason": "One run numbers the invoices it issues in the order of the (random) billing account IDs."
+    },
+    {
+      "test": "*bills projects with their own profile*",
+      "step": "billing/*",
+      "paths": ["$.data[*].number", "$.data.number", "$.data.statements[*].number"],
+      "reason": "The statements of one closing run are numbered in the order of the (random) billing account IDs, so the same statement carries the other number."
+    },
+    {
+      "test": "*reconciles each product once for a batch of new members*",
+      "step": "licenses/*",
+      "paths": ["$.data.seats[*].identity*", "$.data.seats[*].id"],
+      "reason": "A pool of 10 seats reconciles 12 new group members in the order of their (random) identity IDs, so which ten hold a seat differs per run."
+    },
+    {
+      "test": "*takes the owner grant authority from a demoted owner*",
+      "step": "roles/create",
+      "paths": ["$.data.authorityId", "$.data.uniqueKey"],
+      "reason": "The remaining owner then holds two grant authorities and grants under the first one found, in the order of their (random) IDs (a binding names its authority in its unique key)."
+    },
+    {
+      "test": "*takes the owner grant authority from a demoted owner*",
+      "step": "bindings/create",
+      "paths": ["$.data.authorityId", "$.data.uniqueKey"],
+      "reason": "The remaining owner then holds two grant authorities and grants under the first one found, in the order of their (random) IDs (a binding names its authority in its unique key)."
+    },
+    {
+      "test": "*guards and validates the signals API*",
+      "step": "signals/*",
+      "paths": ["$.data.events[*].jti", "$.data.jti"],
+      "reason": "Events received in the same millisecond are listed in the order of their (random) IDs, so which of the test's events fills a limited page differs per run."
+    },
+    {
+      "test": "*lists who can perform an action on a resource and which actions an identity holds there*",
+      "step": "policies/whoCan",
+      "paths": [
+        "$.data.identities[*].identityId",
+        "$.data.identities[*].name",
+        "$.data.identities[*].email"
+      ],
+      "reason": "A limited page of who-can results is filled in the order of (random) identity IDs, so which people it holds differs per run."
+    },
+    {
+      "test": "*separates reading, assigning and managing*",
+      "step": "licenses/*",
+      "paths": ["$.data.seats[*].identityId"],
+      "reason": "Removing a pool moves one of several seats assigned in the same millisecond back to waiting, picked in the order of (random) seat IDs; the seats a later retirement reports follow from that pick."
+    },
+    {
+      "test": "*keeps a carved-out project under the organization*",
+      "step": "billing/*",
+      "paths": [
+        "$.data[*].number",
+        "$.data.number",
+        "$.data.statements[*].number",
+        "$.data.issued[*].number"
+      ],
+      "reason": "The statements of one closing run are numbered in the order of the (random) billing account IDs."
+    },
+    {
+      "test": "*keeps a carved-out project under the organization*",
+      "step": "call billing.*",
+      "paths": ["$.data.issued[*].number", "$.data[*].number"],
+      "reason": "The statements of one closing run are numbered in the order of the (random) billing account IDs."
+    },
+    {
+      "test": "*refuses rows that do not match their trust or provider*",
+      "step": "store *",
+      "paths": [
+        "$.data[*].credentialAuthorityId",
+        "$.ops[*].data.credentialAuthorityId",
+        "$.ops[*].data[*].credentialAuthorityId"
+      ],
+      "reason": "The service account holds several grant authorities (two the test inserted with fixed IDs) and a credential is issued under the first one found, in ID order, which depends on the (random) ID of the one the server created."
+    },
+    {
+      "test": "*stops at the limit, and the self-check notices an archive that falls behind*",
+      "step": "call archiveAudit",
+      "paths": ["$.data.archived.*", "$.callbacks*"],
+      "reason": "A run limited to 3 events archives tenants in the order of their (random) IDs, so which tenant it reaches first differs per run."
+    },
+    {
+      "step": "POST */links/create",
+      "paths": [
+        "$.body.data.tenantId",
+        "$.body.data.uniqueKey",
+        "$.body.data.left*",
+        "$.body.data.right*"
+      ],
+      "reason": "A link stores its two sides ordered by (random) identity ID, so which account is left differs per run (the same link created over HTTP)."
+    },
+    {
+      "test": "*rolls back duplicate owner redemption and prevents final-owner disable*",
+      "step": "tenants/acceptInvitation",
+      "paths": ["$", "$.*"],
+      "reason": "The test redeems one invitation twice concurrently on purpose; which of the two requests wins the race is up to scheduling.",
+      "concurrent": true
+    },
+    {
+      "test": "*keeps the host authority to names the organization owns*",
+      "step": "ssh/updateSettings",
+      "paths": ["$.error.message"],
+      "reason": "The refusal names the first enrolled host outside the new patterns, and hosts are checked in the order of their (random) IDs."
+    },
+    {
+      "test": "*stops at the limit, and the self-check notices an archive that falls behind*",
+      "step": "call selfCheck",
+      "paths": ["$.data.findings[*].message", "$.data.findings[*].count"],
+      "reason": "How many tenants the limited archive run left behind depends on which tenant it reached first, in the order of (random) tenant IDs."
+    },
+    {
+      "test": "*keeps the host authority to names the organization owns*",
+      "step": "audit/list",
+      "paths": ["$.data[*].metadata.message"],
+      "reason": "The audited refusal names the first enrolled host outside the new patterns, checked in the order of (random) host IDs."
+    }
+  ]
+}

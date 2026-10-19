@@ -1,0 +1,5721 @@
+{
+  "description": "Condition operators, one statement { effect: allow, actions: [a:b], resources: [r/1], conditions: { [operator]: { key: expected } } } evaluated against a context holding `key` (or not). Missing or wrongly typed values never satisfy a condition, negated ones included; negated operators need every value to differ, ArrayContainsAll every value present, the others any value. Output is evaluatePolicy's decision.",
+  "source": "packages/core/src/policy.ts#evaluatePolicy (matches, compare, wellTyped)",
+  "cases": [
+    {
+      "name": "StringEquals \"eng\" vs \"eng\"",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": "eng"
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "StringEquals": {
+                    "key": "eng"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": true,
+        "reason": "allowed",
+        "matched": [
+          "grant:0:0"
+        ]
+      }
+    },
+    {
+      "name": "StringEquals \"eng\" vs \"ENG\"",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": "ENG"
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "StringEquals": {
+                    "key": "eng"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": false,
+        "reason": "no-grant",
+        "matched": []
+      }
+    },
+    {
+      "name": "StringEquals \"eng\" vs \"ops\"",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": "ops"
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "StringEquals": {
+                    "key": "eng"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": false,
+        "reason": "no-grant",
+        "matched": []
+      }
+    },
+    {
+      "name": "StringEquals \"eng\" vs 5",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": 5
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "StringEquals": {
+                    "key": "eng"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": false,
+        "reason": "no-grant",
+        "matched": []
+      }
+    },
+    {
+      "name": "StringEquals \"eng\" vs missing",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01"
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "StringEquals": {
+                    "key": "eng"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": false,
+        "reason": "no-grant",
+        "matched": []
+      }
+    },
+    {
+      "name": "StringEquals \"eng\" vs [\"eng\"]",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": [
+            "eng"
+          ]
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "StringEquals": {
+                    "key": "eng"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": false,
+        "reason": "no-grant",
+        "matched": []
+      }
+    },
+    {
+      "name": "StringEquals \"eng\" vs undefined",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": {
+            "$undefined": true
+          }
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "StringEquals": {
+                    "key": "eng"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": false,
+        "reason": "no-grant",
+        "matched": []
+      }
+    },
+    {
+      "name": "StringEquals [\"eng\",\"ops\"] vs \"ops\"",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": "ops"
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "StringEquals": {
+                    "key": [
+                      "eng",
+                      "ops"
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": true,
+        "reason": "allowed",
+        "matched": [
+          "grant:0:0"
+        ]
+      }
+    },
+    {
+      "name": "StringEquals [\"eng\",\"ops\"] vs \"qa\"",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": "qa"
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "StringEquals": {
+                    "key": [
+                      "eng",
+                      "ops"
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": false,
+        "reason": "no-grant",
+        "matched": []
+      }
+    },
+    {
+      "name": "StringEquals \"${principal.team}\" vs \"eng\"",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": "eng"
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "StringEquals": {
+                    "key": "${principal.team}"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": true,
+        "reason": "allowed",
+        "matched": [
+          "grant:0:0"
+        ]
+      }
+    },
+    {
+      "name": "StringEquals \"${principal.team}\" vs \"ops\"",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": "ops"
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "StringEquals": {
+                    "key": "${principal.team}"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": false,
+        "reason": "no-grant",
+        "matched": []
+      }
+    },
+    {
+      "name": "StringNotEquals \"eng\" vs \"eng\"",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": "eng"
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "StringNotEquals": {
+                    "key": "eng"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": false,
+        "reason": "no-grant",
+        "matched": []
+      }
+    },
+    {
+      "name": "StringNotEquals \"eng\" vs \"ops\"",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": "ops"
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "StringNotEquals": {
+                    "key": "eng"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": true,
+        "reason": "allowed",
+        "matched": [
+          "grant:0:0"
+        ]
+      }
+    },
+    {
+      "name": "StringNotEquals \"eng\" vs 5",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": 5
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "StringNotEquals": {
+                    "key": "eng"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": false,
+        "reason": "no-grant",
+        "matched": []
+      }
+    },
+    {
+      "name": "StringNotEquals \"eng\" vs missing",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01"
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "StringNotEquals": {
+                    "key": "eng"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": false,
+        "reason": "no-grant",
+        "matched": []
+      }
+    },
+    {
+      "name": "StringNotEquals [\"eng\",\"ops\"] vs \"ops\"",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": "ops"
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "StringNotEquals": {
+                    "key": [
+                      "eng",
+                      "ops"
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": false,
+        "reason": "no-grant",
+        "matched": []
+      }
+    },
+    {
+      "name": "StringNotEquals [\"eng\",\"ops\"] vs \"qa\"",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": "qa"
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "StringNotEquals": {
+                    "key": [
+                      "eng",
+                      "ops"
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": true,
+        "reason": "allowed",
+        "matched": [
+          "grant:0:0"
+        ]
+      }
+    },
+    {
+      "name": "StringNotEquals \"${principal.missing}\" vs \"eng\"",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": "eng"
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "StringNotEquals": {
+                    "key": "${principal.missing}"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": true,
+        "reason": "allowed",
+        "matched": [
+          "grant:0:0"
+        ]
+      }
+    },
+    {
+      "name": "StringEqualsIgnoreCase \"Eng\" vs \"eNG\"",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": "eNG"
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "StringEqualsIgnoreCase": {
+                    "key": "Eng"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": true,
+        "reason": "allowed",
+        "matched": [
+          "grant:0:0"
+        ]
+      }
+    },
+    {
+      "name": "StringEqualsIgnoreCase \"Eng\" vs \"eng\"",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": "eng"
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "StringEqualsIgnoreCase": {
+                    "key": "Eng"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": true,
+        "reason": "allowed",
+        "matched": [
+          "grant:0:0"
+        ]
+      }
+    },
+    {
+      "name": "StringEqualsIgnoreCase \"Eng\" vs \"ops\"",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": "ops"
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "StringEqualsIgnoreCase": {
+                    "key": "Eng"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": false,
+        "reason": "no-grant",
+        "matched": []
+      }
+    },
+    {
+      "name": "StringEqualsIgnoreCase \"Eng\" vs 5",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": 5
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "StringEqualsIgnoreCase": {
+                    "key": "Eng"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": false,
+        "reason": "no-grant",
+        "matched": []
+      }
+    },
+    {
+      "name": "StringEqualsIgnoreCase \"${principal.team}\" vs \"ENG\"",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": "ENG"
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "StringEqualsIgnoreCase": {
+                    "key": "${principal.team}"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": true,
+        "reason": "allowed",
+        "matched": [
+          "grant:0:0"
+        ]
+      }
+    },
+    {
+      "name": "StringNotEqualsIgnoreCase \"Eng\" vs \"eNG\"",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": "eNG"
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "StringNotEqualsIgnoreCase": {
+                    "key": "Eng"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": false,
+        "reason": "no-grant",
+        "matched": []
+      }
+    },
+    {
+      "name": "StringNotEqualsIgnoreCase \"Eng\" vs \"ops\"",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": "ops"
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "StringNotEqualsIgnoreCase": {
+                    "key": "Eng"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": true,
+        "reason": "allowed",
+        "matched": [
+          "grant:0:0"
+        ]
+      }
+    },
+    {
+      "name": "StringNotEqualsIgnoreCase \"Eng\" vs 5",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": 5
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "StringNotEqualsIgnoreCase": {
+                    "key": "Eng"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": false,
+        "reason": "no-grant",
+        "matched": []
+      }
+    },
+    {
+      "name": "StringNotEqualsIgnoreCase \"Eng\" vs missing",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01"
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "StringNotEqualsIgnoreCase": {
+                    "key": "Eng"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": false,
+        "reason": "no-grant",
+        "matched": []
+      }
+    },
+    {
+      "name": "StringLike \"eng-*\" vs \"eng-team\"",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": "eng-team"
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "StringLike": {
+                    "key": "eng-*"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": true,
+        "reason": "allowed",
+        "matched": [
+          "grant:0:0"
+        ]
+      }
+    },
+    {
+      "name": "StringLike \"eng-*\" vs \"eng-\"",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": "eng-"
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "StringLike": {
+                    "key": "eng-*"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": true,
+        "reason": "allowed",
+        "matched": [
+          "grant:0:0"
+        ]
+      }
+    },
+    {
+      "name": "StringLike \"eng-*\" vs \"ENG-team\"",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": "ENG-team"
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "StringLike": {
+                    "key": "eng-*"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": false,
+        "reason": "no-grant",
+        "matched": []
+      }
+    },
+    {
+      "name": "StringLike \"eng-*\" vs \"xeng-team\"",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": "xeng-team"
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "StringLike": {
+                    "key": "eng-*"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": false,
+        "reason": "no-grant",
+        "matched": []
+      }
+    },
+    {
+      "name": "StringLike \"eng-*\" vs 5",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": 5
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "StringLike": {
+                    "key": "eng-*"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": false,
+        "reason": "no-grant",
+        "matched": []
+      }
+    },
+    {
+      "name": "StringLike \"?ng\" vs \"eng\"",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": "eng"
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "StringLike": {
+                    "key": "?ng"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": true,
+        "reason": "allowed",
+        "matched": [
+          "grant:0:0"
+        ]
+      }
+    },
+    {
+      "name": "StringLike \"?ng\" vs \"ng\"",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": "ng"
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "StringLike": {
+                    "key": "?ng"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": false,
+        "reason": "no-grant",
+        "matched": []
+      }
+    },
+    {
+      "name": "StringLike \"?ng\" vs \"eeng\"",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": "eeng"
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "StringLike": {
+                    "key": "?ng"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": false,
+        "reason": "no-grant",
+        "matched": []
+      }
+    },
+    {
+      "name": "StringLike \"a*b?c\" vs \"abxc\"",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": "abxc"
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "StringLike": {
+                    "key": "a*b?c"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": true,
+        "reason": "allowed",
+        "matched": [
+          "grant:0:0"
+        ]
+      }
+    },
+    {
+      "name": "StringLike \"a*b?c\" vs \"a-b-xc\"",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": "a-b-xc"
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "StringLike": {
+                    "key": "a*b?c"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": false,
+        "reason": "no-grant",
+        "matched": []
+      }
+    },
+    {
+      "name": "StringLike \"a*b?c\" vs \"abc\"",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": "abc"
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "StringLike": {
+                    "key": "a*b?c"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": false,
+        "reason": "no-grant",
+        "matched": []
+      }
+    },
+    {
+      "name": "StringLike \"${principal.team}-*\" vs \"eng-1\"",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": "eng-1"
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "StringLike": {
+                    "key": "${principal.team}-*"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": true,
+        "reason": "allowed",
+        "matched": [
+          "grant:0:0"
+        ]
+      }
+    },
+    {
+      "name": "StringLike \"${principal.team}-*\" vs \"ops-1\"",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": "ops-1"
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "StringLike": {
+                    "key": "${principal.team}-*"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": false,
+        "reason": "no-grant",
+        "matched": []
+      }
+    },
+    {
+      "name": "StringNotLike \"eng-*\" vs \"eng-team\"",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": "eng-team"
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "StringNotLike": {
+                    "key": "eng-*"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": false,
+        "reason": "no-grant",
+        "matched": []
+      }
+    },
+    {
+      "name": "StringNotLike \"eng-*\" vs \"ops\"",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": "ops"
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "StringNotLike": {
+                    "key": "eng-*"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": true,
+        "reason": "allowed",
+        "matched": [
+          "grant:0:0"
+        ]
+      }
+    },
+    {
+      "name": "StringNotLike \"eng-*\" vs 5",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": 5
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "StringNotLike": {
+                    "key": "eng-*"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": false,
+        "reason": "no-grant",
+        "matched": []
+      }
+    },
+    {
+      "name": "StringNotLike \"eng-*\" vs missing",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01"
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "StringNotLike": {
+                    "key": "eng-*"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": false,
+        "reason": "no-grant",
+        "matched": []
+      }
+    },
+    {
+      "name": "StringLikeIgnoreCase \"ENG-*\" vs \"eng-team\"",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": "eng-team"
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "StringLikeIgnoreCase": {
+                    "key": "ENG-*"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": true,
+        "reason": "allowed",
+        "matched": [
+          "grant:0:0"
+        ]
+      }
+    },
+    {
+      "name": "StringLikeIgnoreCase \"ENG-*\" vs \"Eng-X\"",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": "Eng-X"
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "StringLikeIgnoreCase": {
+                    "key": "ENG-*"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": true,
+        "reason": "allowed",
+        "matched": [
+          "grant:0:0"
+        ]
+      }
+    },
+    {
+      "name": "StringLikeIgnoreCase \"ENG-*\" vs \"ops\"",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": "ops"
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "StringLikeIgnoreCase": {
+                    "key": "ENG-*"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": false,
+        "reason": "no-grant",
+        "matched": []
+      }
+    },
+    {
+      "name": "StringLikeIgnoreCase \"${principal.team}-*\" vs \"ENG-1\"",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": "ENG-1"
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "StringLikeIgnoreCase": {
+                    "key": "${principal.team}-*"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": true,
+        "reason": "allowed",
+        "matched": [
+          "grant:0:0"
+        ]
+      }
+    },
+    {
+      "name": "Bool true vs true",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": true
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "Bool": {
+                    "key": true
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": true,
+        "reason": "allowed",
+        "matched": [
+          "grant:0:0"
+        ]
+      }
+    },
+    {
+      "name": "Bool true vs false",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": false
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "Bool": {
+                    "key": true
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": false,
+        "reason": "no-grant",
+        "matched": []
+      }
+    },
+    {
+      "name": "Bool true vs \"true\"",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": "true"
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "Bool": {
+                    "key": true
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": false,
+        "reason": "no-grant",
+        "matched": []
+      }
+    },
+    {
+      "name": "Bool true vs 1",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": 1
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "Bool": {
+                    "key": true
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": false,
+        "reason": "no-grant",
+        "matched": []
+      }
+    },
+    {
+      "name": "Bool true vs missing",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01"
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "Bool": {
+                    "key": true
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": false,
+        "reason": "no-grant",
+        "matched": []
+      }
+    },
+    {
+      "name": "Bool false vs false",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": false
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "Bool": {
+                    "key": false
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": true,
+        "reason": "allowed",
+        "matched": [
+          "grant:0:0"
+        ]
+      }
+    },
+    {
+      "name": "Bool false vs true",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": true
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "Bool": {
+                    "key": false
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": false,
+        "reason": "no-grant",
+        "matched": []
+      }
+    },
+    {
+      "name": "NumericEquals 5 vs 5",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": 5
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "NumericEquals": {
+                    "key": 5
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": true,
+        "reason": "allowed",
+        "matched": [
+          "grant:0:0"
+        ]
+      }
+    },
+    {
+      "name": "NumericEquals 5 vs 4",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": 4
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "NumericEquals": {
+                    "key": 5
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": false,
+        "reason": "no-grant",
+        "matched": []
+      }
+    },
+    {
+      "name": "NumericEquals 5 vs \"5\"",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": "5"
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "NumericEquals": {
+                    "key": 5
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": false,
+        "reason": "no-grant",
+        "matched": []
+      }
+    },
+    {
+      "name": "NumericEquals 5 vs missing",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01"
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "NumericEquals": {
+                    "key": 5
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": false,
+        "reason": "no-grant",
+        "matched": []
+      }
+    },
+    {
+      "name": "NumericEquals [1,2] vs 2",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": 2
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "NumericEquals": {
+                    "key": [
+                      1,
+                      2
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": true,
+        "reason": "allowed",
+        "matched": [
+          "grant:0:0"
+        ]
+      }
+    },
+    {
+      "name": "NumericEquals [1,2] vs 3",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": 3
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "NumericEquals": {
+                    "key": [
+                      1,
+                      2
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": false,
+        "reason": "no-grant",
+        "matched": []
+      }
+    },
+    {
+      "name": "NumericNotEquals 5 vs 5",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": 5
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "NumericNotEquals": {
+                    "key": 5
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": false,
+        "reason": "no-grant",
+        "matched": []
+      }
+    },
+    {
+      "name": "NumericNotEquals 5 vs 6",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": 6
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "NumericNotEquals": {
+                    "key": 5
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": true,
+        "reason": "allowed",
+        "matched": [
+          "grant:0:0"
+        ]
+      }
+    },
+    {
+      "name": "NumericNotEquals 5 vs \"6\"",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": "6"
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "NumericNotEquals": {
+                    "key": 5
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": false,
+        "reason": "no-grant",
+        "matched": []
+      }
+    },
+    {
+      "name": "NumericNotEquals 5 vs missing",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01"
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "NumericNotEquals": {
+                    "key": 5
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": false,
+        "reason": "no-grant",
+        "matched": []
+      }
+    },
+    {
+      "name": "NumericLessThan 5 vs 4",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": 4
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "NumericLessThan": {
+                    "key": 5
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": true,
+        "reason": "allowed",
+        "matched": [
+          "grant:0:0"
+        ]
+      }
+    },
+    {
+      "name": "NumericLessThan 5 vs 5",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": 5
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "NumericLessThan": {
+                    "key": 5
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": false,
+        "reason": "no-grant",
+        "matched": []
+      }
+    },
+    {
+      "name": "NumericLessThan 5 vs 6",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": 6
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "NumericLessThan": {
+                    "key": 5
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": false,
+        "reason": "no-grant",
+        "matched": []
+      }
+    },
+    {
+      "name": "NumericLessThan 5 vs null",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": {
+            "$number": "-Infinity"
+          }
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "NumericLessThan": {
+                    "key": 5
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": false,
+        "reason": "no-grant",
+        "matched": []
+      }
+    },
+    {
+      "name": "NumericLessThan 5 vs \"4\"",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": "4"
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "NumericLessThan": {
+                    "key": 5
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": false,
+        "reason": "no-grant",
+        "matched": []
+      }
+    },
+    {
+      "name": "NumericLessThanEquals 5 vs 5",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": 5
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "NumericLessThanEquals": {
+                    "key": 5
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": true,
+        "reason": "allowed",
+        "matched": [
+          "grant:0:0"
+        ]
+      }
+    },
+    {
+      "name": "NumericLessThanEquals 5 vs 5.000001",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": 5.000001
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "NumericLessThanEquals": {
+                    "key": 5
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": false,
+        "reason": "no-grant",
+        "matched": []
+      }
+    },
+    {
+      "name": "NumericLessThanEquals 5 vs 4.9",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": 4.9
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "NumericLessThanEquals": {
+                    "key": 5
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": true,
+        "reason": "allowed",
+        "matched": [
+          "grant:0:0"
+        ]
+      }
+    },
+    {
+      "name": "NumericGreaterThan 5 vs 6",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": 6
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "NumericGreaterThan": {
+                    "key": 5
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": true,
+        "reason": "allowed",
+        "matched": [
+          "grant:0:0"
+        ]
+      }
+    },
+    {
+      "name": "NumericGreaterThan 5 vs 5",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": 5
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "NumericGreaterThan": {
+                    "key": 5
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": false,
+        "reason": "no-grant",
+        "matched": []
+      }
+    },
+    {
+      "name": "NumericGreaterThan 5 vs null",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": {
+            "$number": "Infinity"
+          }
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "NumericGreaterThan": {
+                    "key": 5
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": false,
+        "reason": "no-grant",
+        "matched": []
+      }
+    },
+    {
+      "name": "NumericGreaterThanEquals 5 vs 5",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": 5
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "NumericGreaterThanEquals": {
+                    "key": 5
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": true,
+        "reason": "allowed",
+        "matched": [
+          "grant:0:0"
+        ]
+      }
+    },
+    {
+      "name": "NumericGreaterThanEquals 5 vs 4.999",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": 4.999
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "NumericGreaterThanEquals": {
+                    "key": 5
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": false,
+        "reason": "no-grant",
+        "matched": []
+      }
+    },
+    {
+      "name": "DateBefore \"2026-01-01T00:00:00Z\" vs \"2025-12-31T23:59:59Z\"",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": "2025-12-31T23:59:59Z"
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "DateBefore": {
+                    "key": "2026-01-01T00:00:00Z"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": true,
+        "reason": "allowed",
+        "matched": [
+          "grant:0:0"
+        ]
+      }
+    },
+    {
+      "name": "DateBefore \"2026-01-01T00:00:00Z\" vs \"2026-01-01T00:00:00Z\"",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": "2026-01-01T00:00:00Z"
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "DateBefore": {
+                    "key": "2026-01-01T00:00:00Z"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": false,
+        "reason": "no-grant",
+        "matched": []
+      }
+    },
+    {
+      "name": "DateBefore \"2026-01-01T00:00:00Z\" vs \"2026-01-01T00:00:00.001Z\"",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": "2026-01-01T00:00:00.001Z"
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "DateBefore": {
+                    "key": "2026-01-01T00:00:00Z"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": false,
+        "reason": "no-grant",
+        "matched": []
+      }
+    },
+    {
+      "name": "DateBefore \"2026-01-01T00:00:00Z\" vs \"2026-01-01T00:59:59+01:00\"",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": "2026-01-01T00:59:59+01:00"
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "DateBefore": {
+                    "key": "2026-01-01T00:00:00Z"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": true,
+        "reason": "allowed",
+        "matched": [
+          "grant:0:0"
+        ]
+      }
+    },
+    {
+      "name": "DateBefore \"2026-01-01T00:00:00Z\" vs \"2026-02-30T00:00:00Z\"",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": "2026-02-30T00:00:00Z"
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "DateBefore": {
+                    "key": "2026-01-01T00:00:00Z"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": false,
+        "reason": "no-grant",
+        "matched": []
+      }
+    },
+    {
+      "name": "DateBefore \"2026-01-01T00:00:00Z\" vs \"2025-12-31\"",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": "2025-12-31"
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "DateBefore": {
+                    "key": "2026-01-01T00:00:00Z"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": false,
+        "reason": "no-grant",
+        "matched": []
+      }
+    },
+    {
+      "name": "DateBefore \"2026-01-01T00:00:00Z\" vs \"not a date\"",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": "not a date"
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "DateBefore": {
+                    "key": "2026-01-01T00:00:00Z"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": false,
+        "reason": "no-grant",
+        "matched": []
+      }
+    },
+    {
+      "name": "DateBefore \"2026-01-01T00:00:00Z\" vs 1767225600000",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": 1767225600000
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "DateBefore": {
+                    "key": "2026-01-01T00:00:00Z"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": false,
+        "reason": "no-grant",
+        "matched": []
+      }
+    },
+    {
+      "name": "DateAfter \"2026-01-01T00:00:00.000+00:00\" vs \"2026-01-01T00:00:00.001Z\"",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": "2026-01-01T00:00:00.001Z"
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "DateAfter": {
+                    "key": "2026-01-01T00:00:00.000+00:00"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": true,
+        "reason": "allowed",
+        "matched": [
+          "grant:0:0"
+        ]
+      }
+    },
+    {
+      "name": "DateAfter \"2026-01-01T00:00:00.000+00:00\" vs \"2026-01-01T01:00:01+01:00\"",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": "2026-01-01T01:00:01+01:00"
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "DateAfter": {
+                    "key": "2026-01-01T00:00:00.000+00:00"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": true,
+        "reason": "allowed",
+        "matched": [
+          "grant:0:0"
+        ]
+      }
+    },
+    {
+      "name": "DateAfter \"2026-01-01T00:00:00.000+00:00\" vs \"2025-01-01T00:00:00Z\"",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": "2025-01-01T00:00:00Z"
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "DateAfter": {
+                    "key": "2026-01-01T00:00:00.000+00:00"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": false,
+        "reason": "no-grant",
+        "matched": []
+      }
+    },
+    {
+      "name": "DateAfter \"2026-01-01T00:00:00.000+00:00\" vs \"2026-13-01T00:00:00Z\"",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": "2026-13-01T00:00:00Z"
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "DateAfter": {
+                    "key": "2026-01-01T00:00:00.000+00:00"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": false,
+        "reason": "no-grant",
+        "matched": []
+      }
+    },
+    {
+      "name": "IpAddress \"10.0.0.0/8\" vs \"10.1.2.3\"",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": "10.1.2.3"
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "IpAddress": {
+                    "key": "10.0.0.0/8"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": true,
+        "reason": "allowed",
+        "matched": [
+          "grant:0:0"
+        ]
+      }
+    },
+    {
+      "name": "IpAddress \"10.0.0.0/8\" vs \"11.0.0.1\"",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": "11.0.0.1"
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "IpAddress": {
+                    "key": "10.0.0.0/8"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": false,
+        "reason": "no-grant",
+        "matched": []
+      }
+    },
+    {
+      "name": "IpAddress \"10.0.0.0/8\" vs \"::ffff:10.1.2.3\"",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": "::ffff:10.1.2.3"
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "IpAddress": {
+                    "key": "10.0.0.0/8"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": true,
+        "reason": "allowed",
+        "matched": [
+          "grant:0:0"
+        ]
+      }
+    },
+    {
+      "name": "IpAddress \"10.0.0.0/8\" vs \"::ffff:a01:203\"",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": "::ffff:a01:203"
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "IpAddress": {
+                    "key": "10.0.0.0/8"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": true,
+        "reason": "allowed",
+        "matched": [
+          "grant:0:0"
+        ]
+      }
+    },
+    {
+      "name": "IpAddress \"10.0.0.0/8\" vs \"010.1.2.3\"",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": "010.1.2.3"
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "IpAddress": {
+                    "key": "10.0.0.0/8"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": false,
+        "reason": "no-grant",
+        "matched": []
+      }
+    },
+    {
+      "name": "IpAddress \"10.0.0.0/8\" vs \"10.1.2\"",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": "10.1.2"
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "IpAddress": {
+                    "key": "10.0.0.0/8"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": false,
+        "reason": "no-grant",
+        "matched": []
+      }
+    },
+    {
+      "name": "IpAddress \"10.0.0.0/8\" vs \"not-ip\"",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": "not-ip"
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "IpAddress": {
+                    "key": "10.0.0.0/8"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": false,
+        "reason": "no-grant",
+        "matched": []
+      }
+    },
+    {
+      "name": "IpAddress \"10.0.0.0/8\" vs 5",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": 5
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "IpAddress": {
+                    "key": "10.0.0.0/8"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": false,
+        "reason": "no-grant",
+        "matched": []
+      }
+    },
+    {
+      "name": "IpAddress \"2001:db8::/32\" vs \"2001:db8::1\"",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": "2001:db8::1"
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "IpAddress": {
+                    "key": "2001:db8::/32"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": true,
+        "reason": "allowed",
+        "matched": [
+          "grant:0:0"
+        ]
+      }
+    },
+    {
+      "name": "IpAddress \"2001:db8::/32\" vs \"2001:DB8:0:0:0:0:0:1\"",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": "2001:DB8:0:0:0:0:0:1"
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "IpAddress": {
+                    "key": "2001:db8::/32"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": true,
+        "reason": "allowed",
+        "matched": [
+          "grant:0:0"
+        ]
+      }
+    },
+    {
+      "name": "IpAddress \"2001:db8::/32\" vs \"2001:db9::1\"",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": "2001:db9::1"
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "IpAddress": {
+                    "key": "2001:db8::/32"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": false,
+        "reason": "no-grant",
+        "matched": []
+      }
+    },
+    {
+      "name": "IpAddress \"2001:db8::/32\" vs \"10.0.0.1\"",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": "10.0.0.1"
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "IpAddress": {
+                    "key": "2001:db8::/32"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": false,
+        "reason": "no-grant",
+        "matched": []
+      }
+    },
+    {
+      "name": "IpAddress \"::ffff:198.51.100.0/120\" vs \"198.51.100.7\"",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": "198.51.100.7"
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "IpAddress": {
+                    "key": "::ffff:198.51.100.0/120"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": true,
+        "reason": "allowed",
+        "matched": [
+          "grant:0:0"
+        ]
+      }
+    },
+    {
+      "name": "IpAddress \"::ffff:198.51.100.0/120\" vs \"198.51.101.7\"",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": "198.51.101.7"
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "IpAddress": {
+                    "key": "::ffff:198.51.100.0/120"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": false,
+        "reason": "no-grant",
+        "matched": []
+      }
+    },
+    {
+      "name": "IpAddress \"::ffff:198.51.100.0/120\" vs \"::ffff:198.51.100.9\"",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": "::ffff:198.51.100.9"
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "IpAddress": {
+                    "key": "::ffff:198.51.100.0/120"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": true,
+        "reason": "allowed",
+        "matched": [
+          "grant:0:0"
+        ]
+      }
+    },
+    {
+      "name": "IpAddress \"198.51.100.7\" vs \"198.51.100.7\"",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": "198.51.100.7"
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "IpAddress": {
+                    "key": "198.51.100.7"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": true,
+        "reason": "allowed",
+        "matched": [
+          "grant:0:0"
+        ]
+      }
+    },
+    {
+      "name": "IpAddress \"198.51.100.7\" vs \"198.51.100.8\"",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": "198.51.100.8"
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "IpAddress": {
+                    "key": "198.51.100.7"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": false,
+        "reason": "no-grant",
+        "matched": []
+      }
+    },
+    {
+      "name": "IpAddress [\"10.0.0.0/8\",\"192.168.0.0/16\"] vs \"192.168.1.1\"",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": "192.168.1.1"
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "IpAddress": {
+                    "key": [
+                      "10.0.0.0/8",
+                      "192.168.0.0/16"
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": true,
+        "reason": "allowed",
+        "matched": [
+          "grant:0:0"
+        ]
+      }
+    },
+    {
+      "name": "IpAddress [\"10.0.0.0/8\",\"192.168.0.0/16\"] vs \"172.16.0.1\"",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": "172.16.0.1"
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "IpAddress": {
+                    "key": [
+                      "10.0.0.0/8",
+                      "192.168.0.0/16"
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": false,
+        "reason": "no-grant",
+        "matched": []
+      }
+    },
+    {
+      "name": "NotIpAddress \"10.0.0.0/8\" vs \"10.1.2.3\"",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": "10.1.2.3"
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "NotIpAddress": {
+                    "key": "10.0.0.0/8"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": false,
+        "reason": "no-grant",
+        "matched": []
+      }
+    },
+    {
+      "name": "NotIpAddress \"10.0.0.0/8\" vs \"11.0.0.1\"",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": "11.0.0.1"
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "NotIpAddress": {
+                    "key": "10.0.0.0/8"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": true,
+        "reason": "allowed",
+        "matched": [
+          "grant:0:0"
+        ]
+      }
+    },
+    {
+      "name": "NotIpAddress \"10.0.0.0/8\" vs \"not-ip\"",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": "not-ip"
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "NotIpAddress": {
+                    "key": "10.0.0.0/8"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": false,
+        "reason": "no-grant",
+        "matched": []
+      }
+    },
+    {
+      "name": "NotIpAddress \"10.0.0.0/8\" vs missing",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01"
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "NotIpAddress": {
+                    "key": "10.0.0.0/8"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": false,
+        "reason": "no-grant",
+        "matched": []
+      }
+    },
+    {
+      "name": "NotIpAddress [\"10.0.0.0/8\",\"192.168.0.0/16\"] vs \"192.168.1.1\"",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": "192.168.1.1"
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "NotIpAddress": {
+                    "key": [
+                      "10.0.0.0/8",
+                      "192.168.0.0/16"
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": false,
+        "reason": "no-grant",
+        "matched": []
+      }
+    },
+    {
+      "name": "NotIpAddress [\"10.0.0.0/8\",\"192.168.0.0/16\"] vs \"172.16.0.1\"",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": "172.16.0.1"
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "NotIpAddress": {
+                    "key": [
+                      "10.0.0.0/8",
+                      "192.168.0.0/16"
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": true,
+        "reason": "allowed",
+        "matched": [
+          "grant:0:0"
+        ]
+      }
+    },
+    {
+      "name": "ArrayContains \"admin\" vs [\"admin\",\"x\"]",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": [
+            "admin",
+            "x"
+          ]
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "ArrayContains": {
+                    "key": "admin"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": true,
+        "reason": "allowed",
+        "matched": [
+          "grant:0:0"
+        ]
+      }
+    },
+    {
+      "name": "ArrayContains \"admin\" vs [\"ops\"]",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": [
+            "ops"
+          ]
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "ArrayContains": {
+                    "key": "admin"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": false,
+        "reason": "no-grant",
+        "matched": []
+      }
+    },
+    {
+      "name": "ArrayContains \"admin\" vs \"admin\"",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": "admin"
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "ArrayContains": {
+                    "key": "admin"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": false,
+        "reason": "no-grant",
+        "matched": []
+      }
+    },
+    {
+      "name": "ArrayContains \"admin\" vs []",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": []
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "ArrayContains": {
+                    "key": "admin"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": false,
+        "reason": "no-grant",
+        "matched": []
+      }
+    },
+    {
+      "name": "ArrayContains \"admin\" vs missing",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01"
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "ArrayContains": {
+                    "key": "admin"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": false,
+        "reason": "no-grant",
+        "matched": []
+      }
+    },
+    {
+      "name": "ArrayContains 5 vs [5]",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": [
+            5
+          ]
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "ArrayContains": {
+                    "key": 5
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": true,
+        "reason": "allowed",
+        "matched": [
+          "grant:0:0"
+        ]
+      }
+    },
+    {
+      "name": "ArrayContains 5 vs [\"5\"]",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": [
+            "5"
+          ]
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "ArrayContains": {
+                    "key": 5
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": false,
+        "reason": "no-grant",
+        "matched": []
+      }
+    },
+    {
+      "name": "ArrayContains true vs [true]",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": [
+            true
+          ]
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "ArrayContains": {
+                    "key": true
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": true,
+        "reason": "allowed",
+        "matched": [
+          "grant:0:0"
+        ]
+      }
+    },
+    {
+      "name": "ArrayContains true vs [false]",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": [
+            false
+          ]
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "ArrayContains": {
+                    "key": true
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": false,
+        "reason": "no-grant",
+        "matched": []
+      }
+    },
+    {
+      "name": "ArrayContains [\"admin\",\"ops\"] vs [\"ops\"]",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": [
+            "ops"
+          ]
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "ArrayContains": {
+                    "key": [
+                      "admin",
+                      "ops"
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": true,
+        "reason": "allowed",
+        "matched": [
+          "grant:0:0"
+        ]
+      }
+    },
+    {
+      "name": "ArrayContains [\"admin\",\"ops\"] vs [\"qa\"]",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": [
+            "qa"
+          ]
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "ArrayContains": {
+                    "key": [
+                      "admin",
+                      "ops"
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": false,
+        "reason": "no-grant",
+        "matched": []
+      }
+    },
+    {
+      "name": "ArrayContains \"${principal.id}\" vs [\"idn_01\"]",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": [
+            "idn_01"
+          ]
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "ArrayContains": {
+                    "key": "${principal.id}"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": true,
+        "reason": "allowed",
+        "matched": [
+          "grant:0:0"
+        ]
+      }
+    },
+    {
+      "name": "ArrayContains \"${principal.id}\" vs [\"idn_02\"]",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": [
+            "idn_02"
+          ]
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "ArrayContains": {
+                    "key": "${principal.id}"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": false,
+        "reason": "no-grant",
+        "matched": []
+      }
+    },
+    {
+      "name": "ArrayContainsAll [\"admin\",\"ops\"] vs [\"admin\",\"ops\",\"x\"]",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": [
+            "admin",
+            "ops",
+            "x"
+          ]
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "ArrayContainsAll": {
+                    "key": [
+                      "admin",
+                      "ops"
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": true,
+        "reason": "allowed",
+        "matched": [
+          "grant:0:0"
+        ]
+      }
+    },
+    {
+      "name": "ArrayContainsAll [\"admin\",\"ops\"] vs [\"admin\"]",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": [
+            "admin"
+          ]
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "ArrayContainsAll": {
+                    "key": [
+                      "admin",
+                      "ops"
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": false,
+        "reason": "no-grant",
+        "matched": []
+      }
+    },
+    {
+      "name": "ArrayContainsAll [\"admin\",\"ops\"] vs \"admin\"",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": "admin"
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "ArrayContainsAll": {
+                    "key": [
+                      "admin",
+                      "ops"
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": false,
+        "reason": "no-grant",
+        "matched": []
+      }
+    },
+    {
+      "name": "ArrayContainsAll \"admin\" vs [\"admin\"]",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": [
+            "admin"
+          ]
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "ArrayContainsAll": {
+                    "key": "admin"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": true,
+        "reason": "allowed",
+        "matched": [
+          "grant:0:0"
+        ]
+      }
+    },
+    {
+      "name": "ArrayContainsAll \"admin\" vs []",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": []
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "ArrayContainsAll": {
+                    "key": "admin"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": false,
+        "reason": "no-grant",
+        "matched": []
+      }
+    },
+    {
+      "name": "Exists true vs \"x\"",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": "x"
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "Exists": {
+                    "key": true
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": true,
+        "reason": "allowed",
+        "matched": [
+          "grant:0:0"
+        ]
+      }
+    },
+    {
+      "name": "Exists true vs null",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": null
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "Exists": {
+                    "key": true
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": true,
+        "reason": "allowed",
+        "matched": [
+          "grant:0:0"
+        ]
+      }
+    },
+    {
+      "name": "Exists true vs undefined",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": {
+            "$undefined": true
+          }
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "Exists": {
+                    "key": true
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": false,
+        "reason": "no-grant",
+        "matched": []
+      }
+    },
+    {
+      "name": "Exists true vs missing",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01"
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "Exists": {
+                    "key": true
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": false,
+        "reason": "no-grant",
+        "matched": []
+      }
+    },
+    {
+      "name": "Exists true vs 0",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": 0
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "Exists": {
+                    "key": true
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": true,
+        "reason": "allowed",
+        "matched": [
+          "grant:0:0"
+        ]
+      }
+    },
+    {
+      "name": "Exists true vs false",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": false
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "Exists": {
+                    "key": true
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": true,
+        "reason": "allowed",
+        "matched": [
+          "grant:0:0"
+        ]
+      }
+    },
+    {
+      "name": "Exists false vs \"x\"",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": "x"
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "Exists": {
+                    "key": false
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": false,
+        "reason": "no-grant",
+        "matched": []
+      }
+    },
+    {
+      "name": "Exists false vs undefined",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01",
+          "key": {
+            "$undefined": true
+          }
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "Exists": {
+                    "key": false
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": true,
+        "reason": "allowed",
+        "matched": [
+          "grant:0:0"
+        ]
+      }
+    },
+    {
+      "name": "Exists false vs missing",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "principal.team": "eng",
+          "principal.id": "idn_01"
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "Exists": {
+                    "key": false
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": true,
+        "reason": "allowed",
+        "matched": [
+          "grant:0:0"
+        ]
+      }
+    },
+    {
+      "name": "all conditions must hold",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "team": "eng",
+          "level": 3
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "StringEquals": {
+                    "team": "eng"
+                  },
+                  "NumericGreaterThan": {
+                    "level": 2
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": true,
+        "reason": "allowed",
+        "matched": [
+          "grant:0:0"
+        ]
+      }
+    },
+    {
+      "name": "one failing condition refuses",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "team": "eng",
+          "level": 1
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "a:b"
+                ],
+                "resources": [
+                  "r/1"
+                ],
+                "conditions": {
+                  "StringEquals": {
+                    "team": "eng"
+                  },
+                  "NumericGreaterThan": {
+                    "level": 2
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": false,
+        "reason": "no-grant",
+        "matched": []
+      }
+    },
+    {
+      "name": "conditional deny applies only when it holds",
+      "input": {
+        "action": "a:b",
+        "resource": "r/1",
+        "context": {
+          "request.ip": "203.0.113.9"
+        },
+        "grants": [
+          {
+            "version": 1,
+            "statements": [
+              {
+                "effect": "allow",
+                "actions": [
+                  "*"
+                ],
+                "resources": [
+                  "*"
+                ]
+              },
+              {
+                "effect": "deny",
+                "actions": [
+                  "*"
+                ],
+                "resources": [
+                  "*"
+                ],
+                "conditions": {
+                  "NotIpAddress": {
+                    "request.ip": "10.0.0.0/8"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "allowed": false,
+        "reason": "explicit-deny",
+        "matched": [
+          "grant:0:0",
+          "grant:0:1"
+        ]
+      }
+    }
+  ]
+}

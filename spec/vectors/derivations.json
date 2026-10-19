@@ -1,0 +1,284 @@
+{
+  "description": "Keys and MACs derived from the deployment secret: assertion keys (hex SHA-256 of \"better-iam:assertion:\" + secret), challenge digests (HMAC-SHA256(secret, tenantId \":\" token) hex), privacy subjects and consent receipts, protection fingerprints, verifiable-credential proof nonces (\"{base36 time}.{base64url 16 random bytes}.{base64url HMAC-SHA256(SHA-256('better-iam:vc-nonce:' + secret), tenantId.time.random)}\").",
+  "source": "packages/server/src/assertions.ts#assertionKey; packages/auth/src/service/base.ts#digestChallenge; packages/server/src/privacy.ts#emailSubject,signReceipt,receiptSignatureValid; packages/server/src/tokenization.ts#fingerprint; packages/server/src/vc.ts#createNonce; packages/oauth/src/adapter.ts#hash",
+  "cases": [
+    {
+      "name": "assertionKey deployment-s",
+      "input": {
+        "secret": "deployment-secret-A-with-at-least-32-characters"
+      },
+      "output": "5b723b4d5bbce2a9a11ebf9a32e9c6a74de963d5a432cb557be6167f2e0c35be"
+    },
+    {
+      "name": "assertionKey s",
+      "input": {
+        "secret": "s"
+      },
+      "output": "8bf6523970a869d51ebe232eafee4ad41011e278828efc982de094f72a563ec3"
+    },
+    {
+      "name": "assertionKey sécret-🔑",
+      "input": {
+        "secret": "sécret-🔑"
+      },
+      "output": "5cbce0ea089e0fc716f9911af7a3c61de3460734a6099c4469562f1d5c113631"
+    },
+    {
+      "name": "digestChallenge tnt_01 challeng",
+      "input": {
+        "tenantId": "tnt_01",
+        "token": "challenge-token",
+        "secret": "deployment-secret-A-with-at-least-32-characters"
+      },
+      "output": "70425e80ebeeb88e69d1dd277076b133dbab50e20451dc23484ccf416a2ebfce"
+    },
+    {
+      "name": "digestChallenge tnt_02 challeng",
+      "input": {
+        "tenantId": "tnt_02",
+        "token": "challenge-token",
+        "secret": "deployment-secret-A-with-at-least-32-characters"
+      },
+      "output": "dd0d5e786c931f84272c4c9bf2bfc129ff6869fe0d21964a7b77f0807e95f9d6"
+    },
+    {
+      "name": "digestChallenge tnt_01 kZaf8-pv",
+      "input": {
+        "tenantId": "tnt_01",
+        "token": "kZaf8-pvZ0eGfarZRTxLk-jeZdQ0XXEtDX9rTkHaX_k",
+        "secret": "deployment-secret-B-with-at-least-32-characters"
+      },
+      "output": "713c3acbb63bfb30f67ab1167510096e6ea757757a8a5785200e6edc34a4e39f"
+    },
+    {
+      "name": "emailSubject Person@Example.COM",
+      "input": {
+        "secret": "deployment-secret-A-with-at-least-32-characters",
+        "address": "Person@Example.COM"
+      },
+      "output": "email:6699d7f3b57981bcca1aa190f548a0539d490c39b48bcff24241fb6919b5516c"
+    },
+    {
+      "name": "emailSubject person@example.com",
+      "input": {
+        "secret": "deployment-secret-A-with-at-least-32-characters",
+        "address": "person@example.com"
+      },
+      "output": "email:6699d7f3b57981bcca1aa190f548a0539d490c39b48bcff24241fb6919b5516c"
+    },
+    {
+      "name": "emailSubject ünï@exämple.de",
+      "input": {
+        "secret": "deployment-secret-A-with-at-least-32-characters",
+        "address": "ünï@exämple.de"
+      },
+      "output": "email:295c228c2085fe7c02bef02ab239c91fe8abc51d07c6a653bc8505a1abd1a823"
+    },
+    {
+      "name": "signReceipt",
+      "input": {
+        "secret": "deployment-secret-A-with-at-least-32-characters",
+        "body": {
+          "version": 1,
+          "receiptId": "rcpt_01",
+          "tenantId": "tnt_01",
+          "subject": "identity:idn_01",
+          "purpose": {
+            "key": "marketing",
+            "name": "Marketing email",
+            "version": 2,
+            "legalBasis": "consent"
+          },
+          "granted": true,
+          "recordedAt": 1767225600000,
+          "source": "api",
+          "method": "checkbox"
+        }
+      },
+      "output": {
+        "version": 1,
+        "receiptId": "rcpt_01",
+        "tenantId": "tnt_01",
+        "subject": "identity:idn_01",
+        "purpose": {
+          "key": "marketing",
+          "name": "Marketing email",
+          "version": 2,
+          "legalBasis": "consent"
+        },
+        "granted": true,
+        "recordedAt": 1767225600000,
+        "source": "api",
+        "method": "checkbox",
+        "signature": "hqk5RJe50y9t_JLjuy3jGaa6ZjZpFJi0q_mGSLsHdJo"
+      }
+    },
+    {
+      "name": "receiptSignatureValid current secret",
+      "input": {
+        "secrets": [
+          "deployment-secret-A-with-at-least-32-characters"
+        ],
+        "receipt": {
+          "version": 1,
+          "receiptId": "rcpt_01",
+          "tenantId": "tnt_01",
+          "subject": "identity:idn_01",
+          "purpose": {
+            "key": "marketing",
+            "name": "Marketing email",
+            "version": 2,
+            "legalBasis": "consent"
+          },
+          "granted": true,
+          "recordedAt": 1767225600000,
+          "source": "api",
+          "method": "checkbox",
+          "signature": "hqk5RJe50y9t_JLjuy3jGaa6ZjZpFJi0q_mGSLsHdJo"
+        }
+      },
+      "output": true
+    },
+    {
+      "name": "receiptSignatureValid previous secret",
+      "input": {
+        "secrets": [
+          "deployment-secret-B-with-at-least-32-characters",
+          "deployment-secret-A-with-at-least-32-characters"
+        ],
+        "receipt": {
+          "version": 1,
+          "receiptId": "rcpt_01",
+          "tenantId": "tnt_01",
+          "subject": "identity:idn_01",
+          "purpose": {
+            "key": "marketing",
+            "name": "Marketing email",
+            "version": 2,
+            "legalBasis": "consent"
+          },
+          "granted": true,
+          "recordedAt": 1767225600000,
+          "source": "api",
+          "method": "checkbox",
+          "signature": "hqk5RJe50y9t_JLjuy3jGaa6ZjZpFJi0q_mGSLsHdJo"
+        }
+      },
+      "output": true
+    },
+    {
+      "name": "receiptSignatureValid wrong secret",
+      "input": {
+        "secrets": [
+          "deployment-secret-B-with-at-least-32-characters"
+        ],
+        "receipt": {
+          "version": 1,
+          "receiptId": "rcpt_01",
+          "tenantId": "tnt_01",
+          "subject": "identity:idn_01",
+          "purpose": {
+            "key": "marketing",
+            "name": "Marketing email",
+            "version": 2,
+            "legalBasis": "consent"
+          },
+          "granted": true,
+          "recordedAt": 1767225600000,
+          "source": "api",
+          "method": "checkbox",
+          "signature": "hqk5RJe50y9t_JLjuy3jGaa6ZjZpFJi0q_mGSLsHdJo"
+        }
+      },
+      "output": false
+    },
+    {
+      "name": "receiptSignatureValid altered body",
+      "input": {
+        "secrets": [
+          "deployment-secret-A-with-at-least-32-characters"
+        ],
+        "receipt": {
+          "version": 1,
+          "receiptId": "rcpt_01",
+          "tenantId": "tnt_01",
+          "subject": "identity:idn_01",
+          "purpose": {
+            "key": "marketing",
+            "name": "Marketing email",
+            "version": 2,
+            "legalBasis": "consent"
+          },
+          "granted": false,
+          "recordedAt": 1767225600000,
+          "source": "api",
+          "method": "checkbox",
+          "signature": "hqk5RJe50y9t_JLjuy3jGaa6ZjZpFJi0q_mGSLsHdJo"
+        }
+      },
+      "output": false
+    },
+    {
+      "name": "fingerprint \"4111111111111111\"",
+      "input": {
+        "key": {
+          "$bytes": "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc"
+        },
+        "value": "4111111111111111"
+      },
+      "output": "M-z6Gwuof0VHHdZLo2qb3nHgktXrSqas61w3EPAnwo4"
+    },
+    {
+      "name": "fingerprint \"person@example.com\"",
+      "input": {
+        "key": {
+          "$bytes": "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc"
+        },
+        "value": "person@example.com"
+      },
+      "output": "jl1cP1N7cJr2amxMc5LUhsOfAMG-fhigtZlYe1EoptI"
+    },
+    {
+      "name": "fingerprint \"\"",
+      "input": {
+        "key": {
+          "$bytes": "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc"
+        },
+        "value": ""
+      },
+      "output": "naxqdEAbRu2bSJ0OGdaNGxPMa1CQNS_c-lvXTfTmnYc"
+    },
+    {
+      "name": "vc nonce tnt_01",
+      "input": {
+        "secret": "deployment-secret-A-with-at-least-32-characters",
+        "tenantId": "tnt_01",
+        "now": 1767225600000
+      },
+      "output": "mjuohs00.wQlNhVTpxoWxASCKDP8hhw.T16pknMs5JlNLgpMAt7u1Wrluh-EFpXJrGBPl3nnC2c"
+    },
+    {
+      "name": "vc nonce tnt_02",
+      "input": {
+        "secret": "deployment-secret-A-with-at-least-32-characters",
+        "tenantId": "tnt_02",
+        "now": 1767225600000
+      },
+      "output": "mjuohs00.FARLpoesCr32e2_iPOic9g.E9xCmp_TdcQhHF6xeZnKVpQbnbUEuXSrinB8kMAIGEY"
+    },
+    {
+      "name": "oauth artifact id hash client_01",
+      "input": {
+        "value": "client_01"
+      },
+      "output": "40d8b33b4dae7c59baa6a4d159f142a77170a610d4fe7684d73d2bc7661b90e9"
+    },
+    {
+      "name": "oauth artifact id hash grant:abc",
+      "input": {
+        "value": "grant:abc"
+      },
+      "output": "4ade2c73bc1a3edc6df8b7994a10a72659b05ab08c7ed875390cd0708d4936a5"
+    }
+  ]
+}

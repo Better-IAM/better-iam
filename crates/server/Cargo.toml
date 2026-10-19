@@ -1,0 +1,65 @@
+[package]
+name = "better-iam-server"
+description = "The Better IAM server for Rust: the decision engine, the provisioning API and its HTTP router, configuration, chained audit events and webhooks, and the standalone server binary, sharing its database with the TypeScript implementation."
+readme = "README.md"
+exclude = ["tests/fixtures", "tools"]
+keywords = ["iam", "authorization", "rbac", "abac", "audit"]
+categories = ["authentication", "web-programming"]
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+
+[features]
+default = ["sqlite"]
+# Store kinds the standalone configuration (`better-iam.json`) can open.
+sqlite = ["dep:better-iam-adapter-sqlite"]
+postgres = ["dep:better-iam-adapter-postgres"]
+libsql = ["dep:better-iam-adapter-libsql"]
+
+[dependencies]
+better-iam-core.workspace = true
+better-iam-auth.workspace = true
+better-iam-types.workspace = true
+better-iam-adapter-sqlite = { workspace = true, optional = true }
+better-iam-adapter-postgres = { workspace = true, optional = true }
+better-iam-adapter-libsql = { workspace = true, optional = true }
+async-trait.workspace = true
+futures.workspace = true
+indexmap.workspace = true
+regex.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "sync", "macros", "time", "net", "signal"] }
+bytes.workspace = true
+http = "1"
+http-body-util = "0.1"
+hyper = { version = "1", features = ["server", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+tower-service = "0.3"
+base64 = "0.22"
+hex = "0.4"
+hmac = "0.12"
+subtle = "2"
+url = "2"
+uuid = { version = "1", features = ["v4"] }
+# IANA time zones for access windows (Intl.DateTimeFormat) and the ICU root collation of String#localeCompare.
+jiff = { version = "0.2", default-features = false, features = ["std", "tz-system", "tzdb-bundle-always"] }
+icu_collator = "2"
+
+[dev-dependencies]
+better-iam-adapter-sqlite.workspace = true
+tempfile.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time", "net", "io-util"] }
+
+[lib]
+doctest = false
+
+[[bin]]
+name = "better-iam-server"
+path = "src/bin/better-iam-server.rs"

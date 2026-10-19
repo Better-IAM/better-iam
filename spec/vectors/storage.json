@@ -1,0 +1,1481 @@
+{
+  "description": "Storage semantics shared by every adapter: planQuery (filter -> column tests and typed field conditions; exact when nothing is left to filter in memory), matchesFilter (the reference equality: deep JSON equality, absent equals undefined), compareIds (code-point order), storableString, and the PostgreSQL value encoding (encodeJsonbDocument / decodeJsonbDocument).",
+  "source": "packages/core/src/storage.ts#planQuery,matchesFilter,compareIds,storableString; packages/core/src/sql.ts#encodeJsonbDocument,decodeJsonbDocument",
+  "cases": [
+    {
+      "name": "planQuery empty",
+      "input": {
+        "collection": "identities",
+        "filter": {}
+      },
+      "output": {
+        "query": {
+          "collection": "identities",
+          "conditions": []
+        },
+        "exact": true,
+        "empty": false
+      }
+    },
+    {
+      "name": "planQuery json empty",
+      "input": {
+        "collection": "identities",
+        "filter": {},
+        "capabilities": {
+          "json": true
+        }
+      },
+      "output": {
+        "query": {
+          "collection": "identities",
+          "conditions": []
+        },
+        "exact": true,
+        "empty": false
+      }
+    },
+    {
+      "name": "planQuery tenant",
+      "input": {
+        "collection": "identities",
+        "filter": {
+          "tenantId": "tnt_01"
+        }
+      },
+      "output": {
+        "query": {
+          "collection": "identities",
+          "conditions": [],
+          "tenantId": "tnt_01"
+        },
+        "exact": true,
+        "empty": false
+      }
+    },
+    {
+      "name": "planQuery json tenant",
+      "input": {
+        "collection": "identities",
+        "filter": {
+          "tenantId": "tnt_01"
+        },
+        "capabilities": {
+          "json": true
+        }
+      },
+      "output": {
+        "query": {
+          "collection": "identities",
+          "conditions": [],
+          "tenantId": "tnt_01"
+        },
+        "exact": true,
+        "empty": false
+      }
+    },
+    {
+      "name": "planQuery id tenant uniqueKey",
+      "input": {
+        "collection": "identities",
+        "filter": {
+          "id": "a",
+          "tenantId": "t",
+          "uniqueKey": "k"
+        }
+      },
+      "output": {
+        "query": {
+          "collection": "identities",
+          "conditions": [],
+          "id": "a",
+          "tenantId": "t",
+          "uniqueKey": "k"
+        },
+        "exact": true,
+        "empty": false
+      }
+    },
+    {
+      "name": "planQuery json id tenant uniqueKey",
+      "input": {
+        "collection": "identities",
+        "filter": {
+          "id": "a",
+          "tenantId": "t",
+          "uniqueKey": "k"
+        },
+        "capabilities": {
+          "json": true
+        }
+      },
+      "output": {
+        "query": {
+          "collection": "identities",
+          "conditions": [],
+          "id": "a",
+          "tenantId": "t",
+          "uniqueKey": "k"
+        },
+        "exact": true,
+        "empty": false
+      }
+    },
+    {
+      "name": "planQuery string field",
+      "input": {
+        "collection": "identities",
+        "filter": {
+          "email": "a@example.com"
+        }
+      },
+      "output": {
+        "query": {
+          "collection": "identities",
+          "conditions": [
+            {
+              "field": "email",
+              "kind": "string",
+              "value": "a@example.com"
+            }
+          ]
+        },
+        "exact": true,
+        "empty": false
+      }
+    },
+    {
+      "name": "planQuery json string field",
+      "input": {
+        "collection": "identities",
+        "filter": {
+          "email": "a@example.com"
+        },
+        "capabilities": {
+          "json": true
+        }
+      },
+      "output": {
+        "query": {
+          "collection": "identities",
+          "conditions": [
+            {
+              "field": "email",
+              "kind": "string",
+              "value": "a@example.com"
+            }
+          ]
+        },
+        "exact": true,
+        "empty": false
+      }
+    },
+    {
+      "name": "planQuery number boolean null",
+      "input": {
+        "collection": "identities",
+        "filter": {
+          "count": 3,
+          "active": true,
+          "deletedAt": null
+        }
+      },
+      "output": {
+        "query": {
+          "collection": "identities",
+          "conditions": [
+            {
+              "field": "count",
+              "kind": "number",
+              "value": 3
+            },
+            {
+              "field": "active",
+              "kind": "boolean",
+              "value": true
+            },
+            {
+              "field": "deletedAt",
+              "kind": "null"
+            }
+          ]
+        },
+        "exact": true,
+        "empty": false
+      }
+    },
+    {
+      "name": "planQuery json number boolean null",
+      "input": {
+        "collection": "identities",
+        "filter": {
+          "count": 3,
+          "active": true,
+          "deletedAt": null
+        },
+        "capabilities": {
+          "json": true
+        }
+      },
+      "output": {
+        "query": {
+          "collection": "identities",
+          "conditions": [
+            {
+              "field": "count",
+              "kind": "number",
+              "value": 3
+            },
+            {
+              "field": "active",
+              "kind": "boolean",
+              "value": true
+            },
+            {
+              "field": "deletedAt",
+              "kind": "null"
+            }
+          ]
+        },
+        "exact": true,
+        "empty": false
+      }
+    },
+    {
+      "name": "planQuery absent",
+      "input": {
+        "collection": "identities",
+        "filter": {
+          "expiresAt": {
+            "$undefined": true
+          }
+        }
+      },
+      "output": {
+        "query": {
+          "collection": "identities",
+          "conditions": [
+            {
+              "field": "expiresAt",
+              "kind": "absent"
+            }
+          ]
+        },
+        "exact": true,
+        "empty": false
+      }
+    },
+    {
+      "name": "planQuery json absent",
+      "input": {
+        "collection": "identities",
+        "filter": {
+          "expiresAt": {
+            "$undefined": true
+          }
+        },
+        "capabilities": {
+          "json": true
+        }
+      },
+      "output": {
+        "query": {
+          "collection": "identities",
+          "conditions": [
+            {
+              "field": "expiresAt",
+              "kind": "absent"
+            }
+          ]
+        },
+        "exact": true,
+        "empty": false
+      }
+    },
+    {
+      "name": "planQuery object value",
+      "input": {
+        "collection": "identities",
+        "filter": {
+          "attributes": {
+            "team": "eng"
+          }
+        }
+      },
+      "output": {
+        "query": {
+          "collection": "identities",
+          "conditions": []
+        },
+        "exact": false,
+        "empty": false
+      }
+    },
+    {
+      "name": "planQuery json object value",
+      "input": {
+        "collection": "identities",
+        "filter": {
+          "attributes": {
+            "team": "eng"
+          }
+        },
+        "capabilities": {
+          "json": true
+        }
+      },
+      "output": {
+        "query": {
+          "collection": "identities",
+          "conditions": [
+            {
+              "field": "attributes",
+              "kind": "json",
+              "value": "{\"team\":\"eng\"}"
+            }
+          ]
+        },
+        "exact": true,
+        "empty": false
+      }
+    },
+    {
+      "name": "planQuery array value",
+      "input": {
+        "collection": "identities",
+        "filter": {
+          "roles": [
+            "a",
+            "b"
+          ]
+        }
+      },
+      "output": {
+        "query": {
+          "collection": "identities",
+          "conditions": []
+        },
+        "exact": false,
+        "empty": false
+      }
+    },
+    {
+      "name": "planQuery json array value",
+      "input": {
+        "collection": "identities",
+        "filter": {
+          "roles": [
+            "a",
+            "b"
+          ]
+        },
+        "capabilities": {
+          "json": true
+        }
+      },
+      "output": {
+        "query": {
+          "collection": "identities",
+          "conditions": [
+            {
+              "field": "roles",
+              "kind": "json",
+              "value": "[\"a\",\"b\"]"
+            }
+          ]
+        },
+        "exact": true,
+        "empty": false
+      }
+    },
+    {
+      "name": "planQuery unqueryable field name",
+      "input": {
+        "collection": "identities",
+        "filter": {
+          "tag.team": "eng"
+        }
+      },
+      "output": {
+        "query": {
+          "collection": "identities",
+          "conditions": []
+        },
+        "exact": false,
+        "empty": false
+      }
+    },
+    {
+      "name": "planQuery json unqueryable field name",
+      "input": {
+        "collection": "identities",
+        "filter": {
+          "tag.team": "eng"
+        },
+        "capabilities": {
+          "json": true
+        }
+      },
+      "output": {
+        "query": {
+          "collection": "identities",
+          "conditions": []
+        },
+        "exact": false,
+        "empty": false
+      }
+    },
+    {
+      "name": "planQuery unstorable string value",
+      "input": {
+        "collection": "identities",
+        "filter": {
+          "name": "a\u0000b"
+        }
+      },
+      "output": {
+        "query": {
+          "collection": "identities",
+          "conditions": []
+        },
+        "exact": false,
+        "empty": false
+      }
+    },
+    {
+      "name": "planQuery json unstorable string value",
+      "input": {
+        "collection": "identities",
+        "filter": {
+          "name": "a\u0000b"
+        },
+        "capabilities": {
+          "json": true
+        }
+      },
+      "output": {
+        "query": {
+          "collection": "identities",
+          "conditions": []
+        },
+        "exact": false,
+        "empty": false
+      }
+    },
+    {
+      "name": "planQuery unstorable id",
+      "input": {
+        "collection": "identities",
+        "filter": {
+          "id": {
+            "$utf16": [
+              55296
+            ]
+          }
+        }
+      },
+      "output": {
+        "query": {
+          "collection": "identities",
+          "conditions": []
+        },
+        "exact": true,
+        "empty": true
+      }
+    },
+    {
+      "name": "planQuery json unstorable id",
+      "input": {
+        "collection": "identities",
+        "filter": {
+          "id": {
+            "$utf16": [
+              55296
+            ]
+          }
+        },
+        "capabilities": {
+          "json": true
+        }
+      },
+      "output": {
+        "query": {
+          "collection": "identities",
+          "conditions": []
+        },
+        "exact": true,
+        "empty": true
+      }
+    },
+    {
+      "name": "planQuery non-string id",
+      "input": {
+        "collection": "identities",
+        "filter": {
+          "id": 5
+        }
+      },
+      "output": {
+        "query": {
+          "collection": "identities",
+          "conditions": [
+            {
+              "field": "id",
+              "kind": "number",
+              "value": 5
+            }
+          ]
+        },
+        "exact": true,
+        "empty": false
+      }
+    },
+    {
+      "name": "planQuery json non-string id",
+      "input": {
+        "collection": "identities",
+        "filter": {
+          "id": 5
+        },
+        "capabilities": {
+          "json": true
+        }
+      },
+      "output": {
+        "query": {
+          "collection": "identities",
+          "conditions": [
+            {
+              "field": "id",
+              "kind": "number",
+              "value": 5
+            }
+          ]
+        },
+        "exact": true,
+        "empty": false
+      }
+    },
+    {
+      "name": "planQuery 25 conditions",
+      "input": {
+        "collection": "identities",
+        "filter": {
+          "f0": 0,
+          "f1": 1,
+          "f2": 2,
+          "f3": 3,
+          "f4": 4,
+          "f5": 5,
+          "f6": 6,
+          "f7": 7,
+          "f8": 8,
+          "f9": 9,
+          "f10": 10,
+          "f11": 11,
+          "f12": 12,
+          "f13": 13,
+          "f14": 14,
+          "f15": 15,
+          "f16": 16,
+          "f17": 17,
+          "f18": 18,
+          "f19": 19,
+          "f20": 20,
+          "f21": 21,
+          "f22": 22,
+          "f23": 23,
+          "f24": 24
+        }
+      },
+      "output": {
+        "query": {
+          "collection": "identities",
+          "conditions": [
+            {
+              "field": "f0",
+              "kind": "number",
+              "value": 0
+            },
+            {
+              "field": "f1",
+              "kind": "number",
+              "value": 1
+            },
+            {
+              "field": "f2",
+              "kind": "number",
+              "value": 2
+            },
+            {
+              "field": "f3",
+              "kind": "number",
+              "value": 3
+            },
+            {
+              "field": "f4",
+              "kind": "number",
+              "value": 4
+            },
+            {
+              "field": "f5",
+              "kind": "number",
+              "value": 5
+            },
+            {
+              "field": "f6",
+              "kind": "number",
+              "value": 6
+            },
+            {
+              "field": "f7",
+              "kind": "number",
+              "value": 7
+            },
+            {
+              "field": "f8",
+              "kind": "number",
+              "value": 8
+            },
+            {
+              "field": "f9",
+              "kind": "number",
+              "value": 9
+            },
+            {
+              "field": "f10",
+              "kind": "number",
+              "value": 10
+            },
+            {
+              "field": "f11",
+              "kind": "number",
+              "value": 11
+            },
+            {
+              "field": "f12",
+              "kind": "number",
+              "value": 12
+            },
+            {
+              "field": "f13",
+              "kind": "number",
+              "value": 13
+            },
+            {
+              "field": "f14",
+              "kind": "number",
+              "value": 14
+            },
+            {
+              "field": "f15",
+              "kind": "number",
+              "value": 15
+            },
+            {
+              "field": "f16",
+              "kind": "number",
+              "value": 16
+            },
+            {
+              "field": "f17",
+              "kind": "number",
+              "value": 17
+            },
+            {
+              "field": "f18",
+              "kind": "number",
+              "value": 18
+            },
+            {
+              "field": "f19",
+              "kind": "number",
+              "value": 19
+            },
+            {
+              "field": "f20",
+              "kind": "number",
+              "value": 20
+            },
+            {
+              "field": "f21",
+              "kind": "number",
+              "value": 21
+            },
+            {
+              "field": "f22",
+              "kind": "number",
+              "value": 22
+            },
+            {
+              "field": "f23",
+              "kind": "number",
+              "value": 23
+            }
+          ]
+        },
+        "exact": false,
+        "empty": false
+      }
+    },
+    {
+      "name": "planQuery json 25 conditions",
+      "input": {
+        "collection": "identities",
+        "filter": {
+          "f0": 0,
+          "f1": 1,
+          "f2": 2,
+          "f3": 3,
+          "f4": 4,
+          "f5": 5,
+          "f6": 6,
+          "f7": 7,
+          "f8": 8,
+          "f9": 9,
+          "f10": 10,
+          "f11": 11,
+          "f12": 12,
+          "f13": 13,
+          "f14": 14,
+          "f15": 15,
+          "f16": 16,
+          "f17": 17,
+          "f18": 18,
+          "f19": 19,
+          "f20": 20,
+          "f21": 21,
+          "f22": 22,
+          "f23": 23,
+          "f24": 24
+        },
+        "capabilities": {
+          "json": true
+        }
+      },
+      "output": {
+        "query": {
+          "collection": "identities",
+          "conditions": [
+            {
+              "field": "f0",
+              "kind": "number",
+              "value": 0
+            },
+            {
+              "field": "f1",
+              "kind": "number",
+              "value": 1
+            },
+            {
+              "field": "f2",
+              "kind": "number",
+              "value": 2
+            },
+            {
+              "field": "f3",
+              "kind": "number",
+              "value": 3
+            },
+            {
+              "field": "f4",
+              "kind": "number",
+              "value": 4
+            },
+            {
+              "field": "f5",
+              "kind": "number",
+              "value": 5
+            },
+            {
+              "field": "f6",
+              "kind": "number",
+              "value": 6
+            },
+            {
+              "field": "f7",
+              "kind": "number",
+              "value": 7
+            },
+            {
+              "field": "f8",
+              "kind": "number",
+              "value": 8
+            },
+            {
+              "field": "f9",
+              "kind": "number",
+              "value": 9
+            },
+            {
+              "field": "f10",
+              "kind": "number",
+              "value": 10
+            },
+            {
+              "field": "f11",
+              "kind": "number",
+              "value": 11
+            },
+            {
+              "field": "f12",
+              "kind": "number",
+              "value": 12
+            },
+            {
+              "field": "f13",
+              "kind": "number",
+              "value": 13
+            },
+            {
+              "field": "f14",
+              "kind": "number",
+              "value": 14
+            },
+            {
+              "field": "f15",
+              "kind": "number",
+              "value": 15
+            },
+            {
+              "field": "f16",
+              "kind": "number",
+              "value": 16
+            },
+            {
+              "field": "f17",
+              "kind": "number",
+              "value": 17
+            },
+            {
+              "field": "f18",
+              "kind": "number",
+              "value": 18
+            },
+            {
+              "field": "f19",
+              "kind": "number",
+              "value": 19
+            },
+            {
+              "field": "f20",
+              "kind": "number",
+              "value": 20
+            },
+            {
+              "field": "f21",
+              "kind": "number",
+              "value": 21
+            },
+            {
+              "field": "f22",
+              "kind": "number",
+              "value": 22
+            },
+            {
+              "field": "f23",
+              "kind": "number",
+              "value": 23
+            }
+          ]
+        },
+        "exact": false,
+        "empty": false
+      }
+    },
+    {
+      "name": "planQuery escape key in object",
+      "input": {
+        "collection": "identities",
+        "filter": {
+          "meta": {
+            "\u0001better-iam": "x"
+          }
+        }
+      },
+      "output": {
+        "query": {
+          "collection": "identities",
+          "conditions": []
+        },
+        "exact": false,
+        "empty": false
+      }
+    },
+    {
+      "name": "planQuery json escape key in object",
+      "input": {
+        "collection": "identities",
+        "filter": {
+          "meta": {
+            "\u0001better-iam": "x"
+          }
+        },
+        "capabilities": {
+          "json": true
+        }
+      },
+      "output": {
+        "query": {
+          "collection": "identities",
+          "conditions": []
+        },
+        "exact": false,
+        "empty": false
+      }
+    },
+    {
+      "name": "matchesFilter matches string",
+      "input": {
+        "record": {
+          "id": "r1",
+          "tenantId": "t1",
+          "email": "a@example.com",
+          "count": 3,
+          "active": true,
+          "deletedAt": null,
+          "attributes": {
+            "team": "eng",
+            "level": 2
+          },
+          "roles": [
+            "a",
+            "b"
+          ]
+        },
+        "filter": {
+          "email": "a@example.com"
+        }
+      },
+      "output": true
+    },
+    {
+      "name": "matchesFilter matches number",
+      "input": {
+        "record": {
+          "id": "r1",
+          "tenantId": "t1",
+          "email": "a@example.com",
+          "count": 3,
+          "active": true,
+          "deletedAt": null,
+          "attributes": {
+            "team": "eng",
+            "level": 2
+          },
+          "roles": [
+            "a",
+            "b"
+          ]
+        },
+        "filter": {
+          "count": 3
+        }
+      },
+      "output": true
+    },
+    {
+      "name": "matchesFilter number vs string",
+      "input": {
+        "record": {
+          "id": "r1",
+          "tenantId": "t1",
+          "email": "a@example.com",
+          "count": 3,
+          "active": true,
+          "deletedAt": null,
+          "attributes": {
+            "team": "eng",
+            "level": 2
+          },
+          "roles": [
+            "a",
+            "b"
+          ]
+        },
+        "filter": {
+          "count": "3"
+        }
+      },
+      "output": false
+    },
+    {
+      "name": "matchesFilter matches null",
+      "input": {
+        "record": {
+          "id": "r1",
+          "tenantId": "t1",
+          "email": "a@example.com",
+          "count": 3,
+          "active": true,
+          "deletedAt": null,
+          "attributes": {
+            "team": "eng",
+            "level": 2
+          },
+          "roles": [
+            "a",
+            "b"
+          ]
+        },
+        "filter": {
+          "deletedAt": null
+        }
+      },
+      "output": true
+    },
+    {
+      "name": "matchesFilter null vs absent",
+      "input": {
+        "record": {
+          "id": "r1",
+          "tenantId": "t1",
+          "email": "a@example.com",
+          "count": 3,
+          "active": true,
+          "deletedAt": null,
+          "attributes": {
+            "team": "eng",
+            "level": 2
+          },
+          "roles": [
+            "a",
+            "b"
+          ]
+        },
+        "filter": {
+          "missing": null
+        }
+      },
+      "output": false
+    },
+    {
+      "name": "matchesFilter absent as undefined",
+      "input": {
+        "record": {
+          "id": "r1",
+          "tenantId": "t1",
+          "email": "a@example.com",
+          "count": 3,
+          "active": true,
+          "deletedAt": null,
+          "attributes": {
+            "team": "eng",
+            "level": 2
+          },
+          "roles": [
+            "a",
+            "b"
+          ]
+        },
+        "filter": {
+          "missing": {
+            "$undefined": true
+          }
+        }
+      },
+      "output": true
+    },
+    {
+      "name": "matchesFilter present vs undefined",
+      "input": {
+        "record": {
+          "id": "r1",
+          "tenantId": "t1",
+          "email": "a@example.com",
+          "count": 3,
+          "active": true,
+          "deletedAt": null,
+          "attributes": {
+            "team": "eng",
+            "level": 2
+          },
+          "roles": [
+            "a",
+            "b"
+          ]
+        },
+        "filter": {
+          "email": {
+            "$undefined": true
+          }
+        }
+      },
+      "output": false
+    },
+    {
+      "name": "matchesFilter object key order ignored",
+      "input": {
+        "record": {
+          "id": "r1",
+          "tenantId": "t1",
+          "email": "a@example.com",
+          "count": 3,
+          "active": true,
+          "deletedAt": null,
+          "attributes": {
+            "team": "eng",
+            "level": 2
+          },
+          "roles": [
+            "a",
+            "b"
+          ]
+        },
+        "filter": {
+          "attributes": {
+            "level": 2,
+            "team": "eng"
+          }
+        }
+      },
+      "output": true
+    },
+    {
+      "name": "matchesFilter object subset is not equal",
+      "input": {
+        "record": {
+          "id": "r1",
+          "tenantId": "t1",
+          "email": "a@example.com",
+          "count": 3,
+          "active": true,
+          "deletedAt": null,
+          "attributes": {
+            "team": "eng",
+            "level": 2
+          },
+          "roles": [
+            "a",
+            "b"
+          ]
+        },
+        "filter": {
+          "attributes": {
+            "team": "eng"
+          }
+        }
+      },
+      "output": false
+    },
+    {
+      "name": "matchesFilter array order kept",
+      "input": {
+        "record": {
+          "id": "r1",
+          "tenantId": "t1",
+          "email": "a@example.com",
+          "count": 3,
+          "active": true,
+          "deletedAt": null,
+          "attributes": {
+            "team": "eng",
+            "level": 2
+          },
+          "roles": [
+            "a",
+            "b"
+          ]
+        },
+        "filter": {
+          "roles": [
+            "b",
+            "a"
+          ]
+        }
+      },
+      "output": false
+    },
+    {
+      "name": "matchesFilter array equal",
+      "input": {
+        "record": {
+          "id": "r1",
+          "tenantId": "t1",
+          "email": "a@example.com",
+          "count": 3,
+          "active": true,
+          "deletedAt": null,
+          "attributes": {
+            "team": "eng",
+            "level": 2
+          },
+          "roles": [
+            "a",
+            "b"
+          ]
+        },
+        "filter": {
+          "roles": [
+            "a",
+            "b"
+          ]
+        }
+      },
+      "output": true
+    },
+    {
+      "name": "matchesFilter several keys",
+      "input": {
+        "record": {
+          "id": "r1",
+          "tenantId": "t1",
+          "email": "a@example.com",
+          "count": 3,
+          "active": true,
+          "deletedAt": null,
+          "attributes": {
+            "team": "eng",
+            "level": 2
+          },
+          "roles": [
+            "a",
+            "b"
+          ]
+        },
+        "filter": {
+          "email": "a@example.com",
+          "active": true
+        }
+      },
+      "output": true
+    },
+    {
+      "name": "compareIds \"a\" \"b\"",
+      "input": {
+        "a": "a",
+        "b": "b"
+      },
+      "output": -1
+    },
+    {
+      "name": "compareIds \"b\" \"a\"",
+      "input": {
+        "a": "b",
+        "b": "a"
+      },
+      "output": 1
+    },
+    {
+      "name": "compareIds \"a\" \"a\"",
+      "input": {
+        "a": "a",
+        "b": "a"
+      },
+      "output": 0
+    },
+    {
+      "name": "compareIds \"a\" \"ab\"",
+      "input": {
+        "a": "a",
+        "b": "ab"
+      },
+      "output": -1
+    },
+    {
+      "name": "compareIds \"B\" \"a\"",
+      "input": {
+        "a": "B",
+        "b": "a"
+      },
+      "output": -1
+    },
+    {
+      "name": "compareIds \"￿\" \"😀\"",
+      "input": {
+        "a": "￿",
+        "b": "😀"
+      },
+      "output": -1
+    },
+    {
+      "name": "compareIds \"\" \"😀\"",
+      "input": {
+        "a": "",
+        "b": "😀"
+      },
+      "output": -1
+    },
+    {
+      "name": "compareIds \"😀\" \"퟿\"",
+      "input": {
+        "a": "😀",
+        "b": "퟿"
+      },
+      "output": 1
+    },
+    {
+      "name": "compareIds \"10\" \"9\"",
+      "input": {
+        "a": "10",
+        "b": "9"
+      },
+      "output": -1
+    },
+    {
+      "name": "storableString \"plain\"",
+      "input": {
+        "value": "plain"
+      },
+      "output": true
+    },
+    {
+      "name": "storableString \"\"",
+      "input": {
+        "value": ""
+      },
+      "output": true
+    },
+    {
+      "name": "storableString \"a\\u0000b\"",
+      "input": {
+        "value": "a\u0000b"
+      },
+      "output": false
+    },
+    {
+      "name": "storableString \"\\ud800\"",
+      "input": {
+        "value": {
+          "$utf16": [
+            55296
+          ]
+        }
+      },
+      "output": false
+    },
+    {
+      "name": "storableString \"\\udc00\"",
+      "input": {
+        "value": {
+          "$utf16": [
+            56320
+          ]
+        }
+      },
+      "output": false
+    },
+    {
+      "name": "storableString \"x\\ud83d\"",
+      "input": {
+        "value": {
+          "$utf16": [
+            120,
+            55357
+          ]
+        }
+      },
+      "output": false
+    },
+    {
+      "name": "storableString \"\\ude00\\ud83d\"",
+      "input": {
+        "value": {
+          "$utf16": [
+            56832,
+            55357
+          ]
+        }
+      },
+      "output": false
+    },
+    {
+      "name": "storableString \"a😀b\"",
+      "input": {
+        "value": "a😀b"
+      },
+      "output": true
+    },
+    {
+      "name": "storableString \"😀\"",
+      "input": {
+        "value": "😀"
+      },
+      "output": true
+    },
+    {
+      "name": "encodeJsonbDocument plain record unchanged",
+      "input": {
+        "data": "{\"id\":\"a\",\"tenantId\":\"t\",\"name\":\"x\"}"
+      },
+      "output": "{\"id\":\"a\",\"tenantId\":\"t\",\"name\":\"x\"}"
+    },
+    {
+      "name": "decodeJsonbDocument plain record unchanged",
+      "input": {
+        "data": "{\"id\":\"a\",\"tenantId\":\"t\",\"name\":\"x\"}"
+      },
+      "output": "{\"id\":\"a\",\"tenantId\":\"t\",\"name\":\"x\"}"
+    },
+    {
+      "name": "encodeJsonbDocument nul in value",
+      "input": {
+        "data": "{\"id\":\"a\",\"tenantId\":\"t\",\"name\":\"a\\u0000b\"}"
+      },
+      "output": "{\"id\":\"a\",\"tenantId\":\"t\",\"name\":{\"\\u0001better-iam\":\"006100000062\"}}"
+    },
+    {
+      "name": "decodeJsonbDocument nul in value",
+      "input": {
+        "data": "{\"id\":\"a\",\"tenantId\":\"t\",\"name\":{\"\\u0001better-iam\":\"006100000062\"}}"
+      },
+      "output": "{\"id\":\"a\",\"tenantId\":\"t\",\"name\":\"a\\u0000b\"}"
+    },
+    {
+      "name": "encodeJsonbDocument lone surrogate in value",
+      "input": {
+        "data": "{\"id\":\"a\",\"tenantId\":\"t\",\"name\":\"x\\ud800\"}"
+      },
+      "output": "{\"id\":\"a\",\"tenantId\":\"t\",\"name\":{\"\\u0001better-iam\":\"0078d800\"}}"
+    },
+    {
+      "name": "decodeJsonbDocument lone surrogate in value",
+      "input": {
+        "data": "{\"id\":\"a\",\"tenantId\":\"t\",\"name\":{\"\\u0001better-iam\":\"0078d800\"}}"
+      },
+      "output": "{\"id\":\"a\",\"tenantId\":\"t\",\"name\":\"x\\ud800\"}"
+    },
+    {
+      "name": "encodeJsonbDocument nul in key",
+      "input": {
+        "data": "{\"id\":\"a\",\"tenantId\":\"t\",\"meta\":{\"k\\u0000\":1,\"ok\":2}}"
+      },
+      "output": "{\"id\":\"a\",\"tenantId\":\"t\",\"meta\":{\"ok\":2,\"\\u0001better-iam\":[[\"006b0000\",1]]}}"
+    },
+    {
+      "name": "decodeJsonbDocument nul in key",
+      "input": {
+        "data": "{\"id\":\"a\",\"tenantId\":\"t\",\"meta\":{\"ok\":2,\"\\u0001better-iam\":[[\"006b0000\",1]]}}"
+      },
+      "output": "{\"id\":\"a\",\"tenantId\":\"t\",\"meta\":{\"ok\":2,\"k\\u0000\":1}}"
+    },
+    {
+      "name": "encodeJsonbDocument escape key as key",
+      "input": {
+        "data": "{\"id\":\"a\",\"tenantId\":\"t\",\"meta\":{\"\\u0001better-iam\":\"v\"}}"
+      },
+      "output": "{\"id\":\"a\",\"tenantId\":\"t\",\"meta\":{\"\\u0001better-iam\":[[\"0001006200650074007400650072002d00690061006d\",\"v\"]]}}"
+    },
+    {
+      "name": "decodeJsonbDocument escape key as key",
+      "input": {
+        "data": "{\"id\":\"a\",\"tenantId\":\"t\",\"meta\":{\"\\u0001better-iam\":[[\"0001006200650074007400650072002d00690061006d\",\"v\"]]}}"
+      },
+      "output": "{\"id\":\"a\",\"tenantId\":\"t\",\"meta\":{\"\\u0001better-iam\":\"v\"}}"
+    },
+    {
+      "name": "encodeJsonbDocument nested arrays",
+      "input": {
+        "data": "{\"id\":\"a\",\"tenantId\":\"t\",\"list\":[\"ok\",\"\\u0000\",[\"\\udfff\"]]}"
+      },
+      "output": "{\"id\":\"a\",\"tenantId\":\"t\",\"list\":[\"ok\",{\"\\u0001better-iam\":\"0000\"},[{\"\\u0001better-iam\":\"dfff\"}]]}"
+    },
+    {
+      "name": "decodeJsonbDocument nested arrays",
+      "input": {
+        "data": "{\"id\":\"a\",\"tenantId\":\"t\",\"list\":[\"ok\",{\"\\u0001better-iam\":\"0000\"},[{\"\\u0001better-iam\":\"dfff\"}]]}"
+      },
+      "output": "{\"id\":\"a\",\"tenantId\":\"t\",\"list\":[\"ok\",\"\\u0000\",[\"\\udfff\"]]}"
+    }
+  ]
+}

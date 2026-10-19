@@ -1,0 +1,1372 @@
+{
+  "description": "Audit hash chain. hash = lowercase hex SHA-256 of canonicalJson(event without `hash`); the first event of a tenant has sequence 1 and previousHash = 64 zeros; each next event has sequence + 1 and previousHash = the previous hash. The chain head lives in auditChains (id = tenantId: { id, tenantId, sequence, hash, updatedAt = event.timestamp }). verifyAuditChain sorts by sequence and reports the first failure.",
+  "source": "packages/core/src/audit.ts#auditEventHash,chainAuditEvent,appendAuditEvent,verifyAuditChain",
+  "notes": {
+    "genesis": "0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "cases": [
+    {
+      "name": "hash minimal event",
+      "input": {
+        "event": {
+          "id": "evt_01",
+          "tenantId": "tnt_01",
+          "actorId": "idn_01",
+          "action": "iam:groups:create",
+          "resourceId": "grp_1",
+          "outcome": "allow",
+          "rootOverride": false,
+          "timestamp": 1767225601000
+        }
+      },
+      "output": "bd8e15bb50c9190659d40d931d13c9a19f1b17babb44b3640e9271bf43fd2591"
+    },
+    {
+      "name": "hash with metadata and session context",
+      "input": {
+        "event": {
+          "id": "evt_02",
+          "tenantId": "tnt_01",
+          "actorId": "idn_01",
+          "action": "iam:groups:create",
+          "resourceId": "grp_2",
+          "outcome": "allow",
+          "rootOverride": false,
+          "timestamp": 1767225602000,
+          "metadata": {
+            "name": "Eng",
+            "tags": [
+              "b",
+              "a"
+            ],
+            "nested": {
+              "z": 1,
+              "a": 2
+            }
+          },
+          "sessionContext": {
+            "kind": "role",
+            "roleId": "role_01",
+            "sessionName": "deploy"
+          },
+          "originalActorId": "idn_00",
+          "impersonatorId": "idn_root"
+        }
+      },
+      "output": "6e1ccbf5ebdd5d11b98380f2916ee23ddaaef3b35a942863140bfee9b707009b"
+    },
+    {
+      "name": "hash with chain fields",
+      "input": {
+        "event": {
+          "id": "evt_03",
+          "tenantId": "tnt_01",
+          "actorId": "idn_01",
+          "action": "iam:groups:create",
+          "resourceId": "grp_3",
+          "outcome": "allow",
+          "rootOverride": false,
+          "timestamp": 1767225603000,
+          "sequence": 3,
+          "previousHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      "output": "98bdc5d46077b0d26c4f4b8814e525aaf135cd117e1cc3f84ba35eebfac3142b"
+    },
+    {
+      "name": "hash ignores hash field",
+      "input": {
+        "event": {
+          "id": "evt_03",
+          "tenantId": "tnt_01",
+          "actorId": "idn_01",
+          "action": "iam:groups:create",
+          "resourceId": "grp_3",
+          "outcome": "allow",
+          "rootOverride": false,
+          "timestamp": 1767225603000,
+          "sequence": 3,
+          "previousHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "hash": "ignored"
+        }
+      },
+      "output": "98bdc5d46077b0d26c4f4b8814e525aaf135cd117e1cc3f84ba35eebfac3142b"
+    },
+    {
+      "name": "hash with unicode",
+      "input": {
+        "event": {
+          "id": "evt_04",
+          "tenantId": "tnt_01",
+          "actorId": "idn_01",
+          "action": "iam:groups:create",
+          "resourceId": "grp_4",
+          "outcome": "allow",
+          "rootOverride": false,
+          "timestamp": 1767225604000,
+          "metadata": {
+            "name": "Ingeniería ✓ 😀"
+          }
+        }
+      },
+      "output": "7c8d22c19e21e0c1aedc68a4816ac60be0979f457110aa2c6d2492d1b2a1377e"
+    },
+    {
+      "name": "hash with deny outcome",
+      "input": {
+        "event": {
+          "id": "evt_05",
+          "tenantId": "tnt_01",
+          "actorId": "idn_01",
+          "action": "iam:groups:create",
+          "resourceId": "grp_5",
+          "outcome": "deny",
+          "rootOverride": true,
+          "timestamp": 1767225605000
+        }
+      },
+      "output": "5ecf6773373134d67e8cd6436af95acb4bffd10005a823b0cf8302ee342b55c8"
+    },
+    {
+      "name": "append 1 (tnt_01)",
+      "input": {
+        "event": {
+          "id": "evt_01",
+          "tenantId": "tnt_01",
+          "actorId": "idn_01",
+          "action": "iam:groups:create",
+          "resourceId": "grp_1",
+          "outcome": "allow",
+          "rootOverride": false,
+          "timestamp": 1767225601000
+        }
+      },
+      "output": {
+        "event": {
+          "id": "evt_01",
+          "tenantId": "tnt_01",
+          "actorId": "idn_01",
+          "action": "iam:groups:create",
+          "resourceId": "grp_1",
+          "outcome": "allow",
+          "rootOverride": false,
+          "timestamp": 1767225601000,
+          "sequence": 1,
+          "previousHash": "0000000000000000000000000000000000000000000000000000000000000000",
+          "hash": "ad681827a6854b9ddc1d50d9e916e4e23fcef89368df079acd87d3acbbc2b027"
+        },
+        "head": {
+          "id": "tnt_01",
+          "tenantId": "tnt_01",
+          "sequence": 1,
+          "hash": "ad681827a6854b9ddc1d50d9e916e4e23fcef89368df079acd87d3acbbc2b027",
+          "updatedAt": 1767225601000
+        }
+      }
+    },
+    {
+      "name": "append 2 (tnt_02)",
+      "input": {
+        "event": {
+          "id": "evt_02",
+          "tenantId": "tnt_02",
+          "actorId": "idn_01",
+          "action": "iam:groups:create",
+          "resourceId": "grp_2",
+          "outcome": "allow",
+          "rootOverride": false,
+          "timestamp": 1767225602000
+        }
+      },
+      "output": {
+        "event": {
+          "id": "evt_02",
+          "tenantId": "tnt_02",
+          "actorId": "idn_01",
+          "action": "iam:groups:create",
+          "resourceId": "grp_2",
+          "outcome": "allow",
+          "rootOverride": false,
+          "timestamp": 1767225602000,
+          "sequence": 1,
+          "previousHash": "0000000000000000000000000000000000000000000000000000000000000000",
+          "hash": "be7fa163340165cb205ccf4a124aadb89b6de03a24c850ef29cf2b73bb23179c"
+        },
+        "head": {
+          "id": "tnt_02",
+          "tenantId": "tnt_02",
+          "sequence": 1,
+          "hash": "be7fa163340165cb205ccf4a124aadb89b6de03a24c850ef29cf2b73bb23179c",
+          "updatedAt": 1767225602000
+        }
+      }
+    },
+    {
+      "name": "append 3 (tnt_01)",
+      "input": {
+        "event": {
+          "id": "evt_03",
+          "tenantId": "tnt_01",
+          "actorId": "idn_01",
+          "action": "iam:groups:create",
+          "resourceId": "grp_3",
+          "outcome": "allow",
+          "rootOverride": false,
+          "timestamp": 1767225603000
+        }
+      },
+      "output": {
+        "event": {
+          "id": "evt_03",
+          "tenantId": "tnt_01",
+          "actorId": "idn_01",
+          "action": "iam:groups:create",
+          "resourceId": "grp_3",
+          "outcome": "allow",
+          "rootOverride": false,
+          "timestamp": 1767225603000,
+          "sequence": 2,
+          "previousHash": "ad681827a6854b9ddc1d50d9e916e4e23fcef89368df079acd87d3acbbc2b027",
+          "hash": "e0c5d646576567cacf9c4165c74cd802bf7d782d3275ceb45a449a623a828e66"
+        },
+        "head": {
+          "id": "tnt_01",
+          "tenantId": "tnt_01",
+          "sequence": 2,
+          "hash": "e0c5d646576567cacf9c4165c74cd802bf7d782d3275ceb45a449a623a828e66",
+          "updatedAt": 1767225603000
+        }
+      }
+    },
+    {
+      "name": "append 4 (tnt_01)",
+      "input": {
+        "event": {
+          "id": "evt_04",
+          "tenantId": "tnt_01",
+          "actorId": "idn_01",
+          "action": "iam:groups:create",
+          "resourceId": "grp_4",
+          "outcome": "allow",
+          "rootOverride": false,
+          "timestamp": 1767225604000,
+          "metadata": {
+            "a": 1
+          }
+        }
+      },
+      "output": {
+        "event": {
+          "id": "evt_04",
+          "tenantId": "tnt_01",
+          "actorId": "idn_01",
+          "action": "iam:groups:create",
+          "resourceId": "grp_4",
+          "outcome": "allow",
+          "rootOverride": false,
+          "timestamp": 1767225604000,
+          "metadata": {
+            "a": 1
+          },
+          "sequence": 3,
+          "previousHash": "e0c5d646576567cacf9c4165c74cd802bf7d782d3275ceb45a449a623a828e66",
+          "hash": "ea40bac74020f54675d4b54a59a4bd1e296afc5f2f21015c09949fe9756d9df8"
+        },
+        "head": {
+          "id": "tnt_01",
+          "tenantId": "tnt_01",
+          "sequence": 3,
+          "hash": "ea40bac74020f54675d4b54a59a4bd1e296afc5f2f21015c09949fe9756d9df8",
+          "updatedAt": 1767225604000
+        }
+      }
+    },
+    {
+      "name": "append 5 (tnt_02)",
+      "input": {
+        "event": {
+          "id": "evt_05",
+          "tenantId": "tnt_02",
+          "actorId": "idn_01",
+          "action": "iam:groups:create",
+          "resourceId": "grp_5",
+          "outcome": "allow",
+          "rootOverride": false,
+          "timestamp": 1767225605000
+        }
+      },
+      "output": {
+        "event": {
+          "id": "evt_05",
+          "tenantId": "tnt_02",
+          "actorId": "idn_01",
+          "action": "iam:groups:create",
+          "resourceId": "grp_5",
+          "outcome": "allow",
+          "rootOverride": false,
+          "timestamp": 1767225605000,
+          "sequence": 2,
+          "previousHash": "be7fa163340165cb205ccf4a124aadb89b6de03a24c850ef29cf2b73bb23179c",
+          "hash": "577fc86c4eb8b9ccaebff9244626531573678796771c2415fe19de01731e1bc9"
+        },
+        "head": {
+          "id": "tnt_02",
+          "tenantId": "tnt_02",
+          "sequence": 2,
+          "hash": "577fc86c4eb8b9ccaebff9244626531573678796771c2415fe19de01731e1bc9",
+          "updatedAt": 1767225605000
+        }
+      }
+    },
+    {
+      "name": "append 6 (tnt_01)",
+      "input": {
+        "event": {
+          "id": "evt_06",
+          "tenantId": "tnt_01",
+          "actorId": "idn_01",
+          "action": "iam:groups:create",
+          "resourceId": "grp_6",
+          "outcome": "allow",
+          "rootOverride": false,
+          "timestamp": 1767225606000
+        }
+      },
+      "output": {
+        "event": {
+          "id": "evt_06",
+          "tenantId": "tnt_01",
+          "actorId": "idn_01",
+          "action": "iam:groups:create",
+          "resourceId": "grp_6",
+          "outcome": "allow",
+          "rootOverride": false,
+          "timestamp": 1767225606000,
+          "sequence": 4,
+          "previousHash": "ea40bac74020f54675d4b54a59a4bd1e296afc5f2f21015c09949fe9756d9df8",
+          "hash": "080f780dd00f66a765a3a6ad8ec21028a885ed5e0a967fa3d00d483464ce0efb"
+        },
+        "head": {
+          "id": "tnt_01",
+          "tenantId": "tnt_01",
+          "sequence": 4,
+          "hash": "080f780dd00f66a765a3a6ad8ec21028a885ed5e0a967fa3d00d483464ce0efb",
+          "updatedAt": 1767225606000
+        }
+      }
+    },
+    {
+      "name": "verify whole chain against head",
+      "input": {
+        "events": [
+          {
+            "id": "evt_01",
+            "tenantId": "tnt_01",
+            "actorId": "idn_01",
+            "action": "iam:groups:create",
+            "resourceId": "grp_1",
+            "outcome": "allow",
+            "rootOverride": false,
+            "timestamp": 1767225601000,
+            "sequence": 1,
+            "previousHash": "0000000000000000000000000000000000000000000000000000000000000000",
+            "hash": "ad681827a6854b9ddc1d50d9e916e4e23fcef89368df079acd87d3acbbc2b027"
+          },
+          {
+            "id": "evt_03",
+            "tenantId": "tnt_01",
+            "actorId": "idn_01",
+            "action": "iam:groups:create",
+            "resourceId": "grp_3",
+            "outcome": "allow",
+            "rootOverride": false,
+            "timestamp": 1767225603000,
+            "sequence": 2,
+            "previousHash": "ad681827a6854b9ddc1d50d9e916e4e23fcef89368df079acd87d3acbbc2b027",
+            "hash": "e0c5d646576567cacf9c4165c74cd802bf7d782d3275ceb45a449a623a828e66"
+          },
+          {
+            "id": "evt_04",
+            "tenantId": "tnt_01",
+            "actorId": "idn_01",
+            "action": "iam:groups:create",
+            "resourceId": "grp_4",
+            "outcome": "allow",
+            "rootOverride": false,
+            "timestamp": 1767225604000,
+            "metadata": {
+              "a": 1
+            },
+            "sequence": 3,
+            "previousHash": "e0c5d646576567cacf9c4165c74cd802bf7d782d3275ceb45a449a623a828e66",
+            "hash": "ea40bac74020f54675d4b54a59a4bd1e296afc5f2f21015c09949fe9756d9df8"
+          },
+          {
+            "id": "evt_06",
+            "tenantId": "tnt_01",
+            "actorId": "idn_01",
+            "action": "iam:groups:create",
+            "resourceId": "grp_6",
+            "outcome": "allow",
+            "rootOverride": false,
+            "timestamp": 1767225606000,
+            "sequence": 4,
+            "previousHash": "ea40bac74020f54675d4b54a59a4bd1e296afc5f2f21015c09949fe9756d9df8",
+            "hash": "080f780dd00f66a765a3a6ad8ec21028a885ed5e0a967fa3d00d483464ce0efb"
+          }
+        ],
+        "options": {
+          "head": {
+            "sequence": 4,
+            "hash": "080f780dd00f66a765a3a6ad8ec21028a885ed5e0a967fa3d00d483464ce0efb"
+          }
+        }
+      },
+      "output": {
+        "valid": true,
+        "checked": 4,
+        "unchained": 0,
+        "first": 1,
+        "last": 4,
+        "lastHash": "080f780dd00f66a765a3a6ad8ec21028a885ed5e0a967fa3d00d483464ce0efb"
+      }
+    },
+    {
+      "name": "verify unordered input",
+      "input": {
+        "events": [
+          {
+            "id": "evt_06",
+            "tenantId": "tnt_01",
+            "actorId": "idn_01",
+            "action": "iam:groups:create",
+            "resourceId": "grp_6",
+            "outcome": "allow",
+            "rootOverride": false,
+            "timestamp": 1767225606000,
+            "sequence": 4,
+            "previousHash": "ea40bac74020f54675d4b54a59a4bd1e296afc5f2f21015c09949fe9756d9df8",
+            "hash": "080f780dd00f66a765a3a6ad8ec21028a885ed5e0a967fa3d00d483464ce0efb"
+          },
+          {
+            "id": "evt_04",
+            "tenantId": "tnt_01",
+            "actorId": "idn_01",
+            "action": "iam:groups:create",
+            "resourceId": "grp_4",
+            "outcome": "allow",
+            "rootOverride": false,
+            "timestamp": 1767225604000,
+            "metadata": {
+              "a": 1
+            },
+            "sequence": 3,
+            "previousHash": "e0c5d646576567cacf9c4165c74cd802bf7d782d3275ceb45a449a623a828e66",
+            "hash": "ea40bac74020f54675d4b54a59a4bd1e296afc5f2f21015c09949fe9756d9df8"
+          },
+          {
+            "id": "evt_03",
+            "tenantId": "tnt_01",
+            "actorId": "idn_01",
+            "action": "iam:groups:create",
+            "resourceId": "grp_3",
+            "outcome": "allow",
+            "rootOverride": false,
+            "timestamp": 1767225603000,
+            "sequence": 2,
+            "previousHash": "ad681827a6854b9ddc1d50d9e916e4e23fcef89368df079acd87d3acbbc2b027",
+            "hash": "e0c5d646576567cacf9c4165c74cd802bf7d782d3275ceb45a449a623a828e66"
+          },
+          {
+            "id": "evt_01",
+            "tenantId": "tnt_01",
+            "actorId": "idn_01",
+            "action": "iam:groups:create",
+            "resourceId": "grp_1",
+            "outcome": "allow",
+            "rootOverride": false,
+            "timestamp": 1767225601000,
+            "sequence": 1,
+            "previousHash": "0000000000000000000000000000000000000000000000000000000000000000",
+            "hash": "ad681827a6854b9ddc1d50d9e916e4e23fcef89368df079acd87d3acbbc2b027"
+          }
+        ],
+        "options": {
+          "head": {
+            "sequence": 4,
+            "hash": "080f780dd00f66a765a3a6ad8ec21028a885ed5e0a967fa3d00d483464ce0efb"
+          }
+        }
+      },
+      "output": {
+        "valid": true,
+        "checked": 4,
+        "unchained": 0,
+        "first": 1,
+        "last": 4,
+        "lastHash": "080f780dd00f66a765a3a6ad8ec21028a885ed5e0a967fa3d00d483464ce0efb"
+      }
+    },
+    {
+      "name": "verify run without head",
+      "input": {
+        "events": [
+          {
+            "id": "evt_03",
+            "tenantId": "tnt_01",
+            "actorId": "idn_01",
+            "action": "iam:groups:create",
+            "resourceId": "grp_3",
+            "outcome": "allow",
+            "rootOverride": false,
+            "timestamp": 1767225603000,
+            "sequence": 2,
+            "previousHash": "ad681827a6854b9ddc1d50d9e916e4e23fcef89368df079acd87d3acbbc2b027",
+            "hash": "e0c5d646576567cacf9c4165c74cd802bf7d782d3275ceb45a449a623a828e66"
+          },
+          {
+            "id": "evt_04",
+            "tenantId": "tnt_01",
+            "actorId": "idn_01",
+            "action": "iam:groups:create",
+            "resourceId": "grp_4",
+            "outcome": "allow",
+            "rootOverride": false,
+            "timestamp": 1767225604000,
+            "metadata": {
+              "a": 1
+            },
+            "sequence": 3,
+            "previousHash": "e0c5d646576567cacf9c4165c74cd802bf7d782d3275ceb45a449a623a828e66",
+            "hash": "ea40bac74020f54675d4b54a59a4bd1e296afc5f2f21015c09949fe9756d9df8"
+          },
+          {
+            "id": "evt_06",
+            "tenantId": "tnt_01",
+            "actorId": "idn_01",
+            "action": "iam:groups:create",
+            "resourceId": "grp_6",
+            "outcome": "allow",
+            "rootOverride": false,
+            "timestamp": 1767225606000,
+            "sequence": 4,
+            "previousHash": "ea40bac74020f54675d4b54a59a4bd1e296afc5f2f21015c09949fe9756d9df8",
+            "hash": "080f780dd00f66a765a3a6ad8ec21028a885ed5e0a967fa3d00d483464ce0efb"
+          }
+        ]
+      },
+      "output": {
+        "valid": true,
+        "checked": 3,
+        "unchained": 0,
+        "first": 2,
+        "last": 4,
+        "lastHash": "080f780dd00f66a765a3a6ad8ec21028a885ed5e0a967fa3d00d483464ce0efb"
+      }
+    },
+    {
+      "name": "verify run with explicit previous hash",
+      "input": {
+        "events": [
+          {
+            "id": "evt_03",
+            "tenantId": "tnt_01",
+            "actorId": "idn_01",
+            "action": "iam:groups:create",
+            "resourceId": "grp_3",
+            "outcome": "allow",
+            "rootOverride": false,
+            "timestamp": 1767225603000,
+            "sequence": 2,
+            "previousHash": "ad681827a6854b9ddc1d50d9e916e4e23fcef89368df079acd87d3acbbc2b027",
+            "hash": "e0c5d646576567cacf9c4165c74cd802bf7d782d3275ceb45a449a623a828e66"
+          },
+          {
+            "id": "evt_04",
+            "tenantId": "tnt_01",
+            "actorId": "idn_01",
+            "action": "iam:groups:create",
+            "resourceId": "grp_4",
+            "outcome": "allow",
+            "rootOverride": false,
+            "timestamp": 1767225604000,
+            "metadata": {
+              "a": 1
+            },
+            "sequence": 3,
+            "previousHash": "e0c5d646576567cacf9c4165c74cd802bf7d782d3275ceb45a449a623a828e66",
+            "hash": "ea40bac74020f54675d4b54a59a4bd1e296afc5f2f21015c09949fe9756d9df8"
+          },
+          {
+            "id": "evt_06",
+            "tenantId": "tnt_01",
+            "actorId": "idn_01",
+            "action": "iam:groups:create",
+            "resourceId": "grp_6",
+            "outcome": "allow",
+            "rootOverride": false,
+            "timestamp": 1767225606000,
+            "sequence": 4,
+            "previousHash": "ea40bac74020f54675d4b54a59a4bd1e296afc5f2f21015c09949fe9756d9df8",
+            "hash": "080f780dd00f66a765a3a6ad8ec21028a885ed5e0a967fa3d00d483464ce0efb"
+          }
+        ],
+        "options": {
+          "previousHash": "ad681827a6854b9ddc1d50d9e916e4e23fcef89368df079acd87d3acbbc2b027"
+        }
+      },
+      "output": {
+        "valid": true,
+        "checked": 3,
+        "unchained": 0,
+        "first": 2,
+        "last": 4,
+        "lastHash": "080f780dd00f66a765a3a6ad8ec21028a885ed5e0a967fa3d00d483464ce0efb"
+      }
+    },
+    {
+      "name": "verify run with wrong previous hash",
+      "input": {
+        "events": [
+          {
+            "id": "evt_03",
+            "tenantId": "tnt_01",
+            "actorId": "idn_01",
+            "action": "iam:groups:create",
+            "resourceId": "grp_3",
+            "outcome": "allow",
+            "rootOverride": false,
+            "timestamp": 1767225603000,
+            "sequence": 2,
+            "previousHash": "ad681827a6854b9ddc1d50d9e916e4e23fcef89368df079acd87d3acbbc2b027",
+            "hash": "e0c5d646576567cacf9c4165c74cd802bf7d782d3275ceb45a449a623a828e66"
+          },
+          {
+            "id": "evt_04",
+            "tenantId": "tnt_01",
+            "actorId": "idn_01",
+            "action": "iam:groups:create",
+            "resourceId": "grp_4",
+            "outcome": "allow",
+            "rootOverride": false,
+            "timestamp": 1767225604000,
+            "metadata": {
+              "a": 1
+            },
+            "sequence": 3,
+            "previousHash": "e0c5d646576567cacf9c4165c74cd802bf7d782d3275ceb45a449a623a828e66",
+            "hash": "ea40bac74020f54675d4b54a59a4bd1e296afc5f2f21015c09949fe9756d9df8"
+          },
+          {
+            "id": "evt_06",
+            "tenantId": "tnt_01",
+            "actorId": "idn_01",
+            "action": "iam:groups:create",
+            "resourceId": "grp_6",
+            "outcome": "allow",
+            "rootOverride": false,
+            "timestamp": 1767225606000,
+            "sequence": 4,
+            "previousHash": "ea40bac74020f54675d4b54a59a4bd1e296afc5f2f21015c09949fe9756d9df8",
+            "hash": "080f780dd00f66a765a3a6ad8ec21028a885ed5e0a967fa3d00d483464ce0efb"
+          }
+        ],
+        "options": {
+          "previousHash": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+        }
+      },
+      "output": {
+        "valid": false,
+        "checked": 0,
+        "unchained": 0,
+        "first": 2,
+        "failure": {
+          "sequence": 2,
+          "id": "evt_03",
+          "reason": "previous-hash-mismatch"
+        }
+      }
+    },
+    {
+      "name": "verify tampered field",
+      "input": {
+        "events": [
+          {
+            "id": "evt_01",
+            "tenantId": "tnt_01",
+            "actorId": "idn_01",
+            "action": "iam:groups:create",
+            "resourceId": "grp_1",
+            "outcome": "allow",
+            "rootOverride": false,
+            "timestamp": 1767225601000,
+            "sequence": 1,
+            "previousHash": "0000000000000000000000000000000000000000000000000000000000000000",
+            "hash": "ad681827a6854b9ddc1d50d9e916e4e23fcef89368df079acd87d3acbbc2b027"
+          },
+          {
+            "id": "evt_03",
+            "tenantId": "tnt_01",
+            "actorId": "idn_01",
+            "action": "iam:groups:create",
+            "resourceId": "grp_x",
+            "outcome": "allow",
+            "rootOverride": false,
+            "timestamp": 1767225603000,
+            "sequence": 2,
+            "previousHash": "ad681827a6854b9ddc1d50d9e916e4e23fcef89368df079acd87d3acbbc2b027",
+            "hash": "e0c5d646576567cacf9c4165c74cd802bf7d782d3275ceb45a449a623a828e66"
+          },
+          {
+            "id": "evt_04",
+            "tenantId": "tnt_01",
+            "actorId": "idn_01",
+            "action": "iam:groups:create",
+            "resourceId": "grp_4",
+            "outcome": "allow",
+            "rootOverride": false,
+            "timestamp": 1767225604000,
+            "metadata": {
+              "a": 1
+            },
+            "sequence": 3,
+            "previousHash": "e0c5d646576567cacf9c4165c74cd802bf7d782d3275ceb45a449a623a828e66",
+            "hash": "ea40bac74020f54675d4b54a59a4bd1e296afc5f2f21015c09949fe9756d9df8"
+          },
+          {
+            "id": "evt_06",
+            "tenantId": "tnt_01",
+            "actorId": "idn_01",
+            "action": "iam:groups:create",
+            "resourceId": "grp_6",
+            "outcome": "allow",
+            "rootOverride": false,
+            "timestamp": 1767225606000,
+            "sequence": 4,
+            "previousHash": "ea40bac74020f54675d4b54a59a4bd1e296afc5f2f21015c09949fe9756d9df8",
+            "hash": "080f780dd00f66a765a3a6ad8ec21028a885ed5e0a967fa3d00d483464ce0efb"
+          }
+        ],
+        "options": {
+          "head": {
+            "sequence": 4,
+            "hash": "080f780dd00f66a765a3a6ad8ec21028a885ed5e0a967fa3d00d483464ce0efb"
+          }
+        }
+      },
+      "output": {
+        "valid": false,
+        "checked": 1,
+        "unchained": 0,
+        "first": 1,
+        "last": 1,
+        "lastHash": "ad681827a6854b9ddc1d50d9e916e4e23fcef89368df079acd87d3acbbc2b027",
+        "failure": {
+          "sequence": 2,
+          "id": "evt_03",
+          "reason": "hash-mismatch"
+        }
+      }
+    },
+    {
+      "name": "verify tampered hash",
+      "input": {
+        "events": [
+          {
+            "id": "evt_01",
+            "tenantId": "tnt_01",
+            "actorId": "idn_01",
+            "action": "iam:groups:create",
+            "resourceId": "grp_1",
+            "outcome": "allow",
+            "rootOverride": false,
+            "timestamp": 1767225601000,
+            "sequence": 1,
+            "previousHash": "0000000000000000000000000000000000000000000000000000000000000000",
+            "hash": "ad681827a6854b9ddc1d50d9e916e4e23fcef89368df079acd87d3acbbc2b027"
+          },
+          {
+            "id": "evt_03",
+            "tenantId": "tnt_01",
+            "actorId": "idn_01",
+            "action": "iam:groups:create",
+            "resourceId": "grp_3",
+            "outcome": "allow",
+            "rootOverride": false,
+            "timestamp": 1767225603000,
+            "sequence": 2,
+            "previousHash": "ad681827a6854b9ddc1d50d9e916e4e23fcef89368df079acd87d3acbbc2b027",
+            "hash": "e0c5d646576567cacf9c4165c74cd802bf7d782d3275ceb45a449a623a828e66"
+          },
+          {
+            "id": "evt_04",
+            "tenantId": "tnt_01",
+            "actorId": "idn_01",
+            "action": "iam:groups:create",
+            "resourceId": "grp_4",
+            "outcome": "allow",
+            "rootOverride": false,
+            "timestamp": 1767225604000,
+            "metadata": {
+              "a": 1
+            },
+            "sequence": 3,
+            "previousHash": "e0c5d646576567cacf9c4165c74cd802bf7d782d3275ceb45a449a623a828e66",
+            "hash": "0000000000000000000000000000000000000000000000000000000000000000"
+          },
+          {
+            "id": "evt_06",
+            "tenantId": "tnt_01",
+            "actorId": "idn_01",
+            "action": "iam:groups:create",
+            "resourceId": "grp_6",
+            "outcome": "allow",
+            "rootOverride": false,
+            "timestamp": 1767225606000,
+            "sequence": 4,
+            "previousHash": "ea40bac74020f54675d4b54a59a4bd1e296afc5f2f21015c09949fe9756d9df8",
+            "hash": "080f780dd00f66a765a3a6ad8ec21028a885ed5e0a967fa3d00d483464ce0efb"
+          }
+        ],
+        "options": {
+          "head": {
+            "sequence": 4,
+            "hash": "080f780dd00f66a765a3a6ad8ec21028a885ed5e0a967fa3d00d483464ce0efb"
+          }
+        }
+      },
+      "output": {
+        "valid": false,
+        "checked": 2,
+        "unchained": 0,
+        "first": 1,
+        "last": 2,
+        "lastHash": "e0c5d646576567cacf9c4165c74cd802bf7d782d3275ceb45a449a623a828e66",
+        "failure": {
+          "sequence": 3,
+          "id": "evt_04",
+          "reason": "hash-mismatch"
+        }
+      }
+    },
+    {
+      "name": "verify sequence gap",
+      "input": {
+        "events": [
+          {
+            "id": "evt_01",
+            "tenantId": "tnt_01",
+            "actorId": "idn_01",
+            "action": "iam:groups:create",
+            "resourceId": "grp_1",
+            "outcome": "allow",
+            "rootOverride": false,
+            "timestamp": 1767225601000,
+            "sequence": 1,
+            "previousHash": "0000000000000000000000000000000000000000000000000000000000000000",
+            "hash": "ad681827a6854b9ddc1d50d9e916e4e23fcef89368df079acd87d3acbbc2b027"
+          },
+          {
+            "id": "evt_04",
+            "tenantId": "tnt_01",
+            "actorId": "idn_01",
+            "action": "iam:groups:create",
+            "resourceId": "grp_4",
+            "outcome": "allow",
+            "rootOverride": false,
+            "timestamp": 1767225604000,
+            "metadata": {
+              "a": 1
+            },
+            "sequence": 3,
+            "previousHash": "e0c5d646576567cacf9c4165c74cd802bf7d782d3275ceb45a449a623a828e66",
+            "hash": "ea40bac74020f54675d4b54a59a4bd1e296afc5f2f21015c09949fe9756d9df8"
+          },
+          {
+            "id": "evt_06",
+            "tenantId": "tnt_01",
+            "actorId": "idn_01",
+            "action": "iam:groups:create",
+            "resourceId": "grp_6",
+            "outcome": "allow",
+            "rootOverride": false,
+            "timestamp": 1767225606000,
+            "sequence": 4,
+            "previousHash": "ea40bac74020f54675d4b54a59a4bd1e296afc5f2f21015c09949fe9756d9df8",
+            "hash": "080f780dd00f66a765a3a6ad8ec21028a885ed5e0a967fa3d00d483464ce0efb"
+          }
+        ],
+        "options": {}
+      },
+      "output": {
+        "valid": false,
+        "checked": 1,
+        "unchained": 0,
+        "first": 1,
+        "last": 1,
+        "lastHash": "ad681827a6854b9ddc1d50d9e916e4e23fcef89368df079acd87d3acbbc2b027",
+        "failure": {
+          "sequence": 3,
+          "id": "evt_04",
+          "reason": "sequence-gap"
+        }
+      }
+    },
+    {
+      "name": "verify head mismatch (last event deleted)",
+      "input": {
+        "events": [
+          {
+            "id": "evt_01",
+            "tenantId": "tnt_01",
+            "actorId": "idn_01",
+            "action": "iam:groups:create",
+            "resourceId": "grp_1",
+            "outcome": "allow",
+            "rootOverride": false,
+            "timestamp": 1767225601000,
+            "sequence": 1,
+            "previousHash": "0000000000000000000000000000000000000000000000000000000000000000",
+            "hash": "ad681827a6854b9ddc1d50d9e916e4e23fcef89368df079acd87d3acbbc2b027"
+          },
+          {
+            "id": "evt_03",
+            "tenantId": "tnt_01",
+            "actorId": "idn_01",
+            "action": "iam:groups:create",
+            "resourceId": "grp_3",
+            "outcome": "allow",
+            "rootOverride": false,
+            "timestamp": 1767225603000,
+            "sequence": 2,
+            "previousHash": "ad681827a6854b9ddc1d50d9e916e4e23fcef89368df079acd87d3acbbc2b027",
+            "hash": "e0c5d646576567cacf9c4165c74cd802bf7d782d3275ceb45a449a623a828e66"
+          },
+          {
+            "id": "evt_04",
+            "tenantId": "tnt_01",
+            "actorId": "idn_01",
+            "action": "iam:groups:create",
+            "resourceId": "grp_4",
+            "outcome": "allow",
+            "rootOverride": false,
+            "timestamp": 1767225604000,
+            "metadata": {
+              "a": 1
+            },
+            "sequence": 3,
+            "previousHash": "e0c5d646576567cacf9c4165c74cd802bf7d782d3275ceb45a449a623a828e66",
+            "hash": "ea40bac74020f54675d4b54a59a4bd1e296afc5f2f21015c09949fe9756d9df8"
+          }
+        ],
+        "options": {
+          "head": {
+            "sequence": 4,
+            "hash": "080f780dd00f66a765a3a6ad8ec21028a885ed5e0a967fa3d00d483464ce0efb"
+          }
+        }
+      },
+      "output": {
+        "valid": false,
+        "checked": 3,
+        "unchained": 0,
+        "first": 1,
+        "last": 3,
+        "lastHash": "ea40bac74020f54675d4b54a59a4bd1e296afc5f2f21015c09949fe9756d9df8",
+        "failure": {
+          "sequence": 3,
+          "id": "evt_04",
+          "reason": "head-mismatch"
+        }
+      }
+    },
+    {
+      "name": "verify missing prefix",
+      "input": {
+        "events": [
+          {
+            "id": "evt_03",
+            "tenantId": "tnt_01",
+            "actorId": "idn_01",
+            "action": "iam:groups:create",
+            "resourceId": "grp_3",
+            "outcome": "allow",
+            "rootOverride": false,
+            "timestamp": 1767225603000,
+            "sequence": 2,
+            "previousHash": "ad681827a6854b9ddc1d50d9e916e4e23fcef89368df079acd87d3acbbc2b027",
+            "hash": "e0c5d646576567cacf9c4165c74cd802bf7d782d3275ceb45a449a623a828e66"
+          },
+          {
+            "id": "evt_04",
+            "tenantId": "tnt_01",
+            "actorId": "idn_01",
+            "action": "iam:groups:create",
+            "resourceId": "grp_4",
+            "outcome": "allow",
+            "rootOverride": false,
+            "timestamp": 1767225604000,
+            "metadata": {
+              "a": 1
+            },
+            "sequence": 3,
+            "previousHash": "e0c5d646576567cacf9c4165c74cd802bf7d782d3275ceb45a449a623a828e66",
+            "hash": "ea40bac74020f54675d4b54a59a4bd1e296afc5f2f21015c09949fe9756d9df8"
+          },
+          {
+            "id": "evt_06",
+            "tenantId": "tnt_01",
+            "actorId": "idn_01",
+            "action": "iam:groups:create",
+            "resourceId": "grp_6",
+            "outcome": "allow",
+            "rootOverride": false,
+            "timestamp": 1767225606000,
+            "sequence": 4,
+            "previousHash": "ea40bac74020f54675d4b54a59a4bd1e296afc5f2f21015c09949fe9756d9df8",
+            "hash": "080f780dd00f66a765a3a6ad8ec21028a885ed5e0a967fa3d00d483464ce0efb"
+          }
+        ],
+        "options": {
+          "head": {
+            "sequence": 4,
+            "hash": "080f780dd00f66a765a3a6ad8ec21028a885ed5e0a967fa3d00d483464ce0efb"
+          }
+        }
+      },
+      "output": {
+        "valid": false,
+        "checked": 3,
+        "unchained": 0,
+        "first": 2,
+        "last": 4,
+        "lastHash": "080f780dd00f66a765a3a6ad8ec21028a885ed5e0a967fa3d00d483464ce0efb",
+        "failure": {
+          "sequence": 2,
+          "id": "evt_03",
+          "reason": "missing-prefix"
+        }
+      }
+    },
+    {
+      "name": "verify unchained event in whole chain",
+      "input": {
+        "events": [
+          {
+            "id": "evt_01",
+            "tenantId": "tnt_01",
+            "actorId": "idn_01",
+            "action": "iam:groups:create",
+            "resourceId": "grp_1",
+            "outcome": "allow",
+            "rootOverride": false,
+            "timestamp": 1767225601000,
+            "sequence": 1,
+            "previousHash": "0000000000000000000000000000000000000000000000000000000000000000",
+            "hash": "ad681827a6854b9ddc1d50d9e916e4e23fcef89368df079acd87d3acbbc2b027"
+          },
+          {
+            "id": "evt_03",
+            "tenantId": "tnt_01",
+            "actorId": "idn_01",
+            "action": "iam:groups:create",
+            "resourceId": "grp_3",
+            "outcome": "allow",
+            "rootOverride": false,
+            "timestamp": 1767225603000,
+            "sequence": 2,
+            "previousHash": "ad681827a6854b9ddc1d50d9e916e4e23fcef89368df079acd87d3acbbc2b027",
+            "hash": "e0c5d646576567cacf9c4165c74cd802bf7d782d3275ceb45a449a623a828e66"
+          },
+          {
+            "id": "evt_04",
+            "tenantId": "tnt_01",
+            "actorId": "idn_01",
+            "action": "iam:groups:create",
+            "resourceId": "grp_4",
+            "outcome": "allow",
+            "rootOverride": false,
+            "timestamp": 1767225604000,
+            "metadata": {
+              "a": 1
+            },
+            "sequence": 3,
+            "previousHash": "e0c5d646576567cacf9c4165c74cd802bf7d782d3275ceb45a449a623a828e66",
+            "hash": "ea40bac74020f54675d4b54a59a4bd1e296afc5f2f21015c09949fe9756d9df8"
+          },
+          {
+            "id": "evt_06",
+            "tenantId": "tnt_01",
+            "actorId": "idn_01",
+            "action": "iam:groups:create",
+            "resourceId": "grp_6",
+            "outcome": "allow",
+            "rootOverride": false,
+            "timestamp": 1767225606000,
+            "sequence": 4,
+            "previousHash": "ea40bac74020f54675d4b54a59a4bd1e296afc5f2f21015c09949fe9756d9df8",
+            "hash": "080f780dd00f66a765a3a6ad8ec21028a885ed5e0a967fa3d00d483464ce0efb"
+          },
+          {
+            "id": "evt_09",
+            "tenantId": "tnt_01",
+            "actorId": "idn_01",
+            "action": "iam:groups:create",
+            "resourceId": "grp_9",
+            "outcome": "allow",
+            "rootOverride": false,
+            "timestamp": 1767225609000
+          }
+        ],
+        "options": {
+          "head": {
+            "sequence": 4,
+            "hash": "080f780dd00f66a765a3a6ad8ec21028a885ed5e0a967fa3d00d483464ce0efb"
+          }
+        }
+      },
+      "output": {
+        "valid": false,
+        "checked": 4,
+        "unchained": 1,
+        "first": 1,
+        "last": 4,
+        "lastHash": "080f780dd00f66a765a3a6ad8ec21028a885ed5e0a967fa3d00d483464ce0efb",
+        "failure": {
+          "sequence": 0,
+          "id": "evt_09",
+          "reason": "unchained"
+        }
+      }
+    },
+    {
+      "name": "verify unchained event in run",
+      "input": {
+        "events": [
+          {
+            "id": "evt_01",
+            "tenantId": "tnt_01",
+            "actorId": "idn_01",
+            "action": "iam:groups:create",
+            "resourceId": "grp_1",
+            "outcome": "allow",
+            "rootOverride": false,
+            "timestamp": 1767225601000,
+            "sequence": 1,
+            "previousHash": "0000000000000000000000000000000000000000000000000000000000000000",
+            "hash": "ad681827a6854b9ddc1d50d9e916e4e23fcef89368df079acd87d3acbbc2b027"
+          },
+          {
+            "id": "evt_03",
+            "tenantId": "tnt_01",
+            "actorId": "idn_01",
+            "action": "iam:groups:create",
+            "resourceId": "grp_3",
+            "outcome": "allow",
+            "rootOverride": false,
+            "timestamp": 1767225603000,
+            "sequence": 2,
+            "previousHash": "ad681827a6854b9ddc1d50d9e916e4e23fcef89368df079acd87d3acbbc2b027",
+            "hash": "e0c5d646576567cacf9c4165c74cd802bf7d782d3275ceb45a449a623a828e66"
+          },
+          {
+            "id": "evt_04",
+            "tenantId": "tnt_01",
+            "actorId": "idn_01",
+            "action": "iam:groups:create",
+            "resourceId": "grp_4",
+            "outcome": "allow",
+            "rootOverride": false,
+            "timestamp": 1767225604000,
+            "metadata": {
+              "a": 1
+            },
+            "sequence": 3,
+            "previousHash": "e0c5d646576567cacf9c4165c74cd802bf7d782d3275ceb45a449a623a828e66",
+            "hash": "ea40bac74020f54675d4b54a59a4bd1e296afc5f2f21015c09949fe9756d9df8"
+          },
+          {
+            "id": "evt_06",
+            "tenantId": "tnt_01",
+            "actorId": "idn_01",
+            "action": "iam:groups:create",
+            "resourceId": "grp_6",
+            "outcome": "allow",
+            "rootOverride": false,
+            "timestamp": 1767225606000,
+            "sequence": 4,
+            "previousHash": "ea40bac74020f54675d4b54a59a4bd1e296afc5f2f21015c09949fe9756d9df8",
+            "hash": "080f780dd00f66a765a3a6ad8ec21028a885ed5e0a967fa3d00d483464ce0efb"
+          },
+          {
+            "id": "evt_09",
+            "tenantId": "tnt_01",
+            "actorId": "idn_01",
+            "action": "iam:groups:create",
+            "resourceId": "grp_9",
+            "outcome": "allow",
+            "rootOverride": false,
+            "timestamp": 1767225609000
+          }
+        ]
+      },
+      "output": {
+        "valid": true,
+        "checked": 4,
+        "unchained": 1,
+        "first": 1,
+        "last": 4,
+        "lastHash": "080f780dd00f66a765a3a6ad8ec21028a885ed5e0a967fa3d00d483464ce0efb"
+      }
+    },
+    {
+      "name": "verify empty run",
+      "input": {
+        "events": []
+      },
+      "output": {
+        "valid": true,
+        "checked": 0,
+        "unchained": 0
+      }
+    },
+    {
+      "name": "verify empty chain against head",
+      "input": {
+        "events": [],
+        "options": {
+          "head": {
+            "sequence": 0,
+            "hash": "0000000000000000000000000000000000000000000000000000000000000000"
+          }
+        }
+      },
+      "output": {
+        "valid": false,
+        "checked": 0,
+        "unchained": 0,
+        "failure": {
+          "sequence": 0,
+          "id": "",
+          "reason": "head-mismatch"
+        }
+      }
+    },
+    {
+      "name": "verify pruned chain with checkpoint",
+      "input": {
+        "events": [
+          {
+            "id": "evt_03",
+            "tenantId": "tnt_01",
+            "actorId": "idn_01",
+            "action": "iam:groups:create",
+            "resourceId": "grp_3",
+            "outcome": "allow",
+            "rootOverride": false,
+            "timestamp": 1767225603000,
+            "sequence": 3,
+            "previousHash": "b528186bbbf573cede94df94d14930c50c1a7dbb6d6b781d1b3909bf96cd0431",
+            "hash": "5271d77200661f984c59845b0c174bcefb3be288a73639f612d047c9f4c83b53"
+          },
+          {
+            "id": "evt_04",
+            "tenantId": "tnt_01",
+            "actorId": "idn_01",
+            "action": "iam:groups:create",
+            "resourceId": "grp_4",
+            "outcome": "allow",
+            "rootOverride": false,
+            "timestamp": 1767225604000,
+            "sequence": 4,
+            "previousHash": "5271d77200661f984c59845b0c174bcefb3be288a73639f612d047c9f4c83b53",
+            "hash": "fe7ce05b9610a051ef27ef556216fc1e3e4739df585e834411497b8df03ef185"
+          },
+          {
+            "id": "evt_05",
+            "tenantId": "tnt_01",
+            "actorId": "deployment-operator",
+            "action": "audit:prune",
+            "resourceId": "audit",
+            "outcome": "allow",
+            "rootOverride": false,
+            "timestamp": 1767225605000,
+            "metadata": {
+              "prunedThroughSequence": 2,
+              "prunedThroughHash": "b528186bbbf573cede94df94d14930c50c1a7dbb6d6b781d1b3909bf96cd0431"
+            },
+            "sequence": 5,
+            "previousHash": "fe7ce05b9610a051ef27ef556216fc1e3e4739df585e834411497b8df03ef185",
+            "hash": "43f28ece2e9654f9c66a1de6ea3b94e815051d67ff408cb2af6bb02907003328"
+          }
+        ],
+        "options": {
+          "head": {
+            "sequence": 5,
+            "hash": "43f28ece2e9654f9c66a1de6ea3b94e815051d67ff408cb2af6bb02907003328"
+          }
+        }
+      },
+      "output": {
+        "valid": true,
+        "checked": 3,
+        "unchained": 0,
+        "first": 3,
+        "last": 5,
+        "lastHash": "43f28ece2e9654f9c66a1de6ea3b94e815051d67ff408cb2af6bb02907003328"
+      }
+    },
+    {
+      "name": "verify pruned chain without checkpoint",
+      "input": {
+        "events": [
+          {
+            "id": "evt_03",
+            "tenantId": "tnt_01",
+            "actorId": "idn_01",
+            "action": "iam:groups:create",
+            "resourceId": "grp_3",
+            "outcome": "allow",
+            "rootOverride": false,
+            "timestamp": 1767225603000,
+            "sequence": 3,
+            "previousHash": "b528186bbbf573cede94df94d14930c50c1a7dbb6d6b781d1b3909bf96cd0431",
+            "hash": "5271d77200661f984c59845b0c174bcefb3be288a73639f612d047c9f4c83b53"
+          },
+          {
+            "id": "evt_04",
+            "tenantId": "tnt_01",
+            "actorId": "idn_01",
+            "action": "iam:groups:create",
+            "resourceId": "grp_4",
+            "outcome": "allow",
+            "rootOverride": false,
+            "timestamp": 1767225604000,
+            "sequence": 4,
+            "previousHash": "5271d77200661f984c59845b0c174bcefb3be288a73639f612d047c9f4c83b53",
+            "hash": "fe7ce05b9610a051ef27ef556216fc1e3e4739df585e834411497b8df03ef185"
+          }
+        ],
+        "options": {
+          "head": {
+            "sequence": 4,
+            "hash": "fe7ce05b9610a051ef27ef556216fc1e3e4739df585e834411497b8df03ef185"
+          }
+        }
+      },
+      "output": {
+        "valid": false,
+        "checked": 2,
+        "unchained": 0,
+        "first": 3,
+        "last": 4,
+        "lastHash": "fe7ce05b9610a051ef27ef556216fc1e3e4739df585e834411497b8df03ef185",
+        "failure": {
+          "sequence": 3,
+          "id": "evt_03",
+          "reason": "missing-prefix"
+        }
+      }
+    }
+  ]
+}

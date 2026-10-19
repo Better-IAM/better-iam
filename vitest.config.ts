@@ -1,5 +1,9 @@
 import { defineConfig } from 'vitest/config';
 import { fileURLToPath } from 'node:url';
+// Conformance trace recording (spec/conformance/FORMAT.md): only when BETTER_IAM_RECORD=<dir> is set, the server
+// and SQLite adapter packages resolve to wrappers that record every instance and a setup file writes the traces.
+// Off by default.
+const recording = Boolean(process.env.BETTER_IAM_RECORD);
 export default defineConfig({
   // NestJS decorators (tests/nestjs.test.ts) are the legacy TypeScript form.
   esbuild: { jsx: 'automatic', tsconfigRaw: { compilerOptions: { experimentalDecorators: true } } },
@@ -8,6 +12,7 @@ export default defineConfig({
     testTimeout: 30000,
     hookTimeout: 30000,
     fileParallelism: false,
+    ...(recording ? { setupFiles: ['tests/conformance/record-setup.ts'] } : {}),
   },
   resolve: {
     alias: {
@@ -66,7 +71,10 @@ export default defineConfig({
       '@better-iam/core': fileURLToPath(new URL('./packages/core/src/index.ts', import.meta.url)),
       '@better-iam/auth': fileURLToPath(new URL('./packages/auth/src/index.ts', import.meta.url)),
       '@better-iam/server': fileURLToPath(
-        new URL('./packages/server/src/index.ts', import.meta.url),
+        new URL(
+          recording ? './tests/conformance/recording-server.ts' : './packages/server/src/index.ts',
+          import.meta.url,
+        ),
       ),
       '@better-iam/oauth': fileURLToPath(new URL('./packages/oauth/src/index.ts', import.meta.url)),
       '@better-iam/saml': fileURLToPath(new URL('./packages/saml/src/index.ts', import.meta.url)),
@@ -75,7 +83,12 @@ export default defineConfig({
         new URL('./packages/adapter-postgres/src/index.ts', import.meta.url),
       ),
       '@better-iam/adapter-sqlite': fileURLToPath(
-        new URL('./packages/adapter-sqlite/src/index.ts', import.meta.url),
+        new URL(
+          recording
+            ? './tests/conformance/recording-adapter-sqlite.ts'
+            : './packages/adapter-sqlite/src/index.ts',
+          import.meta.url,
+        ),
       ),
       '@better-iam/adapter-libsql': fileURLToPath(
         new URL('./packages/adapter-libsql/src/index.ts', import.meta.url),

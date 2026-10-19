@@ -1,0 +1,1425 @@
+{
+  "description": "Delegation tokens (RFC 8693 act chains). readDelegationTokenClaims checks signature-verified claims; delegationActor builds act from the chain (person's own delegate first). Signed cases use the deployment card signer (compact JWS, header {\"alg\",\"kid\",\"typ\":\"biam-delegation+jwt\"}, payload JSON.stringify(claims) in insertion order) and the @better-iam/a2a verifier.",
+  "source": "packages/core/src/delegation-tokens.ts#readDelegationTokenClaims,delegationActor; packages/server/src/a2a.ts#cardSigner.signJwt,verifyJwt; packages/a2a/src/delegation-tokens.ts#verifyDelegationToken",
+  "notes": {
+    "key": {
+      "kty": "OKP",
+      "crv": "Ed25519",
+      "x": "08GCDNWLIbAAvgC-66Hhrp50jqrb7xT4CIjML_mGIVw",
+      "d": "7e2OyRxSBsZij7SX6OybOzoVnrFlbyQvptN9NXsIC6E",
+      "kid": "card-ed-1",
+      "alg": "EdDSA"
+    },
+    "limits": {
+      "minSeconds": 30,
+      "maxSeconds": 3600,
+      "defaultSeconds": 300,
+      "maxActors": 4
+    },
+    "scopePattern": "^[A-Za-z0-9*][A-Za-z0-9:_*./-]{0,127}$",
+    "tokenType": "biam-delegation+jwt"
+  },
+  "cases": [
+    {
+      "name": "read valid",
+      "input": {
+        "claims": {
+          "iss": "https://iam.example.com/api/iam",
+          "sub": "idn_person",
+          "aud": "https://agent-api.example.com",
+          "iat": 1767225600,
+          "nbf": 1767225600,
+          "exp": 1767225900,
+          "jti": "dtk_01",
+          "tenant_id": "tnt_01",
+          "delegation_id": "dlg_01",
+          "act": {
+            "sub": "agt_01"
+          },
+          "scope": "documents:read billing:*"
+        },
+        "expected": {
+          "issuer": "https://iam.example.com/api/iam",
+          "audience": "https://agent-api.example.com",
+          "now": 1767225600000
+        }
+      },
+      "output": {
+        "token": {
+          "issuer": "https://iam.example.com/api/iam",
+          "personId": "idn_person",
+          "tenantId": "tnt_01",
+          "delegationId": "dlg_01",
+          "agentId": "agt_01",
+          "chain": [
+            "agt_01"
+          ],
+          "scopes": [
+            "documents:read",
+            "billing:*"
+          ],
+          "audience": "https://agent-api.example.com",
+          "tokenId": "dtk_01",
+          "issuedAt": 1767225600000,
+          "expiresAt": 1767225900000,
+          "claims": {
+            "iss": "https://iam.example.com/api/iam",
+            "sub": "idn_person",
+            "aud": "https://agent-api.example.com",
+            "iat": 1767225600,
+            "nbf": 1767225600,
+            "exp": 1767225900,
+            "jti": "dtk_01",
+            "tenant_id": "tnt_01",
+            "delegation_id": "dlg_01",
+            "act": {
+              "sub": "agt_01"
+            },
+            "scope": "documents:read billing:*"
+          }
+        }
+      }
+    },
+    {
+      "name": "read valid with issuer list and tenant",
+      "input": {
+        "claims": {
+          "iss": "https://iam.example.com/api/iam",
+          "sub": "idn_person",
+          "aud": "https://agent-api.example.com",
+          "iat": 1767225600,
+          "nbf": 1767225600,
+          "exp": 1767225900,
+          "jti": "dtk_01",
+          "tenant_id": "tnt_01",
+          "delegation_id": "dlg_01",
+          "act": {
+            "sub": "agt_01"
+          },
+          "scope": "documents:read billing:*"
+        },
+        "expected": {
+          "issuer": [
+            "https://x.example.com",
+            "https://iam.example.com/api/iam"
+          ],
+          "audience": "https://agent-api.example.com",
+          "now": 1767225600000,
+          "tenantId": "tnt_01"
+        }
+      },
+      "output": {
+        "token": {
+          "issuer": "https://iam.example.com/api/iam",
+          "personId": "idn_person",
+          "tenantId": "tnt_01",
+          "delegationId": "dlg_01",
+          "agentId": "agt_01",
+          "chain": [
+            "agt_01"
+          ],
+          "scopes": [
+            "documents:read",
+            "billing:*"
+          ],
+          "audience": "https://agent-api.example.com",
+          "tokenId": "dtk_01",
+          "issuedAt": 1767225600000,
+          "expiresAt": 1767225900000,
+          "claims": {
+            "iss": "https://iam.example.com/api/iam",
+            "sub": "idn_person",
+            "aud": "https://agent-api.example.com",
+            "iat": 1767225600,
+            "nbf": 1767225600,
+            "exp": 1767225900,
+            "jti": "dtk_01",
+            "tenant_id": "tnt_01",
+            "delegation_id": "dlg_01",
+            "act": {
+              "sub": "agt_01"
+            },
+            "scope": "documents:read billing:*"
+          }
+        }
+      }
+    },
+    {
+      "name": "read hand-off chain",
+      "input": {
+        "claims": {
+          "iss": "https://iam.example.com/api/iam",
+          "sub": "idn_person",
+          "aud": "https://agent-api.example.com",
+          "iat": 1767225600,
+          "nbf": 1767225600,
+          "exp": 1767225900,
+          "jti": "dtk_01",
+          "tenant_id": "tnt_01",
+          "delegation_id": "dlg_01",
+          "act": {
+            "sub": "agt_03",
+            "act": {
+              "sub": "agt_02",
+              "act": {
+                "sub": "agt_01"
+              }
+            }
+          },
+          "scope": "documents:read billing:*"
+        },
+        "expected": {
+          "issuer": "https://iam.example.com/api/iam",
+          "audience": "https://agent-api.example.com",
+          "now": 1767225600000
+        }
+      },
+      "output": {
+        "token": {
+          "issuer": "https://iam.example.com/api/iam",
+          "personId": "idn_person",
+          "tenantId": "tnt_01",
+          "delegationId": "dlg_01",
+          "agentId": "agt_03",
+          "chain": [
+            "agt_01",
+            "agt_02",
+            "agt_03"
+          ],
+          "scopes": [
+            "documents:read",
+            "billing:*"
+          ],
+          "audience": "https://agent-api.example.com",
+          "tokenId": "dtk_01",
+          "issuedAt": 1767225600000,
+          "expiresAt": 1767225900000,
+          "claims": {
+            "iss": "https://iam.example.com/api/iam",
+            "sub": "idn_person",
+            "aud": "https://agent-api.example.com",
+            "iat": 1767225600,
+            "nbf": 1767225600,
+            "exp": 1767225900,
+            "jti": "dtk_01",
+            "tenant_id": "tnt_01",
+            "delegation_id": "dlg_01",
+            "act": {
+              "sub": "agt_03",
+              "act": {
+                "sub": "agt_02",
+                "act": {
+                  "sub": "agt_01"
+                }
+              }
+            },
+            "scope": "documents:read billing:*"
+          }
+        }
+      }
+    },
+    {
+      "name": "read without scope",
+      "input": {
+        "claims": {
+          "iss": "https://iam.example.com/api/iam",
+          "sub": "idn_person",
+          "aud": "https://agent-api.example.com",
+          "iat": 1767225600,
+          "nbf": 1767225600,
+          "exp": 1767225900,
+          "jti": "dtk_01",
+          "tenant_id": "tnt_01",
+          "delegation_id": "dlg_01",
+          "act": {
+            "sub": "agt_01"
+          },
+          "scope": {
+            "$undefined": true
+          }
+        },
+        "expected": {
+          "issuer": "https://iam.example.com/api/iam",
+          "audience": "https://agent-api.example.com",
+          "now": 1767225600000
+        }
+      },
+      "output": {
+        "token": {
+          "issuer": "https://iam.example.com/api/iam",
+          "personId": "idn_person",
+          "tenantId": "tnt_01",
+          "delegationId": "dlg_01",
+          "agentId": "agt_01",
+          "chain": [
+            "agt_01"
+          ],
+          "scopes": [],
+          "audience": "https://agent-api.example.com",
+          "tokenId": "dtk_01",
+          "issuedAt": 1767225600000,
+          "expiresAt": 1767225900000,
+          "claims": {
+            "iss": "https://iam.example.com/api/iam",
+            "sub": "idn_person",
+            "aud": "https://agent-api.example.com",
+            "iat": 1767225600,
+            "nbf": 1767225600,
+            "exp": 1767225900,
+            "jti": "dtk_01",
+            "tenant_id": "tnt_01",
+            "delegation_id": "dlg_01",
+            "act": {
+              "sub": "agt_01"
+            },
+            "scope": {
+              "$undefined": true
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "read empty scope string",
+      "input": {
+        "claims": {
+          "iss": "https://iam.example.com/api/iam",
+          "sub": "idn_person",
+          "aud": "https://agent-api.example.com",
+          "iat": 1767225600,
+          "nbf": 1767225600,
+          "exp": 1767225900,
+          "jti": "dtk_01",
+          "tenant_id": "tnt_01",
+          "delegation_id": "dlg_01",
+          "act": {
+            "sub": "agt_01"
+          },
+          "scope": "  "
+        },
+        "expected": {
+          "issuer": "https://iam.example.com/api/iam",
+          "audience": "https://agent-api.example.com",
+          "now": 1767225600000
+        }
+      },
+      "output": {
+        "token": {
+          "issuer": "https://iam.example.com/api/iam",
+          "personId": "idn_person",
+          "tenantId": "tnt_01",
+          "delegationId": "dlg_01",
+          "agentId": "agt_01",
+          "chain": [
+            "agt_01"
+          ],
+          "scopes": [],
+          "audience": "https://agent-api.example.com",
+          "tokenId": "dtk_01",
+          "issuedAt": 1767225600000,
+          "expiresAt": 1767225900000,
+          "claims": {
+            "iss": "https://iam.example.com/api/iam",
+            "sub": "idn_person",
+            "aud": "https://agent-api.example.com",
+            "iat": 1767225600,
+            "nbf": 1767225600,
+            "exp": 1767225900,
+            "jti": "dtk_01",
+            "tenant_id": "tnt_01",
+            "delegation_id": "dlg_01",
+            "act": {
+              "sub": "agt_01"
+            },
+            "scope": "  "
+          }
+        }
+      }
+    },
+    {
+      "name": "read not an object",
+      "input": {
+        "claims": [
+          1
+        ],
+        "expected": {
+          "issuer": "https://iam.example.com/api/iam",
+          "audience": "https://agent-api.example.com",
+          "now": 1767225600000
+        }
+      },
+      "output": {
+        "rejected": "malformed",
+        "message": "The token has no claims object"
+      }
+    },
+    {
+      "name": "read missing jti",
+      "input": {
+        "claims": {
+          "iss": "https://iam.example.com/api/iam",
+          "sub": "idn_person",
+          "aud": "https://agent-api.example.com",
+          "iat": 1767225600,
+          "nbf": 1767225600,
+          "exp": 1767225900,
+          "jti": "",
+          "tenant_id": "tnt_01",
+          "delegation_id": "dlg_01",
+          "act": {
+            "sub": "agt_01"
+          },
+          "scope": "documents:read billing:*"
+        },
+        "expected": {
+          "issuer": "https://iam.example.com/api/iam",
+          "audience": "https://agent-api.example.com",
+          "now": 1767225600000
+        }
+      },
+      "output": {
+        "rejected": "malformed",
+        "message": "The token has no jti"
+      }
+    },
+    {
+      "name": "read invalid sub",
+      "input": {
+        "claims": {
+          "iss": "https://iam.example.com/api/iam",
+          "sub": "has space",
+          "aud": "https://agent-api.example.com",
+          "iat": 1767225600,
+          "nbf": 1767225600,
+          "exp": 1767225900,
+          "jti": "dtk_01",
+          "tenant_id": "tnt_01",
+          "delegation_id": "dlg_01",
+          "act": {
+            "sub": "agt_01"
+          },
+          "scope": "documents:read billing:*"
+        },
+        "expected": {
+          "issuer": "https://iam.example.com/api/iam",
+          "audience": "https://agent-api.example.com",
+          "now": 1767225600000
+        }
+      },
+      "output": {
+        "rejected": "malformed",
+        "message": "The token's sub is invalid"
+      }
+    },
+    {
+      "name": "read fractional iat",
+      "input": {
+        "claims": {
+          "iss": "https://iam.example.com/api/iam",
+          "sub": "idn_person",
+          "aud": "https://agent-api.example.com",
+          "iat": 1767225600.5,
+          "nbf": 1767225600,
+          "exp": 1767225900,
+          "jti": "dtk_01",
+          "tenant_id": "tnt_01",
+          "delegation_id": "dlg_01",
+          "act": {
+            "sub": "agt_01"
+          },
+          "scope": "documents:read billing:*"
+        },
+        "expected": {
+          "issuer": "https://iam.example.com/api/iam",
+          "audience": "https://agent-api.example.com",
+          "now": 1767225600000
+        }
+      },
+      "output": {
+        "rejected": "malformed",
+        "message": "The token has no valid iat, nbf and exp"
+      }
+    },
+    {
+      "name": "read no actor",
+      "input": {
+        "claims": {
+          "iss": "https://iam.example.com/api/iam",
+          "sub": "idn_person",
+          "aud": "https://agent-api.example.com",
+          "iat": 1767225600,
+          "nbf": 1767225600,
+          "exp": 1767225900,
+          "jti": "dtk_01",
+          "tenant_id": "tnt_01",
+          "delegation_id": "dlg_01",
+          "act": {
+            "$undefined": true
+          },
+          "scope": "documents:read billing:*"
+        },
+        "expected": {
+          "issuer": "https://iam.example.com/api/iam",
+          "audience": "https://agent-api.example.com",
+          "now": 1767225600000
+        }
+      },
+      "output": {
+        "rejected": "malformed",
+        "message": "The token names no actor (act)"
+      }
+    },
+    {
+      "name": "read invalid actor",
+      "input": {
+        "claims": {
+          "iss": "https://iam.example.com/api/iam",
+          "sub": "idn_person",
+          "aud": "https://agent-api.example.com",
+          "iat": 1767225600,
+          "nbf": 1767225600,
+          "exp": 1767225900,
+          "jti": "dtk_01",
+          "tenant_id": "tnt_01",
+          "delegation_id": "dlg_01",
+          "act": {
+            "sub": 7
+          },
+          "scope": "documents:read billing:*"
+        },
+        "expected": {
+          "issuer": "https://iam.example.com/api/iam",
+          "audience": "https://agent-api.example.com",
+          "now": 1767225600000
+        }
+      },
+      "output": {
+        "rejected": "malformed",
+        "message": "The token has an invalid act claim"
+      }
+    },
+    {
+      "name": "read five actors",
+      "input": {
+        "claims": {
+          "iss": "https://iam.example.com/api/iam",
+          "sub": "idn_person",
+          "aud": "https://agent-api.example.com",
+          "iat": 1767225600,
+          "nbf": 1767225600,
+          "exp": 1767225900,
+          "jti": "dtk_01",
+          "tenant_id": "tnt_01",
+          "delegation_id": "dlg_01",
+          "act": {
+            "sub": "a1",
+            "act": {
+              "sub": "a2",
+              "act": {
+                "sub": "a3",
+                "act": {
+                  "sub": "a4",
+                  "act": {
+                    "sub": "a5"
+                  }
+                }
+              }
+            }
+          },
+          "scope": "documents:read billing:*"
+        },
+        "expected": {
+          "issuer": "https://iam.example.com/api/iam",
+          "audience": "https://agent-api.example.com",
+          "now": 1767225600000
+        }
+      },
+      "output": {
+        "rejected": "malformed",
+        "message": "The token names too many actors"
+      }
+    },
+    {
+      "name": "read repeated actor",
+      "input": {
+        "claims": {
+          "iss": "https://iam.example.com/api/iam",
+          "sub": "idn_person",
+          "aud": "https://agent-api.example.com",
+          "iat": 1767225600,
+          "nbf": 1767225600,
+          "exp": 1767225900,
+          "jti": "dtk_01",
+          "tenant_id": "tnt_01",
+          "delegation_id": "dlg_01",
+          "act": {
+            "sub": "agt_01",
+            "act": {
+              "sub": "agt_01"
+            }
+          },
+          "scope": "documents:read billing:*"
+        },
+        "expected": {
+          "issuer": "https://iam.example.com/api/iam",
+          "audience": "https://agent-api.example.com",
+          "now": 1767225600000
+        }
+      },
+      "output": {
+        "rejected": "malformed",
+        "message": "The token repeats an actor"
+      }
+    },
+    {
+      "name": "read actor equal to subject",
+      "input": {
+        "claims": {
+          "iss": "https://iam.example.com/api/iam",
+          "sub": "idn_person",
+          "aud": "https://agent-api.example.com",
+          "iat": 1767225600,
+          "nbf": 1767225600,
+          "exp": 1767225900,
+          "jti": "dtk_01",
+          "tenant_id": "tnt_01",
+          "delegation_id": "dlg_01",
+          "act": {
+            "sub": "idn_person"
+          },
+          "scope": "documents:read billing:*"
+        },
+        "expected": {
+          "issuer": "https://iam.example.com/api/iam",
+          "audience": "https://agent-api.example.com",
+          "now": 1767225600000
+        }
+      },
+      "output": {
+        "rejected": "malformed",
+        "message": "The token repeats an actor"
+      }
+    },
+    {
+      "name": "read invalid scope",
+      "input": {
+        "claims": {
+          "iss": "https://iam.example.com/api/iam",
+          "sub": "idn_person",
+          "aud": "https://agent-api.example.com",
+          "iat": 1767225600,
+          "nbf": 1767225600,
+          "exp": 1767225900,
+          "jti": "dtk_01",
+          "tenant_id": "tnt_01",
+          "delegation_id": "dlg_01",
+          "act": {
+            "sub": "agt_01"
+          },
+          "scope": "bad scope!"
+        },
+        "expected": {
+          "issuer": "https://iam.example.com/api/iam",
+          "audience": "https://agent-api.example.com",
+          "now": 1767225600000
+        }
+      },
+      "output": {
+        "rejected": "malformed",
+        "message": "The token has an invalid scope"
+      }
+    },
+    {
+      "name": "read scope not string",
+      "input": {
+        "claims": {
+          "iss": "https://iam.example.com/api/iam",
+          "sub": "idn_person",
+          "aud": "https://agent-api.example.com",
+          "iat": 1767225600,
+          "nbf": 1767225600,
+          "exp": 1767225900,
+          "jti": "dtk_01",
+          "tenant_id": "tnt_01",
+          "delegation_id": "dlg_01",
+          "act": {
+            "sub": "agt_01"
+          },
+          "scope": [
+            "a"
+          ]
+        },
+        "expected": {
+          "issuer": "https://iam.example.com/api/iam",
+          "audience": "https://agent-api.example.com",
+          "now": 1767225600000
+        }
+      },
+      "output": {
+        "rejected": "malformed",
+        "message": "The token has an invalid scope"
+      }
+    },
+    {
+      "name": "read untrusted issuer",
+      "input": {
+        "claims": {
+          "iss": "https://evil.example.com",
+          "sub": "idn_person",
+          "aud": "https://agent-api.example.com",
+          "iat": 1767225600,
+          "nbf": 1767225600,
+          "exp": 1767225900,
+          "jti": "dtk_01",
+          "tenant_id": "tnt_01",
+          "delegation_id": "dlg_01",
+          "act": {
+            "sub": "agt_01"
+          },
+          "scope": "documents:read billing:*"
+        },
+        "expected": {
+          "issuer": "https://iam.example.com/api/iam",
+          "audience": "https://agent-api.example.com",
+          "now": 1767225600000
+        }
+      },
+      "output": {
+        "rejected": "issuer",
+        "message": "The token was issued by https://evil.example.com"
+      }
+    },
+    {
+      "name": "read other audience",
+      "input": {
+        "claims": {
+          "iss": "https://iam.example.com/api/iam",
+          "sub": "idn_person",
+          "aud": "https://other.example.com",
+          "iat": 1767225600,
+          "nbf": 1767225600,
+          "exp": 1767225900,
+          "jti": "dtk_01",
+          "tenant_id": "tnt_01",
+          "delegation_id": "dlg_01",
+          "act": {
+            "sub": "agt_01"
+          },
+          "scope": "documents:read billing:*"
+        },
+        "expected": {
+          "issuer": "https://iam.example.com/api/iam",
+          "audience": "https://agent-api.example.com",
+          "now": 1767225600000
+        }
+      },
+      "output": {
+        "rejected": "audience",
+        "message": "The token is for another audience"
+      }
+    },
+    {
+      "name": "read other tenant",
+      "input": {
+        "claims": {
+          "iss": "https://iam.example.com/api/iam",
+          "sub": "idn_person",
+          "aud": "https://agent-api.example.com",
+          "iat": 1767225600,
+          "nbf": 1767225600,
+          "exp": 1767225900,
+          "jti": "dtk_01",
+          "tenant_id": "tnt_01",
+          "delegation_id": "dlg_01",
+          "act": {
+            "sub": "agt_01"
+          },
+          "scope": "documents:read billing:*"
+        },
+        "expected": {
+          "issuer": "https://iam.example.com/api/iam",
+          "audience": "https://agent-api.example.com",
+          "now": 1767225600000,
+          "tenantId": "tnt_02"
+        }
+      },
+      "output": {
+        "rejected": "tenant",
+        "message": "The token is from another organization"
+      }
+    },
+    {
+      "name": "read lifetime too long",
+      "input": {
+        "claims": {
+          "iss": "https://iam.example.com/api/iam",
+          "sub": "idn_person",
+          "aud": "https://agent-api.example.com",
+          "iat": 1767225600,
+          "nbf": 1767225600,
+          "exp": 1767229201,
+          "jti": "dtk_01",
+          "tenant_id": "tnt_01",
+          "delegation_id": "dlg_01",
+          "act": {
+            "sub": "agt_01"
+          },
+          "scope": "documents:read billing:*"
+        },
+        "expected": {
+          "issuer": "https://iam.example.com/api/iam",
+          "audience": "https://agent-api.example.com",
+          "now": 1767225600000
+        }
+      },
+      "output": {
+        "rejected": "lifetime",
+        "message": "The token lives longer than a delegation token may"
+      }
+    },
+    {
+      "name": "read exp before iat",
+      "input": {
+        "claims": {
+          "iss": "https://iam.example.com/api/iam",
+          "sub": "idn_person",
+          "aud": "https://agent-api.example.com",
+          "iat": 1767225600,
+          "nbf": 1767225600,
+          "exp": 1767225600,
+          "jti": "dtk_01",
+          "tenant_id": "tnt_01",
+          "delegation_id": "dlg_01",
+          "act": {
+            "sub": "agt_01"
+          },
+          "scope": "documents:read billing:*"
+        },
+        "expected": {
+          "issuer": "https://iam.example.com/api/iam",
+          "audience": "https://agent-api.example.com",
+          "now": 1767225600000
+        }
+      },
+      "output": {
+        "rejected": "lifetime",
+        "message": "The token lives longer than a delegation token may"
+      }
+    },
+    {
+      "name": "read nbf before iat",
+      "input": {
+        "claims": {
+          "iss": "https://iam.example.com/api/iam",
+          "sub": "idn_person",
+          "aud": "https://agent-api.example.com",
+          "iat": 1767225600,
+          "nbf": 1767225599,
+          "exp": 1767225900,
+          "jti": "dtk_01",
+          "tenant_id": "tnt_01",
+          "delegation_id": "dlg_01",
+          "act": {
+            "sub": "agt_01"
+          },
+          "scope": "documents:read billing:*"
+        },
+        "expected": {
+          "issuer": "https://iam.example.com/api/iam",
+          "audience": "https://agent-api.example.com",
+          "now": 1767225600000
+        }
+      },
+      "output": {
+        "rejected": "lifetime",
+        "message": "The token lives longer than a delegation token may"
+      }
+    },
+    {
+      "name": "read expired",
+      "input": {
+        "claims": {
+          "iss": "https://iam.example.com/api/iam",
+          "sub": "idn_person",
+          "aud": "https://agent-api.example.com",
+          "iat": 1767225600,
+          "nbf": 1767225600,
+          "exp": 1767225900,
+          "jti": "dtk_01",
+          "tenant_id": "tnt_01",
+          "delegation_id": "dlg_01",
+          "act": {
+            "sub": "agt_01"
+          },
+          "scope": "documents:read billing:*"
+        },
+        "expected": {
+          "issuer": "https://iam.example.com/api/iam",
+          "audience": "https://agent-api.example.com",
+          "now": 1767225930000
+        }
+      },
+      "output": {
+        "rejected": "expired",
+        "message": "The token has expired"
+      }
+    },
+    {
+      "name": "read expired within tolerance",
+      "input": {
+        "claims": {
+          "iss": "https://iam.example.com/api/iam",
+          "sub": "idn_person",
+          "aud": "https://agent-api.example.com",
+          "iat": 1767225600,
+          "nbf": 1767225600,
+          "exp": 1767225900,
+          "jti": "dtk_01",
+          "tenant_id": "tnt_01",
+          "delegation_id": "dlg_01",
+          "act": {
+            "sub": "agt_01"
+          },
+          "scope": "documents:read billing:*"
+        },
+        "expected": {
+          "issuer": "https://iam.example.com/api/iam",
+          "audience": "https://agent-api.example.com",
+          "now": 1767225929000
+        }
+      },
+      "output": {
+        "token": {
+          "issuer": "https://iam.example.com/api/iam",
+          "personId": "idn_person",
+          "tenantId": "tnt_01",
+          "delegationId": "dlg_01",
+          "agentId": "agt_01",
+          "chain": [
+            "agt_01"
+          ],
+          "scopes": [
+            "documents:read",
+            "billing:*"
+          ],
+          "audience": "https://agent-api.example.com",
+          "tokenId": "dtk_01",
+          "issuedAt": 1767225600000,
+          "expiresAt": 1767225900000,
+          "claims": {
+            "iss": "https://iam.example.com/api/iam",
+            "sub": "idn_person",
+            "aud": "https://agent-api.example.com",
+            "iat": 1767225600,
+            "nbf": 1767225600,
+            "exp": 1767225900,
+            "jti": "dtk_01",
+            "tenant_id": "tnt_01",
+            "delegation_id": "dlg_01",
+            "act": {
+              "sub": "agt_01"
+            },
+            "scope": "documents:read billing:*"
+          }
+        }
+      }
+    },
+    {
+      "name": "read not yet valid",
+      "input": {
+        "claims": {
+          "iss": "https://iam.example.com/api/iam",
+          "sub": "idn_person",
+          "aud": "https://agent-api.example.com",
+          "iat": 1767225600,
+          "nbf": 1767225600,
+          "exp": 1767225900,
+          "jti": "dtk_01",
+          "tenant_id": "tnt_01",
+          "delegation_id": "dlg_01",
+          "act": {
+            "sub": "agt_01"
+          },
+          "scope": "documents:read billing:*"
+        },
+        "expected": {
+          "issuer": "https://iam.example.com/api/iam",
+          "audience": "https://agent-api.example.com",
+          "now": 1767225569000
+        }
+      },
+      "output": {
+        "rejected": "not-yet-valid",
+        "message": "The token is not valid yet"
+      }
+    },
+    {
+      "name": "read tolerance 0",
+      "input": {
+        "claims": {
+          "iss": "https://iam.example.com/api/iam",
+          "sub": "idn_person",
+          "aud": "https://agent-api.example.com",
+          "iat": 1767225600,
+          "nbf": 1767225600,
+          "exp": 1767225900,
+          "jti": "dtk_01",
+          "tenant_id": "tnt_01",
+          "delegation_id": "dlg_01",
+          "act": {
+            "sub": "agt_01"
+          },
+          "scope": "documents:read billing:*"
+        },
+        "expected": {
+          "issuer": "https://iam.example.com/api/iam",
+          "audience": "https://agent-api.example.com",
+          "now": 1767225900000,
+          "clockToleranceSeconds": 0
+        }
+      },
+      "output": {
+        "rejected": "expired",
+        "message": "The token has expired"
+      }
+    },
+    {
+      "name": "read tolerance out of range",
+      "input": {
+        "claims": {
+          "iss": "https://iam.example.com/api/iam",
+          "sub": "idn_person",
+          "aud": "https://agent-api.example.com",
+          "iat": 1767225600,
+          "nbf": 1767225600,
+          "exp": 1767225900,
+          "jti": "dtk_01",
+          "tenant_id": "tnt_01",
+          "delegation_id": "dlg_01",
+          "act": {
+            "sub": "agt_01"
+          },
+          "scope": "documents:read billing:*"
+        },
+        "expected": {
+          "issuer": "https://iam.example.com/api/iam",
+          "audience": "https://agent-api.example.com",
+          "now": 1767225600000,
+          "clockToleranceSeconds": 301
+        }
+      },
+      "output": {
+        "$error": {
+          "name": "TypeError",
+          "message": "clockToleranceSeconds must be 0 to 300 seconds and now a finite time"
+        }
+      }
+    },
+    {
+      "name": "delegationActor agt_01",
+      "input": {
+        "chain": [
+          "agt_01"
+        ]
+      },
+      "output": {
+        "sub": "agt_01"
+      }
+    },
+    {
+      "name": "delegationActor agt_01,agt_02",
+      "input": {
+        "chain": [
+          "agt_01",
+          "agt_02"
+        ]
+      },
+      "output": {
+        "sub": "agt_02",
+        "act": {
+          "sub": "agt_01"
+        }
+      }
+    },
+    {
+      "name": "delegationActor agt_01,agt_02,agt_03,agt_04",
+      "input": {
+        "chain": [
+          "agt_01",
+          "agt_02",
+          "agt_03",
+          "agt_04"
+        ]
+      },
+      "output": {
+        "sub": "agt_04",
+        "act": {
+          "sub": "agt_03",
+          "act": {
+            "sub": "agt_02",
+            "act": {
+              "sub": "agt_01"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "delegationActor empty",
+      "input": {
+        "chain": []
+      },
+      "output": {
+        "$error": {
+          "name": "TypeError",
+          "message": "A delegation token needs at least one actor"
+        }
+      }
+    },
+    {
+      "name": "sign delegation token",
+      "input": {
+        "claims": {
+          "iss": "https://iam.example.com/api/iam",
+          "sub": "idn_person",
+          "aud": "https://agent-api.example.com",
+          "iat": 1767225600,
+          "nbf": 1767225600,
+          "exp": 1767225900,
+          "jti": "dtk_01",
+          "tenant_id": "tnt_01",
+          "delegation_id": "dlg_01",
+          "act": {
+            "sub": "agt_01"
+          },
+          "scope": "documents:read billing:*"
+        },
+        "key": "notes.key"
+      },
+      "output": {
+        "token": "eyJhbGciOiJFZERTQSIsImtpZCI6ImNhcmQtZWQtMSIsInR5cCI6ImJpYW0tZGVsZWdhdGlvbitqd3QifQ.eyJpc3MiOiJodHRwczovL2lhbS5leGFtcGxlLmNvbS9hcGkvaWFtIiwic3ViIjoiaWRuX3BlcnNvbiIsImF1ZCI6Imh0dHBzOi8vYWdlbnQtYXBpLmV4YW1wbGUuY29tIiwiaWF0IjoxNzY3MjI1NjAwLCJuYmYiOjE3NjcyMjU2MDAsImV4cCI6MTc2NzIyNTkwMCwianRpIjoiZHRrXzAxIiwidGVuYW50X2lkIjoidG50XzAxIiwiZGVsZWdhdGlvbl9pZCI6ImRsZ18wMSIsImFjdCI6eyJzdWIiOiJhZ3RfMDEifSwic2NvcGUiOiJkb2N1bWVudHM6cmVhZCBiaWxsaW5nOioifQ.HDBFGWWTkGuVKbYEOVTZ0CII87uKTXjBREuE74fihmKHb-GkP1enwyracijoT_GjpihpXCumcgAYFmlpApT3Cg",
+        "header": {
+          "alg": "EdDSA",
+          "kid": "card-ed-1",
+          "typ": "biam-delegation+jwt"
+        },
+        "payload": {
+          "iss": "https://iam.example.com/api/iam",
+          "sub": "idn_person",
+          "aud": "https://agent-api.example.com",
+          "iat": 1767225600,
+          "nbf": 1767225600,
+          "exp": 1767225900,
+          "jti": "dtk_01",
+          "tenant_id": "tnt_01",
+          "delegation_id": "dlg_01",
+          "act": {
+            "sub": "agt_01"
+          },
+          "scope": "documents:read billing:*"
+        },
+        "signature": "HDBFGWWTkGuVKbYEOVTZ0CII87uKTXjBREuE74fihmKHb-GkP1enwyracijoT_GjpihpXCumcgAYFmlpApT3Cg"
+      }
+    },
+    {
+      "name": "sign hand-off delegation token",
+      "input": {
+        "claims": {
+          "iss": "https://iam.example.com/api/iam",
+          "sub": "idn_person",
+          "aud": "https://agent-api.example.com",
+          "iat": 1767225600,
+          "nbf": 1767225600,
+          "exp": 1767225900,
+          "jti": "dtk_02",
+          "tenant_id": "tnt_01",
+          "delegation_id": "dlg_01",
+          "act": {
+            "sub": "agt_02",
+            "act": {
+              "sub": "agt_01"
+            }
+          },
+          "scope": "documents:read billing:*"
+        },
+        "key": "notes.key"
+      },
+      "output": {
+        "token": "eyJhbGciOiJFZERTQSIsImtpZCI6ImNhcmQtZWQtMSIsInR5cCI6ImJpYW0tZGVsZWdhdGlvbitqd3QifQ.eyJpc3MiOiJodHRwczovL2lhbS5leGFtcGxlLmNvbS9hcGkvaWFtIiwic3ViIjoiaWRuX3BlcnNvbiIsImF1ZCI6Imh0dHBzOi8vYWdlbnQtYXBpLmV4YW1wbGUuY29tIiwiaWF0IjoxNzY3MjI1NjAwLCJuYmYiOjE3NjcyMjU2MDAsImV4cCI6MTc2NzIyNTkwMCwianRpIjoiZHRrXzAyIiwidGVuYW50X2lkIjoidG50XzAxIiwiZGVsZWdhdGlvbl9pZCI6ImRsZ18wMSIsImFjdCI6eyJzdWIiOiJhZ3RfMDIiLCJhY3QiOnsic3ViIjoiYWd0XzAxIn19LCJzY29wZSI6ImRvY3VtZW50czpyZWFkIGJpbGxpbmc6KiJ9.3hHT3b5UzRhLZaiGXADKAbma9CkSfkhgUhvi_Vy7tMuMTiL6HtQb92YPWWow1UNMtjsfK8oB1r-DcXCl_RNJCQ",
+        "header": {
+          "alg": "EdDSA",
+          "kid": "card-ed-1",
+          "typ": "biam-delegation+jwt"
+        },
+        "payload": {
+          "iss": "https://iam.example.com/api/iam",
+          "sub": "idn_person",
+          "aud": "https://agent-api.example.com",
+          "iat": 1767225600,
+          "nbf": 1767225600,
+          "exp": 1767225900,
+          "jti": "dtk_02",
+          "tenant_id": "tnt_01",
+          "delegation_id": "dlg_01",
+          "act": {
+            "sub": "agt_02",
+            "act": {
+              "sub": "agt_01"
+            }
+          },
+          "scope": "documents:read billing:*"
+        },
+        "signature": "3hHT3b5UzRhLZaiGXADKAbma9CkSfkhgUhvi_Vy7tMuMTiL6HtQb92YPWWow1UNMtjsfK8oB1r-DcXCl_RNJCQ"
+      }
+    },
+    {
+      "name": "verify valid",
+      "input": {
+        "token": "eyJhbGciOiJFZERTQSIsImtpZCI6ImNhcmQtZWQtMSIsInR5cCI6ImJpYW0tZGVsZWdhdGlvbitqd3QifQ.eyJpc3MiOiJodHRwczovL2lhbS5leGFtcGxlLmNvbS9hcGkvaWFtIiwic3ViIjoiaWRuX3BlcnNvbiIsImF1ZCI6Imh0dHBzOi8vYWdlbnQtYXBpLmV4YW1wbGUuY29tIiwiaWF0IjoxNzY3MjI1NjAwLCJuYmYiOjE3NjcyMjU2MDAsImV4cCI6MTc2NzIyNTkwMCwianRpIjoiZHRrXzAxIiwidGVuYW50X2lkIjoidG50XzAxIiwiZGVsZWdhdGlvbl9pZCI6ImRsZ18wMSIsImFjdCI6eyJzdWIiOiJhZ3RfMDEifSwic2NvcGUiOiJkb2N1bWVudHM6cmVhZCBiaWxsaW5nOioifQ.HDBFGWWTkGuVKbYEOVTZ0CII87uKTXjBREuE74fihmKHb-GkP1enwyracijoT_GjpihpXCumcgAYFmlpApT3Cg",
+        "audience": "https://agent-api.example.com",
+        "now": 1767225600000
+      },
+      "output": {
+        "issuer": "https://iam.example.com/api/iam",
+        "personId": "idn_person",
+        "tenantId": "tnt_01",
+        "delegationId": "dlg_01",
+        "agentId": "agt_01",
+        "chain": [
+          "agt_01"
+        ],
+        "scopes": [
+          "documents:read",
+          "billing:*"
+        ],
+        "audience": "https://agent-api.example.com",
+        "tokenId": "dtk_01",
+        "issuedAt": 1767225600000,
+        "expiresAt": 1767225900000,
+        "claims": {
+          "iss": "https://iam.example.com/api/iam",
+          "sub": "idn_person",
+          "aud": "https://agent-api.example.com",
+          "iat": 1767225600,
+          "nbf": 1767225600,
+          "exp": 1767225900,
+          "jti": "dtk_01",
+          "tenant_id": "tnt_01",
+          "delegation_id": "dlg_01",
+          "act": {
+            "sub": "agt_01"
+          },
+          "scope": "documents:read billing:*"
+        }
+      }
+    },
+    {
+      "name": "verify hand-off",
+      "input": {
+        "token": "eyJhbGciOiJFZERTQSIsImtpZCI6ImNhcmQtZWQtMSIsInR5cCI6ImJpYW0tZGVsZWdhdGlvbitqd3QifQ.eyJpc3MiOiJodHRwczovL2lhbS5leGFtcGxlLmNvbS9hcGkvaWFtIiwic3ViIjoiaWRuX3BlcnNvbiIsImF1ZCI6Imh0dHBzOi8vYWdlbnQtYXBpLmV4YW1wbGUuY29tIiwiaWF0IjoxNzY3MjI1NjAwLCJuYmYiOjE3NjcyMjU2MDAsImV4cCI6MTc2NzIyNTkwMCwianRpIjoiZHRrXzAyIiwidGVuYW50X2lkIjoidG50XzAxIiwiZGVsZWdhdGlvbl9pZCI6ImRsZ18wMSIsImFjdCI6eyJzdWIiOiJhZ3RfMDIiLCJhY3QiOnsic3ViIjoiYWd0XzAxIn19LCJzY29wZSI6ImRvY3VtZW50czpyZWFkIGJpbGxpbmc6KiJ9.3hHT3b5UzRhLZaiGXADKAbma9CkSfkhgUhvi_Vy7tMuMTiL6HtQb92YPWWow1UNMtjsfK8oB1r-DcXCl_RNJCQ",
+        "audience": "https://agent-api.example.com",
+        "now": 1767225600000
+      },
+      "output": {
+        "issuer": "https://iam.example.com/api/iam",
+        "personId": "idn_person",
+        "tenantId": "tnt_01",
+        "delegationId": "dlg_01",
+        "agentId": "agt_02",
+        "chain": [
+          "agt_01",
+          "agt_02"
+        ],
+        "scopes": [
+          "documents:read",
+          "billing:*"
+        ],
+        "audience": "https://agent-api.example.com",
+        "tokenId": "dtk_02",
+        "issuedAt": 1767225600000,
+        "expiresAt": 1767225900000,
+        "claims": {
+          "iss": "https://iam.example.com/api/iam",
+          "sub": "idn_person",
+          "aud": "https://agent-api.example.com",
+          "iat": 1767225600,
+          "nbf": 1767225600,
+          "exp": 1767225900,
+          "jti": "dtk_02",
+          "tenant_id": "tnt_01",
+          "delegation_id": "dlg_01",
+          "act": {
+            "sub": "agt_02",
+            "act": {
+              "sub": "agt_01"
+            }
+          },
+          "scope": "documents:read billing:*"
+        }
+      }
+    },
+    {
+      "name": "verify wrong audience",
+      "input": {
+        "token": "eyJhbGciOiJFZERTQSIsImtpZCI6ImNhcmQtZWQtMSIsInR5cCI6ImJpYW0tZGVsZWdhdGlvbitqd3QifQ.eyJpc3MiOiJodHRwczovL2lhbS5leGFtcGxlLmNvbS9hcGkvaWFtIiwic3ViIjoiaWRuX3BlcnNvbiIsImF1ZCI6Imh0dHBzOi8vYWdlbnQtYXBpLmV4YW1wbGUuY29tIiwiaWF0IjoxNzY3MjI1NjAwLCJuYmYiOjE3NjcyMjU2MDAsImV4cCI6MTc2NzIyNTkwMCwianRpIjoiZHRrXzAxIiwidGVuYW50X2lkIjoidG50XzAxIiwiZGVsZWdhdGlvbl9pZCI6ImRsZ18wMSIsImFjdCI6eyJzdWIiOiJhZ3RfMDEifSwic2NvcGUiOiJkb2N1bWVudHM6cmVhZCBiaWxsaW5nOioifQ.HDBFGWWTkGuVKbYEOVTZ0CII87uKTXjBREuE74fihmKHb-GkP1enwyracijoT_GjpihpXCumcgAYFmlpApT3Cg",
+        "audience": "https://other.example.com",
+        "now": 1767225600000
+      },
+      "output": {
+        "$error": {
+          "name": "DelegationTokenError",
+          "reason": "audience",
+          "message": "The token is for another audience"
+        }
+      }
+    },
+    {
+      "name": "verify expired",
+      "input": {
+        "token": "eyJhbGciOiJFZERTQSIsImtpZCI6ImNhcmQtZWQtMSIsInR5cCI6ImJpYW0tZGVsZWdhdGlvbitqd3QifQ.eyJpc3MiOiJodHRwczovL2lhbS5leGFtcGxlLmNvbS9hcGkvaWFtIiwic3ViIjoiaWRuX3BlcnNvbiIsImF1ZCI6Imh0dHBzOi8vYWdlbnQtYXBpLmV4YW1wbGUuY29tIiwiaWF0IjoxNzY3MjI1NjAwLCJuYmYiOjE3NjcyMjU2MDAsImV4cCI6MTc2NzIyNTkwMCwianRpIjoiZHRrXzAxIiwidGVuYW50X2lkIjoidG50XzAxIiwiZGVsZWdhdGlvbl9pZCI6ImRsZ18wMSIsImFjdCI6eyJzdWIiOiJhZ3RfMDEifSwic2NvcGUiOiJkb2N1bWVudHM6cmVhZCBiaWxsaW5nOioifQ.HDBFGWWTkGuVKbYEOVTZ0CII87uKTXjBREuE74fihmKHb-GkP1enwyracijoT_GjpihpXCumcgAYFmlpApT3Cg",
+        "audience": "https://agent-api.example.com",
+        "now": 1767225931000
+      },
+      "output": {
+        "$error": {
+          "name": "DelegationTokenError",
+          "reason": "expired",
+          "message": "The token has expired"
+        }
+      }
+    },
+    {
+      "name": "verify other tenant",
+      "input": {
+        "token": "eyJhbGciOiJFZERTQSIsImtpZCI6ImNhcmQtZWQtMSIsInR5cCI6ImJpYW0tZGVsZWdhdGlvbitqd3QifQ.eyJpc3MiOiJodHRwczovL2lhbS5leGFtcGxlLmNvbS9hcGkvaWFtIiwic3ViIjoiaWRuX3BlcnNvbiIsImF1ZCI6Imh0dHBzOi8vYWdlbnQtYXBpLmV4YW1wbGUuY29tIiwiaWF0IjoxNzY3MjI1NjAwLCJuYmYiOjE3NjcyMjU2MDAsImV4cCI6MTc2NzIyNTkwMCwianRpIjoiZHRrXzAxIiwidGVuYW50X2lkIjoidG50XzAxIiwiZGVsZWdhdGlvbl9pZCI6ImRsZ18wMSIsImFjdCI6eyJzdWIiOiJhZ3RfMDEifSwic2NvcGUiOiJkb2N1bWVudHM6cmVhZCBiaWxsaW5nOioifQ.HDBFGWWTkGuVKbYEOVTZ0CII87uKTXjBREuE74fihmKHb-GkP1enwyracijoT_GjpihpXCumcgAYFmlpApT3Cg",
+        "audience": "https://agent-api.example.com",
+        "now": 1767225600000,
+        "tenantId": "tnt_02"
+      },
+      "output": {
+        "$error": {
+          "name": "DelegationTokenError",
+          "reason": "tenant",
+          "message": "The token is from another organization"
+        }
+      }
+    },
+    {
+      "name": "verify tampered payload",
+      "input": {
+        "token": "eyJhbGciOiJFZERTQSIsImtpZCI6ImNhcmQtZWQtMSIsInR5cCI6ImJpYW0tZGVsZWdhdGlvbitqd3QifQ.eyJpc3MiOiJodHRwczovL2lhbS5leGFtcGxlLmNvbS9hcGkvaWFtIiwic3ViIjoiaWRuX290aGVyIiwiYXVkIjoiaHR0cHM6Ly9hZ2VudC1hcGkuZXhhbXBsZS5jb20iLCJpYXQiOjE3NjcyMjU2MDAsIm5iZiI6MTc2NzIyNTYwMCwiZXhwIjoxNzY3MjI1OTAwLCJqdGkiOiJkdGtfMDEiLCJ0ZW5hbnRfaWQiOiJ0bnRfMDEiLCJkZWxlZ2F0aW9uX2lkIjoiZGxnXzAxIiwiYWN0Ijp7InN1YiI6ImFndF8wMSJ9LCJzY29wZSI6ImRvY3VtZW50czpyZWFkIGJpbGxpbmc6KiJ9.HDBFGWWTkGuVKbYEOVTZ0CII87uKTXjBREuE74fihmKHb-GkP1enwyracijoT_GjpihpXCumcgAYFmlpApT3Cg",
+        "audience": "https://agent-api.example.com",
+        "now": 1767225600000
+      },
+      "output": {
+        "$error": {
+          "name": "DelegationTokenError",
+          "reason": "signature",
+          "message": "The token signature does not verify"
+        }
+      }
+    },
+    {
+      "name": "verify wrong typ",
+      "input": {
+        "token": "eyJhbGciOiJFZERTQSIsImtpZCI6ImNhcmQtZWQtMSIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJodHRwczovL2lhbS5leGFtcGxlLmNvbS9hcGkvaWFtIiwic3ViIjoiaWRuX3BlcnNvbiIsImF1ZCI6Imh0dHBzOi8vYWdlbnQtYXBpLmV4YW1wbGUuY29tIiwiaWF0IjoxNzY3MjI1NjAwLCJuYmYiOjE3NjcyMjU2MDAsImV4cCI6MTc2NzIyNTkwMCwianRpIjoiZHRrXzAxIiwidGVuYW50X2lkIjoidG50XzAxIiwiZGVsZWdhdGlvbl9pZCI6ImRsZ18wMSIsImFjdCI6eyJzdWIiOiJhZ3RfMDEifSwic2NvcGUiOiJkb2N1bWVudHM6cmVhZCBiaWxsaW5nOioifQ.HDBFGWWTkGuVKbYEOVTZ0CII87uKTXjBREuE74fihmKHb-GkP1enwyracijoT_GjpihpXCumcgAYFmlpApT3Cg",
+        "audience": "https://agent-api.example.com",
+        "now": 1767225600000
+      },
+      "output": {
+        "$error": {
+          "name": "DelegationTokenError",
+          "reason": "type",
+          "message": "The token is not a delegation token"
+        }
+      }
+    },
+    {
+      "name": "verify unknown kid",
+      "input": {
+        "token": "eyJhbGciOiJFZERTQSIsImtpZCI6Im5vcGUiLCJ0eXAiOiJiaWFtLWRlbGVnYXRpb24rand0In0.eyJpc3MiOiJodHRwczovL2lhbS5leGFtcGxlLmNvbS9hcGkvaWFtIiwic3ViIjoiaWRuX3BlcnNvbiIsImF1ZCI6Imh0dHBzOi8vYWdlbnQtYXBpLmV4YW1wbGUuY29tIiwiaWF0IjoxNzY3MjI1NjAwLCJuYmYiOjE3NjcyMjU2MDAsImV4cCI6MTc2NzIyNTkwMCwianRpIjoiZHRrXzAxIiwidGVuYW50X2lkIjoidG50XzAxIiwiZGVsZWdhdGlvbl9pZCI6ImRsZ18wMSIsImFjdCI6eyJzdWIiOiJhZ3RfMDEifSwic2NvcGUiOiJkb2N1bWVudHM6cmVhZCBiaWxsaW5nOioifQ.HDBFGWWTkGuVKbYEOVTZ0CII87uKTXjBREuE74fihmKHb-GkP1enwyracijoT_GjpihpXCumcgAYFmlpApT3Cg",
+        "audience": "https://agent-api.example.com",
+        "now": 1767225600000
+      },
+      "output": {
+        "$error": {
+          "name": "DelegationTokenError",
+          "reason": "untrusted-key",
+          "message": "The token is not signed with a trusted key"
+        }
+      }
+    },
+    {
+      "name": "verify untrusted issuer",
+      "input": {
+        "token": "eyJhbGciOiJFZERTQSIsImtpZCI6ImNhcmQtZWQtMSIsInR5cCI6ImJpYW0tZGVsZWdhdGlvbitqd3QifQ.eyJpc3MiOiJodHRwczovL2V2aWwuZXhhbXBsZS5jb20iLCJzdWIiOiJpZG5fcGVyc29uIiwiYXVkIjoiaHR0cHM6Ly9hZ2VudC1hcGkuZXhhbXBsZS5jb20iLCJpYXQiOjE3NjcyMjU2MDAsIm5iZiI6MTc2NzIyNTYwMCwiZXhwIjoxNzY3MjI1OTAwLCJqdGkiOiJkdGtfMDEiLCJ0ZW5hbnRfaWQiOiJ0bnRfMDEiLCJkZWxlZ2F0aW9uX2lkIjoiZGxnXzAxIiwiYWN0Ijp7InN1YiI6ImFndF8wMSJ9LCJzY29wZSI6ImRvY3VtZW50czpyZWFkIGJpbGxpbmc6KiJ9.HDBFGWWTkGuVKbYEOVTZ0CII87uKTXjBREuE74fihmKHb-GkP1enwyracijoT_GjpihpXCumcgAYFmlpApT3Cg",
+        "audience": "https://agent-api.example.com",
+        "now": 1767225600000
+      },
+      "output": {
+        "$error": {
+          "name": "DelegationTokenError",
+          "reason": "issuer",
+          "message": "The token was issued by https://evil.example.com"
+        }
+      }
+    },
+    {
+      "name": "verify not compact",
+      "input": {
+        "token": "abc",
+        "audience": "https://agent-api.example.com",
+        "now": 1767225600000
+      },
+      "output": {
+        "$error": {
+          "name": "DelegationTokenError",
+          "reason": "malformed",
+          "message": "Not a compact JWT"
+        }
+      }
+    },
+    {
+      "name": "server verifyJwt valid",
+      "input": {
+        "token": "eyJhbGciOiJFZERTQSIsImtpZCI6ImNhcmQtZWQtMSIsInR5cCI6ImJpYW0tZGVsZWdhdGlvbitqd3QifQ.eyJpc3MiOiJodHRwczovL2lhbS5leGFtcGxlLmNvbS9hcGkvaWFtIiwic3ViIjoiaWRuX3BlcnNvbiIsImF1ZCI6Imh0dHBzOi8vYWdlbnQtYXBpLmV4YW1wbGUuY29tIiwiaWF0IjoxNzY3MjI1NjAwLCJuYmYiOjE3NjcyMjU2MDAsImV4cCI6MTc2NzIyNTkwMCwianRpIjoiZHRrXzAxIiwidGVuYW50X2lkIjoidG50XzAxIiwiZGVsZWdhdGlvbl9pZCI6ImRsZ18wMSIsImFjdCI6eyJzdWIiOiJhZ3RfMDEifSwic2NvcGUiOiJkb2N1bWVudHM6cmVhZCBiaWxsaW5nOioifQ.HDBFGWWTkGuVKbYEOVTZ0CII87uKTXjBREuE74fihmKHb-GkP1enwyracijoT_GjpihpXCumcgAYFmlpApT3Cg",
+        "typ": "biam-delegation+jwt"
+      },
+      "output": {
+        "iss": "https://iam.example.com/api/iam",
+        "sub": "idn_person",
+        "aud": "https://agent-api.example.com",
+        "iat": 1767225600,
+        "nbf": 1767225600,
+        "exp": 1767225900,
+        "jti": "dtk_01",
+        "tenant_id": "tnt_01",
+        "delegation_id": "dlg_01",
+        "act": {
+          "sub": "agt_01"
+        },
+        "scope": "documents:read billing:*"
+      }
+    },
+    {
+      "name": "server verifyJwt wrong typ",
+      "input": {
+        "token": "eyJhbGciOiJFZERTQSIsImtpZCI6ImNhcmQtZWQtMSIsInR5cCI6ImJpYW0tZGVsZWdhdGlvbitqd3QifQ.eyJpc3MiOiJodHRwczovL2lhbS5leGFtcGxlLmNvbS9hcGkvaWFtIiwic3ViIjoiaWRuX3BlcnNvbiIsImF1ZCI6Imh0dHBzOi8vYWdlbnQtYXBpLmV4YW1wbGUuY29tIiwiaWF0IjoxNzY3MjI1NjAwLCJuYmYiOjE3NjcyMjU2MDAsImV4cCI6MTc2NzIyNTkwMCwianRpIjoiZHRrXzAxIiwidGVuYW50X2lkIjoidG50XzAxIiwiZGVsZWdhdGlvbl9pZCI6ImRsZ18wMSIsImFjdCI6eyJzdWIiOiJhZ3RfMDEifSwic2NvcGUiOiJkb2N1bWVudHM6cmVhZCBiaWxsaW5nOioifQ.HDBFGWWTkGuVKbYEOVTZ0CII87uKTXjBREuE74fihmKHb-GkP1enwyracijoT_GjpihpXCumcgAYFmlpApT3Cg",
+        "typ": "biam-other+jwt"
+      },
+      "output": {
+        "$undefined": true
+      }
+    },
+    {
+      "name": "server verifyJwt tampered",
+      "input": {
+        "token": "eyJhbGciOiJFZERTQSIsImtpZCI6ImNhcmQtZWQtMSIsInR5cCI6ImJpYW0tZGVsZWdhdGlvbitqd3QifQ.eyJpc3MiOiJodHRwczovL2lhbS5leGFtcGxlLmNvbS9hcGkvaWFtIiwic3ViIjoiaWRuX3BlcnNvbiIsImF1ZCI6Imh0dHBzOi8vYWdlbnQtYXBpLmV4YW1wbGUuY29tIiwiaWF0IjoxNzY3MjI1NjAwLCJuYmYiOjE3NjcyMjU2MDAsImV4cCI6MTc2NzIyNTkwMCwianRpIjoiZHRrXzAxIiwidGVuYW50X2lkIjoidG50XzAxIiwiZGVsZWdhdGlvbl9pZCI6ImRsZ18wMSIsImFjdCI6eyJzdWIiOiJhZ3RfMDEifSwic2NvcGUiOiJkb2N1bWVudHM6cmVhZCBiaWxsaW5nOioifQ.HDBFGWWTkGuVKbYEOVTZ0CII87uKTXjBREuE74fihmKHb-GkP1enwyracijoT_GjpihpXCumcgAYFmlpApT3AA",
+        "typ": "biam-delegation+jwt"
+      },
+      "output": {
+        "$undefined": true
+      }
+    }
+  ]
+}

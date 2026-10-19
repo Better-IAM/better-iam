@@ -1,0 +1,128 @@
+{
+  "description": "OAuth provider artifact sealing (oidc-provider payloads at rest): AES-256-GCM with the 32-byte encryptionKey (base64), a 12-byte random IV, no additional data; sealed = base64(iv || ciphertext || tag) of JSON.stringify(payload). encryptionKey must decode to exactly 32 bytes.",
+  "source": "packages/oauth/src/adapter.ts#cipher,encryptionKey",
+  "cases": [
+    {
+      "name": "seal object payload",
+      "input": {
+        "key": "KioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKio=",
+        "value": {
+          "kind": "AccessToken",
+          "jti": "at_01",
+          "exp": 1767229200,
+          "scope": "openid email"
+        }
+      },
+      "output": {
+        "sealed": "BUvATiva0JU7CLD4HHWBodQ6fX1t78n9XJlWu1y5VOY+bo8y0l2F0nuJuh099nZFnzK23ZictifGrO/VocQYRtrpztAqDwXvzQ9U1Rkacj/0BPaCRRBtCNUYXbUDfI2Wyk8c+tEuJ6M=",
+        "iv": "BUvATiva0JU7CLD4",
+        "tag": "1RhdtQN8jZbKTxz60S4now=="
+      }
+    },
+    {
+      "name": "open object payload",
+      "input": {
+        "key": "KioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKio=",
+        "sealed": "BUvATiva0JU7CLD4HHWBodQ6fX1t78n9XJlWu1y5VOY+bo8y0l2F0nuJuh099nZFnzK23ZictifGrO/VocQYRtrpztAqDwXvzQ9U1Rkacj/0BPaCRRBtCNUYXbUDfI2Wyk8c+tEuJ6M="
+      },
+      "output": {
+        "kind": "AccessToken",
+        "jti": "at_01",
+        "exp": 1767229200,
+        "scope": "openid email"
+      }
+    },
+    {
+      "name": "seal string payload",
+      "input": {
+        "key": "KioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKio=",
+        "value": "plain"
+      },
+      "output": {
+        "sealed": "/WZy7enOnkQLcWA2Vx9Uof0D0zz800dhf35yhXFzq7Tr6GU=",
+        "iv": "/WZy7enOnkQLcWA2",
+        "tag": "PPzTR2F/fnKFcXOrtOvoZQ=="
+      }
+    },
+    {
+      "name": "open string payload",
+      "input": {
+        "key": "KioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKio=",
+        "sealed": "/WZy7enOnkQLcWA2Vx9Uof0D0zz800dhf35yhXFzq7Tr6GU="
+      },
+      "output": "plain"
+    },
+    {
+      "name": "seal nested payload",
+      "input": {
+        "key": "KioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKio=",
+        "value": {
+          "a": [
+            1,
+            2,
+            {
+              "b": null
+            }
+          ],
+          "c": "ü"
+        }
+      },
+      "output": {
+        "sealed": "644WO1i1TgyrHHOYp80p+D2VhV4VzoVG6sfOLh1KxPLUUg7i1V0rJY7iPCa/rEEq+jX8xjJ8nAEDZhk=",
+        "iv": "644WO1i1TgyrHHOY",
+        "tag": "Jr+sQSr6NfzGMnycAQNmGQ=="
+      }
+    },
+    {
+      "name": "open nested payload",
+      "input": {
+        "key": "KioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKio=",
+        "sealed": "644WO1i1TgyrHHOYp80p+D2VhV4VzoVG6sfOLh1KxPLUUg7i1V0rJY7iPCa/rEEq+jX8xjJ8nAEDZhk="
+      },
+      "output": {
+        "a": [
+          1,
+          2,
+          {
+            "b": null
+          }
+        ],
+        "c": "ü"
+      }
+    },
+    {
+      "name": "open tampered",
+      "input": {
+        "key": "KioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKio=",
+        "sealed": "BUvATiva0JU7CLD4HHSBodQ6fX1t78n9XJlWu1y5VOY+bo8y0l2F0nuJuh099nZFnzK23ZictifGrO/VocQYRtrpztAqDwXvzQ9U1Rkacj/0BPaCRRBtCNUYXbUDfI2Wyk8c+tEuJ6M="
+      },
+      "output": {
+        "$error": {
+          "name": "Error",
+          "message": "Unsupported state or unable to authenticate data"
+        }
+      }
+    },
+    {
+      "name": "encryptionKey of 31 bytes",
+      "input": {
+        "key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "configuration",
+          "status": 400,
+          "message": "OAuth encryptionKey must encode exactly 32 bytes."
+        }
+      }
+    },
+    {
+      "name": "encryptionKey of 32 bytes",
+      "input": {
+        "key": "KioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKio="
+      },
+      "output": 32
+    }
+  ]
+}

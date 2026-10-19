@@ -1,0 +1,960 @@
+{
+  "description": "Glob matching (matchPattern: anchored, * any run of code points, ? one code point, ${var} substituted literally from context, unresolved variables never match), variable resolution (resolvePolicyValue), variable syntax (validPolicyVariables), and IP helpers (isIpRange, ipMatches, ipCounterKey).",
+  "source": "packages/core/src/policy.ts#matchPattern,resolvePolicyValue,validPolicyVariables,isIpRange,ipMatches,ipCounterKey",
+  "cases": [
+    {
+      "name": "matchPattern \"*\" \"\"",
+      "input": {
+        "pattern": "*",
+        "value": ""
+      },
+      "output": true
+    },
+    {
+      "name": "matchPattern \"*\" \"anything\"",
+      "input": {
+        "pattern": "*",
+        "value": "anything"
+      },
+      "output": true
+    },
+    {
+      "name": "matchPattern \"abc\" \"abc\"",
+      "input": {
+        "pattern": "abc",
+        "value": "abc"
+      },
+      "output": true
+    },
+    {
+      "name": "matchPattern \"abc\" \"abcd\"",
+      "input": {
+        "pattern": "abc",
+        "value": "abcd"
+      },
+      "output": false
+    },
+    {
+      "name": "matchPattern \"a*\" \"a\"",
+      "input": {
+        "pattern": "a*",
+        "value": "a"
+      },
+      "output": true
+    },
+    {
+      "name": "matchPattern \"*c\" \"abc\"",
+      "input": {
+        "pattern": "*c",
+        "value": "abc"
+      },
+      "output": true
+    },
+    {
+      "name": "matchPattern \"a*c\" \"ac\"",
+      "input": {
+        "pattern": "a*c",
+        "value": "ac"
+      },
+      "output": true
+    },
+    {
+      "name": "matchPattern \"a*c\" \"abbbc\"",
+      "input": {
+        "pattern": "a*c",
+        "value": "abbbc"
+      },
+      "output": true
+    },
+    {
+      "name": "matchPattern \"a*c\" \"abcd\"",
+      "input": {
+        "pattern": "a*c",
+        "value": "abcd"
+      },
+      "output": false
+    },
+    {
+      "name": "matchPattern \"a*b*c\" \"aXbYc\"",
+      "input": {
+        "pattern": "a*b*c",
+        "value": "aXbYc"
+      },
+      "output": true
+    },
+    {
+      "name": "matchPattern \"a*b*c\" \"acb\"",
+      "input": {
+        "pattern": "a*b*c",
+        "value": "acb"
+      },
+      "output": false
+    },
+    {
+      "name": "matchPattern \"**\" \"x\"",
+      "input": {
+        "pattern": "**",
+        "value": "x"
+      },
+      "output": true
+    },
+    {
+      "name": "matchPattern \"?\" \"\"",
+      "input": {
+        "pattern": "?",
+        "value": ""
+      },
+      "output": false
+    },
+    {
+      "name": "matchPattern \"?\" \"a\"",
+      "input": {
+        "pattern": "?",
+        "value": "a"
+      },
+      "output": true
+    },
+    {
+      "name": "matchPattern \"?\" \"ab\"",
+      "input": {
+        "pattern": "?",
+        "value": "ab"
+      },
+      "output": false
+    },
+    {
+      "name": "matchPattern \"?\" \"😀\"",
+      "input": {
+        "pattern": "?",
+        "value": "😀"
+      },
+      "output": true
+    },
+    {
+      "name": "matchPattern \"??\" \"😀\"",
+      "input": {
+        "pattern": "??",
+        "value": "😀"
+      },
+      "output": false
+    },
+    {
+      "name": "matchPattern \"a?c\" \"abc\"",
+      "input": {
+        "pattern": "a?c",
+        "value": "abc"
+      },
+      "output": true
+    },
+    {
+      "name": "matchPattern \"a?c\" \"a😀c\"",
+      "input": {
+        "pattern": "a?c",
+        "value": "a😀c"
+      },
+      "output": true
+    },
+    {
+      "name": "matchPattern \"*?\" \"\"",
+      "input": {
+        "pattern": "*?",
+        "value": ""
+      },
+      "output": false
+    },
+    {
+      "name": "matchPattern \"*?\" \"x\"",
+      "input": {
+        "pattern": "*?",
+        "value": "x"
+      },
+      "output": true
+    },
+    {
+      "name": "matchPattern \"a*?*b\" \"ab\"",
+      "input": {
+        "pattern": "a*?*b",
+        "value": "ab"
+      },
+      "output": false
+    },
+    {
+      "name": "matchPattern \"a*?*b\" \"axb\"",
+      "input": {
+        "pattern": "a*?*b",
+        "value": "axb"
+      },
+      "output": true
+    },
+    {
+      "name": "matchPattern \"literal*star\" \"literal*star\"",
+      "input": {
+        "pattern": "literal*star",
+        "value": "literal*star"
+      },
+      "output": true
+    },
+    {
+      "name": "matchPattern \"x*\" \"*\"",
+      "input": {
+        "pattern": "x*",
+        "value": "*"
+      },
+      "output": false
+    },
+    {
+      "name": "matchPattern \"😀*\" \"😀🎉\"",
+      "input": {
+        "pattern": "😀*",
+        "value": "😀🎉"
+      },
+      "output": true
+    },
+    {
+      "name": "matchPattern \"é\" \"é\"",
+      "input": {
+        "pattern": "é",
+        "value": "é"
+      },
+      "output": true
+    },
+    {
+      "name": "matchPattern \"é\" \"é\"",
+      "input": {
+        "pattern": "é",
+        "value": "é"
+      },
+      "output": false
+    },
+    {
+      "name": "matchPattern \"user/${principal.id}\" \"user/idn_01\" (context)",
+      "input": {
+        "pattern": "user/${principal.id}",
+        "value": "user/idn_01",
+        "context": {
+          "principal.id": "idn_01",
+          "principal.team": "eng*",
+          "n": 7,
+          "b": false,
+          "list": [
+            "x"
+          ]
+        }
+      },
+      "output": true
+    },
+    {
+      "name": "matchPattern \"user/${principal.id}\" \"user/idn_02\" (context)",
+      "input": {
+        "pattern": "user/${principal.id}",
+        "value": "user/idn_02",
+        "context": {
+          "principal.id": "idn_01",
+          "principal.team": "eng*",
+          "n": 7,
+          "b": false,
+          "list": [
+            "x"
+          ]
+        }
+      },
+      "output": false
+    },
+    {
+      "name": "matchPattern \"user/${principal.missing}\" \"user/\" (context)",
+      "input": {
+        "pattern": "user/${principal.missing}",
+        "value": "user/",
+        "context": {
+          "principal.id": "idn_01",
+          "principal.team": "eng*",
+          "n": 7,
+          "b": false,
+          "list": [
+            "x"
+          ]
+        }
+      },
+      "output": false
+    },
+    {
+      "name": "matchPattern \"team/${principal.team}\" \"team/eng*\" (context)",
+      "input": {
+        "pattern": "team/${principal.team}",
+        "value": "team/eng*",
+        "context": {
+          "principal.id": "idn_01",
+          "principal.team": "eng*",
+          "n": 7,
+          "b": false,
+          "list": [
+            "x"
+          ]
+        }
+      },
+      "output": true
+    },
+    {
+      "name": "matchPattern \"team/${principal.team}\" \"team/engineering\" (context)",
+      "input": {
+        "pattern": "team/${principal.team}",
+        "value": "team/engineering",
+        "context": {
+          "principal.id": "idn_01",
+          "principal.team": "eng*",
+          "n": 7,
+          "b": false,
+          "list": [
+            "x"
+          ]
+        }
+      },
+      "output": false
+    },
+    {
+      "name": "matchPattern \"n/${n}\" \"n/7\" (context)",
+      "input": {
+        "pattern": "n/${n}",
+        "value": "n/7",
+        "context": {
+          "principal.id": "idn_01",
+          "principal.team": "eng*",
+          "n": 7,
+          "b": false,
+          "list": [
+            "x"
+          ]
+        }
+      },
+      "output": true
+    },
+    {
+      "name": "matchPattern \"b/${b}\" \"b/false\" (context)",
+      "input": {
+        "pattern": "b/${b}",
+        "value": "b/false",
+        "context": {
+          "principal.id": "idn_01",
+          "principal.team": "eng*",
+          "n": 7,
+          "b": false,
+          "list": [
+            "x"
+          ]
+        }
+      },
+      "output": true
+    },
+    {
+      "name": "matchPattern \"l/${list}\" \"l/x\" (context)",
+      "input": {
+        "pattern": "l/${list}",
+        "value": "l/x",
+        "context": {
+          "principal.id": "idn_01",
+          "principal.team": "eng*",
+          "n": 7,
+          "b": false,
+          "list": [
+            "x"
+          ]
+        }
+      },
+      "output": false
+    },
+    {
+      "name": "matchPattern \"${principal.id}*\" \"idn_01/x\" (context)",
+      "input": {
+        "pattern": "${principal.id}*",
+        "value": "idn_01/x",
+        "context": {
+          "principal.id": "idn_01",
+          "principal.team": "eng*",
+          "n": 7,
+          "b": false,
+          "list": [
+            "x"
+          ]
+        }
+      },
+      "output": true
+    },
+    {
+      "name": "matchPattern \"bad/${\" \"bad/${\" (context)",
+      "input": {
+        "pattern": "bad/${",
+        "value": "bad/${",
+        "context": {
+          "principal.id": "idn_01",
+          "principal.team": "eng*",
+          "n": 7,
+          "b": false,
+          "list": [
+            "x"
+          ]
+        }
+      },
+      "output": true
+    },
+    {
+      "name": "matchPattern \"bad/${x\" \"bad/${x\" (context)",
+      "input": {
+        "pattern": "bad/${x",
+        "value": "bad/${x",
+        "context": {
+          "principal.id": "idn_01",
+          "principal.team": "eng*",
+          "n": 7,
+          "b": false,
+          "list": [
+            "x"
+          ]
+        }
+      },
+      "output": true
+    },
+    {
+      "name": "matchPattern \"bad/${1x}\" \"bad/${1x}\" (context)",
+      "input": {
+        "pattern": "bad/${1x}",
+        "value": "bad/${1x}",
+        "context": {
+          "principal.id": "idn_01",
+          "principal.team": "eng*",
+          "n": 7,
+          "b": false,
+          "list": [
+            "x"
+          ]
+        }
+      },
+      "output": true
+    },
+    {
+      "name": "matchPattern \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa*\" \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "input": {
+        "pattern": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa*",
+        "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "output": true
+    },
+    {
+      "name": "resolvePolicyValue plain",
+      "input": {
+        "value": "plain",
+        "context": {
+          "principal.id": "idn_01",
+          "principal.team": "eng*",
+          "n": 7,
+          "b": false,
+          "list": [
+            "x"
+          ]
+        }
+      },
+      "output": "plain"
+    },
+    {
+      "name": "resolvePolicyValue ${principal.id}",
+      "input": {
+        "value": "${principal.id}",
+        "context": {
+          "principal.id": "idn_01",
+          "principal.team": "eng*",
+          "n": 7,
+          "b": false,
+          "list": [
+            "x"
+          ]
+        }
+      },
+      "output": "idn_01"
+    },
+    {
+      "name": "resolvePolicyValue a-${principal.id}-${n}",
+      "input": {
+        "value": "a-${principal.id}-${n}",
+        "context": {
+          "principal.id": "idn_01",
+          "principal.team": "eng*",
+          "n": 7,
+          "b": false,
+          "list": [
+            "x"
+          ]
+        }
+      },
+      "output": "a-idn_01-7"
+    },
+    {
+      "name": "resolvePolicyValue ${principal.team}",
+      "input": {
+        "value": "${principal.team}",
+        "context": {
+          "principal.id": "idn_01",
+          "principal.team": "eng*",
+          "n": 7,
+          "b": false,
+          "list": [
+            "x"
+          ]
+        }
+      },
+      "output": "eng*"
+    },
+    {
+      "name": "resolvePolicyValue ${missing}",
+      "input": {
+        "value": "${missing}",
+        "context": {
+          "principal.id": "idn_01",
+          "principal.team": "eng*",
+          "n": 7,
+          "b": false,
+          "list": [
+            "x"
+          ]
+        }
+      },
+      "output": {
+        "$undefined": true
+      }
+    },
+    {
+      "name": "resolvePolicyValue ${",
+      "input": {
+        "value": "${",
+        "context": {
+          "principal.id": "idn_01",
+          "principal.team": "eng*",
+          "n": 7,
+          "b": false,
+          "list": [
+            "x"
+          ]
+        }
+      },
+      "output": "${"
+    },
+    {
+      "name": "resolvePolicyValue x${principal.id",
+      "input": {
+        "value": "x${principal.id",
+        "context": {
+          "principal.id": "idn_01",
+          "principal.team": "eng*",
+          "n": 7,
+          "b": false,
+          "list": [
+            "x"
+          ]
+        }
+      },
+      "output": "x${principal.id"
+    },
+    {
+      "name": "validPolicyVariables plain",
+      "input": {
+        "value": "plain"
+      },
+      "output": true
+    },
+    {
+      "name": "validPolicyVariables ${a}",
+      "input": {
+        "value": "${a}"
+      },
+      "output": true
+    },
+    {
+      "name": "validPolicyVariables ${a.b:c-d_e}",
+      "input": {
+        "value": "${a.b:c-d_e}"
+      },
+      "output": true
+    },
+    {
+      "name": "validPolicyVariables ${",
+      "input": {
+        "value": "${"
+      },
+      "output": false
+    },
+    {
+      "name": "validPolicyVariables ${}",
+      "input": {
+        "value": "${}"
+      },
+      "output": false
+    },
+    {
+      "name": "validPolicyVariables ${1a}",
+      "input": {
+        "value": "${1a}"
+      },
+      "output": false
+    },
+    {
+      "name": "validPolicyVariables ${a",
+      "input": {
+        "value": "${a"
+      },
+      "output": false
+    },
+    {
+      "name": "validPolicyVariables x${a}y${b}",
+      "input": {
+        "value": "x${a}y${b}"
+      },
+      "output": true
+    },
+    {
+      "name": "validPolicyVariables $ {a}",
+      "input": {
+        "value": "$ {a}"
+      },
+      "output": true
+    },
+    {
+      "name": "validPolicyVariables ${aaaaaaaaaa... (131 chars)",
+      "input": {
+        "value": "${aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}"
+      },
+      "output": true
+    },
+    {
+      "name": "validPolicyVariables ${aaaaaaaaaa... (132 chars)",
+      "input": {
+        "value": "${aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}"
+      },
+      "output": false
+    },
+    {
+      "name": "isIpRange 10.0.0.1",
+      "input": {
+        "value": "10.0.0.1"
+      },
+      "output": true
+    },
+    {
+      "name": "isIpRange 10.0.0.0/8",
+      "input": {
+        "value": "10.0.0.0/8"
+      },
+      "output": true
+    },
+    {
+      "name": "isIpRange 10.0.0.0/33",
+      "input": {
+        "value": "10.0.0.0/33"
+      },
+      "output": false
+    },
+    {
+      "name": "isIpRange 010.0.0.1",
+      "input": {
+        "value": "010.0.0.1"
+      },
+      "output": false
+    },
+    {
+      "name": "isIpRange 256.0.0.1",
+      "input": {
+        "value": "256.0.0.1"
+      },
+      "output": false
+    },
+    {
+      "name": "isIpRange 1.2.3",
+      "input": {
+        "value": "1.2.3"
+      },
+      "output": false
+    },
+    {
+      "name": "isIpRange ::1",
+      "input": {
+        "value": "::1"
+      },
+      "output": true
+    },
+    {
+      "name": "isIpRange ::",
+      "input": {
+        "value": "::"
+      },
+      "output": true
+    },
+    {
+      "name": "isIpRange 2001:db8::/32",
+      "input": {
+        "value": "2001:db8::/32"
+      },
+      "output": true
+    },
+    {
+      "name": "isIpRange 2001:db8::/129",
+      "input": {
+        "value": "2001:db8::/129"
+      },
+      "output": false
+    },
+    {
+      "name": "isIpRange 2001:db8:::1",
+      "input": {
+        "value": "2001:db8:::1"
+      },
+      "output": false
+    },
+    {
+      "name": "isIpRange ::ffff:1.2.3.4",
+      "input": {
+        "value": "::ffff:1.2.3.4"
+      },
+      "output": true
+    },
+    {
+      "name": "isIpRange fe80::1%eth0",
+      "input": {
+        "value": "fe80::1%eth0"
+      },
+      "output": false
+    },
+    {
+      "name": "isIpRange [::1]",
+      "input": {
+        "value": "[::1]"
+      },
+      "output": false
+    },
+    {
+      "name": "isIpRange 1.2.3.4/08",
+      "input": {
+        "value": "1.2.3.4/08"
+      },
+      "output": false
+    },
+    {
+      "name": "isIpRange gggg::1",
+      "input": {
+        "value": "gggg::1"
+      },
+      "output": false
+    },
+    {
+      "name": "isIpRange 1:2:3:4:5:6:7:8",
+      "input": {
+        "value": "1:2:3:4:5:6:7:8"
+      },
+      "output": true
+    },
+    {
+      "name": "isIpRange 1:2:3:4:5:6:7:8:9",
+      "input": {
+        "value": "1:2:3:4:5:6:7:8:9"
+      },
+      "output": false
+    },
+    {
+      "name": "isIpRange 1::2:3:4:5:6:7:8",
+      "input": {
+        "value": "1::2:3:4:5:6:7:8"
+      },
+      "output": false
+    },
+    {
+      "name": "ipMatches 10.1.2.3 10.0.0.0/8",
+      "input": {
+        "address": "10.1.2.3",
+        "network": "10.0.0.0/8"
+      },
+      "output": true
+    },
+    {
+      "name": "ipMatches 10.1.2.3 10.1.2.3",
+      "input": {
+        "address": "10.1.2.3",
+        "network": "10.1.2.3"
+      },
+      "output": true
+    },
+    {
+      "name": "ipMatches 10.1.2.3 10.1.2.4",
+      "input": {
+        "address": "10.1.2.3",
+        "network": "10.1.2.4"
+      },
+      "output": false
+    },
+    {
+      "name": "ipMatches 10.1.2.3 0.0.0.0/0",
+      "input": {
+        "address": "10.1.2.3",
+        "network": "0.0.0.0/0"
+      },
+      "output": true
+    },
+    {
+      "name": "ipMatches ::ffff:10.1.2.3 10.0.0.0/8",
+      "input": {
+        "address": "::ffff:10.1.2.3",
+        "network": "10.0.0.0/8"
+      },
+      "output": true
+    },
+    {
+      "name": "ipMatches ::ffff:a01:203 10.0.0.0/8",
+      "input": {
+        "address": "::ffff:a01:203",
+        "network": "10.0.0.0/8"
+      },
+      "output": true
+    },
+    {
+      "name": "ipMatches 10.1.2.3 ::ffff:10.0.0.0/104",
+      "input": {
+        "address": "10.1.2.3",
+        "network": "::ffff:10.0.0.0/104"
+      },
+      "output": true
+    },
+    {
+      "name": "ipMatches 10.1.2.3 ::ffff:10.0.0.0/95",
+      "input": {
+        "address": "10.1.2.3",
+        "network": "::ffff:10.0.0.0/95"
+      },
+      "output": false
+    },
+    {
+      "name": "ipMatches 2001:db8::1 2001:db8::/32",
+      "input": {
+        "address": "2001:db8::1",
+        "network": "2001:db8::/32"
+      },
+      "output": true
+    },
+    {
+      "name": "ipMatches 2001:0db8:0000::0001 2001:db8::1",
+      "input": {
+        "address": "2001:0db8:0000::0001",
+        "network": "2001:db8::1"
+      },
+      "output": true
+    },
+    {
+      "name": "ipMatches 2001:db8::1 ::/0",
+      "input": {
+        "address": "2001:db8::1",
+        "network": "::/0"
+      },
+      "output": true
+    },
+    {
+      "name": "ipMatches 2001:db8::1 10.0.0.0/8",
+      "input": {
+        "address": "2001:db8::1",
+        "network": "10.0.0.0/8"
+      },
+      "output": false
+    },
+    {
+      "name": "ipMatches 10.1.2.3 2001:db8::/32",
+      "input": {
+        "address": "10.1.2.3",
+        "network": "2001:db8::/32"
+      },
+      "output": false
+    },
+    {
+      "name": "ipMatches 10.1.2.3/32 10.0.0.0/8",
+      "input": {
+        "address": "10.1.2.3/32",
+        "network": "10.0.0.0/8"
+      },
+      "output": false
+    },
+    {
+      "name": "ipMatches not-ip 10.0.0.0/8",
+      "input": {
+        "address": "not-ip",
+        "network": "10.0.0.0/8"
+      },
+      "output": false
+    },
+    {
+      "name": "ipCounterKey 10.1.2.3",
+      "input": {
+        "value": "10.1.2.3"
+      },
+      "output": "10.1.2.3"
+    },
+    {
+      "name": "ipCounterKey  10.1.2.3 ",
+      "input": {
+        "value": " 10.1.2.3 "
+      },
+      "output": "10.1.2.3"
+    },
+    {
+      "name": "ipCounterKey ::ffff:10.1.2.3",
+      "input": {
+        "value": "::ffff:10.1.2.3"
+      },
+      "output": "10.1.2.3"
+    },
+    {
+      "name": "ipCounterKey ::ffff:a01:203",
+      "input": {
+        "value": "::ffff:a01:203"
+      },
+      "output": "10.1.2.3"
+    },
+    {
+      "name": "ipCounterKey 2001:db8:1:2:3:4:5:6",
+      "input": {
+        "value": "2001:db8:1:2:3:4:5:6"
+      },
+      "output": "2001:db8:1:2::/64"
+    },
+    {
+      "name": "ipCounterKey 2001:DB8:1:2::",
+      "input": {
+        "value": "2001:DB8:1:2::"
+      },
+      "output": "2001:db8:1:2::/64"
+    },
+    {
+      "name": "ipCounterKey ::1",
+      "input": {
+        "value": "::1"
+      },
+      "output": "0:0:0:0::/64"
+    },
+    {
+      "name": "ipCounterKey fe80::1",
+      "input": {
+        "value": "fe80::1"
+      },
+      "output": "fe80:0:0:0::/64"
+    },
+    {
+      "name": "ipCounterKey not-ip",
+      "input": {
+        "value": "not-ip"
+      },
+      "output": {
+        "$undefined": true
+      }
+    },
+    {
+      "name": "ipCounterKey 10.0.0.0/8",
+      "input": {
+        "value": "10.0.0.0/8"
+      },
+      "output": {
+        "$undefined": true
+      }
+    }
+  ]
+}

@@ -1,0 +1,1298 @@
+{
+  "description": "Security Event Tokens (RFC 8417, SSF 1.0, CAEP, RISC): readSecurityEvent normalizes verified SET claims (iss, aud list, iat, jti, txn, the single event, subject, eventTimestamp in ms) or throws SignalFormatError with a reason; parseSubjectIdentifier / legacyRiscSubject read subjects; signalEventType maps event URIs; userSubjects lists the user identifiers of a subject.",
+  "source": "packages/core/src/shared-signals.ts#readSecurityEvent,parseSubjectIdentifier,legacyRiscSubject,signalEventType,userSubjects",
+  "notes": {
+    "signalEventUris": {
+      "session-revoked": "https://schemas.openid.net/secevent/caep/event-type/session-revoked",
+      "credential-change": "https://schemas.openid.net/secevent/caep/event-type/credential-change",
+      "token-claims-change": "https://schemas.openid.net/secevent/caep/event-type/token-claims-change",
+      "assurance-level-change": "https://schemas.openid.net/secevent/caep/event-type/assurance-level-change",
+      "device-compliance-change": "https://schemas.openid.net/secevent/caep/event-type/device-compliance-change",
+      "risk-level-change": "https://schemas.openid.net/secevent/caep/event-type/risk-level-change",
+      "account-disabled": "https://schemas.openid.net/secevent/risc/event-type/account-disabled",
+      "account-enabled": "https://schemas.openid.net/secevent/risc/event-type/account-enabled",
+      "account-purged": "https://schemas.openid.net/secevent/risc/event-type/account-purged",
+      "account-credential-change-required": "https://schemas.openid.net/secevent/risc/event-type/account-credential-change-required",
+      "credential-compromise": "https://schemas.openid.net/secevent/risc/event-type/credential-compromise",
+      "identifier-changed": "https://schemas.openid.net/secevent/risc/event-type/identifier-changed",
+      "identifier-recycled": "https://schemas.openid.net/secevent/risc/event-type/identifier-recycled",
+      "sessions-revoked": "https://schemas.openid.net/secevent/risc/event-type/sessions-revoked",
+      "verification": "https://schemas.openid.net/secevent/ssf/event-type/verification",
+      "stream-updated": "https://schemas.openid.net/secevent/ssf/event-type/stream-updated"
+    }
+  },
+  "cases": [
+    {
+      "name": "signalEventType caep/event-type/session-revoked",
+      "input": {
+        "uri": "https://schemas.openid.net/secevent/caep/event-type/session-revoked"
+      },
+      "output": "session-revoked"
+    },
+    {
+      "name": "signalEventType risc/event-type/account-disabled",
+      "input": {
+        "uri": "https://schemas.openid.net/secevent/risc/event-type/account-disabled"
+      },
+      "output": "account-disabled"
+    },
+    {
+      "name": "signalEventType ssf/event-type/verification",
+      "input": {
+        "uri": "https://schemas.openid.net/secevent/ssf/event-type/verification"
+      },
+      "output": "verification"
+    },
+    {
+      "name": "signalEventType risc/event-type/verification",
+      "input": {
+        "uri": "https://schemas.openid.net/secevent/risc/event-type/verification"
+      },
+      "output": "verification"
+    },
+    {
+      "name": "signalEventType sse/event-type/stream-updated",
+      "input": {
+        "uri": "https://schemas.openid.net/secevent/sse/event-type/stream-updated"
+      },
+      "output": "stream-updated"
+    },
+    {
+      "name": "signalEventType caep/event-type/unknown-thing",
+      "input": {
+        "uri": "https://schemas.openid.net/secevent/caep/event-type/unknown-thing"
+      },
+      "output": "unknown"
+    },
+    {
+      "name": "signalEventType ",
+      "input": {
+        "uri": ""
+      },
+      "output": "unknown"
+    },
+    {
+      "name": "signalEventType caep/event-type/session-revoked/",
+      "input": {
+        "uri": "https://schemas.openid.net/secevent/caep/event-type/session-revoked/"
+      },
+      "output": "unknown"
+    },
+    {
+      "name": "parseSubjectIdentifier iss_sub",
+      "input": {
+        "value": {
+          "format": "iss_sub",
+          "iss": "https://idp.example.com",
+          "sub": "u1"
+        }
+      },
+      "output": {
+        "format": "iss_sub",
+        "iss": "https://idp.example.com",
+        "sub": "u1"
+      }
+    },
+    {
+      "name": "parseSubjectIdentifier email",
+      "input": {
+        "value": {
+          "format": "email",
+          "email": "person@example.com"
+        }
+      },
+      "output": {
+        "format": "email",
+        "email": "person@example.com"
+      }
+    },
+    {
+      "name": "parseSubjectIdentifier email invalid",
+      "input": {
+        "value": {
+          "format": "email",
+          "email": "not-an-email"
+        }
+      },
+      "output": {
+        "$undefined": true
+      }
+    },
+    {
+      "name": "parseSubjectIdentifier opaque",
+      "input": {
+        "value": {
+          "format": "opaque",
+          "id": "abc-123"
+        }
+      },
+      "output": {
+        "format": "opaque",
+        "id": "abc-123"
+      }
+    },
+    {
+      "name": "parseSubjectIdentifier account",
+      "input": {
+        "value": {
+          "format": "account",
+          "uri": "acct:person@example.com"
+        }
+      },
+      "output": {
+        "format": "account",
+        "uri": "acct:person@example.com"
+      }
+    },
+    {
+      "name": "parseSubjectIdentifier account invalid",
+      "input": {
+        "value": {
+          "format": "account",
+          "uri": "mailto:person@example.com"
+        }
+      },
+      "output": {
+        "$undefined": true
+      }
+    },
+    {
+      "name": "parseSubjectIdentifier phone",
+      "input": {
+        "value": {
+          "format": "phone_number",
+          "phone_number": "+12025550123"
+        }
+      },
+      "output": {
+        "format": "phone_number",
+        "phone_number": "+12025550123"
+      }
+    },
+    {
+      "name": "parseSubjectIdentifier did",
+      "input": {
+        "value": {
+          "format": "did",
+          "url": "did:example:123"
+        }
+      },
+      "output": {
+        "format": "did",
+        "url": "did:example:123"
+      }
+    },
+    {
+      "name": "parseSubjectIdentifier uri",
+      "input": {
+        "value": {
+          "format": "uri",
+          "uri": "https://example.com/users/1"
+        }
+      },
+      "output": {
+        "format": "uri",
+        "uri": "https://example.com/users/1"
+      }
+    },
+    {
+      "name": "parseSubjectIdentifier extra members dropped",
+      "input": {
+        "value": {
+          "format": "email",
+          "email": "person@example.com",
+          "extra": 1
+        }
+      },
+      "output": {
+        "format": "email",
+        "email": "person@example.com"
+      }
+    },
+    {
+      "name": "parseSubjectIdentifier aliases",
+      "input": {
+        "value": {
+          "format": "aliases",
+          "identifiers": [
+            {
+              "format": "email",
+              "email": "a@example.com"
+            },
+            {
+              "format": "opaque",
+              "id": "x"
+            }
+          ]
+        }
+      },
+      "output": {
+        "format": "aliases",
+        "identifiers": [
+          {
+            "format": "email",
+            "email": "a@example.com"
+          },
+          {
+            "format": "opaque",
+            "id": "x"
+          }
+        ]
+      }
+    },
+    {
+      "name": "parseSubjectIdentifier aliases nested",
+      "input": {
+        "value": {
+          "format": "aliases",
+          "identifiers": [
+            {
+              "format": "aliases",
+              "identifiers": []
+            }
+          ]
+        }
+      },
+      "output": {
+        "$undefined": true
+      }
+    },
+    {
+      "name": "parseSubjectIdentifier complex",
+      "input": {
+        "value": {
+          "format": "complex",
+          "user": {
+            "format": "email",
+            "email": "a@example.com"
+          },
+          "session": {
+            "format": "opaque",
+            "id": "s1"
+          },
+          "tenant": {
+            "format": "opaque",
+            "id": "t1"
+          }
+        }
+      },
+      "output": {
+        "format": "complex",
+        "user": {
+          "format": "email",
+          "email": "a@example.com"
+        },
+        "session": {
+          "format": "opaque",
+          "id": "s1"
+        },
+        "tenant": {
+          "format": "opaque",
+          "id": "t1"
+        }
+      }
+    },
+    {
+      "name": "parseSubjectIdentifier complex inside complex",
+      "input": {
+        "value": {
+          "format": "complex",
+          "user": {
+            "format": "complex",
+            "user": {
+              "format": "opaque",
+              "id": "x"
+            }
+          }
+        }
+      },
+      "output": {
+        "$undefined": true
+      }
+    },
+    {
+      "name": "parseSubjectIdentifier unknown format",
+      "input": {
+        "value": {
+          "format": "x500",
+          "dn": "cn=a"
+        }
+      },
+      "output": {
+        "$undefined": true
+      }
+    },
+    {
+      "name": "parseSubjectIdentifier not an object",
+      "input": {
+        "value": "email"
+      },
+      "output": {
+        "$undefined": true
+      }
+    },
+    {
+      "name": "parseSubjectIdentifier control character",
+      "input": {
+        "value": {
+          "format": "opaque",
+          "id": "a\u0000"
+        }
+      },
+      "output": {
+        "$undefined": true
+      }
+    },
+    {
+      "name": "legacyRiscSubject iss-sub",
+      "input": {
+        "value": {
+          "subject_type": "iss-sub",
+          "iss": "https://accounts.google.com",
+          "sub": "123"
+        }
+      },
+      "output": {
+        "format": "iss_sub",
+        "iss": "https://accounts.google.com",
+        "sub": "123"
+      }
+    },
+    {
+      "name": "legacyRiscSubject email",
+      "input": {
+        "value": {
+          "subject_type": "email",
+          "email": "a@example.com"
+        }
+      },
+      "output": {
+        "format": "email",
+        "email": "a@example.com"
+      }
+    },
+    {
+      "name": "legacyRiscSubject phone",
+      "input": {
+        "value": {
+          "subject_type": "phone",
+          "phone": "+12025550123"
+        }
+      },
+      "output": {
+        "format": "phone_number",
+        "phone_number": "+12025550123"
+      }
+    },
+    {
+      "name": "legacyRiscSubject id_token_claims several",
+      "input": {
+        "value": {
+          "subject_type": "id_token_claims",
+          "iss": "https://accounts.google.com",
+          "sub": "123",
+          "email": "a@example.com"
+        }
+      },
+      "output": {
+        "format": "aliases",
+        "identifiers": [
+          {
+            "format": "iss_sub",
+            "iss": "https://accounts.google.com",
+            "sub": "123"
+          },
+          {
+            "format": "email",
+            "email": "a@example.com"
+          }
+        ]
+      }
+    },
+    {
+      "name": "legacyRiscSubject id_token_claims one",
+      "input": {
+        "value": {
+          "subject_type": "id-token-claims",
+          "email": "a@example.com"
+        }
+      },
+      "output": {
+        "format": "email",
+        "email": "a@example.com"
+      }
+    },
+    {
+      "name": "legacyRiscSubject id_token_claims partial iss",
+      "input": {
+        "value": {
+          "subject_type": "id_token_claims",
+          "iss": "https://accounts.google.com"
+        }
+      },
+      "output": {
+        "$undefined": true
+      }
+    },
+    {
+      "name": "legacyRiscSubject unknown type",
+      "input": {
+        "value": {
+          "subject_type": "oauth_token",
+          "token": "x"
+        }
+      },
+      "output": {
+        "$undefined": true
+      }
+    },
+    {
+      "name": "readSecurityEvent session revoked",
+      "input": {
+        "payload": {
+          "iss": "https://idp.example.com/",
+          "aud": "https://iam.example.com/api/iam",
+          "iat": 1767225600,
+          "jti": "set-01",
+          "sub_id": {
+            "format": "iss_sub",
+            "iss": "https://idp.example.com/",
+            "sub": "u1"
+          },
+          "events": {
+            "https://schemas.openid.net/secevent/caep/event-type/session-revoked": {
+              "event_timestamp": 1767225500,
+              "reason_admin": {
+                "en": "Compromised"
+              }
+            }
+          }
+        }
+      },
+      "output": {
+        "iss": "https://idp.example.com/",
+        "aud": [
+          "https://iam.example.com/api/iam"
+        ],
+        "iat": 1767225600,
+        "jti": "set-01",
+        "eventUri": "https://schemas.openid.net/secevent/caep/event-type/session-revoked",
+        "eventType": "session-revoked",
+        "event": {
+          "event_timestamp": 1767225500,
+          "reason_admin": {
+            "en": "Compromised"
+          }
+        },
+        "subject": {
+          "format": "iss_sub",
+          "iss": "https://idp.example.com/",
+          "sub": "u1"
+        },
+        "eventTimestamp": 1767225500000
+      }
+    },
+    {
+      "name": "readSecurityEvent audience list with repeats",
+      "input": {
+        "payload": {
+          "iss": "https://idp.example.com/",
+          "aud": [
+            "a",
+            "b",
+            "a"
+          ],
+          "iat": 1767225600,
+          "jti": "set-01",
+          "sub_id": {
+            "format": "iss_sub",
+            "iss": "https://idp.example.com/",
+            "sub": "u1"
+          },
+          "events": {
+            "https://schemas.openid.net/secevent/caep/event-type/session-revoked": {
+              "event_timestamp": 1767225500,
+              "reason_admin": {
+                "en": "Compromised"
+              }
+            }
+          }
+        }
+      },
+      "output": {
+        "iss": "https://idp.example.com/",
+        "aud": [
+          "a",
+          "b"
+        ],
+        "iat": 1767225600,
+        "jti": "set-01",
+        "eventUri": "https://schemas.openid.net/secevent/caep/event-type/session-revoked",
+        "eventType": "session-revoked",
+        "event": {
+          "event_timestamp": 1767225500,
+          "reason_admin": {
+            "en": "Compromised"
+          }
+        },
+        "subject": {
+          "format": "iss_sub",
+          "iss": "https://idp.example.com/",
+          "sub": "u1"
+        },
+        "eventTimestamp": 1767225500000
+      }
+    },
+    {
+      "name": "readSecurityEvent with txn and toe",
+      "input": {
+        "payload": {
+          "iss": "https://idp.example.com/",
+          "aud": "https://iam.example.com/api/iam",
+          "iat": 1767225600,
+          "jti": "set-01",
+          "sub_id": {
+            "format": "iss_sub",
+            "iss": "https://idp.example.com/",
+            "sub": "u1"
+          },
+          "events": {
+            "https://schemas.openid.net/secevent/caep/event-type/credential-change": {
+              "credential_type": "password",
+              "change_type": "update"
+            }
+          },
+          "txn": "tx-1",
+          "toe": 1767225000
+        }
+      },
+      "output": {
+        "iss": "https://idp.example.com/",
+        "aud": [
+          "https://iam.example.com/api/iam"
+        ],
+        "iat": 1767225600,
+        "jti": "set-01",
+        "txn": "tx-1",
+        "eventUri": "https://schemas.openid.net/secevent/caep/event-type/credential-change",
+        "eventType": "credential-change",
+        "event": {
+          "credential_type": "password",
+          "change_type": "update"
+        },
+        "subject": {
+          "format": "iss_sub",
+          "iss": "https://idp.example.com/",
+          "sub": "u1"
+        },
+        "eventTimestamp": 1767225000000
+      }
+    },
+    {
+      "name": "readSecurityEvent legacy RISC subject",
+      "input": {
+        "payload": {
+          "iss": "https://idp.example.com/",
+          "aud": "https://iam.example.com/api/iam",
+          "iat": 1767225600,
+          "jti": "set-01",
+          "sub_id": {
+            "$undefined": true
+          },
+          "events": {
+            "https://schemas.openid.net/secevent/risc/event-type/account-disabled": {
+              "subject": {
+                "subject_type": "iss-sub",
+                "iss": "https://idp.example.com/",
+                "sub": "u1"
+              },
+              "reason": "hijacking"
+            }
+          }
+        }
+      },
+      "output": {
+        "iss": "https://idp.example.com/",
+        "aud": [
+          "https://iam.example.com/api/iam"
+        ],
+        "iat": 1767225600,
+        "jti": "set-01",
+        "eventUri": "https://schemas.openid.net/secevent/risc/event-type/account-disabled",
+        "eventType": "account-disabled",
+        "event": {
+          "reason": "hijacking"
+        },
+        "subject": {
+          "format": "iss_sub",
+          "iss": "https://idp.example.com/",
+          "sub": "u1"
+        }
+      }
+    },
+    {
+      "name": "readSecurityEvent matching legacy and top-level subject",
+      "input": {
+        "payload": {
+          "iss": "https://idp.example.com/",
+          "aud": "https://iam.example.com/api/iam",
+          "iat": 1767225600,
+          "jti": "set-01",
+          "sub_id": {
+            "format": "iss_sub",
+            "iss": "https://idp.example.com/",
+            "sub": "u1"
+          },
+          "events": {
+            "https://schemas.openid.net/secevent/risc/event-type/account-disabled": {
+              "subject": {
+                "format": "iss_sub",
+                "iss": "https://idp.example.com/",
+                "sub": "u1"
+              }
+            }
+          }
+        }
+      },
+      "output": {
+        "iss": "https://idp.example.com/",
+        "aud": [
+          "https://iam.example.com/api/iam"
+        ],
+        "iat": 1767225600,
+        "jti": "set-01",
+        "eventUri": "https://schemas.openid.net/secevent/risc/event-type/account-disabled",
+        "eventType": "account-disabled",
+        "event": {},
+        "subject": {
+          "format": "iss_sub",
+          "iss": "https://idp.example.com/",
+          "sub": "u1"
+        }
+      }
+    },
+    {
+      "name": "readSecurityEvent conflicting legacy and top-level subject",
+      "input": {
+        "payload": {
+          "iss": "https://idp.example.com/",
+          "aud": "https://iam.example.com/api/iam",
+          "iat": 1767225600,
+          "jti": "set-01",
+          "sub_id": {
+            "format": "iss_sub",
+            "iss": "https://idp.example.com/",
+            "sub": "u1"
+          },
+          "events": {
+            "https://schemas.openid.net/secevent/risc/event-type/account-disabled": {
+              "subject": {
+                "format": "email",
+                "email": "x@example.com"
+              }
+            }
+          }
+        }
+      },
+      "output": {
+        "$error": {
+          "name": "SignalFormatError",
+          "reason": "subject",
+          "message": "The sub_id claim and the event name different subjects"
+        }
+      }
+    },
+    {
+      "name": "readSecurityEvent top-level sub contradicts subject",
+      "input": {
+        "payload": {
+          "iss": "https://idp.example.com/",
+          "aud": "https://iam.example.com/api/iam",
+          "iat": 1767225600,
+          "jti": "set-01",
+          "sub_id": {
+            "format": "iss_sub",
+            "iss": "https://idp.example.com/",
+            "sub": "u1"
+          },
+          "events": {
+            "https://schemas.openid.net/secevent/caep/event-type/session-revoked": {
+              "event_timestamp": 1767225500,
+              "reason_admin": {
+                "en": "Compromised"
+              }
+            }
+          },
+          "sub": "u2"
+        }
+      },
+      "output": {
+        "$error": {
+          "name": "SignalFormatError",
+          "reason": "subject",
+          "message": "The sub and sub_id claims name different subjects"
+        }
+      }
+    },
+    {
+      "name": "readSecurityEvent top-level sub agrees",
+      "input": {
+        "payload": {
+          "iss": "https://idp.example.com/",
+          "aud": "https://iam.example.com/api/iam",
+          "iat": 1767225600,
+          "jti": "set-01",
+          "sub_id": {
+            "format": "iss_sub",
+            "iss": "https://idp.example.com/",
+            "sub": "u1"
+          },
+          "events": {
+            "https://schemas.openid.net/secevent/caep/event-type/session-revoked": {
+              "event_timestamp": 1767225500,
+              "reason_admin": {
+                "en": "Compromised"
+              }
+            }
+          },
+          "sub": "u1"
+        }
+      },
+      "output": {
+        "iss": "https://idp.example.com/",
+        "aud": [
+          "https://iam.example.com/api/iam"
+        ],
+        "iat": 1767225600,
+        "jti": "set-01",
+        "eventUri": "https://schemas.openid.net/secevent/caep/event-type/session-revoked",
+        "eventType": "session-revoked",
+        "event": {
+          "event_timestamp": 1767225500,
+          "reason_admin": {
+            "en": "Compromised"
+          }
+        },
+        "subject": {
+          "format": "iss_sub",
+          "iss": "https://idp.example.com/",
+          "sub": "u1"
+        },
+        "eventTimestamp": 1767225500000
+      }
+    },
+    {
+      "name": "readSecurityEvent verification event",
+      "input": {
+        "payload": {
+          "iss": "https://idp.example.com/",
+          "aud": "https://iam.example.com/api/iam",
+          "iat": 1767225600,
+          "jti": "set-01",
+          "sub_id": {
+            "$undefined": true
+          },
+          "events": {
+            "https://schemas.openid.net/secevent/ssf/event-type/verification": {
+              "state": "abc"
+            }
+          }
+        }
+      },
+      "output": {
+        "iss": "https://idp.example.com/",
+        "aud": [
+          "https://iam.example.com/api/iam"
+        ],
+        "iat": 1767225600,
+        "jti": "set-01",
+        "eventUri": "https://schemas.openid.net/secevent/ssf/event-type/verification",
+        "eventType": "verification",
+        "event": {
+          "state": "abc"
+        }
+      }
+    },
+    {
+      "name": "readSecurityEvent unknown event type",
+      "input": {
+        "payload": {
+          "iss": "https://idp.example.com/",
+          "aud": "https://iam.example.com/api/iam",
+          "iat": 1767225600,
+          "jti": "set-01",
+          "sub_id": {
+            "format": "iss_sub",
+            "iss": "https://idp.example.com/",
+            "sub": "u1"
+          },
+          "events": {
+            "https://example.com/event": {}
+          }
+        }
+      },
+      "output": {
+        "iss": "https://idp.example.com/",
+        "aud": [
+          "https://iam.example.com/api/iam"
+        ],
+        "iat": 1767225600,
+        "jti": "set-01",
+        "eventUri": "https://example.com/event",
+        "eventType": "unknown",
+        "event": {},
+        "subject": {
+          "format": "iss_sub",
+          "iss": "https://idp.example.com/",
+          "sub": "u1"
+        }
+      }
+    },
+    {
+      "name": "readSecurityEvent no events",
+      "input": {
+        "payload": {
+          "iss": "https://idp.example.com/",
+          "aud": "https://iam.example.com/api/iam",
+          "iat": 1767225600,
+          "jti": "set-01",
+          "sub_id": {
+            "format": "iss_sub",
+            "iss": "https://idp.example.com/",
+            "sub": "u1"
+          },
+          "events": {}
+        }
+      },
+      "output": {
+        "$error": {
+          "name": "SignalFormatError",
+          "reason": "events",
+          "message": "A security event token carries exactly one event, not 0"
+        }
+      }
+    },
+    {
+      "name": "readSecurityEvent two events",
+      "input": {
+        "payload": {
+          "iss": "https://idp.example.com/",
+          "aud": "https://iam.example.com/api/iam",
+          "iat": 1767225600,
+          "jti": "set-01",
+          "sub_id": {
+            "format": "iss_sub",
+            "iss": "https://idp.example.com/",
+            "sub": "u1"
+          },
+          "events": {
+            "https://schemas.openid.net/secevent/caep/event-type/session-revoked": {},
+            "https://schemas.openid.net/secevent/caep/event-type/credential-change": {}
+          }
+        }
+      },
+      "output": {
+        "$error": {
+          "name": "SignalFormatError",
+          "reason": "events",
+          "message": "A security event token carries exactly one event, not 2"
+        }
+      }
+    },
+    {
+      "name": "readSecurityEvent event not an object",
+      "input": {
+        "payload": {
+          "iss": "https://idp.example.com/",
+          "aud": "https://iam.example.com/api/iam",
+          "iat": 1767225600,
+          "jti": "set-01",
+          "sub_id": {
+            "format": "iss_sub",
+            "iss": "https://idp.example.com/",
+            "sub": "u1"
+          },
+          "events": {
+            "https://schemas.openid.net/secevent/caep/event-type/session-revoked": "x"
+          }
+        }
+      },
+      "output": {
+        "$error": {
+          "name": "SignalFormatError",
+          "reason": "events",
+          "message": "The event of the security event token is not an object"
+        }
+      }
+    },
+    {
+      "name": "readSecurityEvent nonce present",
+      "input": {
+        "payload": {
+          "iss": "https://idp.example.com/",
+          "aud": "https://iam.example.com/api/iam",
+          "iat": 1767225600,
+          "jti": "set-01",
+          "sub_id": {
+            "format": "iss_sub",
+            "iss": "https://idp.example.com/",
+            "sub": "u1"
+          },
+          "events": {
+            "https://schemas.openid.net/secevent/caep/event-type/session-revoked": {
+              "event_timestamp": 1767225500,
+              "reason_admin": {
+                "en": "Compromised"
+              }
+            }
+          },
+          "nonce": "n"
+        }
+      },
+      "output": {
+        "$error": {
+          "name": "SignalFormatError",
+          "reason": "nonce",
+          "message": "A security event token must not carry a nonce"
+        }
+      }
+    },
+    {
+      "name": "readSecurityEvent missing jti",
+      "input": {
+        "payload": {
+          "iss": "https://idp.example.com/",
+          "aud": "https://iam.example.com/api/iam",
+          "iat": 1767225600,
+          "jti": {
+            "$undefined": true
+          },
+          "sub_id": {
+            "format": "iss_sub",
+            "iss": "https://idp.example.com/",
+            "sub": "u1"
+          },
+          "events": {
+            "https://schemas.openid.net/secevent/caep/event-type/session-revoked": {
+              "event_timestamp": 1767225500,
+              "reason_admin": {
+                "en": "Compromised"
+              }
+            }
+          }
+        }
+      },
+      "output": {
+        "$error": {
+          "name": "SignalFormatError",
+          "reason": "claims",
+          "message": "The security event token has no jti claim"
+        }
+      }
+    },
+    {
+      "name": "readSecurityEvent empty iss",
+      "input": {
+        "payload": {
+          "iss": "",
+          "aud": "https://iam.example.com/api/iam",
+          "iat": 1767225600,
+          "jti": "set-01",
+          "sub_id": {
+            "format": "iss_sub",
+            "iss": "https://idp.example.com/",
+            "sub": "u1"
+          },
+          "events": {
+            "https://schemas.openid.net/secevent/caep/event-type/session-revoked": {
+              "event_timestamp": 1767225500,
+              "reason_admin": {
+                "en": "Compromised"
+              }
+            }
+          }
+        }
+      },
+      "output": {
+        "$error": {
+          "name": "SignalFormatError",
+          "reason": "claims",
+          "message": "The security event token's iss claim is invalid"
+        }
+      }
+    },
+    {
+      "name": "readSecurityEvent missing aud",
+      "input": {
+        "payload": {
+          "iss": "https://idp.example.com/",
+          "aud": {
+            "$undefined": true
+          },
+          "iat": 1767225600,
+          "jti": "set-01",
+          "sub_id": {
+            "format": "iss_sub",
+            "iss": "https://idp.example.com/",
+            "sub": "u1"
+          },
+          "events": {
+            "https://schemas.openid.net/secevent/caep/event-type/session-revoked": {
+              "event_timestamp": 1767225500,
+              "reason_admin": {
+                "en": "Compromised"
+              }
+            }
+          }
+        }
+      },
+      "output": {
+        "$error": {
+          "name": "SignalFormatError",
+          "reason": "claims",
+          "message": "The security event token has no aud claim"
+        }
+      }
+    },
+    {
+      "name": "readSecurityEvent empty aud list",
+      "input": {
+        "payload": {
+          "iss": "https://idp.example.com/",
+          "aud": [],
+          "iat": 1767225600,
+          "jti": "set-01",
+          "sub_id": {
+            "format": "iss_sub",
+            "iss": "https://idp.example.com/",
+            "sub": "u1"
+          },
+          "events": {
+            "https://schemas.openid.net/secevent/caep/event-type/session-revoked": {
+              "event_timestamp": 1767225500,
+              "reason_admin": {
+                "en": "Compromised"
+              }
+            }
+          }
+        }
+      },
+      "output": {
+        "$error": {
+          "name": "SignalFormatError",
+          "reason": "claims",
+          "message": "The security event token's aud claim is invalid"
+        }
+      }
+    },
+    {
+      "name": "readSecurityEvent negative iat",
+      "input": {
+        "payload": {
+          "iss": "https://idp.example.com/",
+          "aud": "https://iam.example.com/api/iam",
+          "iat": -1,
+          "jti": "set-01",
+          "sub_id": {
+            "format": "iss_sub",
+            "iss": "https://idp.example.com/",
+            "sub": "u1"
+          },
+          "events": {
+            "https://schemas.openid.net/secevent/caep/event-type/session-revoked": {
+              "event_timestamp": 1767225500,
+              "reason_admin": {
+                "en": "Compromised"
+              }
+            }
+          }
+        }
+      },
+      "output": {
+        "$error": {
+          "name": "SignalFormatError",
+          "reason": "claims",
+          "message": "The security event token's iat claim is invalid"
+        }
+      }
+    },
+    {
+      "name": "readSecurityEvent string iat",
+      "input": {
+        "payload": {
+          "iss": "https://idp.example.com/",
+          "aud": "https://iam.example.com/api/iam",
+          "iat": "1767225600",
+          "jti": "set-01",
+          "sub_id": {
+            "format": "iss_sub",
+            "iss": "https://idp.example.com/",
+            "sub": "u1"
+          },
+          "events": {
+            "https://schemas.openid.net/secevent/caep/event-type/session-revoked": {
+              "event_timestamp": 1767225500,
+              "reason_admin": {
+                "en": "Compromised"
+              }
+            }
+          }
+        }
+      },
+      "output": {
+        "$error": {
+          "name": "SignalFormatError",
+          "reason": "claims",
+          "message": "The security event token's iat claim is invalid"
+        }
+      }
+    },
+    {
+      "name": "readSecurityEvent invalid subject",
+      "input": {
+        "payload": {
+          "iss": "https://idp.example.com/",
+          "aud": "https://iam.example.com/api/iam",
+          "iat": 1767225600,
+          "jti": "set-01",
+          "sub_id": {
+            "format": "email",
+            "email": "nope"
+          },
+          "events": {
+            "https://schemas.openid.net/secevent/caep/event-type/session-revoked": {
+              "event_timestamp": 1767225500,
+              "reason_admin": {
+                "en": "Compromised"
+              }
+            }
+          }
+        }
+      },
+      "output": {
+        "$error": {
+          "name": "SignalFormatError",
+          "reason": "subject",
+          "message": "The sub_id claim is not a valid subject identifier"
+        }
+      }
+    },
+    {
+      "name": "readSecurityEvent bad event timestamp",
+      "input": {
+        "payload": {
+          "iss": "https://idp.example.com/",
+          "aud": "https://iam.example.com/api/iam",
+          "iat": 1767225600,
+          "jti": "set-01",
+          "sub_id": {
+            "format": "iss_sub",
+            "iss": "https://idp.example.com/",
+            "sub": "u1"
+          },
+          "events": {
+            "https://schemas.openid.net/secevent/caep/event-type/session-revoked": {
+              "event_timestamp": "yesterday"
+            }
+          }
+        }
+      },
+      "output": {
+        "$error": {
+          "name": "SignalFormatError",
+          "reason": "claims",
+          "message": "The security event token's event_timestamp is invalid"
+        }
+      }
+    },
+    {
+      "name": "userSubjects undefined",
+      "input": {
+        "subject": {
+          "$undefined": true
+        }
+      },
+      "output": []
+    },
+    {
+      "name": "userSubjects email",
+      "input": {
+        "subject": {
+          "format": "email",
+          "email": "a@example.com"
+        }
+      },
+      "output": [
+        {
+          "format": "email",
+          "email": "a@example.com"
+        }
+      ]
+    },
+    {
+      "name": "userSubjects aliases",
+      "input": {
+        "subject": {
+          "format": "aliases",
+          "identifiers": [
+            {
+              "format": "email",
+              "email": "a@example.com"
+            },
+            {
+              "format": "iss_sub",
+              "iss": "i",
+              "sub": "s"
+            }
+          ]
+        }
+      },
+      "output": [
+        {
+          "format": "email",
+          "email": "a@example.com"
+        },
+        {
+          "format": "iss_sub",
+          "iss": "i",
+          "sub": "s"
+        }
+      ]
+    },
+    {
+      "name": "userSubjects complex with user",
+      "input": {
+        "subject": {
+          "format": "complex",
+          "user": {
+            "format": "email",
+            "email": "a@example.com"
+          },
+          "session": {
+            "format": "opaque",
+            "id": "s1"
+          }
+        }
+      },
+      "output": [
+        {
+          "format": "email",
+          "email": "a@example.com"
+        }
+      ]
+    },
+    {
+      "name": "userSubjects complex without user",
+      "input": {
+        "subject": {
+          "format": "complex",
+          "session": {
+            "format": "opaque",
+            "id": "s1"
+          }
+        }
+      },
+      "output": []
+    }
+  ]
+}

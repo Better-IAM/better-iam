@@ -1,0 +1,303 @@
+{
+  "adapter": "@better-iam/adapter-libsql",
+  "dialect": "sqlite",
+  "description": "Everything the adapter sends while migrate() runs, in order, captured from the real adapter (adapter construction included). `fresh` is an empty database; `current` one where every migration ran already. applied_at is the clock at migrate() time (fixed here).",
+  "appliedAtClock": 1767225600000,
+  "migrations": [
+    {
+      "name": "0001_records",
+      "statements": 2
+    },
+    {
+      "name": "0002_query_indexes",
+      "statements": 21
+    },
+    {
+      "name": "0003_ordered_indexes",
+      "statements": 2
+    },
+    {
+      "name": "0004_expiry_indexes",
+      "statements": 3
+    },
+    {
+      "name": "0005_lookup_indexes",
+      "statements": 2
+    },
+    {
+      "name": "0006_protection_indexes",
+      "statements": 1
+    }
+  ],
+  "fresh": [
+    {
+      "event": "client.transaction('write')",
+      "note": "the libSQL client opens it with BEGIN IMMEDIATE"
+    },
+    {
+      "sql": "CREATE TABLE IF NOT EXISTS iam_schema_version (id INTEGER PRIMARY KEY CHECK (id = 1), version INTEGER NOT NULL)",
+      "params": [],
+      "kind": "bookkeeping"
+    },
+    {
+      "sql": "SELECT version FROM iam_schema_version WHERE id = 1",
+      "params": [],
+      "kind": "bookkeeping"
+    },
+    {
+      "sql": "CREATE TABLE IF NOT EXISTS iam_migrations (name TEXT PRIMARY KEY, applied_at BIGINT NOT NULL)",
+      "params": [],
+      "kind": "bookkeeping"
+    },
+    {
+      "sql": "SELECT name FROM iam_migrations",
+      "params": [],
+      "kind": "bookkeeping"
+    },
+    {
+      "sql": "CREATE TABLE IF NOT EXISTS iam_records (collection TEXT NOT NULL, id TEXT NOT NULL, tenant_id TEXT NOT NULL, unique_key TEXT, data TEXT NOT NULL, PRIMARY KEY (collection, id), UNIQUE (collection, tenant_id, unique_key))",
+      "params": [],
+      "kind": "migration"
+    },
+    {
+      "sql": "CREATE INDEX IF NOT EXISTS iam_records_tenant ON iam_records (collection, tenant_id)",
+      "params": [],
+      "kind": "migration"
+    },
+    {
+      "sql": "INSERT INTO iam_migrations (name, applied_at) VALUES (?, ?)",
+      "params": [
+        "0001_records",
+        1767225600000
+      ],
+      "kind": "bookkeeping"
+    },
+    {
+      "sql": "CREATE INDEX IF NOT EXISTS iam_records_tenant_id ON iam_records (collection, tenant_id, id)",
+      "params": [],
+      "kind": "migration"
+    },
+    {
+      "sql": "CREATE INDEX IF NOT EXISTS iam_records_unique_key ON iam_records (collection, unique_key, id) WHERE unique_key IS NOT NULL",
+      "params": [],
+      "kind": "migration"
+    },
+    {
+      "sql": "CREATE INDEX IF NOT EXISTS iam_records_field_tokenHash ON iam_records (collection, json_extract(data, '$.\"tokenHash\"'), id) WHERE json_extract(data, '$.\"tokenHash\"') IS NOT NULL",
+      "params": [],
+      "kind": "migration"
+    },
+    {
+      "sql": "CREATE INDEX IF NOT EXISTS iam_records_field_identityId ON iam_records (collection, json_extract(data, '$.\"identityId\"'), id) WHERE json_extract(data, '$.\"identityId\"') IS NOT NULL",
+      "params": [],
+      "kind": "migration"
+    },
+    {
+      "sql": "CREATE INDEX IF NOT EXISTS iam_records_field_email ON iam_records (collection, json_extract(data, '$.\"email\"'), id) WHERE json_extract(data, '$.\"email\"') IS NOT NULL",
+      "params": [],
+      "kind": "migration"
+    },
+    {
+      "sql": "CREATE INDEX IF NOT EXISTS iam_records_field_parentId ON iam_records (collection, json_extract(data, '$.\"parentId\"'), id) WHERE json_extract(data, '$.\"parentId\"') IS NOT NULL",
+      "params": [],
+      "kind": "migration"
+    },
+    {
+      "sql": "CREATE INDEX IF NOT EXISTS iam_records_field_subjectId ON iam_records (collection, json_extract(data, '$.\"subjectId\"'), id) WHERE json_extract(data, '$.\"subjectId\"') IS NOT NULL",
+      "params": [],
+      "kind": "migration"
+    },
+    {
+      "sql": "CREATE INDEX IF NOT EXISTS iam_records_field_groupId ON iam_records (collection, json_extract(data, '$.\"groupId\"'), id) WHERE json_extract(data, '$.\"groupId\"') IS NOT NULL",
+      "params": [],
+      "kind": "migration"
+    },
+    {
+      "sql": "CREATE INDEX IF NOT EXISTS iam_records_field_roleId ON iam_records (collection, json_extract(data, '$.\"roleId\"'), id) WHERE json_extract(data, '$.\"roleId\"') IS NOT NULL",
+      "params": [],
+      "kind": "migration"
+    },
+    {
+      "sql": "CREATE INDEX IF NOT EXISTS iam_records_field_credentialId ON iam_records (collection, json_extract(data, '$.\"credentialId\"'), id) WHERE json_extract(data, '$.\"credentialId\"') IS NOT NULL",
+      "params": [],
+      "kind": "migration"
+    },
+    {
+      "sql": "CREATE INDEX IF NOT EXISTS iam_records_field_originalIdentityId ON iam_records (collection, json_extract(data, '$.\"originalIdentityId\"'), id) WHERE json_extract(data, '$.\"originalIdentityId\"') IS NOT NULL",
+      "params": [],
+      "kind": "migration"
+    },
+    {
+      "sql": "CREATE INDEX IF NOT EXISTS iam_records_field_impersonatorSessionId ON iam_records (collection, json_extract(data, '$.\"impersonatorSessionId\"'), id) WHERE json_extract(data, '$.\"impersonatorSessionId\"') IS NOT NULL",
+      "params": [],
+      "kind": "migration"
+    },
+    {
+      "sql": "CREATE INDEX IF NOT EXISTS iam_records_field_accountId ON iam_records (collection, json_extract(data, '$.\"accountId\"'), id) WHERE json_extract(data, '$.\"accountId\"') IS NOT NULL",
+      "params": [],
+      "kind": "migration"
+    },
+    {
+      "sql": "CREATE INDEX IF NOT EXISTS iam_records_field_clientId ON iam_records (collection, json_extract(data, '$.\"clientId\"'), id) WHERE json_extract(data, '$.\"clientId\"') IS NOT NULL",
+      "params": [],
+      "kind": "migration"
+    },
+    {
+      "sql": "CREATE INDEX IF NOT EXISTS iam_records_field_uidHash ON iam_records (collection, json_extract(data, '$.\"uidHash\"'), id) WHERE json_extract(data, '$.\"uidHash\"') IS NOT NULL",
+      "params": [],
+      "kind": "migration"
+    },
+    {
+      "sql": "CREATE INDEX IF NOT EXISTS iam_records_field_userCodeHash ON iam_records (collection, json_extract(data, '$.\"userCodeHash\"'), id) WHERE json_extract(data, '$.\"userCodeHash\"') IS NOT NULL",
+      "params": [],
+      "kind": "migration"
+    },
+    {
+      "sql": "CREATE INDEX IF NOT EXISTS iam_records_field_grantIdHash ON iam_records (collection, json_extract(data, '$.\"grantIdHash\"'), id) WHERE json_extract(data, '$.\"grantIdHash\"') IS NOT NULL",
+      "params": [],
+      "kind": "migration"
+    },
+    {
+      "sql": "CREATE INDEX IF NOT EXISTS iam_records_field_connectionId ON iam_records (collection, json_extract(data, '$.\"connectionId\"'), id) WHERE json_extract(data, '$.\"connectionId\"') IS NOT NULL",
+      "params": [],
+      "kind": "migration"
+    },
+    {
+      "sql": "CREATE INDEX IF NOT EXISTS iam_records_field_targetId ON iam_records (collection, json_extract(data, '$.\"targetId\"'), id) WHERE json_extract(data, '$.\"targetId\"') IS NOT NULL",
+      "params": [],
+      "kind": "migration"
+    },
+    {
+      "sql": "CREATE INDEX IF NOT EXISTS iam_records_field_streamId ON iam_records (collection, json_extract(data, '$.\"streamId\"'), id) WHERE json_extract(data, '$.\"streamId\"') IS NOT NULL",
+      "params": [],
+      "kind": "migration"
+    },
+    {
+      "sql": "CREATE INDEX IF NOT EXISTS iam_records_field_jti ON iam_records (collection, json_extract(data, '$.\"jti\"'), id) WHERE json_extract(data, '$.\"jti\"') IS NOT NULL",
+      "params": [],
+      "kind": "migration"
+    },
+    {
+      "sql": "INSERT INTO iam_migrations (name, applied_at) VALUES (?, ?)",
+      "params": [
+        "0002_query_indexes",
+        1767225600000
+      ],
+      "kind": "bookkeeping"
+    },
+    {
+      "sql": "CREATE INDEX IF NOT EXISTS iam_records_order_timestamp ON iam_records (collection, tenant_id, json_extract(data, '$.\"timestamp\"'), id) WHERE json_extract(data, '$.\"timestamp\"') IS NOT NULL",
+      "params": [],
+      "kind": "migration"
+    },
+    {
+      "sql": "CREATE INDEX IF NOT EXISTS iam_records_order_sequence ON iam_records (collection, tenant_id, json_extract(data, '$.\"sequence\"'), id) WHERE json_extract(data, '$.\"sequence\"') IS NOT NULL",
+      "params": [],
+      "kind": "migration"
+    },
+    {
+      "sql": "INSERT INTO iam_migrations (name, applied_at) VALUES (?, ?)",
+      "params": [
+        "0003_ordered_indexes",
+        1767225600000
+      ],
+      "kind": "bookkeeping"
+    },
+    {
+      "sql": "CREATE INDEX IF NOT EXISTS iam_records_expiry_expiresAt ON iam_records (collection, json_extract(data, '$.\"expiresAt\"'), id) WHERE json_extract(data, '$.\"expiresAt\"') IS NOT NULL",
+      "params": [],
+      "kind": "migration"
+    },
+    {
+      "sql": "CREATE INDEX IF NOT EXISTS iam_records_expiry_deliveredAt ON iam_records (collection, json_extract(data, '$.\"deliveredAt\"'), id) WHERE json_extract(data, '$.\"deliveredAt\"') IS NOT NULL",
+      "params": [],
+      "kind": "migration"
+    },
+    {
+      "sql": "CREATE INDEX IF NOT EXISTS iam_records_expiry_failedAt ON iam_records (collection, json_extract(data, '$.\"failedAt\"'), id) WHERE json_extract(data, '$.\"failedAt\"') IS NOT NULL",
+      "params": [],
+      "kind": "migration"
+    },
+    {
+      "sql": "INSERT INTO iam_migrations (name, applied_at) VALUES (?, ?)",
+      "params": [
+        "0004_expiry_indexes",
+        1767225600000
+      ],
+      "kind": "bookkeeping"
+    },
+    {
+      "sql": "CREATE INDEX IF NOT EXISTS iam_records_field_sourceSessionId ON iam_records (collection, json_extract(data, '$.\"sourceSessionId\"'), id) WHERE json_extract(data, '$.\"sourceSessionId\"') IS NOT NULL",
+      "params": [],
+      "kind": "migration"
+    },
+    {
+      "sql": "CREATE INDEX IF NOT EXISTS iam_records_field_trustId ON iam_records (collection, json_extract(data, '$.\"trustId\"'), id) WHERE json_extract(data, '$.\"trustId\"') IS NOT NULL",
+      "params": [],
+      "kind": "migration"
+    },
+    {
+      "sql": "INSERT INTO iam_migrations (name, applied_at) VALUES (?, ?)",
+      "params": [
+        "0005_lookup_indexes",
+        1767225600000
+      ],
+      "kind": "bookkeeping"
+    },
+    {
+      "sql": "CREATE INDEX IF NOT EXISTS iam_records_field_fingerprint ON iam_records (collection, json_extract(data, '$.\"fingerprint\"'), id) WHERE json_extract(data, '$.\"fingerprint\"') IS NOT NULL",
+      "params": [],
+      "kind": "migration"
+    },
+    {
+      "sql": "INSERT INTO iam_migrations (name, applied_at) VALUES (?, ?)",
+      "params": [
+        "0006_protection_indexes",
+        1767225600000
+      ],
+      "kind": "bookkeeping"
+    },
+    {
+      "sql": "INSERT INTO iam_schema_version (id, version) VALUES (1, 1) ON CONFLICT (id) DO NOTHING",
+      "params": [],
+      "kind": "bookkeeping"
+    },
+    {
+      "event": "commit"
+    }
+  ],
+  "current": [
+    {
+      "event": "client.transaction('write')",
+      "note": "the libSQL client opens it with BEGIN IMMEDIATE"
+    },
+    {
+      "sql": "CREATE TABLE IF NOT EXISTS iam_schema_version (id INTEGER PRIMARY KEY CHECK (id = 1), version INTEGER NOT NULL)",
+      "params": [],
+      "kind": "bookkeeping"
+    },
+    {
+      "sql": "SELECT version FROM iam_schema_version WHERE id = 1",
+      "params": [],
+      "kind": "bookkeeping"
+    },
+    {
+      "sql": "CREATE TABLE IF NOT EXISTS iam_migrations (name TEXT PRIMARY KEY, applied_at BIGINT NOT NULL)",
+      "params": [],
+      "kind": "bookkeeping"
+    },
+    {
+      "sql": "SELECT name FROM iam_migrations",
+      "params": [],
+      "kind": "bookkeeping"
+    },
+    {
+      "sql": "INSERT INTO iam_schema_version (id, version) VALUES (1, 1) ON CONFLICT (id) DO NOTHING",
+      "params": [],
+      "kind": "bookkeeping"
+    },
+    {
+      "event": "commit"
+    }
+  ]
+}

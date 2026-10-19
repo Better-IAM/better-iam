@@ -1,0 +1,40 @@
+[package]
+name = "better-iam-core"
+description = "Core of Better IAM for Rust: shared types, the storage contract, policy validation and evaluation, query planning, the audit hash chain, and adapter conformance tests."
+readme = "README.md"
+keywords = ["iam", "authorization", "access-control", "policy", "abac"]
+categories = ["authentication", "database", "data-structures"]
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+
+[features]
+default = []
+# The adapter conformance suite (`@better-iam/core/conformance`).
+conformance = ["tokio/time"]
+
+[dependencies]
+async-trait.workspace = true
+futures.workspace = true
+indexmap.workspace = true
+regex.workspace = true
+ryu-js.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }
+async-trait.workspace = true
+regex.workspace = true
+serde_json.workspace = true
+
+[[test]]
+name = "conformance_memory"
+required-features = ["conformance"]

@@ -14,6 +14,35 @@ authors = ["Better IAM contributors"]
 # Internal crates are listed here with both `path` and `version` so `cargo publish --workspace` resolves them;
 # `scripts/release-version.mjs` keeps these versions in lockstep with the workspace version.
 [workspace.dependencies]
+better-iam-core = { path = "crates/core", version = "0.3.1" }
+better-iam-adapter-sqlite = { path = "crates/adapter-sqlite", version = "0.3.1" }
+better-iam-adapter-postgres = { path = "crates/adapter-postgres", version = "0.3.1" }
+better-iam-adapter-libsql = { path = "crates/adapter-libsql", version = "0.3.1" }
+better-iam-auth = { path = "crates/auth", version = "0.3.1" }
+better-iam-types = { path = "crates/types", version = "0.3.1" }
+better-iam-server = { path = "crates/server", version = "0.3.1" }
+
+# Third-party dependencies shared by the workspace.
+async-trait = "0.1"
+futures = "0.3"
+indexmap = { version = "2", features = ["serde"] }
+regex = "1"
+ryu-js = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order", "float_roundtrip"] }
+sha2 = "0.10"
+thiserror = "2"
+tokio = { version = "1", features = ["rt", "sync", "macros", "time"] }
+rusqlite = { version = "0.40", features = ["bundled"] }
+tokio-postgres = "0.7"
+deadpool-postgres = "0.14"
+tokio-postgres-rustls = { version = "0.14", features = ["ring"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+webpki-roots = "1"
+bytes = "1"
+# Remote (Hrana) only: the libSQL C core defines the same symbols as bundled SQLite, so local files use rusqlite.
+libsql = { version = "0.10", default-features = false, features = ["remote", "tls"] }
+tempfile = "3"
 
 [profile.dev.package."*"]
 opt-level = 1

@@ -1,0 +1,281 @@
+//! Port of the validators of `packages/server/src/web-identity.ts` that configuration needs (`webIdentityIssuer`).
+//!
+//! The external-token verifier (`createWebIdentityVerifier`: discovery, JWKS caching, signature and claim checks) is
+//! the [`crate::contracts::WebIdentityVerifier`] contract, ported with the STS modules.
+
+use better_iam_core::IamResult;
+use serde_json::Value;
+use url::Url;
+
+use crate::hosts::url_hostname;
+use crate::js::{invalid_input, utf16_len};
+
+const LOOPBACK_HOSTS: [&str; 3] = ["localhost", "127.0.0.1", "[::1]"];
+
+/// `/[\u0000-\u001f\u007f]/`.
+fn has_control_or_delete(value: &str) -> bool {
+    value.chars().any(|c| (c as u32) < 0x20 || c == '\u{7f}')
+}
+
+/// What [`web_identity_issuer`] checks besides the URL shape.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct IssuerRules<'a> {
+    pub allow_insecure_localhost: bool,
+    pub self_issuer: Option<&'a str>,
+    pub allowed_issuers: Option<&'a [String]>,
+}
+
+/// `webIdentityIssuer(value, options)`: an absolute https URL without credentials, query or fragment, at most 512
+/// characters (http only for loopback hosts with `allowInsecureLocalhost`). IAM's own issuer is refused, and with
+/// `allowedIssuers` the issuer must be on it. Returns the value unchanged; comparisons are exact.
+pub fn web_identity_issuer(value: Option<&Value>, rules: &IssuerRules<'_>) -> IamResult<String> {
+    let value = match value {
+        Some(Value::String(text))
+            if !text.is_empty() && utf16_len(text) <= 512 && !has_control_or_delete(text) =>
+        {
+            text.clone()
+        }
+        _ => return Err(invalid_input("Invalid issuer")),
+    };
+    let Ok(url) = Url::parse(&value) else {
+        return Err(invalid_input("The issuer must be an absolute URL"));
+    };
+    let insecure_local =
+        rules.allow_insecure_localhost && LOOPBACK_HOSTS.contains(&url_hostname(&url).as_str());
+    if url.scheme() != "https" && !(insecure_local && url.scheme() == "http") {
+        return Err(invalid_input("The issuer must use https"));
+    }
+    if !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some_and(|query| !query.is_empty())
+        || url.fragment().is_some_and(|fragment| !fragment.is_empty())
+        || value.contains(['?', '#'])
+    {
+        return Err(invalid_input(
+            "The issuer cannot carry credentials, a query or a fragment",
+        ));
+    }
+    let trimmed = |issuer: &str| issuer.trim_end_matches('/').to_owned();
+    if let Some(self_issuer) = rules.self_issuer
+        && trimmed(&value) == trimmed(self_issuer)
+    {
+        return Err(invalid_input(
+            "IAM cannot trust its own issuer as a web identity provider",
+        ));
+    }
+    if let Some(allowed) = rules.allowed_issuers
+        && !allowed.contains(&value)
+    {
+        return Err(invalid_input(
+            "The issuer is not in sts.webIdentity.allowedIssuers",
+        ));
+    }
+    Ok(value)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn check(value: Value, rules: &IssuerRules<'_>) -> Result<String, String> {
+        web_identity_issuer(Some(&value), rules).map_err(|error| error.message)
+    }
+
+    #[test]
+    fn issuers() {
+        let rules = IssuerRules {
+            self_issuer: Some("https://iam.example.com/api/iam"),
+            ..IssuerRules::default()
+        };
+        assert_eq!(
+            check(json!("https://token.actions.githubusercontent.com"), &rules).unwrap(),
+            "https://token.actions.githubusercontent.com"
+        );
+        assert_eq!(check(json!(""), &rules).unwrap_err(), "Invalid issuer");
+        assert_eq!(
+            check(json!("not a url"), &rules).unwrap_err(),
+            "The issuer must be an absolute URL"
+        );
+        assert_eq!(
+            check(json!("http://localhost:8080"), &rules).unwrap_err(),
+            "The issuer must use https"
+        );
+        assert!(
+            check(
+                json!("http://localhost:8080"),
+                &IssuerRules {
+                    allow_insecure_localhost: true,
+                    ..rules
+                }
+            )
+            .is_ok()
+        );
+        assert_eq!(
+            check(json!("https://a.example.com/?"), &rules).unwrap_err(),
+            "The issuer cannot carry credentials, a query or a fragment"
+        );
+        assert_eq!(
+            check(json!("https://iam.example.com/api/iam/"), &rules).unwrap_err(),
+            "IAM cannot trust its own issuer as a web identity provider"
+        );
+        let allowed = vec!["https://a.example.com".to_owned()];
+        assert_eq!(
+            check(
+                json!("https://b.example.com"),
+                &IssuerRules {
+                    allowed_issuers: Some(&allowed),
+                    ..rules
+                }
+            )
+            .unwrap_err(),
+            "The issuer is not in sts.webIdentity.allowedIssuers"
+        );
+    }
+}
+
+// --- Skeleton stubs (generated by crates/server/tools/gen-skeleton.mjs): items other modules use that this
+// file does not port yet. Each returns NOT_IMPLEMENTED (501) until ported.
+
+mod skeleton {
+    #![allow(
+        unused_variables,
+        unused_imports,
+        dead_code,
+        clippy::too_many_arguments
+    )]
+    use crate::context::{ServerContext, Store};
+    use crate::options::{HttpRequest, HttpResponse};
+    use crate::port::{Callback, not_ported};
+    use better_iam_core::{IamError, IamResult};
+    use indexmap::{IndexMap, IndexSet};
+    use serde::{Deserialize, Serialize};
+    use serde_json::{Map, Value, json};
+    use std::sync::{Arc, Weak};
+
+    /// A verified external token. `context` holds the flattened claims as `token.<claim>` condition keys.
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+    pub struct VerifiedWebIdentity {
+        #[serde(rename = "issuer")]
+        pub issuer: String,
+        #[serde(rename = "subject")]
+        pub subject: String,
+        /// The provider audience the token was accepted for.
+        #[serde(rename = "audience")]
+        pub audience: String,
+        #[serde(rename = "jti", default, skip_serializing_if = "Option::is_none")]
+        pub jti: Option<String>,
+        /// Epoch seconds.
+        #[serde(rename = "issuedAt")]
+        pub issued_at: f64,
+        /// Epoch seconds.
+        #[serde(rename = "expiresAt")]
+        pub expires_at: f64,
+        #[serde(rename = "context")]
+        pub context: Map<String, Value>,
+        /// Members this type does not declare.
+        #[serde(flatten)]
+        pub extra: Map<String, Value>,
+    }
+
+    /// Signature algorithms a provider may allow. Symmetric algorithms and `none` are never accepted.
+    pub const WEB_IDENTITY_ALGORITHMS: &[&str] = &[
+        "RS256", "RS384", "RS512", "PS256", "PS384", "PS512", "ES256", "ES384", "EdDSA",
+    ];
+
+    /// A refused external token. Callers turn every reason into the same public error; `reason` is for audits.
+    /// TODO(port): a class in TypeScript (an error subclass or a stateful helper).
+    #[derive(Debug, Clone, PartialEq)]
+    pub struct WebIdentityFailure {
+        pub error: IamError,
+    }
+
+    impl WebIdentityFailure {
+        /// `new WebIdentityFailure(...)`.
+        pub fn new(reason: &crate::web_identity::WebIdentityFailureReason) -> IamResult<Self> {
+            Err(not_ported("web-identity.ts new WebIdentityFailure"))
+        }
+    }
+
+    impl From<WebIdentityFailure> for IamError {
+        fn from(error: WebIdentityFailure) -> Self {
+            error.error
+        }
+    }
+
+    /// TODO(port): a union or intersection type in TypeScript; JSON until ported.
+    pub type WebIdentityFailureReason = Value;
+
+    /// The verifier contract (`WebIdentityVerifier` of web-identity.ts).
+    pub use crate::contracts::WebIdentityVerifier;
+
+    /// `createWebIdentityVerifier({ ...config.sts.webIdentity, fetchJson, now, selfIssuer })`: creates the web-identity
+    /// verifier. Fetched keys are cached per provider id (dropped when `updatedAt` changes) for `jwksCacheSeconds`,
+    /// fetched single-flight, remembered as unavailable for 30 s after a failure, and refetched on an unknown `kid` at
+    /// most once per 30 s. Nothing is fetched until a token needs it.
+    pub fn create_web_identity_verifier(
+        options: &crate::options::ResolvedWebIdentityConfig,
+        fetch_json: Option<crate::options::FetchJsonFn>,
+        now: crate::context::NowFn,
+        self_issuer: &str,
+    ) -> IamResult<Arc<dyn WebIdentityVerifier>> {
+        Err(not_ported("web-identity.ts createWebIdentityVerifier"))
+    }
+
+    /// Evaluates trust conditions against flattened claims with the core policy engine (an allow statement for
+    /// `sts:AssumeRoleWithWebIdentity` on `trust/{trustId}`). `failed` lists each unmet entry as `Operator:key`.
+    pub fn match_web_identity_conditions(
+        conditions: &Value,
+        context: &Map<String, Value>,
+        trust_id: &str,
+    ) -> IamResult<Value> {
+        Err(not_ported("web-identity.ts matchWebIdentityConditions"))
+    }
+
+    /// Validates an algorithm allowlist: a non-empty subset of `WEB_IDENTITY_ALGORITHMS` (default RS256 and ES256).
+    pub fn web_identity_algorithms(value: Option<&Value>) -> IamResult<Vec<String>> {
+        Err(not_ported("web-identity.ts webIdentityAlgorithms"))
+    }
+
+    /// Validates the accepted audiences: 1 to 10 strings of 1 to 256 characters.
+    pub fn web_identity_audiences(value: Option<&Value>) -> IamResult<Vec<String>> {
+        Err(not_ported("web-identity.ts webIdentityAudiences"))
+    }
+
+    /// Validates a flattened claim name as used in conditions, `tagClaims` and `sourceIdentityClaim`: `token.<claim>`.
+    pub fn web_identity_claim_name(value: Option<&Value>) -> IamResult<String> {
+        Err(not_ported("web-identity.ts webIdentityClaimName"))
+    }
+
+    /// Validates web-identity trust conditions: the core condition grammar over `token.<claim>` keys, at most 20
+    /// operator/key entries, no policy variables, and a mandatory subject pin — a `StringEquals` or `StringLike` entry
+    /// on `token.sub` whose values are non-empty and, for `StringLike`, put any wildcard only after two complete
+    /// segments (see `pinsSubject`; else WEAK_TRUST_CONDITIONS).
+    pub fn web_identity_conditions(value: Option<&Value>) -> IamResult<Value> {
+        Err(not_ported("web-identity.ts webIdentityConditions"))
+    }
+
+    /// Validates a JWKS URL: https on port 443 without credentials or a fragment (loopback http with the dev option).
+    pub fn web_identity_jwks_uri(value: Option<&Value>, options: &Value) -> IamResult<String> {
+        Err(not_ported("web-identity.ts webIdentityJwksUri"))
+    }
+
+    /// Validates static provider keys: 1 to 20 public keys (RSA of at least 2048 bits, EC P-256/P-384/P-521, OKP
+    /// Ed25519), `use` absent or `sig`. Returns an allowlisted copy.
+    pub fn web_identity_keys(value: Option<&Value>) -> IamResult<Value> {
+        Err(not_ported("web-identity.ts webIdentityKeys"))
+    }
+
+    /// The replay-cache key of a token at a provider (hex): by `jti` when present, else by the hash of the token's
+    /// signed content (`header.payload`). The signature segment is left out on purpose: it is malleable without the key
+    /// (unused trailing base64url bits, and ECDSA's (r, s) / (r, n - s) pair), so hashing the whole token would let one
+    /// token be redeemed several times under different spellings.
+    pub fn web_identity_replay_id(
+        provider_id: &str,
+        jti: Option<&str>,
+        token: &str,
+    ) -> IamResult<String> {
+        Err(not_ported("web-identity.ts webIdentityReplayId"))
+    }
+}
+pub use skeleton::*;

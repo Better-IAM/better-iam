@@ -1,0 +1,427 @@
+{
+  "description": "RFC 8785 JSON Canonicalization Scheme (canonicalizeJson): members sorted by UTF-16 code units at every depth, ECMAScript shortest number form, JSON.stringify string escaping, no whitespace. undefined members are dropped and undefined array entries become null; NaN, Infinity and bigints throw TypeError. Output is the exact string.",
+  "source": "packages/core/src/jcs.ts#canonicalizeJson",
+  "cases": [
+    {
+      "name": "null",
+      "input": {
+        "value": null
+      },
+      "output": "null"
+    },
+    {
+      "name": "true",
+      "input": {
+        "value": true
+      },
+      "output": "true"
+    },
+    {
+      "name": "false",
+      "input": {
+        "value": false
+      },
+      "output": "false"
+    },
+    {
+      "name": "zero",
+      "input": {
+        "value": 0
+      },
+      "output": "0"
+    },
+    {
+      "name": "negative zero",
+      "input": {
+        "value": {
+          "$number": "-0"
+        }
+      },
+      "output": "0"
+    },
+    {
+      "name": "integer",
+      "input": {
+        "value": 123
+      },
+      "output": "123"
+    },
+    {
+      "name": "negative",
+      "input": {
+        "value": -45
+      },
+      "output": "-45"
+    },
+    {
+      "name": "float",
+      "input": {
+        "value": 0.1
+      },
+      "output": "0.1"
+    },
+    {
+      "name": "float sum",
+      "input": {
+        "value": 0.30000000000000004
+      },
+      "output": "0.30000000000000004"
+    },
+    {
+      "name": "exponent large",
+      "input": {
+        "value": 1e+21
+      },
+      "output": "1e+21"
+    },
+    {
+      "name": "below exponent threshold",
+      "input": {
+        "value": 100000000000000000000
+      },
+      "output": "100000000000000000000"
+    },
+    {
+      "name": "exponent small",
+      "input": {
+        "value": 1e-7
+      },
+      "output": "1e-7"
+    },
+    {
+      "name": "small non-exponent",
+      "input": {
+        "value": 0.000001
+      },
+      "output": "0.000001"
+    },
+    {
+      "name": "max safe integer",
+      "input": {
+        "value": 9007199254740991
+      },
+      "output": "9007199254740991"
+    },
+    {
+      "name": "beyond safe integer",
+      "input": {
+        "value": 9007199254740994
+      },
+      "output": "9007199254740994"
+    },
+    {
+      "name": "max value",
+      "input": {
+        "value": 1.7976931348623157e+308
+      },
+      "output": "1.7976931348623157e+308"
+    },
+    {
+      "name": "min value",
+      "input": {
+        "value": 5e-324
+      },
+      "output": "5e-324"
+    },
+    {
+      "name": "rfc 8785 numbers",
+      "input": {
+        "value": [
+          333333333.3333333,
+          1e+30,
+          4.5,
+          0.002,
+          1e-27
+        ]
+      },
+      "output": "[333333333.3333333,1e+30,4.5,0.002,1e-27]"
+    },
+    {
+      "name": "empty string",
+      "input": {
+        "value": ""
+      },
+      "output": "\"\""
+    },
+    {
+      "name": "ascii string",
+      "input": {
+        "value": "hello"
+      },
+      "output": "\"hello\""
+    },
+    {
+      "name": "escapes",
+      "input": {
+        "value": "quote \" backslash \\ slash / tab \t newline \n cr \r bs \b ff \f"
+      },
+      "output": "\"quote \\\" backslash \\\\ slash / tab \\t newline \\n cr \\r bs \\b ff \\f\""
+    },
+    {
+      "name": "control characters",
+      "input": {
+        "value": "\u0000\u0001\u001f"
+      },
+      "output": "\"\\u0000\\u0001\\u001f\""
+    },
+    {
+      "name": "line separators",
+      "input": {
+        "value": "  "
+      },
+      "output": "\"  \""
+    },
+    {
+      "name": "unicode",
+      "input": {
+        "value": "café ü 日本 €"
+      },
+      "output": "\"café ü 日本 €\""
+    },
+    {
+      "name": "astral",
+      "input": {
+        "value": "😀 𝄞"
+      },
+      "output": "\"😀 𝄞\""
+    },
+    {
+      "name": "lone high surrogate",
+      "input": {
+        "value": {
+          "$utf16": [
+            55296
+          ]
+        }
+      },
+      "output": "\"\\ud800\""
+    },
+    {
+      "name": "lone low surrogate",
+      "input": {
+        "value": {
+          "$utf16": [
+            97,
+            56320,
+            98
+          ]
+        }
+      },
+      "output": "\"a\\udc00b\""
+    },
+    {
+      "name": "empty object",
+      "input": {
+        "value": {}
+      },
+      "output": "{}"
+    },
+    {
+      "name": "empty array",
+      "input": {
+        "value": []
+      },
+      "output": "[]"
+    },
+    {
+      "name": "key order",
+      "input": {
+        "value": {
+          "b": 1,
+          "a": 2,
+          "c": {
+            "z": 1,
+            "y": [
+              3,
+              {
+                "k": 1,
+                "j": 2
+              }
+            ]
+          }
+        }
+      },
+      "output": "{\"a\":2,\"b\":1,\"c\":{\"y\":[3,{\"j\":2,\"k\":1}],\"z\":1}}"
+    },
+    {
+      "name": "integer-like keys",
+      "input": {
+        "value": {
+          "1": "one",
+          "2": "two",
+          "10": "ten",
+          "a": "a"
+        }
+      },
+      "output": "{\"1\":\"one\",\"10\":\"ten\",\"2\":\"two\",\"a\":\"a\"}"
+    },
+    {
+      "name": "utf-16 key order",
+      "input": {
+        "value": {
+          "1": "one",
+          "€": "euro",
+          "\r": "cr",
+          "ö": "o-umlaut",
+          "😀": "emoji",
+          "דּ": "hebrew",
+          "": "c1"
+        }
+      },
+      "output": "{\"\\r\":\"cr\",\"1\":\"one\",\"\":\"c1\",\"ö\":\"o-umlaut\",\"€\":\"euro\",\"😀\":\"emoji\",\"דּ\":\"hebrew\"}"
+    },
+    {
+      "name": "undefined members dropped",
+      "input": {
+        "value": {
+          "a": {
+            "$undefined": true
+          },
+          "b": 1
+        }
+      },
+      "output": "{\"b\":1}"
+    },
+    {
+      "name": "undefined array entries",
+      "input": {
+        "value": [
+          1,
+          {
+            "$undefined": true
+          },
+          3
+        ]
+      },
+      "output": "[1,null,3]"
+    },
+    {
+      "name": "nested arrays",
+      "input": {
+        "value": [
+          [],
+          [
+            []
+          ],
+          [
+            1,
+            [
+              2,
+              [
+                3
+              ]
+            ]
+          ]
+        ]
+      },
+      "output": "[[],[[]],[1,[2,[3]]]]"
+    },
+    {
+      "name": "rfc 8785 example",
+      "input": {
+        "value": {
+          "numbers": [
+            333333333.3333333,
+            1e+30,
+            4.5,
+            0.002,
+            1e-27
+          ],
+          "string": "€$\u000f\nA'B\"\\\\\"/",
+          "literals": [
+            null,
+            true,
+            false
+          ]
+        }
+      },
+      "output": "{\"literals\":[null,true,false],\"numbers\":[333333333.3333333,1e+30,4.5,0.002,1e-27],\"string\":\"€$\\u000f\\nA'B\\\"\\\\\\\\\\\"/\"}"
+    },
+    {
+      "name": "NaN",
+      "input": {
+        "value": {
+          "$number": "NaN"
+        }
+      },
+      "output": {
+        "$error": {
+          "name": "TypeError",
+          "message": "JSON cannot represent a non-finite number"
+        }
+      }
+    },
+    {
+      "name": "Infinity",
+      "input": {
+        "value": {
+          "$number": "Infinity"
+        }
+      },
+      "output": {
+        "$error": {
+          "name": "TypeError",
+          "message": "JSON cannot represent a non-finite number"
+        }
+      }
+    },
+    {
+      "name": "negative Infinity",
+      "input": {
+        "value": {
+          "$number": "-Infinity"
+        }
+      },
+      "output": {
+        "$error": {
+          "name": "TypeError",
+          "message": "JSON cannot represent a non-finite number"
+        }
+      }
+    },
+    {
+      "name": "bigint",
+      "input": {
+        "value": {
+          "$bigint": "10"
+        }
+      },
+      "output": {
+        "$error": {
+          "name": "TypeError",
+          "message": "JSON cannot represent a bigint"
+        }
+      }
+    },
+    {
+      "name": "undefined top level",
+      "input": {
+        "value": {
+          "$undefined": true
+        }
+      },
+      "output": {
+        "$error": {
+          "name": "TypeError",
+          "message": "The value has no JSON representation"
+        }
+      }
+    },
+    {
+      "name": "NaN inside object",
+      "input": {
+        "value": {
+          "a": {
+            "$number": "NaN"
+          }
+        }
+      },
+      "output": {
+        "$error": {
+          "name": "TypeError",
+          "message": "JSON cannot represent a non-finite number"
+        }
+      }
+    }
+  ]
+}

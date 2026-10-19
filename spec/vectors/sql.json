@@ -1,0 +1,1218 @@
+{
+  "description": "SELECT statements the reference adapters run for record queries (sqliteSelect for SQLite and libSQL, postgresSelect for PostgreSQL): text and bound values, exactly. Queries come from planQuery over the filter plus the cursor, order and page given.",
+  "source": "packages/core/src/sql.ts#sqliteSelect,postgresSelect; packages/core/src/storage.ts#planQuery",
+  "cases": [
+    {
+      "name": "sqlite collection only",
+      "input": {
+        "collection": "tenants",
+        "filter": {}
+      },
+      "output": {
+        "query": {
+          "collection": "tenants",
+          "conditions": []
+        },
+        "exact": true,
+        "statement": {
+          "text": "SELECT collection, id, tenant_id, unique_key, data FROM iam_records WHERE collection = ? ORDER BY id",
+          "values": [
+            "tenants"
+          ]
+        }
+      }
+    },
+    {
+      "name": "postgres collection only",
+      "input": {
+        "collection": "tenants",
+        "filter": {}
+      },
+      "output": {
+        "query": {
+          "collection": "tenants",
+          "conditions": []
+        },
+        "exact": true,
+        "statement": {
+          "text": "SELECT collection, id, tenant_id, unique_key, data FROM iam_records WHERE collection = $1 ORDER BY id",
+          "values": [
+            "tenants"
+          ]
+        }
+      }
+    },
+    {
+      "name": "sqlite by tenant",
+      "input": {
+        "collection": "identities",
+        "filter": {
+          "tenantId": "tnt_01"
+        }
+      },
+      "output": {
+        "query": {
+          "collection": "identities",
+          "conditions": [],
+          "tenantId": "tnt_01"
+        },
+        "exact": true,
+        "statement": {
+          "text": "SELECT collection, id, tenant_id, unique_key, data FROM iam_records WHERE collection = ? AND tenant_id = ? ORDER BY id",
+          "values": [
+            "identities",
+            "tnt_01"
+          ]
+        }
+      }
+    },
+    {
+      "name": "postgres by tenant",
+      "input": {
+        "collection": "identities",
+        "filter": {
+          "tenantId": "tnt_01"
+        }
+      },
+      "output": {
+        "query": {
+          "collection": "identities",
+          "conditions": [],
+          "tenantId": "tnt_01"
+        },
+        "exact": true,
+        "statement": {
+          "text": "SELECT collection, id, tenant_id, unique_key, data FROM iam_records WHERE collection = $1 AND tenant_id = $2 ORDER BY id",
+          "values": [
+            "identities",
+            "tnt_01"
+          ]
+        }
+      }
+    },
+    {
+      "name": "sqlite by id",
+      "input": {
+        "collection": "identities",
+        "filter": {
+          "id": "idn_01"
+        }
+      },
+      "output": {
+        "query": {
+          "collection": "identities",
+          "conditions": [],
+          "id": "idn_01"
+        },
+        "exact": true,
+        "statement": {
+          "text": "SELECT collection, id, tenant_id, unique_key, data FROM iam_records WHERE collection = ? AND id = ? ORDER BY id",
+          "values": [
+            "identities",
+            "idn_01"
+          ]
+        }
+      }
+    },
+    {
+      "name": "postgres by id",
+      "input": {
+        "collection": "identities",
+        "filter": {
+          "id": "idn_01"
+        }
+      },
+      "output": {
+        "query": {
+          "collection": "identities",
+          "conditions": [],
+          "id": "idn_01"
+        },
+        "exact": true,
+        "statement": {
+          "text": "SELECT collection, id, tenant_id, unique_key, data FROM iam_records WHERE collection = $1 AND id = $2 ORDER BY id",
+          "values": [
+            "identities",
+            "idn_01"
+          ]
+        }
+      }
+    },
+    {
+      "name": "sqlite by unique key",
+      "input": {
+        "collection": "resources",
+        "filter": {
+          "tenantId": "tnt_01",
+          "uniqueKey": "doc/1"
+        }
+      },
+      "output": {
+        "query": {
+          "collection": "resources",
+          "conditions": [],
+          "tenantId": "tnt_01",
+          "uniqueKey": "doc/1"
+        },
+        "exact": true,
+        "statement": {
+          "text": "SELECT collection, id, tenant_id, unique_key, data FROM iam_records WHERE collection = ? AND tenant_id = ? AND unique_key = ? ORDER BY id",
+          "values": [
+            "resources",
+            "tnt_01",
+            "doc/1"
+          ]
+        }
+      }
+    },
+    {
+      "name": "postgres by unique key",
+      "input": {
+        "collection": "resources",
+        "filter": {
+          "tenantId": "tnt_01",
+          "uniqueKey": "doc/1"
+        }
+      },
+      "output": {
+        "query": {
+          "collection": "resources",
+          "conditions": [],
+          "tenantId": "tnt_01",
+          "uniqueKey": "doc/1"
+        },
+        "exact": true,
+        "statement": {
+          "text": "SELECT collection, id, tenant_id, unique_key, data FROM iam_records WHERE collection = $1 AND tenant_id = $2 AND unique_key = $3 ORDER BY id",
+          "values": [
+            "resources",
+            "tnt_01",
+            "doc/1"
+          ]
+        }
+      }
+    },
+    {
+      "name": "sqlite string condition",
+      "input": {
+        "collection": "sessions",
+        "filter": {
+          "tokenHash": "abc"
+        }
+      },
+      "output": {
+        "query": {
+          "collection": "sessions",
+          "conditions": [
+            {
+              "field": "tokenHash",
+              "kind": "string",
+              "value": "abc"
+            }
+          ]
+        },
+        "exact": true,
+        "statement": {
+          "text": "SELECT collection, id, tenant_id, unique_key, data FROM iam_records WHERE collection = ? AND json_type(data, '$.\"tokenHash\"') = 'text' AND json_extract(data, '$.\"tokenHash\"') = ? ORDER BY id",
+          "values": [
+            "sessions",
+            "abc"
+          ]
+        }
+      }
+    },
+    {
+      "name": "postgres string condition",
+      "input": {
+        "collection": "sessions",
+        "filter": {
+          "tokenHash": "abc"
+        }
+      },
+      "output": {
+        "query": {
+          "collection": "sessions",
+          "conditions": [
+            {
+              "field": "tokenHash",
+              "kind": "string",
+              "value": "abc"
+            }
+          ]
+        },
+        "exact": true,
+        "statement": {
+          "text": "SELECT collection, id, tenant_id, unique_key, data FROM iam_records WHERE collection = $1 AND jsonb_typeof((data::jsonb) -> $2::text) = 'string' AND (data::jsonb) @> $3::jsonb ORDER BY id",
+          "values": [
+            "sessions",
+            "tokenHash",
+            "{\"tokenHash\":\"abc\"}"
+          ]
+        }
+      }
+    },
+    {
+      "name": "sqlite number condition",
+      "input": {
+        "collection": "outbox",
+        "filter": {
+          "attempts": 3
+        }
+      },
+      "output": {
+        "query": {
+          "collection": "outbox",
+          "conditions": [
+            {
+              "field": "attempts",
+              "kind": "number",
+              "value": 3
+            }
+          ]
+        },
+        "exact": true,
+        "statement": {
+          "text": "SELECT collection, id, tenant_id, unique_key, data FROM iam_records WHERE collection = ? AND json_type(data, '$.\"attempts\"') IN ('integer', 'real') AND (data -> '$.\"attempts\"') = ? ORDER BY id",
+          "values": [
+            "outbox",
+            "3"
+          ]
+        }
+      }
+    },
+    {
+      "name": "postgres number condition",
+      "input": {
+        "collection": "outbox",
+        "filter": {
+          "attempts": 3
+        }
+      },
+      "output": {
+        "query": {
+          "collection": "outbox",
+          "conditions": [
+            {
+              "field": "attempts",
+              "kind": "number",
+              "value": 3
+            }
+          ]
+        },
+        "exact": true,
+        "statement": {
+          "text": "SELECT collection, id, tenant_id, unique_key, data FROM iam_records WHERE collection = $1 AND jsonb_typeof((data::jsonb) -> $2::text) = 'number' AND (data::jsonb) @> $3::jsonb ORDER BY id",
+          "values": [
+            "outbox",
+            "attempts",
+            "{\"attempts\":3}"
+          ]
+        }
+      }
+    },
+    {
+      "name": "sqlite large number condition",
+      "input": {
+        "collection": "outbox",
+        "filter": {
+          "attempts": 1152921504606847000
+        }
+      },
+      "output": {
+        "query": {
+          "collection": "outbox",
+          "conditions": [
+            {
+              "field": "attempts",
+              "kind": "number",
+              "value": 1152921504606847000
+            }
+          ]
+        },
+        "exact": true,
+        "statement": {
+          "text": "SELECT collection, id, tenant_id, unique_key, data FROM iam_records WHERE collection = ? AND json_type(data, '$.\"attempts\"') IN ('integer', 'real') AND (data -> '$.\"attempts\"') = ? ORDER BY id",
+          "values": [
+            "outbox",
+            "1152921504606847000"
+          ]
+        }
+      }
+    },
+    {
+      "name": "postgres large number condition",
+      "input": {
+        "collection": "outbox",
+        "filter": {
+          "attempts": 1152921504606847000
+        }
+      },
+      "output": {
+        "query": {
+          "collection": "outbox",
+          "conditions": [
+            {
+              "field": "attempts",
+              "kind": "number",
+              "value": 1152921504606847000
+            }
+          ]
+        },
+        "exact": true,
+        "statement": {
+          "text": "SELECT collection, id, tenant_id, unique_key, data FROM iam_records WHERE collection = $1 AND jsonb_typeof((data::jsonb) -> $2::text) = 'number' AND (data::jsonb) @> $3::jsonb ORDER BY id",
+          "values": [
+            "outbox",
+            "attempts",
+            "{\"attempts\":1152921504606847000}"
+          ]
+        }
+      }
+    },
+    {
+      "name": "sqlite fractional number condition",
+      "input": {
+        "collection": "outbox",
+        "filter": {
+          "weight": 0.1
+        }
+      },
+      "output": {
+        "query": {
+          "collection": "outbox",
+          "conditions": [
+            {
+              "field": "weight",
+              "kind": "number",
+              "value": 0.1
+            }
+          ]
+        },
+        "exact": true,
+        "statement": {
+          "text": "SELECT collection, id, tenant_id, unique_key, data FROM iam_records WHERE collection = ? AND json_type(data, '$.\"weight\"') IN ('integer', 'real') AND (data -> '$.\"weight\"') = ? ORDER BY id",
+          "values": [
+            "outbox",
+            "0.1"
+          ]
+        }
+      }
+    },
+    {
+      "name": "postgres fractional number condition",
+      "input": {
+        "collection": "outbox",
+        "filter": {
+          "weight": 0.1
+        }
+      },
+      "output": {
+        "query": {
+          "collection": "outbox",
+          "conditions": [
+            {
+              "field": "weight",
+              "kind": "number",
+              "value": 0.1
+            }
+          ]
+        },
+        "exact": true,
+        "statement": {
+          "text": "SELECT collection, id, tenant_id, unique_key, data FROM iam_records WHERE collection = $1 AND jsonb_typeof((data::jsonb) -> $2::text) = 'number' AND (data::jsonb) @> $3::jsonb ORDER BY id",
+          "values": [
+            "outbox",
+            "weight",
+            "{\"weight\":0.1}"
+          ]
+        }
+      }
+    },
+    {
+      "name": "sqlite boolean conditions",
+      "input": {
+        "collection": "webhooks",
+        "filter": {
+          "active": true,
+          "paused": false
+        }
+      },
+      "output": {
+        "query": {
+          "collection": "webhooks",
+          "conditions": [
+            {
+              "field": "active",
+              "kind": "boolean",
+              "value": true
+            },
+            {
+              "field": "paused",
+              "kind": "boolean",
+              "value": false
+            }
+          ]
+        },
+        "exact": true,
+        "statement": {
+          "text": "SELECT collection, id, tenant_id, unique_key, data FROM iam_records WHERE collection = ? AND json_type(data, '$.\"active\"') = 'true' AND json_type(data, '$.\"paused\"') = 'false' ORDER BY id",
+          "values": [
+            "webhooks"
+          ]
+        }
+      }
+    },
+    {
+      "name": "postgres boolean conditions",
+      "input": {
+        "collection": "webhooks",
+        "filter": {
+          "active": true,
+          "paused": false
+        }
+      },
+      "output": {
+        "query": {
+          "collection": "webhooks",
+          "conditions": [
+            {
+              "field": "active",
+              "kind": "boolean",
+              "value": true
+            },
+            {
+              "field": "paused",
+              "kind": "boolean",
+              "value": false
+            }
+          ]
+        },
+        "exact": true,
+        "statement": {
+          "text": "SELECT collection, id, tenant_id, unique_key, data FROM iam_records WHERE collection = $1 AND jsonb_typeof((data::jsonb) -> $2::text) = 'boolean' AND jsonb_typeof((data::jsonb) -> $3::text) = 'boolean' AND (data::jsonb) @> $4::jsonb ORDER BY id",
+          "values": [
+            "webhooks",
+            "active",
+            "paused",
+            "{\"active\":true,\"paused\":false}"
+          ]
+        }
+      }
+    },
+    {
+      "name": "sqlite null condition",
+      "input": {
+        "collection": "outbox",
+        "filter": {
+          "deliveredAt": null
+        }
+      },
+      "output": {
+        "query": {
+          "collection": "outbox",
+          "conditions": [
+            {
+              "field": "deliveredAt",
+              "kind": "null"
+            }
+          ]
+        },
+        "exact": true,
+        "statement": {
+          "text": "SELECT collection, id, tenant_id, unique_key, data FROM iam_records WHERE collection = ? AND json_type(data, '$.\"deliveredAt\"') = 'null' ORDER BY id",
+          "values": [
+            "outbox"
+          ]
+        }
+      }
+    },
+    {
+      "name": "postgres null condition",
+      "input": {
+        "collection": "outbox",
+        "filter": {
+          "deliveredAt": null
+        }
+      },
+      "output": {
+        "query": {
+          "collection": "outbox",
+          "conditions": [
+            {
+              "field": "deliveredAt",
+              "kind": "null"
+            }
+          ]
+        },
+        "exact": true,
+        "statement": {
+          "text": "SELECT collection, id, tenant_id, unique_key, data FROM iam_records WHERE collection = $1 AND jsonb_typeof((data::jsonb) -> $2::text) = 'null' AND (data::jsonb) @> $3::jsonb ORDER BY id",
+          "values": [
+            "outbox",
+            "deliveredAt",
+            "{\"deliveredAt\":null}"
+          ]
+        }
+      }
+    },
+    {
+      "name": "sqlite absent condition",
+      "input": {
+        "collection": "outbox",
+        "filter": {
+          "failedAt": {
+            "$undefined": true
+          }
+        }
+      },
+      "output": {
+        "query": {
+          "collection": "outbox",
+          "conditions": [
+            {
+              "field": "failedAt",
+              "kind": "absent"
+            }
+          ]
+        },
+        "exact": true,
+        "statement": {
+          "text": "SELECT collection, id, tenant_id, unique_key, data FROM iam_records WHERE collection = ? AND json_type(data, '$.\"failedAt\"') IS NULL ORDER BY id",
+          "values": [
+            "outbox"
+          ]
+        }
+      }
+    },
+    {
+      "name": "postgres absent condition",
+      "input": {
+        "collection": "outbox",
+        "filter": {
+          "failedAt": {
+            "$undefined": true
+          }
+        }
+      },
+      "output": {
+        "query": {
+          "collection": "outbox",
+          "conditions": [
+            {
+              "field": "failedAt",
+              "kind": "absent"
+            }
+          ]
+        },
+        "exact": true,
+        "statement": {
+          "text": "SELECT collection, id, tenant_id, unique_key, data FROM iam_records WHERE collection = $1 AND ((data::jsonb) -> $2::text) IS NULL ORDER BY id",
+          "values": [
+            "outbox",
+            "failedAt"
+          ]
+        }
+      }
+    },
+    {
+      "name": "sqlite mixed",
+      "input": {
+        "collection": "groupMembers",
+        "filter": {
+          "tenantId": "tnt_01",
+          "groupId": "grp_01",
+          "identityId": "idn_01"
+        }
+      },
+      "output": {
+        "query": {
+          "collection": "groupMembers",
+          "conditions": [
+            {
+              "field": "groupId",
+              "kind": "string",
+              "value": "grp_01"
+            },
+            {
+              "field": "identityId",
+              "kind": "string",
+              "value": "idn_01"
+            }
+          ],
+          "tenantId": "tnt_01"
+        },
+        "exact": true,
+        "statement": {
+          "text": "SELECT collection, id, tenant_id, unique_key, data FROM iam_records WHERE collection = ? AND tenant_id = ? AND json_type(data, '$.\"groupId\"') = 'text' AND json_extract(data, '$.\"groupId\"') = ? AND json_type(data, '$.\"identityId\"') = 'text' AND json_extract(data, '$.\"identityId\"') = ? ORDER BY id",
+          "values": [
+            "groupMembers",
+            "tnt_01",
+            "grp_01",
+            "idn_01"
+          ]
+        }
+      }
+    },
+    {
+      "name": "postgres mixed",
+      "input": {
+        "collection": "groupMembers",
+        "filter": {
+          "tenantId": "tnt_01",
+          "groupId": "grp_01",
+          "identityId": "idn_01"
+        }
+      },
+      "output": {
+        "query": {
+          "collection": "groupMembers",
+          "conditions": [
+            {
+              "field": "groupId",
+              "kind": "string",
+              "value": "grp_01"
+            },
+            {
+              "field": "identityId",
+              "kind": "string",
+              "value": "idn_01"
+            }
+          ],
+          "tenantId": "tnt_01"
+        },
+        "exact": true,
+        "statement": {
+          "text": "SELECT collection, id, tenant_id, unique_key, data FROM iam_records WHERE collection = $1 AND tenant_id = $2 AND jsonb_typeof((data::jsonb) -> $3::text) = 'string' AND jsonb_typeof((data::jsonb) -> $4::text) = 'string' AND (data::jsonb) @> $5::jsonb ORDER BY id",
+          "values": [
+            "groupMembers",
+            "tnt_01",
+            "groupId",
+            "identityId",
+            "{\"groupId\":\"grp_01\",\"identityId\":\"idn_01\"}"
+          ]
+        }
+      }
+    },
+    {
+      "name": "postgres json condition (postgres)",
+      "input": {
+        "collection": "roles",
+        "filter": {
+          "tenantId": "t",
+          "tags": [
+            "a",
+            "b"
+          ]
+        },
+        "capabilities": {
+          "json": true
+        }
+      },
+      "output": {
+        "query": {
+          "collection": "roles",
+          "conditions": [
+            {
+              "field": "tags",
+              "kind": "json",
+              "value": "[\"a\",\"b\"]"
+            }
+          ],
+          "tenantId": "t"
+        },
+        "exact": true,
+        "statement": {
+          "text": "SELECT collection, id, tenant_id, unique_key, data FROM iam_records WHERE collection = $1 AND tenant_id = $2 AND ((data::jsonb) -> $3::text) = $4::jsonb ORDER BY id",
+          "values": [
+            "roles",
+            "t",
+            "tags",
+            "[\"a\",\"b\"]"
+          ]
+        }
+      }
+    },
+    {
+      "name": "sqlite with cursor",
+      "input": {
+        "collection": "identities",
+        "filter": {
+          "tenantId": "tnt_01"
+        },
+        "after": "idn_05"
+      },
+      "output": {
+        "query": {
+          "collection": "identities",
+          "conditions": [],
+          "tenantId": "tnt_01",
+          "after": "idn_05"
+        },
+        "exact": true,
+        "statement": {
+          "text": "SELECT collection, id, tenant_id, unique_key, data FROM iam_records WHERE collection = ? AND tenant_id = ? AND id > ? ORDER BY id",
+          "values": [
+            "identities",
+            "tnt_01",
+            "idn_05"
+          ]
+        }
+      }
+    },
+    {
+      "name": "postgres with cursor",
+      "input": {
+        "collection": "identities",
+        "filter": {
+          "tenantId": "tnt_01"
+        },
+        "after": "idn_05"
+      },
+      "output": {
+        "query": {
+          "collection": "identities",
+          "conditions": [],
+          "tenantId": "tnt_01",
+          "after": "idn_05"
+        },
+        "exact": true,
+        "statement": {
+          "text": "SELECT collection, id, tenant_id, unique_key, data FROM iam_records WHERE collection = $1 AND tenant_id = $2 AND id > $3 ORDER BY id",
+          "values": [
+            "identities",
+            "tnt_01",
+            "idn_05"
+          ]
+        }
+      }
+    },
+    {
+      "name": "sqlite with page",
+      "input": {
+        "collection": "identities",
+        "filter": {
+          "tenantId": "tnt_01"
+        },
+        "page": {
+          "offset": 20,
+          "limit": 10
+        }
+      },
+      "output": {
+        "query": {
+          "collection": "identities",
+          "conditions": [],
+          "tenantId": "tnt_01",
+          "page": {
+            "offset": 20,
+            "limit": 10
+          }
+        },
+        "exact": true,
+        "statement": {
+          "text": "SELECT collection, id, tenant_id, unique_key, data FROM iam_records WHERE collection = ? AND tenant_id = ? ORDER BY id LIMIT ? OFFSET ?",
+          "values": [
+            "identities",
+            "tnt_01",
+            10,
+            20
+          ]
+        }
+      }
+    },
+    {
+      "name": "postgres with page",
+      "input": {
+        "collection": "identities",
+        "filter": {
+          "tenantId": "tnt_01"
+        },
+        "page": {
+          "offset": 20,
+          "limit": 10
+        }
+      },
+      "output": {
+        "query": {
+          "collection": "identities",
+          "conditions": [],
+          "tenantId": "tnt_01",
+          "page": {
+            "offset": 20,
+            "limit": 10
+          }
+        },
+        "exact": true,
+        "statement": {
+          "text": "SELECT collection, id, tenant_id, unique_key, data FROM iam_records WHERE collection = $1 AND tenant_id = $2 ORDER BY id LIMIT $3 OFFSET $4",
+          "values": [
+            "identities",
+            "tnt_01",
+            10,
+            20
+          ]
+        }
+      }
+    },
+    {
+      "name": "sqlite with page without limit",
+      "input": {
+        "collection": "identities",
+        "filter": {},
+        "page": {
+          "offset": 5
+        }
+      },
+      "output": {
+        "query": {
+          "collection": "identities",
+          "conditions": [],
+          "page": {
+            "offset": 5
+          }
+        },
+        "exact": true,
+        "statement": {
+          "text": "SELECT collection, id, tenant_id, unique_key, data FROM iam_records WHERE collection = ? ORDER BY id LIMIT ? OFFSET ?",
+          "values": [
+            "identities",
+            -1,
+            5
+          ]
+        }
+      }
+    },
+    {
+      "name": "postgres with page without limit",
+      "input": {
+        "collection": "identities",
+        "filter": {},
+        "page": {
+          "offset": 5
+        }
+      },
+      "output": {
+        "query": {
+          "collection": "identities",
+          "conditions": [],
+          "page": {
+            "offset": 5
+          }
+        },
+        "exact": true,
+        "statement": {
+          "text": "SELECT collection, id, tenant_id, unique_key, data FROM iam_records WHERE collection = $1 ORDER BY id LIMIT ALL OFFSET $2",
+          "values": [
+            "identities",
+            5
+          ]
+        }
+      }
+    },
+    {
+      "name": "sqlite ordered ascending",
+      "input": {
+        "collection": "audit",
+        "filter": {
+          "tenantId": "tnt_01"
+        },
+        "order": {
+          "field": "timestamp",
+          "direction": "asc"
+        }
+      },
+      "output": {
+        "query": {
+          "collection": "audit",
+          "conditions": [],
+          "tenantId": "tnt_01",
+          "order": {
+            "field": "timestamp",
+            "direction": "asc"
+          }
+        },
+        "exact": true,
+        "statement": {
+          "text": "SELECT collection, id, tenant_id, unique_key, data FROM iam_records WHERE collection = ? AND tenant_id = ? AND json_extract(data, '$.\"timestamp\"') IS NOT NULL AND json_type(data, '$.\"timestamp\"') IN ('integer', 'real') ORDER BY json_extract(data, '$.\"timestamp\"') ASC, id",
+          "values": [
+            "audit",
+            "tnt_01"
+          ]
+        }
+      }
+    },
+    {
+      "name": "postgres ordered ascending",
+      "input": {
+        "collection": "audit",
+        "filter": {
+          "tenantId": "tnt_01"
+        },
+        "order": {
+          "field": "timestamp",
+          "direction": "asc"
+        }
+      },
+      "output": {
+        "query": {
+          "collection": "audit",
+          "conditions": [],
+          "tenantId": "tnt_01",
+          "order": {
+            "field": "timestamp",
+            "direction": "asc"
+          }
+        },
+        "exact": true,
+        "statement": {
+          "text": "SELECT collection, id, tenant_id, unique_key, data FROM iam_records WHERE collection = $1 AND tenant_id = $2 AND jsonb_typeof((data::jsonb) -> 'timestamp') = 'number' ORDER BY ((data::jsonb) -> 'timestamp') ASC, id",
+          "values": [
+            "audit",
+            "tnt_01"
+          ]
+        }
+      }
+    },
+    {
+      "name": "sqlite ordered descending with range and page",
+      "input": {
+        "collection": "audit",
+        "filter": {
+          "tenantId": "tnt_01",
+          "action": "iam:groups:create"
+        },
+        "order": {
+          "field": "sequence",
+          "direction": "desc",
+          "from": 10,
+          "to": 20
+        },
+        "page": {
+          "offset": 0,
+          "limit": 50
+        }
+      },
+      "output": {
+        "query": {
+          "collection": "audit",
+          "conditions": [
+            {
+              "field": "action",
+              "kind": "string",
+              "value": "iam:groups:create"
+            }
+          ],
+          "tenantId": "tnt_01",
+          "order": {
+            "field": "sequence",
+            "direction": "desc",
+            "from": 10,
+            "to": 20
+          },
+          "page": {
+            "offset": 0,
+            "limit": 50
+          }
+        },
+        "exact": true,
+        "statement": {
+          "text": "SELECT collection, id, tenant_id, unique_key, data FROM iam_records WHERE collection = ? AND tenant_id = ? AND json_type(data, '$.\"action\"') = 'text' AND json_extract(data, '$.\"action\"') = ? AND json_extract(data, '$.\"sequence\"') IS NOT NULL AND json_type(data, '$.\"sequence\"') IN ('integer', 'real') AND json_extract(data, '$.\"sequence\"') >= json_extract(?, '$') AND json_extract(data, '$.\"sequence\"') <= json_extract(?, '$') ORDER BY json_extract(data, '$.\"sequence\"') DESC, id LIMIT ? OFFSET ?",
+          "values": [
+            "audit",
+            "tnt_01",
+            "iam:groups:create",
+            "10",
+            "20",
+            50,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "postgres ordered descending with range and page",
+      "input": {
+        "collection": "audit",
+        "filter": {
+          "tenantId": "tnt_01",
+          "action": "iam:groups:create"
+        },
+        "order": {
+          "field": "sequence",
+          "direction": "desc",
+          "from": 10,
+          "to": 20
+        },
+        "page": {
+          "offset": 0,
+          "limit": 50
+        }
+      },
+      "output": {
+        "query": {
+          "collection": "audit",
+          "conditions": [
+            {
+              "field": "action",
+              "kind": "string",
+              "value": "iam:groups:create"
+            }
+          ],
+          "tenantId": "tnt_01",
+          "order": {
+            "field": "sequence",
+            "direction": "desc",
+            "from": 10,
+            "to": 20
+          },
+          "page": {
+            "offset": 0,
+            "limit": 50
+          }
+        },
+        "exact": true,
+        "statement": {
+          "text": "SELECT collection, id, tenant_id, unique_key, data FROM iam_records WHERE collection = $1 AND tenant_id = $2 AND jsonb_typeof((data::jsonb) -> $3::text) = 'string' AND (data::jsonb) @> $4::jsonb AND jsonb_typeof((data::jsonb) -> 'sequence') = 'number' AND ((data::jsonb) -> 'sequence') >= $5::jsonb AND ((data::jsonb) -> 'sequence') <= $6::jsonb ORDER BY ((data::jsonb) -> 'sequence') DESC, id LIMIT $7 OFFSET $8",
+          "values": [
+            "audit",
+            "tnt_01",
+            "action",
+            "{\"action\":\"iam:groups:create\"}",
+            "10",
+            "20",
+            50,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "sqlite ordered by expiry across tenants",
+      "input": {
+        "collection": "sessions",
+        "filter": {},
+        "order": {
+          "field": "expiresAt",
+          "direction": "asc",
+          "to": 1767225600000
+        },
+        "page": {
+          "offset": 0,
+          "limit": 500
+        }
+      },
+      "output": {
+        "query": {
+          "collection": "sessions",
+          "conditions": [],
+          "order": {
+            "field": "expiresAt",
+            "direction": "asc",
+            "to": 1767225600000
+          },
+          "page": {
+            "offset": 0,
+            "limit": 500
+          }
+        },
+        "exact": true,
+        "statement": {
+          "text": "SELECT collection, id, tenant_id, unique_key, data FROM iam_records WHERE collection = ? AND json_extract(data, '$.\"expiresAt\"') IS NOT NULL AND json_type(data, '$.\"expiresAt\"') IN ('integer', 'real') AND json_extract(data, '$.\"expiresAt\"') <= json_extract(?, '$') ORDER BY json_extract(data, '$.\"expiresAt\"') ASC, id LIMIT ? OFFSET ?",
+          "values": [
+            "sessions",
+            "1767225600000",
+            500,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "postgres ordered by expiry across tenants",
+      "input": {
+        "collection": "sessions",
+        "filter": {},
+        "order": {
+          "field": "expiresAt",
+          "direction": "asc",
+          "to": 1767225600000
+        },
+        "page": {
+          "offset": 0,
+          "limit": 500
+        }
+      },
+      "output": {
+        "query": {
+          "collection": "sessions",
+          "conditions": [],
+          "order": {
+            "field": "expiresAt",
+            "direction": "asc",
+            "to": 1767225600000
+          },
+          "page": {
+            "offset": 0,
+            "limit": 500
+          }
+        },
+        "exact": true,
+        "statement": {
+          "text": "SELECT collection, id, tenant_id, unique_key, data FROM iam_records WHERE collection = $1 AND jsonb_typeof((data::jsonb) -> 'expiresAt') = 'number' AND ((data::jsonb) -> 'expiresAt') <= $2::jsonb ORDER BY ((data::jsonb) -> 'expiresAt') ASC, id LIMIT $3 OFFSET $4",
+          "values": [
+            "sessions",
+            "1767225600000",
+            500,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "sqlite json condition refused",
+      "input": {
+        "query": {
+          "collection": "roles",
+          "conditions": [
+            {
+              "field": "tags",
+              "kind": "json",
+              "value": "[\"a\"]"
+            }
+          ]
+        }
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "INVALID_FILTER",
+          "status": 400,
+          "message": "SQLite adapters do not evaluate JSON conditions"
+        }
+      }
+    },
+    {
+      "name": "invalid field name refused",
+      "input": {
+        "query": {
+          "collection": "roles",
+          "conditions": [
+            {
+              "field": "a.b",
+              "kind": "string",
+              "value": "x"
+            }
+          ]
+        }
+      },
+      "output": {
+        "$error": {
+          "name": "IamError",
+          "code": "INVALID_FILTER",
+          "status": 400,
+          "message": "Field names in SQL conditions must be identifiers"
+        }
+      }
+    }
+  ]
+}

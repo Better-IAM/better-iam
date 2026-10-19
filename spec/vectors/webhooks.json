@@ -1,0 +1,298 @@
+{
+  "description": "Webhook deliveries: body = JSON.stringify(webhookBody(event)) (fixed member order: id, type, tenantId, actorId, resourceId, outcome, timestamp, then optional originalActorId, impersonatorId, rootOverride, metadata, sessionContext, sequence, hash); x-better-iam-timestamp = floor(now / 1000); x-better-iam-signature = \"v1=\" + hex HMAC-SHA256(webhook secret, timestamp \".\" body). The webhook secret is sealed with context \"webhook:{hookId}\". verifyWebhookSignature accepts any comma-separated v1= entry within the tolerance (default 300 s).",
+  "source": "packages/server/src/events.ts#webhookBody,createEvents.deliverWebhookMessage,verifyWebhookSignature",
+  "cases": [
+    {
+      "name": "webhookBody minimal",
+      "input": {
+        "event": {
+          "id": "evt_01",
+          "tenantId": "tnt_01",
+          "actorId": "idn_01",
+          "action": "iam:groups:create",
+          "resourceId": "grp_01",
+          "outcome": "allow",
+          "rootOverride": false,
+          "timestamp": 1767225600000
+        }
+      },
+      "output": {
+        "body": {
+          "id": "evt_01",
+          "type": "iam:groups:create",
+          "tenantId": "tnt_01",
+          "actorId": "idn_01",
+          "resourceId": "grp_01",
+          "outcome": "allow",
+          "timestamp": 1767225600000
+        },
+        "json": "{\"id\":\"evt_01\",\"type\":\"iam:groups:create\",\"tenantId\":\"tnt_01\",\"actorId\":\"idn_01\",\"resourceId\":\"grp_01\",\"outcome\":\"allow\",\"timestamp\":1767225600000}"
+      }
+    },
+    {
+      "name": "webhookBody full",
+      "input": {
+        "event": {
+          "id": "evt_01",
+          "tenantId": "tnt_01",
+          "actorId": "idn_01",
+          "action": "iam:groups:create",
+          "resourceId": "grp_01",
+          "outcome": "allow",
+          "rootOverride": true,
+          "timestamp": 1767225600000,
+          "originalActorId": "idn_00",
+          "impersonatorId": "idn_root",
+          "metadata": {
+            "name": "Engineering",
+            "count": 3
+          },
+          "sessionContext": {
+            "kind": "role",
+            "roleId": "role_01"
+          },
+          "sequence": 7,
+          "previousHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        }
+      },
+      "output": {
+        "body": {
+          "id": "evt_01",
+          "type": "iam:groups:create",
+          "tenantId": "tnt_01",
+          "actorId": "idn_01",
+          "resourceId": "grp_01",
+          "outcome": "allow",
+          "timestamp": 1767225600000,
+          "originalActorId": "idn_00",
+          "impersonatorId": "idn_root",
+          "rootOverride": true,
+          "metadata": {
+            "name": "Engineering",
+            "count": 3
+          },
+          "sessionContext": {
+            "kind": "role",
+            "roleId": "role_01"
+          },
+          "sequence": 7,
+          "hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        },
+        "json": "{\"id\":\"evt_01\",\"type\":\"iam:groups:create\",\"tenantId\":\"tnt_01\",\"actorId\":\"idn_01\",\"resourceId\":\"grp_01\",\"outcome\":\"allow\",\"timestamp\":1767225600000,\"originalActorId\":\"idn_00\",\"impersonatorId\":\"idn_root\",\"rootOverride\":true,\"metadata\":{\"name\":\"Engineering\",\"count\":3},\"sessionContext\":{\"kind\":\"role\",\"roleId\":\"role_01\"},\"sequence\":7,\"hash\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"}"
+      }
+    },
+    {
+      "name": "webhookBody falsy optionals",
+      "input": {
+        "event": {
+          "id": "evt_01",
+          "tenantId": "tnt_01",
+          "actorId": "idn_01",
+          "action": "iam:groups:create",
+          "resourceId": "grp_01",
+          "outcome": "allow",
+          "rootOverride": false,
+          "timestamp": 1767225600000,
+          "originalActorId": "",
+          "impersonatorId": {
+            "$undefined": true
+          },
+          "metadata": {
+            "$undefined": true
+          }
+        }
+      },
+      "output": {
+        "body": {
+          "id": "evt_01",
+          "type": "iam:groups:create",
+          "tenantId": "tnt_01",
+          "actorId": "idn_01",
+          "resourceId": "grp_01",
+          "outcome": "allow",
+          "timestamp": 1767225600000
+        },
+        "json": "{\"id\":\"evt_01\",\"type\":\"iam:groups:create\",\"tenantId\":\"tnt_01\",\"actorId\":\"idn_01\",\"resourceId\":\"grp_01\",\"outcome\":\"allow\",\"timestamp\":1767225600000}"
+      }
+    },
+    {
+      "name": "deliver signed webhook",
+      "input": {
+        "hookId": "hook_01",
+        "webhookSecret": "whsec_test_0123456789",
+        "messageId": "msg_01",
+        "event": "iam:groups:create",
+        "body": "{\"id\":\"evt_01\",\"type\":\"iam:groups:create\",\"tenantId\":\"tnt_01\",\"actorId\":\"idn_01\",\"resourceId\":\"grp_01\",\"outcome\":\"allow\",\"timestamp\":1767225600000}",
+        "now": 1767225601234
+      },
+      "output": {
+        "id": "msg_01",
+        "tenantId": "tnt_01",
+        "webhookId": "hook_01",
+        "url": "https://hooks.example.com/iam",
+        "event": "iam:groups:create",
+        "body": "{\"id\":\"evt_01\",\"type\":\"iam:groups:create\",\"tenantId\":\"tnt_01\",\"actorId\":\"idn_01\",\"resourceId\":\"grp_01\",\"outcome\":\"allow\",\"timestamp\":1767225600000}",
+        "headers": {
+          "content-type": "application/json",
+          "user-agent": "better-iam-webhooks/1",
+          "x-better-iam-event": "iam:groups:create",
+          "x-better-iam-delivery": "msg_01",
+          "x-better-iam-webhook": "hook_01",
+          "x-better-iam-timestamp": "1767225601",
+          "x-better-iam-signature": "v1=770a62391076d1df9159b462036737dddfb80ff0f1bdb332cc8c60b06769bac4"
+        }
+      }
+    },
+    {
+      "name": "deliver at another second",
+      "input": {
+        "hookId": "hook_02",
+        "webhookSecret": "whsec_other",
+        "messageId": "msg_02",
+        "event": "iam:groups:create",
+        "body": "{\"id\":\"evt_01\",\"type\":\"iam:groups:create\",\"tenantId\":\"tnt_01\",\"actorId\":\"idn_01\",\"resourceId\":\"grp_01\",\"outcome\":\"allow\",\"timestamp\":1767225600000}",
+        "now": 1767225661000
+      },
+      "output": {
+        "id": "msg_02",
+        "tenantId": "tnt_01",
+        "webhookId": "hook_02",
+        "url": "https://hooks.example.com/iam",
+        "event": "iam:groups:create",
+        "body": "{\"id\":\"evt_01\",\"type\":\"iam:groups:create\",\"tenantId\":\"tnt_01\",\"actorId\":\"idn_01\",\"resourceId\":\"grp_01\",\"outcome\":\"allow\",\"timestamp\":1767225600000}",
+        "headers": {
+          "content-type": "application/json",
+          "user-agent": "better-iam-webhooks/1",
+          "x-better-iam-event": "iam:groups:create",
+          "x-better-iam-delivery": "msg_02",
+          "x-better-iam-webhook": "hook_02",
+          "x-better-iam-timestamp": "1767225661",
+          "x-better-iam-signature": "v1=ee423d14a6657387f659677bde941e3091b196bfefffda51f929cf375f6128bd"
+        }
+      }
+    },
+    {
+      "name": "verify valid",
+      "input": {
+        "secret": "whsec_test_0123456789",
+        "timestamp": "1767225601",
+        "body": "{\"id\":\"evt_01\",\"type\":\"iam:groups:create\",\"tenantId\":\"tnt_01\",\"actorId\":\"idn_01\",\"resourceId\":\"grp_01\",\"outcome\":\"allow\",\"timestamp\":1767225600000}",
+        "signature": "v1=770a62391076d1df9159b462036737dddfb80ff0f1bdb332cc8c60b06769bac4",
+        "now": 1767225602000
+      },
+      "output": true
+    },
+    {
+      "name": "verify numeric timestamp",
+      "input": {
+        "secret": "whsec_test_0123456789",
+        "timestamp": 1767225601,
+        "body": "{\"id\":\"evt_01\",\"type\":\"iam:groups:create\",\"tenantId\":\"tnt_01\",\"actorId\":\"idn_01\",\"resourceId\":\"grp_01\",\"outcome\":\"allow\",\"timestamp\":1767225600000}",
+        "signature": "v1=770a62391076d1df9159b462036737dddfb80ff0f1bdb332cc8c60b06769bac4",
+        "now": 1767225602000
+      },
+      "output": true
+    },
+    {
+      "name": "verify among several signatures",
+      "input": {
+        "secret": "whsec_test_0123456789",
+        "timestamp": "1767225601",
+        "body": "{\"id\":\"evt_01\",\"type\":\"iam:groups:create\",\"tenantId\":\"tnt_01\",\"actorId\":\"idn_01\",\"resourceId\":\"grp_01\",\"outcome\":\"allow\",\"timestamp\":1767225600000}",
+        "signature": "v0=abc, v1=770a62391076d1df9159b462036737dddfb80ff0f1bdb332cc8c60b06769bac4",
+        "now": 1767225602000
+      },
+      "output": true
+    },
+    {
+      "name": "verify wrong secret",
+      "input": {
+        "secret": "whsec_wrong",
+        "timestamp": "1767225601",
+        "body": "{\"id\":\"evt_01\",\"type\":\"iam:groups:create\",\"tenantId\":\"tnt_01\",\"actorId\":\"idn_01\",\"resourceId\":\"grp_01\",\"outcome\":\"allow\",\"timestamp\":1767225600000}",
+        "signature": "v1=770a62391076d1df9159b462036737dddfb80ff0f1bdb332cc8c60b06769bac4",
+        "now": 1767225602000
+      },
+      "output": false
+    },
+    {
+      "name": "verify altered body",
+      "input": {
+        "secret": "whsec_test_0123456789",
+        "timestamp": "1767225601",
+        "body": "{\"id\":\"evt_01\",\"type\":\"iam:groups:create\",\"tenantId\":\"tnt_01\",\"actorId\":\"idn_01\",\"resourceId\":\"grp_01\",\"outcome\":\"allow\",\"timestamp\":1767225600000} ",
+        "signature": "v1=770a62391076d1df9159b462036737dddfb80ff0f1bdb332cc8c60b06769bac4",
+        "now": 1767225602000
+      },
+      "output": false
+    },
+    {
+      "name": "verify at tolerance edge",
+      "input": {
+        "secret": "whsec_test_0123456789",
+        "timestamp": "1767225601",
+        "body": "{\"id\":\"evt_01\",\"type\":\"iam:groups:create\",\"tenantId\":\"tnt_01\",\"actorId\":\"idn_01\",\"resourceId\":\"grp_01\",\"outcome\":\"allow\",\"timestamp\":1767225600000}",
+        "signature": "v1=770a62391076d1df9159b462036737dddfb80ff0f1bdb332cc8c60b06769bac4",
+        "now": 1767225901000
+      },
+      "output": true
+    },
+    {
+      "name": "verify beyond tolerance",
+      "input": {
+        "secret": "whsec_test_0123456789",
+        "timestamp": "1767225601",
+        "body": "{\"id\":\"evt_01\",\"type\":\"iam:groups:create\",\"tenantId\":\"tnt_01\",\"actorId\":\"idn_01\",\"resourceId\":\"grp_01\",\"outcome\":\"allow\",\"timestamp\":1767225600000}",
+        "signature": "v1=770a62391076d1df9159b462036737dddfb80ff0f1bdb332cc8c60b06769bac4",
+        "now": 1767225902000
+      },
+      "output": false
+    },
+    {
+      "name": "verify custom tolerance",
+      "input": {
+        "secret": "whsec_test_0123456789",
+        "timestamp": "1767225601",
+        "body": "{\"id\":\"evt_01\",\"type\":\"iam:groups:create\",\"tenantId\":\"tnt_01\",\"actorId\":\"idn_01\",\"resourceId\":\"grp_01\",\"outcome\":\"allow\",\"timestamp\":1767225600000}",
+        "signature": "v1=770a62391076d1df9159b462036737dddfb80ff0f1bdb332cc8c60b06769bac4",
+        "now": 1767225902000,
+        "toleranceSeconds": 600
+      },
+      "output": true
+    },
+    {
+      "name": "verify upper-case hex",
+      "input": {
+        "secret": "whsec_test_0123456789",
+        "timestamp": "1767225601",
+        "body": "{\"id\":\"evt_01\",\"type\":\"iam:groups:create\",\"tenantId\":\"tnt_01\",\"actorId\":\"idn_01\",\"resourceId\":\"grp_01\",\"outcome\":\"allow\",\"timestamp\":1767225600000}",
+        "signature": "v1=770A62391076D1DF9159B462036737DDDFB80FF0F1BDB332CC8C60B06769BAC4",
+        "now": 1767225602000
+      },
+      "output": false
+    },
+    {
+      "name": "verify non-numeric timestamp",
+      "input": {
+        "secret": "whsec_test_0123456789",
+        "timestamp": "abc",
+        "body": "{\"id\":\"evt_01\",\"type\":\"iam:groups:create\",\"tenantId\":\"tnt_01\",\"actorId\":\"idn_01\",\"resourceId\":\"grp_01\",\"outcome\":\"allow\",\"timestamp\":1767225600000}",
+        "signature": "v1=770a62391076d1df9159b462036737dddfb80ff0f1bdb332cc8c60b06769bac4",
+        "now": 1767225602000
+      },
+      "output": false
+    },
+    {
+      "name": "verify missing v1",
+      "input": {
+        "secret": "whsec_test_0123456789",
+        "timestamp": "1767225601",
+        "body": "{\"id\":\"evt_01\",\"type\":\"iam:groups:create\",\"tenantId\":\"tnt_01\",\"actorId\":\"idn_01\",\"resourceId\":\"grp_01\",\"outcome\":\"allow\",\"timestamp\":1767225600000}",
+        "signature": "v2=770a62391076d1df9159b462036737dddfb80ff0f1bdb332cc8c60b06769bac4",
+        "now": 1767225602000
+      },
+      "output": false
+    }
+  ]
+}

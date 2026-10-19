@@ -18,7 +18,14 @@ import ts from 'typescript';
 const here = dirname(fileURLToPath(import.meta.url));
 const app = resolve(here, '..');
 const root = resolve(app, '..', '..');
-const out = join(app, 'generated');
+// DOCS_GENERATED_DIR / DOCS_PUBLIC_DIR redirect the outputs (scripts/spec/generate.mjs reuses the `api` and
+// `openapi` steps without touching the docs site's files); by default they are the app's own folders.
+const out = process.env.DOCS_GENERATED_DIR
+  ? resolve(process.env.DOCS_GENERATED_DIR)
+  : join(app, 'generated');
+const publicDir = process.env.DOCS_PUBLIC_DIR
+  ? resolve(process.env.DOCS_PUBLIC_DIR)
+  : join(app, 'public');
 await mkdir(out, { recursive: true });
 const siteUrl = (process.env.DOCS_SITE_URL ?? 'http://localhost:4000').replace(/\/$/, '');
 const { version } = JSON.parse(
@@ -1688,8 +1695,8 @@ async function generateOpenApi() {
       },
     },
   };
-  await mkdir(join(app, 'public'), { recursive: true });
-  await writeFile(join(app, 'public', 'openapi.json'), JSON.stringify(spec, null, 1));
+  await mkdir(publicDir, { recursive: true });
+  await writeFile(join(publicDir, 'openapi.json'), JSON.stringify(spec, null, 1));
   return `openapi.json (${operations} operations, ${Object.keys(spec.components.schemas).length} schemas)`;
 }
 
