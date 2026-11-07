@@ -59,19 +59,19 @@ func (f *flagFixture) createPlan(input *core.Object) (any, error) {
 func (f *flagFixture) assignPlan(input *core.Object) any {
 	f.t.Helper()
 	out, err := f.iam.API.Quotas.Assign(context.Background(), f.ownerCred, Input[apitypes.QuotasAssignInput](input))
-	return answer(f.t, out, err)
+	return flagAnswer(f.t, out, err)
 }
 
 func (f *flagFixture) quotaStatus(credential core.CredentialInput, meter string) *core.Object {
 	f.t.Helper()
 	out, err := f.iam.API.Quotas.Status(context.Background(), credential, Input[apitypes.QuotasStatusInput](core.NewObject("tenantId", f.tenantID, "meter", meter)))
-	return asObject(f.t, answer(f.t, out, err))
+	return asObject(f.t, flagAnswer(f.t, out, err))
 }
 
 func (f *flagFixture) quotaConsume(credential core.CredentialInput, input *core.Object) *core.Object {
 	f.t.Helper()
 	out, err := f.iam.API.Quotas.Consume(context.Background(), credential, Input[apitypes.QuotasConsumeInput](input))
-	return asObject(f.t, answer(f.t, out, err))
+	return asObject(f.t, flagAnswer(f.t, out, err))
 }
 
 // runtimeConsume is iam.quotas.consume({ ...credential, tenantId, meter, ...extra }).
@@ -193,7 +193,7 @@ func TestQuotasMostSpecificPlanApplies(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	expectCode(t, plan("other-default", 1, `,"default":true`), "CONFLICT")
+	flagExpectCode(t, plan("other-default", 1, `,"default":true`), "CONFLICT")
 	alice := f.member("alice")
 	bob := f.member("bob")
 	aliceID := jsString(alice.Get("id"))
@@ -252,7 +252,7 @@ func TestQuotasMostSpecificPlanApplies(t *testing.T) {
 	}
 	listed, err := f.iam.API.Quotas.ListAssignments(context.Background(), f.ownerCred, Input[apitypes.QuotasListAssignmentsInput](core.NewObject("tenantId", f.tenantID)))
 	var entries []string
-	for _, entry := range asList(t, answer(t, listed, err)) {
+	for _, entry := range asList(t, flagAnswer(t, listed, err)) {
 		entries = append(entries, fmt.Sprintf("%v:%v:%v", entry.Get("plan"), entry.Get("subjectType"), entry.Get("subjectName")))
 	}
 	sort.Strings(entries)
@@ -261,7 +261,7 @@ func TestQuotasMostSpecificPlanApplies(t *testing.T) {
 	}
 	unassigned, err := f.iam.API.Quotas.Unassign(context.Background(), f.ownerCred, Input[apitypes.QuotasUnassignInput](
 		f.body(`{"tenantId":%q,"meter":"requests","subjectType":"identity","subjectId":%q}`, f.tenantID, aliceID)))
-	if got := toJSON(t, answer(t, unassigned, err)); got != `{"removed":true}` {
+	if got := toJSON(t, flagAnswer(t, unassigned, err)); got != `{"removed":true}` {
 		t.Errorf("unassign: %s", got)
 	}
 	if got := planOf(aliceToken); got != "vip" {
@@ -282,20 +282,20 @@ func TestQuotasTenantScopedCountersUsageResetAndCleanup(t *testing.T) {
 		t.Error("the last unit was refused")
 	}
 	usage, err := f.iam.API.Quotas.Usage(context.Background(), f.ownerCred, Input[apitypes.QuotasUsageInput](f.body(`{"tenantId":%q,"plan":"shared"}`, f.tenantID)))
-	views := asList(t, answer(t, usage, err))
+	views := asList(t, flagAnswer(t, usage, err))
 	if len(views) != 1 {
 		t.Fatalf("usage: %s", toJSON(t, views))
 	}
 	expectMatch(t, views[0], `{"subject":"tenant","limits":[{"period":"hour","used":3,"remaining":0}]}`)
 	reset, err := f.iam.API.Quotas.Reset(context.Background(), f.ownerCred, Input[apitypes.QuotasResetInput](f.body(`{"tenantId":%q,"plan":"shared"}`, f.tenantID)))
-	if got := toJSON(t, answer(t, reset, err)); got != `{"reset":1}` {
+	if got := toJSON(t, flagAnswer(t, reset, err)); got != `{"reset":1}` {
 		t.Errorf("reset: %s", got)
 	}
 	if f.quotaConsume(bob, f.body(`{"tenantId":%q,"meter":"exports","cost":3}`, f.tenantID)).Get("allowed") != true {
 		t.Error("the reset did not start the counters over")
 	}
 	deleted, err := f.iam.API.Quotas.DeletePlan(context.Background(), f.ownerCred, Input[apitypes.QuotasDeletePlanInput](f.body(`{"tenantId":%q,"name":"shared"}`, f.tenantID)))
-	expectMatch(t, answer(t, deleted, err), `{"deleted":true}`)
+	expectMatch(t, flagAnswer(t, deleted, err), `{"deleted":true}`)
 	if counters, _ := f.iam.Store.Find(context.Background(), "quotaCounters", core.NewObject("tenantId", f.tenantID), nil); len(counters) != 0 {
 		t.Errorf("counters left: %d", len(counters))
 	}
@@ -307,19 +307,19 @@ func TestQuotasTenantScopedCountersUsageResetAndCleanup(t *testing.T) {
 func TestQuotasValidatePlansRefuseOtherTenantsAndServeHTTP(t *testing.T) {
 	f := newFlagFixture(t, nil)
 	_, err := f.createPlan(f.body(`{"tenantId":%q,"name":"empty","meter":"requests"}`, f.tenantID))
-	expectCode(t, err, "INVALID_INPUT")
+	flagExpectCode(t, err, "INVALID_INPUT")
 	for _, limits := range []string{`[{"period":"year","limit":1}]`, `[{"period":"day","limit":0}]`, `[{"period":"day","limit":1},{"period":"day","limit":2}]`} {
 		_, err := f.createPlan(f.body(`{"tenantId":%q,"name":"bad","meter":"requests","limits":%s}`, f.tenantID, limits))
-		expectCode(t, err, "INVALID_INPUT")
+		flagExpectCode(t, err, "INVALID_INPUT")
 	}
 	_, err = f.createPlan(f.body(`{"tenantId":%q,"name":"bad","meter":"Requests!","limits":[{"period":"day","limit":1}]}`, f.tenantID))
-	expectCode(t, err, "INVALID_INPUT")
+	flagExpectCode(t, err, "INVALID_INPUT")
 	if _, err := f.createPlan(f.body(`{"tenantId":%q,"name":"free","meter":"requests","default":true,"limits":[{"period":"minute","limit":1}]}`, f.tenantID)); err != nil {
 		t.Fatal(err)
 	}
 	// A session of another tenant cannot count here.
 	_, err = f.iam.Quotas.Consume(context.Background(), core.NewObject("token", f.rootCred.Token, "tenantId", f.tenantID, "meter", "requests"))
-	expectCode(t, err, "ACCESS_DENIED")
+	flagExpectCode(t, err, "ACCESS_DENIED")
 	call := func() *core.Object {
 		t.Helper()
 		response := f.post("http://localhost:3000", "quotas/consume", fmt.Sprintf(`{"tenantId":%q,"meter":"requests"}`, f.tenantID),

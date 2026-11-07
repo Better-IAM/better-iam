@@ -166,7 +166,7 @@ func (f *flagFixture) body(format string, args ...any) *core.Object {
 }
 
 // answer fails the test on an error and returns the answer.
-func answer[T any](t *testing.T, out Out[T], err error) any {
+func flagAnswer[T any](t *testing.T, out Out[T], err error) any {
 	t.Helper()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -253,8 +253,8 @@ func expectMatch(t *testing.T, actual any, expected string) {
 	}
 }
 
-// expectCode is rejects.toMatchObject({ code }).
-func expectCode(t *testing.T, err error, code string) {
+// flagExpectCode is rejects.toMatchObject({ code }).
+func flagExpectCode(t *testing.T, err error, code string) {
 	t.Helper()
 	if err == nil {
 		t.Errorf("expected %s, got success", code)
@@ -301,7 +301,7 @@ func (f *flagFixture) evaluateAPI(credential core.CredentialInput, input *core.O
 func (f *flagFixture) listTargets(credential core.CredentialInput, tenantID, key string) []*core.Object {
 	f.t.Helper()
 	out, err := f.iam.API.Features.ListTargets(context.Background(), credential, Input[apitypes.FeaturesListTargetsInput](core.NewObject("tenantId", tenantID, "key", key)))
-	return asList(f.t, answer(f.t, out, err))
+	return asList(f.t, flagAnswer(f.t, out, err))
 }
 
 // must fails the test on an error.
@@ -361,7 +361,7 @@ func TestFeaturesPlatformFlagsResolveDefaultsOverridesTargetsLocksAndKillSwitch(
 	f.must(f.setTarget(f.rootCred, f.body(`{"tenantId":%q,"key":"new-billing","targetTenantId":%q,"value":false,"locked":true,"note":"Invoice migration pending"}`, f.rootID, f.tenantID)))
 	expectMatch(t, f.evaluateOne(f.tenantID, "new-billing"), `{"value":false,"reason":"TARGET","locked":true,"overridable":false}`)
 	_, err := f.setOverride(f.ownerCred, f.body(`{"tenantId":%q,"key":"new-billing","value":true}`, f.tenantID))
-	expectCode(t, err, "FEATURE_LOCKED")
+	flagExpectCode(t, err, "FEATURE_LOCKED")
 	listed := f.must(f.listFlags(f.ownerCred, f.tenantID)).(*core.Object)
 	flags := asList(t, listed.Get("flags"))
 	if len(flags) != 1 {
@@ -395,7 +395,7 @@ func TestFeaturesPlatformFlagsResolveDefaultsOverridesTargetsLocksAndKillSwitch(
 		t.Error("an override applied to a flag that no longer allows them")
 	}
 	_, err = f.setOverride(f.ownerCred, f.body(`{"tenantId":%q,"key":"new-billing","value":true}`, f.tenantID))
-	expectCode(t, err, "FEATURE_LOCKED")
+	flagExpectCode(t, err, "FEATURE_LOCKED")
 	f.must(f.setOverride(f.ownerCred, f.body(`{"tenantId":%q,"key":"new-billing","value":null}`, f.tenantID)))
 
 	// Unknown keys are off.
@@ -412,22 +412,22 @@ func TestFeaturesValidateKeysAndSettings(t *testing.T) {
 	f := newFlagFixture(t, nil)
 	for _, key := range []string{"Bad", "1st", "a--b", "trailing-", strings.Repeat("x", 65), "__proto__"} {
 		_, err := f.createFlag(f.rootCred, core.NewObject("tenantId", f.rootID, "key", key))
-		expectCode(t, err, "INVALID_INPUT")
+		flagExpectCode(t, err, "INVALID_INPUT")
 	}
 	_, err := f.createFlag(f.rootCred, f.body(`{"tenantId":%q,"key":"on-with-rollout","defaultValue":true,"rolloutPercentage":10}`, f.rootID))
-	expectCode(t, err, "INVALID_INPUT")
+	flagExpectCode(t, err, "INVALID_INPUT")
 	_, err = f.createFlag(f.rootCred, f.body(`{"tenantId":%q,"key":"hidden","internal":true,"tenantOverridable":true}`, f.rootID))
-	expectCode(t, err, "INVALID_INPUT")
+	flagExpectCode(t, err, "INVALID_INPUT")
 	_, err = f.createFlag(f.rootCred, f.body(`{"tenantId":%q,"key":"extra","colour":"blue"}`, f.rootID))
-	expectCode(t, err, "INVALID_INPUT")
+	flagExpectCode(t, err, "INVALID_INPUT")
 	f.must(f.createFlag(f.rootCred, f.body(`{"tenantId":%q,"key":"reports.v2"}`, f.rootID)))
 	_, err = f.createFlag(f.rootCred, f.body(`{"tenantId":%q,"key":"reports.v2"}`, f.rootID))
-	expectCode(t, err, "CONFLICT")
+	flagExpectCode(t, err, "CONFLICT")
 	_, err = f.updateFlag(f.rootCred, f.body(`{"tenantId":%q,"key":"missing"}`, f.rootID))
-	expectCode(t, err, "NOT_FOUND")
+	flagExpectCode(t, err, "NOT_FOUND")
 	// A target must sit below the defining tenant.
 	_, err = f.setTarget(f.rootCred, f.body(`{"tenantId":%q,"key":"reports.v2","targetTenantId":%q,"value":true}`, f.rootID, f.rootID))
-	expectCode(t, err, "INVALID_INPUT")
+	flagExpectCode(t, err, "INVALID_INPUT")
 }
 
 func TestFeaturesTenantFlagsReachTheSubtreeAndAncestorsOwnTheirKeys(t *testing.T) {
@@ -446,7 +446,7 @@ func TestFeaturesTenantFlagsReachTheSubtreeAndAncestorsOwnTheirKeys(t *testing.T
 	// An organization cannot target outside its subtree or itself.
 	for _, target := range []string{f.rootID, f.tenantID} {
 		_, err := f.setTarget(f.ownerCred, f.body(`{"tenantId":%q,"key":"beta-reports","targetTenantId":%q,"value":true}`, f.tenantID, target))
-		expectCode(t, err, "INVALID_INPUT")
+		flagExpectCode(t, err, "INVALID_INPUT")
 	}
 
 	// The project sees the organization's flag and its target, and may override it.
@@ -456,7 +456,7 @@ func TestFeaturesTenantFlagsReachTheSubtreeAndAncestorsOwnTheirKeys(t *testing.T
 	expectMatch(t, opted, `{"value":false,"reason":"OVERRIDE"}`)
 	// The defining tenant changes its own flag through update, not an override.
 	_, err := f.setOverride(f.ownerCred, f.body(`{"tenantId":%q,"key":"beta-reports","value":true}`, f.tenantID))
-	expectCode(t, err, "INVALID_INPUT")
+	flagExpectCode(t, err, "INVALID_INPUT")
 	var entries []string
 	for _, entry := range f.listTargets(f.ownerCred, f.tenantID, "beta-reports") {
 		entries = append(entries, fmt.Sprintf("%v %v %v %v", entry.Get("source"), entry.Get("tenantName"), entry.Get("value"), entry.Get("active")))
@@ -469,9 +469,9 @@ func TestFeaturesTenantFlagsReachTheSubtreeAndAncestorsOwnTheirKeys(t *testing.T
 	// Keys an ancestor defines cannot be defined again below it...
 	f.must(f.createFlag(f.rootCred, f.body(`{"tenantId":%q,"key":"sso"}`, f.rootID)))
 	_, err = f.createFlag(f.ownerCred, f.body(`{"tenantId":%q,"key":"sso"}`, f.tenantID))
-	expectCode(t, err, "CONFLICT")
+	flagExpectCode(t, err, "CONFLICT")
 	_, err = f.createFlag(apollo, f.body(`{"tenantId":%q,"key":"beta-reports"}`, apolloID))
-	expectCode(t, err, "CONFLICT")
+	flagExpectCode(t, err, "CONFLICT")
 	// ...and a platform flag created later shadows a tenant's flag of the same key: tenants cannot switch a
 	// platform-gated feature on for themselves.
 	f.must(f.createFlag(f.ownerCred, f.body(`{"tenantId":%q,"key":"audit-export","defaultValue":true}`, f.tenantID)))
@@ -513,7 +513,7 @@ func TestFeaturesOrganizationOverridesPlatformFlagForItsProjects(t *testing.T) {
 	// A lock on the organization silences overrides in its whole subtree but not the platform's own closer target.
 	f.must(f.setTarget(f.rootCred, f.body(`{"tenantId":%q,"key":"new-editor","targetTenantId":%q,"value":true,"locked":true}`, f.rootID, f.tenantID)))
 	_, err := f.setOverride(apollo, f.body(`{"tenantId":%q,"key":"new-editor","value":true}`, apolloID))
-	expectCode(t, err, "FEATURE_LOCKED")
+	flagExpectCode(t, err, "FEATURE_LOCKED")
 	if f.isEnabled(apolloID, "new-editor") {
 		t.Error("the lock above beat the closer target")
 	}
@@ -640,11 +640,11 @@ func TestFeaturesAccessMembersEvaluateAdministratorsManageInternalFlagsHidden(t 
 		t.Errorf("values: %v %v", values, err)
 	}
 	_, err = f.evaluateAPI(alice, core.NewObject("tenantId", f.rootID))
-	expectCode(t, err, "ACCESS_DENIED")
+	flagExpectCode(t, err, "ACCESS_DENIED")
 	_, err = f.listFlags(alice, f.tenantID)
-	expectCode(t, err, "ACCESS_DENIED")
+	flagExpectCode(t, err, "ACCESS_DENIED")
 	_, err = f.createFlag(alice, f.body(`{"tenantId":%q,"key":"mine"}`, f.tenantID))
-	expectCode(t, err, "ACCESS_DENIED")
+	flagExpectCode(t, err, "ACCESS_DENIED")
 	// Owners do not see the platform's internal flags; root administrators do.
 	ownerView := f.must(f.listFlags(f.ownerCred, f.tenantID)).(*core.Object)
 	var ownerKeys []string
@@ -663,7 +663,7 @@ func TestFeaturesAccessMembersEvaluateAdministratorsManageInternalFlagsHidden(t 
 		t.Errorf("root view: %v", rootKeys)
 	}
 	_, err = f.setOverride(f.ownerCred, f.body(`{"tenantId":%q,"key":"ops-hold","value":false}`, f.tenantID))
-	expectCode(t, err, "NOT_FOUND")
+	flagExpectCode(t, err, "NOT_FOUND")
 
 	// Over HTTP with a bearer token.
 	response := f.post("http://localhost:3000", "features/evaluate", fmt.Sprintf(`{"tenantId":%q}`, f.tenantID),
@@ -683,7 +683,7 @@ func TestFeaturesTargetsLapseDeleteCleansUpAndChangesAreAudited(t *testing.T) {
 	f.must(f.setTarget(f.rootCred, core.NewObject("tenantId", f.rootID, "key", "trial-seats", "targetTenantId", f.tenantID, "value", true, "expiresAt", expiresAt)))
 	expectMatch(t, f.evaluateOne(f.tenantID, "trial-seats"), fmt.Sprintf(`{"value":true,"reason":"TARGET","expiresAt":%s}`, core.NumberString(expiresAt)))
 	_, err := f.setTarget(f.rootCred, core.NewObject("tenantId", f.rootID, "key", "trial-seats", "targetTenantId", f.tenantID, "value", true, "expiresAt", f.now()-1))
-	expectCode(t, err, "INVALID_INPUT")
+	flagExpectCode(t, err, "INVALID_INPUT")
 	f.advance(2 * 3_600_000)
 	if f.isEnabled(f.tenantID, "trial-seats") {
 		t.Error("a lapsed target still applies")
@@ -695,7 +695,7 @@ func TestFeaturesTargetsLapseDeleteCleansUpAndChangesAreAudited(t *testing.T) {
 	expectMatch(t, lapsed[0], `{"tenantName":"Acme","active":false}`)
 
 	deleted, err := f.iam.API.Features.Delete(context.Background(), f.rootCred, Input[apitypes.FeaturesDeleteInput](f.body(`{"tenantId":%q,"key":"trial-seats"}`, f.rootID)))
-	if got := toJSON(t, answer(t, deleted, err)); got != `{"success":true,"removedTargets":1}` {
+	if got := toJSON(t, flagAnswer(t, deleted, err)); got != `{"success":true,"removedTargets":1}` {
 		t.Errorf("delete: %s", got)
 	}
 	expectMatch(t, f.evaluateOne(f.tenantID, "trial-seats"), `{"value":false,"reason":"UNKNOWN"}`)
