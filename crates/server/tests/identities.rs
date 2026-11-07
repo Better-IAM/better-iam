@@ -819,8 +819,12 @@ fn links_and_unlinks_external_sign_ins_ahead_of_the_first_one() {
         assert_eq!(order, ["azure", "okta"]);
         let audited = audit_events(&f, "identity:link-provider").await;
         assert_eq!(audited.len(), 2);
-        assert_eq!(audited[0]["metadata"]["providerId"], json!("okta"));
-        assert_eq!(audited[0]["metadata"]["linkId"], linked["id"]);
+        // The audit query is unordered: pick the okta link's event by provider.
+        let okta = audited
+            .iter()
+            .find(|event| event["metadata"]["providerId"] == json!("okta"))
+            .expect("okta link audited");
+        assert_eq!(okta["metadata"]["linkId"], linked["id"]);
         // Another person's link is not found through this account.
         let (code_, status, message) = code(call!(
             f,
