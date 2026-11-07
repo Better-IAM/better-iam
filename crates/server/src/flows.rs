@@ -240,7 +240,7 @@ pub async fn assert_member_invitation_grantable(
         }
     }
     // Groups that carry license seats (then or since) need the inviter's iam:licenses:assign (api/groups.ts). Its
-    // refusal is an `OperationDenied` (ACCESS_DENIED, 403); any other error propagates.
+    // refusal is an `OperationDenied`; any other error propagates.
     match crate::api::groups::assert_may_claim_licenses(
         ctx,
         tx,
@@ -252,10 +252,8 @@ pub async fn assert_member_invitation_grantable(
     .await
     {
         Ok(()) => Ok(()),
-        Err(error) if error.code == "ACCESS_DENIED" && error.status == 403 => {
-            Err(invitation_invalid(REFUSED))
-        }
-        Err(error) => Err(error),
+        Err(failure) if failure.denied => Err(invitation_invalid(REFUSED)),
+        Err(failure) => Err(failure.error),
     }
 }
 
