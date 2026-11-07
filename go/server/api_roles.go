@@ -77,7 +77,7 @@ func (api *RolesAPI) List(ctx context.Context, credential core.CredentialInput, 
 		if err != nil {
 			return nil, err
 		}
-		return objectsOf(roles), nil
+		return recordValues(roles), nil
 	}, false)
 	return Out[apitypes.RolesListOutput]{Value: result}, err
 }
@@ -296,8 +296,8 @@ func (api *RolesAPI) Update(ctx context.Context, credential core.CredentialInput
 	return Out[apitypes.RolesUpdateOutput]{Value: result}, err
 }
 
-// objectsOf is a record list as a model array.
-func objectsOf(records []*core.Object) []any {
+// recordValues is a record list as a model array.
+func recordValues(records []*core.Object) []any {
 	result := make([]any, len(records))
 	for index, record := range records {
 		result[index] = record

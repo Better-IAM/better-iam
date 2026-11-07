@@ -814,5 +814,5 @@ func LintPolicy(document any, context *core.Object) (result *core.Object, err er
 		}
 		return compareUTF16(jsString(a.Get("message")), jsString(b.Get("message")))
 	})
-	return core.NewObject("valid", true, "warnings", objectsOf(warnings)), nil
+	return core.NewObject("valid", true, "warnings", recordValues(warnings)), nil
 }

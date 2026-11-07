@@ -42,7 +42,7 @@ func (api *GroupsAPI) AddMembers(ctx context.Context, credential core.Credential
 		if err != nil {
 			return nil, err
 		}
-		return core.NewObject("members", objectsOf(members)), nil
+		return core.NewObject("members", recordValues(members)), nil
 	}, false)
 	return Out[apitypes.GroupsAddMembersOutput]{Value: result}, err
 }
@@ -94,7 +94,7 @@ func (api *GroupsAPI) List(ctx context.Context, credential core.CredentialInput,
 		if err != nil {
 			return nil, err
 		}
-		return objectsOf(groups), nil
+		return recordValues(groups), nil
 	}, false)
 	return Out[apitypes.GroupsListOutput]{Value: result}, err
 }

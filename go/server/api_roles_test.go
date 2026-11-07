@@ -4,7 +4,7 @@ package server
 // tests/server.test.ts, and the `roles.revokeSessions` validation and permission tests of
 // tests/revoke-older-sessions.test.ts. Organizations are created with `activate: true` (see api_tenants_test.go)
 // instead of redeeming an owner invitation. Steps that reach another unit's NOT_IMPLEMENTED stub skip the rest of the
-// test (requirePorted, expectCode).
+// test (requirePorted, expectCodeOrSkip).
 
 import (
 	"context"
@@ -15,7 +15,7 @@ import (
 	"github.com/Better-IAM/better-iam/go/core"
 )
 
-const day = 86_400_000.0
+const dayMs = 86_400_000.0
 
 // orgFixture is tests/support/organization.ts organizationFixture: a bootstrapped platform with one active
 // organization ("Acme") and its signed-in owner, the documents:read/write catalog, a resolver that answers the
@@ -30,7 +30,7 @@ type orgFixture struct {
 
 func newOrgFixture(t *testing.T, mutate func(options *BetterIamOptions)) *orgFixture {
 	t.Helper()
-	week := int64(7 * day)
+	week := int64(7 * dayMs)
 	f := newTenantsFixture(t, func(options *BetterIamOptions) {
 		options.Permissions = &core.PermissionsConfig{Actions: []string{"documents:read", "documents:write"}}
 		options.ResolveResource = func(_ context.Context, reference core.ResourceRef) (*ResolvedResource, error) {
@@ -150,8 +150,8 @@ func (f *orgFixture) listRoles(credential core.CredentialInput) []*core.Object {
 	return f.items(f.iam.API.Roles.List(f.ctx, credential, Input[apitypes.RolesListInput](core.NewObject("tenantId", f.tenantID))))
 }
 
-// expectCode expects an IamError with code; another unit's NOT_IMPLEMENTED stub skips the rest of the test.
-func expectCode(t *testing.T, err error, code string) {
+// expectCodeOrSkip expects an IamError with code; another unit's NOT_IMPLEMENTED stub skips the rest of the test.
+func expectCodeOrSkip(t *testing.T, err error, code string) {
 	t.Helper()
 	if err == nil {
 		t.Fatalf("expected %s, got success", code)
@@ -188,9 +188,9 @@ func TestRoleInheritanceIncludesInheritedGrantsValidatesTheHierarchyAndProtectsI
 	expectStrings(t, editor.Get("inherits"), jsString(viewer.Get("id")))
 	// Cycles, self-inheritance, protected roles, and unknown roles are refused.
 	_, err := f.updateRole(owner, "roleId", viewer.Get("id"), "inherits", []any{editor.Get("id")})
-	expectCode(t, err, "INVALID_INPUT")
+	expectCodeOrSkip(t, err, "INVALID_INPUT")
 	_, err = f.updateRole(owner, "roleId", viewer.Get("id"), "inherits", []any{viewer.Get("id")})
-	expectCode(t, err, "INVALID_INPUT")
+	expectCodeOrSkip(t, err, "INVALID_INPUT")
 	var ownerRole *core.Object
 	for _, role := range f.listRoles(owner) {
 		if truthy(role.Get("protected")) {
@@ -202,10 +202,10 @@ func TestRoleInheritanceIncludesInheritedGrantsValidatesTheHierarchyAndProtectsI
 		t.Fatal("the organization has no protected role")
 	}
 	_, err = f.updateRole(owner, "roleId", editor.Get("id"), "inherits", []any{ownerRole.Get("id")})
-	expectCode(t, err, "PROTECTED_RESOURCE")
+	expectCodeOrSkip(t, err, "PROTECTED_RESOURCE")
 	_, err = f.iam.API.Roles.Create(f.ctx, owner, Input[apitypes.RolesCreateInput](core.NewObject(
 		"tenantId", f.tenantID, "name", "Broken", "inherits", []any{"missing"})))
-	expectCode(t, err, "NOT_FOUND")
+	expectCodeOrSkip(t, err, "NOT_FOUND")
 	// Editors read through Viewer; viewers cannot write.
 	alice := f.member("alice")
 	bob := f.member("bob")
@@ -224,7 +224,7 @@ func TestRoleInheritanceIncludesInheritedGrantsValidatesTheHierarchyAndProtectsI
 	expectStrings(t, review.Get("allowed"), "documents:read", "documents:write")
 	// An inherited role cannot be deleted; clearing the inheritance removes the inherited grant.
 	_, err = f.iam.API.Roles.Delete(f.ctx, owner, Input[apitypes.RolesDeleteInput](core.NewObject("tenantId", f.tenantID, "roleId", viewer.Get("id"))))
-	expectCode(t, err, "RESOURCE_IN_USE")
+	expectCodeOrSkip(t, err, "RESOURCE_IN_USE")
 	cleared, err := f.updateRole(owner, "roleId", editor.Get("id"), "inherits", []any{})
 	requirePorted(t, err)
 	if cleared.Has("inherits") {
@@ -263,7 +263,7 @@ func TestRoleInheritanceIsBoundedByTheInheritingRolesAuthorityCeiling(t *testing
 	// Configuration sync carries inheritance by name, parent and child in one document.
 	exported := f.object(f.iam.API.Config.Export(f.ctx, owner, Input[apitypes.ConfigExportInput](core.NewObject("tenantId", f.tenantID))))
 	var exportedNarrow any
-	for _, role := range asList(exported.Get("roles")) {
+	for _, role := range arrayItems(exported.Get("roles")) {
 		if member(role, "name") == "Narrow" {
 			exportedNarrow = role
 		}
@@ -274,7 +274,7 @@ func TestRoleInheritanceIsBoundedByTheInheritingRolesAuthorityCeiling(t *testing
 	// A role created under Bob's authority is not the owner's to edit, even through configuration sync.
 	_, err := f.iam.API.Config.Apply(f.ctx, owner, Input[apitypes.ConfigApplyInput](core.NewObject("tenantId", f.tenantID,
 		"config", obj(t, `{"version":1,"roles":[{"name":"Narrow","inherits":[]}]}`))))
-	expectCode(t, err, "ACCESS_DENIED")
+	expectCodeOrSkip(t, err, "ACCESS_DENIED")
 	applied := f.object(f.iam.API.Config.Apply(f.ctx, owner, Input[apitypes.ConfigApplyInput](core.NewObject("tenantId", f.tenantID,
 		"config", obj(t, `{"version":1,"roles":[{"name":"Base","permissions":["documents:read"]},{"name":"Lead","permissions":["documents:write"],"inherits":["Base"]}]}`)))))
 	if got := core.MustStringify(applied.Get("summary")); got != `{"create":2,"update":0,"delete":0,"unchanged":0}` {
@@ -293,11 +293,11 @@ func TestRoleInheritanceIsBoundedByTheInheritingRolesAuthorityCeiling(t *testing
 	}
 	_, err = f.iam.API.Config.Plan(f.ctx, owner, Input[apitypes.ConfigPlanInput](core.NewObject("tenantId", f.tenantID,
 		"config", obj(t, `{"version":1,"roles":[{"name":"Loop","inherits":["Loop"]}]}`))))
-	expectCode(t, err, "INVALID_INPUT")
+	expectCodeOrSkip(t, err, "INVALID_INPUT")
 }
 
-// asList is a model array's items (none for anything else).
-func asList(value any) []any {
+// arrayItems is a model array's items (none for anything else).
+func arrayItems(value any) []any {
 	list, _ := value.([]any)
 	return list
 }
@@ -312,7 +312,7 @@ func TestRolesSupportDirectPermissionsInlineDocumentsDescriptionsAndBindingIntro
 	f.object(f.iam.API.Groups.AddMember(f.ctx, owner, Input[apitypes.GroupsAddMemberInput](core.NewObject(
 		"tenantId", f.tenantID, "groupId", group.Get("id"), "identityId", user.Get("id")))))
 	editor := f.createRole(owner, "name", "Editor", "description", "Reads and writes documents", "permissions", []any{"documents:read", "documents:write"})
-	statement := asList(member(editor.Get("document"), "statements"))[0].(*core.Object)
+	statement := arrayItems(member(editor.Get("document"), "statements"))[0].(*core.Object)
 	if got := core.MustStringify(statement); got != `{"sid":"RolePermissions","effect":"allow","actions":["documents:read","documents:write"],"resources":["*"]}` {
 		t.Fatalf("permissions compile to an inline allow: %s", got)
 	}
@@ -344,18 +344,18 @@ func TestRolesSupportDirectPermissionsInlineDocumentsDescriptionsAndBindingIntro
 		"tenantId", f.tenantID, "identityId", user.Get("id")))))
 	if len(effective) != 1 || effective[0].Get("id") != binding.Get("id") ||
 		member(effective[0].Get("via"), "groupId") != group.Get("id") || member(effective[0].Get("role"), "name") != "Renamed" {
-		t.Fatalf("effective bindings: %s", core.MustStringify(objectsOf(effective)))
+		t.Fatalf("effective bindings: %s", core.MustStringify(recordValues(effective)))
 	}
 	holders := f.items(f.iam.API.Roles.ListBindings(f.ctx, owner, Input[apitypes.RolesListBindingsInput](core.NewObject(
 		"tenantId", f.tenantID, "roleId", editor.Get("id")))))
 	if len(holders) == 0 || holders[0].Get("subjectType") != "group" ||
 		core.MustStringify(holders[0].Get("subject")) != core.MustStringify(core.NewObject("id", group.Get("id"), "name", "Editors")) {
-		t.Fatalf("role bindings: %s", core.MustStringify(objectsOf(holders)))
+		t.Fatalf("role bindings: %s", core.MustStringify(recordValues(holders)))
 	}
 	members := f.items(f.iam.API.Groups.ListMembers(f.ctx, owner, Input[apitypes.GroupsListMembersInput](core.NewObject(
 		"tenantId", f.tenantID, "groupId", group.Get("id")))))
 	if len(members) != 1 || members[0].Get("id") != user.Get("id") {
-		t.Fatalf("group members: %s", core.MustStringify(objectsOf(members)))
+		t.Fatalf("group members: %s", core.MustStringify(recordValues(members)))
 	}
 	policy := f.object(f.iam.API.Policies.Create(f.ctx, owner, Input[apitypes.PoliciesCreateInput](core.NewObject(
 		"tenantId", f.tenantID, "name", "Reader", "description", "v1",
@@ -392,7 +392,7 @@ func TestRolesRevokeSessionsValidatesBeforeAndNeverMovesTheWatermarkBack(t *test
 	}
 	for _, before := range []any{f.now() + 2, -1.0, 1.5, "1000", 9007199254740992.0} {
 		_, err := revoke("before", before)
-		expectCode(t, err, "INVALID_INPUT")
+		expectCodeOrSkip(t, err, "INVALID_INPUT")
 	}
 	high := f.now()
 	_, err := revoke("before", high)
@@ -424,13 +424,13 @@ func TestRolesRevokeSessionsRequiresRecentAuthenticationAndThePermission(t *test
 		_, err := f.iam.API.Roles.RevokeSessions(f.ctx, credential, Input[apitypes.RolesRevokeSessionsInput](core.NewObject("tenantId", f.tenantID, "roleId", roleID)))
 		return err
 	}
-	expectCode(t, revoke(core.CredentialInput{Token: jsString(assumed.Get("token"))}, role.Get("id")), "RECENT_AUTH_REQUIRED")
+	expectCodeOrSkip(t, revoke(core.CredentialInput{Token: jsString(assumed.Get("token"))}, role.Get("id")), "RECENT_AUTH_REQUIRED")
 	owner := f.ownerSignIn()
 	f.member("alice")
-	expectCode(t, revoke(f.login("alice"), role.Get("id")), "ACCESS_DENIED")
-	expectCode(t, revoke(owner, ID()), "NOT_FOUND")
+	expectCodeOrSkip(t, revoke(f.login("alice"), role.Get("id")), "ACCESS_DENIED")
+	expectCodeOrSkip(t, revoke(owner, ID()), "NOT_FOUND")
 	f.clock.Add(6 * 60_000)
-	expectCode(t, revoke(owner, role.Get("id")), "RECENT_AUTH_REQUIRED")
+	expectCodeOrSkip(t, revoke(owner, role.Get("id")), "RECENT_AUTH_REQUIRED")
 	if f.record("roles", jsString(role.Get("id"))).Has("sessionsRevokedBefore") {
 		t.Fatal("a refused revocation leaves the watermark unset")
 	}

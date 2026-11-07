@@ -157,7 +157,7 @@ func (api *PoliciesAPI) List(ctx context.Context, credential core.CredentialInpu
 		if err != nil {
 			return nil, err
 		}
-		return objectsOf(policies), nil
+		return recordValues(policies), nil
 	}, false)
 	return Out[apitypes.PoliciesListOutput]{Value: result}, err
 }
@@ -192,7 +192,7 @@ func (api *PoliciesAPI) ListVersions(ctx context.Context, credential core.Creden
 			}
 			return 0
 		})
-		return objectsOf(versions), nil
+		return recordValues(versions), nil
 	}, false)
 	return Out[apitypes.PoliciesListVersionsOutput]{Value: result}, err
 }
