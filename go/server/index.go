@@ -343,9 +343,14 @@ func New(options *BetterIamOptions) (*BetterIam, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Validates the a2a option, so invalid card keys fail construction with INVALID_CONFIG.
+	a2a := CreateA2aRuntime(server)
+	if err := a2a.ConfigError(); err != nil {
+		return nil, err
+	}
 	iam := &BetterIam{
 		API: api, Auth: authService, HTTP: transport, Context: server, Store: options.Database,
-		Features: CreateFeatureEvaluator(server), Inference: CreateInferenceRuntime(server), A2a: CreateA2aRuntime(server),
+		Features: CreateFeatureEvaluator(server), Inference: CreateInferenceRuntime(server), A2a: a2a,
 		Billing: CreateBillingRuntime(server), Kms: CreateKmsRuntime(server), Pki: CreatePkiRuntime(server),
 		Protection: CreateProtectionRuntime(server), Vault: CreateVaultRuntime(server), Quotas: CreateQuotasRuntime(server),
 		Privacy: CreatePrivacyRuntime(server), Workflows: CreateWorkflowsRuntime(server),
