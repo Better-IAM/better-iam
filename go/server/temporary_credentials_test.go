@@ -16,7 +16,7 @@ import (
 	"github.com/Better-IAM/better-iam/go/core"
 )
 
-func stringify(t *testing.T, value any) string {
+func stsTestStringify(t *testing.T, value any) string {
 	t.Helper()
 	text, _, err := core.Stringify(value)
 	if err != nil {
@@ -60,7 +60,7 @@ func TestTemporaryCredentialsSessionTags(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := stringify(t, tags); got != `{"Team":"Payments","city":"Zürich","path":"a/b:c=d+e-f@g h_i.j"}` {
+	if got := stsTestStringify(t, tags); got != `{"Team":"Payments","city":"Zürich","path":"a/b:c=d+e-f@g h_i.j"}` {
 		t.Errorf("tags: %s", got)
 	}
 	_, err = SessionTagsValue(obj(t, `{"_team":"a"}`))
@@ -153,32 +153,32 @@ func TestTemporaryCredentialsAllowedTagKeysAndFormats(t *testing.T) {
 func TestTemporaryCredentialsDurations(t *testing.T) {
 	k := newKernel(t, nil)
 	bounds := must(RoleDurationBounds(k.server, core.NewObject(), "opaque"))
-	if got := stringify(t, bounds); got != `{"min":60,"max":3600,"fallback":900}` {
+	if got := stsTestStringify(t, bounds); got != `{"min":60,"max":3600,"fallback":900}` {
 		t.Errorf("default role bounds: %s", got)
 	}
 	// A malformed stored maximum fails closed to the default; a lower one reduces the bounds and the fallback.
 	for _, malformed := range []any{"7200", -5.0, 0.0, 1.5, math.NaN(), nil, 1e300} {
-		if got := stringify(t, must(RoleDurationBounds(k.server, core.NewObject("maxSessionSeconds", malformed), "opaque"))); got != `{"min":60,"max":3600,"fallback":900}` {
+		if got := stsTestStringify(t, must(RoleDurationBounds(k.server, core.NewObject("maxSessionSeconds", malformed), "opaque"))); got != `{"min":60,"max":3600,"fallback":900}` {
 			t.Errorf("malformed %v: %s", malformed, got)
 		}
 	}
-	if got := stringify(t, must(RoleDurationBounds(k.server, core.NewObject("maxSessionSeconds", 600.0), "opaque"))); got != `{"min":60,"max":600,"fallback":600}` {
+	if got := stsTestStringify(t, must(RoleDurationBounds(k.server, core.NewObject("maxSessionSeconds", 600.0), "opaque"))); got != `{"min":60,"max":600,"fallback":600}` {
 		t.Errorf("short trust: %s", got)
 	}
 	// The deployment ceiling caps a longer trust; without sts.jwt a JWT has no extra cap.
-	if got := stringify(t, must(RoleDurationBounds(k.server, core.NewObject("maxSessionSeconds", 43200.0), "jwt"))); got != `{"min":60,"max":3600,"fallback":900}` {
+	if got := stsTestStringify(t, must(RoleDurationBounds(k.server, core.NewObject("maxSessionSeconds", 43200.0), "jwt"))); got != `{"min":60,"max":3600,"fallback":900}` {
 		t.Errorf("deployment ceiling: %s", got)
 	}
 	long := newKernel(t, func(options *BetterIamOptions) {
 		options.Sts = &StsOptions{MaxRoleSessionSeconds: float(43200), MaxSessionTokenSeconds: float(1800)}
 	})
-	if got := stringify(t, must(RoleDurationBounds(long.server, core.NewObject("maxSessionSeconds", 7200.0), "opaque"))); got != `{"min":60,"max":7200,"fallback":900}` {
+	if got := stsTestStringify(t, must(RoleDurationBounds(long.server, core.NewObject("maxSessionSeconds", 7200.0), "opaque"))); got != `{"min":60,"max":7200,"fallback":900}` {
 		t.Errorf("long trust: %s", got)
 	}
-	if got := stringify(t, must(SessionTokenDurationBounds(k.server, "opaque"))); got != `{"min":60,"max":43200,"fallback":3600}` {
+	if got := stsTestStringify(t, must(SessionTokenDurationBounds(k.server, "opaque"))); got != `{"min":60,"max":43200,"fallback":3600}` {
 		t.Errorf("default session token bounds: %s", got)
 	}
-	if got := stringify(t, must(SessionTokenDurationBounds(long.server, "jwt"))); got != `{"min":60,"max":1800,"fallback":1800}` {
+	if got := stsTestStringify(t, must(SessionTokenDurationBounds(long.server, "jwt"))); got != `{"min":60,"max":1800,"fallback":1800}` {
 		t.Errorf("short session tokens: %s", got)
 	}
 	if seconds, err := DurationWithin(core.Undefined, bounds); err != nil || seconds != 900 {
@@ -262,7 +262,7 @@ func TestTemporaryCredentialsProjections(t *testing.T) {
 		"client", obj(t, `{"ip":"203.0.113.9"}`), "method", "password", "createdAt", 1_000.0, "expiresAt", 3_601_500.0, "authenticatedAt", 500.0)
 	credential := must(TemporaryCredential("biam_rol_x", row, 1_000))
 	want := `{"token":"biam_rol_x","tokenType":"Bearer","format":"jwt","expiresAt":3601500,"expiresIn":3600,"session":{"id":"s1","tenantId":"project","kind":"role","identityId":"alice","expiresAt":3601500,"mfa":false,"roleId":"role-1","trustId":"trust-1","sessionName":"deploy","sourceIdentity":"alice@corp"},"audience":["api","billing"]}`
-	if got := stringify(t, credential); got != want {
+	if got := stsTestStringify(t, credential); got != want {
 		t.Errorf("temporary credential:\n got %s\nwant %s", got, want)
 	}
 	if got := jsNumber(must(TemporaryCredential("t", row, 4_000_000)).Get("expiresIn")); got != 0 {
@@ -270,18 +270,18 @@ func TestTemporaryCredentialsProjections(t *testing.T) {
 	}
 	caller := must(CallerIdentity(principalOf(identity("alice", "org"), row)))
 	want = `{"identityId":"alice","identityTenantId":"org","identityKind":"user","tenantId":"project","sessionId":"s1","sessionKind":"role","format":"jwt","mfa":false,"authenticatedAt":500,"issuedAt":1000,"expiresAt":3601500,"method":"password","roleId":"role-1","trustId":"trust-1","sourceTenantId":"org","sessionName":"deploy","sourceIdentity":"alice@corp","sessionTags":{"team":"payments"},"audience":["api","billing"],"webIdentity":{"providerId":"gh","issuer":"https://token.actions.example","subject":"repo:acme/web"}}`
-	if got := stringify(t, caller); got != want {
+	if got := stsTestStringify(t, caller); got != want {
 		t.Errorf("caller identity:\n got %s\nwant %s", got, want)
 	}
 	plain := must(CallerIdentity(principalOf(identity("bob", "org"), session("s2", "bob", "org", "user", "sessionTags", obj(t, `{}`), "impersonatorId", "root", "agentId", "agent-1", "delegationId", "d-1"))))
 	want = `{"identityId":"bob","identityTenantId":"org","identityKind":"user","tenantId":"org","sessionId":"s2","sessionKind":"user","format":"opaque","mfa":false,"authenticatedAt":1,"issuedAt":1,"expiresAt":9000000000000000,"impersonatorId":"root","agentId":"agent-1","delegationId":"d-1"}`
-	if got := stringify(t, plain); got != want {
+	if got := stsTestStringify(t, plain); got != want {
 		t.Errorf("plain caller identity:\n got %s\nwant %s", got, want)
 	}
 	// A cross-tenant role session hides the source person's address from the target tenant.
 	summary := must(RoleSessionSummary(row))
 	want = `{"id":"s1","roleId":"role-1","trustId":"trust-1","identityId":"alice","mfa":false,"format":"jwt","createdAt":1000,"expiresAt":3601500,"sourceTenantId":"org","sessionName":"deploy","sourceIdentity":"alice@corp","webIdentity":{"providerId":"gh","subject":"repo:acme/web"}}`
-	if got := stringify(t, summary); got != want {
+	if got := stsTestStringify(t, summary); got != want {
 		t.Errorf("role session summary:\n got %s\nwant %s", got, want)
 	}
 	local := must(RoleSessionSummary(row.Spread(core.NewObject("sourceTenantId", "project"))))
@@ -291,10 +291,10 @@ func TestTemporaryCredentialsProjections(t *testing.T) {
 	recorded := AuditSessionContext(row.Spread(core.NewObject("agentId", "agent-1",
 		"webIdentity", core.NewObject("providerId", "gh", "subject", strings.Repeat("s", 300)))))
 	want = `{"sessionId":"s1","kind":"role","roleId":"role-1","trustId":"trust-1","sourceTenantId":"org","sessionName":"deploy","sourceIdentity":"alice@corp","webIdentityProviderId":"gh","webIdentitySubject":"` + strings.Repeat("s", 256) + `","format":"jwt","agentId":"agent-1"}`
-	if got := stringify(t, recorded); got != want {
+	if got := stsTestStringify(t, recorded); got != want {
 		t.Errorf("audit session context:\n got %s\nwant %s", got, want)
 	}
-	if got := stringify(t, AuditSessionContext(session("s3", "bob", "org", "user"))); got != `{"sessionId":"s3","kind":"user"}` {
+	if got := stsTestStringify(t, AuditSessionContext(session("s3", "bob", "org", "user"))); got != `{"sessionId":"s3","kind":"user"}` {
 		t.Errorf("plain audit session context: %s", got)
 	}
 	if AuditSessionContext(nil) != nil || AuditSessionContext(session("simulation", "bob", "org", "user")) != nil ||
