@@ -406,5 +406,59 @@
     "term": "Home region",
     "definition": "In a multi-region deployment, the region whose deployment serves an organization's sign-in: its own region, or its nearest ancestor's. Other regions answer WRONG_REGION with its sign-in URL there.",
     "href": "/docs/operations/deployment/hosts-and-regions#regions"
+  },
+  {
+    "id": "agent",
+    "term": "Agent",
+    "definition": "An identity of kind `agent` for an automated actor driven by a model. Like a service account it holds API keys and never signs in; unlike one, it always has a sponsor, its `boundary` policy caps everything it does, and it can act for a person through a delegation.",
+    "href": "/docs/features/ai-agents"
+  },
+  {
+    "id": "sponsor",
+    "term": "Sponsor",
+    "definition": "The person accountable for an agent or a guest (`sponsorId`): an active, unexpired member of the same organization. An agent's credentials work only while its sponsor is active, so no agent outlives the person answerable for it.",
+    "href": "/docs/reference/api/agents#sponsors-and-standing"
+  },
+  {
+    "id": "delegation",
+    "term": "Delegation",
+    "definition": "A person's permission for one agent to act for them, within a scope (an action list or a policy) and until it expires or is revoked. The agent uses it to open delegated sessions; it never gives the agent more than the person has.",
+    "href": "/docs/features/ai-agents#letting-an-agent-act-for-a-person"
+  },
+  {
+    "id": "delegated-session",
+    "term": "Delegated session",
+    "definition": "A short session (a `biam_dlg_...` token) an agent opens with its API key under a delegation. Its identity is the person, capped by the delegation's scope, the agent's boundary, and the key's limits; every use re-checks the whole chain.",
+    "href": "/docs/features/ai-agents#open-a-delegated-session"
+  },
+  {
+    "id": "collection",
+    "term": "Collection",
+    "definition": "The kind of a stored record, such as `identities` or `sessions`. Every record lives in the one `iam_records` table, tagged with its collection, so new features never need new tables.",
+    "href": "/docs/databases/schema#collections"
+  },
+  {
+    "id": "session-jwt",
+    "term": "Session JWT",
+    "definition": "A temporary credential issued as a signed JWT instead of an opaque token (`format: 'jwt'` on `sts.getSessionToken`, `roles.assume`, or `sts.assumeRoleWithWebIdentity`), so other services can verify it offline against the published JWKS. Needs `sts.jwt`; user sessions and API keys are never JWTs.",
+    "href": "/docs/authentication/tokens#session-jwts"
+  },
+  {
+    "id": "token-exchange",
+    "term": "Token exchange",
+    "definition": "The OAuth grant (RFC 8693) by which an API trades the access token it received for a new token to call another API as the same person. The new token's `act` claim names the exchanging client, so the downstream API sees both.",
+    "href": "/docs/federation/token-exchange"
+  },
+  {
+    "id": "meter",
+    "term": "Meter",
+    "definition": "Something billed by usage, such as API calls, seat-days, or AI inference. The root tenant defines platform meters billed to every organization; an organization or project can define chargeback meters for its own subtree.",
+    "href": "/docs/features/billing#meters-and-prices"
+  },
+  {
+    "id": "rate-card",
+    "term": "Rate card",
+    "definition": "The prices of the meters: per unit, graduated or volume tiers, packages, a free allowance, and negotiated prices for individual organizations. A plan's usage items replace it for the plan's subscribers.",
+    "href": "/docs/features/billing#meters-and-prices"
   }
 ]

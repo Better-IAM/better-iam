@@ -2112,7 +2112,7 @@
      "source",
      "options?"
     ],
-    "doc": "Express / Connect integration. `middleware` serves the IAM API (through `iam.nodeHandler`, so node protocol mounts\nsuch as the OAuth provider work) and gives every other request `req.iam`; `requireSession` and `authorize` are route\nguards; `errorHandler` answers IAM refusals thrown by your routes.\n\n```ts\nconst iamExpress = createIamExpress(iam, { loginPath: '/login' });\napp.use(iamExpress.middleware); // before express.json()\napp.get('/projects/:id', iamExpress.authorize('projects:read', { resource: (req) => ({ type: 'project', id: req.params.id }) }), handler);\napp.use(iamExpress.errorHandler);\n```",
+    "doc": "Express / Connect integration. `middleware` serves the IAM API (through `iam.nodeHandler`, so node protocol mounts\nsuch as the OAuth provider work) and gives every other request `req.iam`; `requireSession` and `authorize` are route\nguards; `errorHandler` answers IAM refusals thrown by your routes.\n\n```ts\nconst iamExpress = createIamExpress(iam, { loginPath: '/login' });\napp.use(iamExpress.middleware); // before express.json()\napp.get('/projects/:id', iamExpress.authorize('projects:read', { resource: (req) => ({ type: 'project', id: String(req.params.id) }) }), handler);\napp.use(iamExpress.errorHandler);\n```",
     "deprecated": false
    }
   ]

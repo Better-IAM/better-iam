@@ -1899,6 +1899,8 @@ async function readGuides() {
           .join('\n');
         pages.push({
           url: `/docs/${slug}`,
+          // A section's index page is a catalog of the section; it explains an export only when no page does.
+          index: entry.name === 'index.mdx',
           title: frontmatter.match(/^title:\s*(.+)$/m)?.[1].replace(/^['"]|['"]$/g, '') ?? slug,
           // `packages: ['a', 'b']` or a YAML block list of `- 'a'` lines.
           packages: [
@@ -1961,18 +1963,20 @@ function explainingPage(name, packageName, origin, guides) {
     )
       continue;
     const score = count * (own ? 10 : 1);
-    if (
-      !best ||
-      score > best.score ||
-      (score === best.score && page.url.length < best.page.url.length)
-    )
+    if (!best || score > best.score || (score === best.score && moreFocused(page, best.page)))
       best = { page, score };
   }
   if (best) return best.page;
   const home = guides.filter((page) => page.packages.includes(packageName));
   return home.length && home.length <= 3
-    ? home.reduce((shortest, page) => (page.url.length < shortest.url.length ? page : shortest))
+    ? home.reduce((chosen, page) => (moreFocused(page, chosen) ? page : chosen))
     : undefined;
+}
+
+/** Between two equally good pages: a page over a section's index (a catalog), then the shorter URL. */
+function moreFocused(page, other) {
+  if (page.index !== other.index) return !page.index;
+  return page.url.length < other.url.length;
 }
 
 /** At most `max` characters of whole sentences, keeping Markdown (inline code) intact. */

@@ -48,6 +48,12 @@ A decision used to shape a user interface, such as hiding a button. It is never 
 
 [Learn more](/docs/authorization/queries)
 
+### Agent
+
+An identity of kind `agent` for an automated actor driven by a model. Like a service account it holds API keys and never signs in; unlike one, it always has a sponsor, its `boundary` policy caps everything it does, and it can act for a person through a delegation.
+
+[Learn more](/docs/features/ai-agents)
+
 ### Agreement
 
 A versioned terms-of-use text that members accept. Policies can require acceptance through `principal.agreements`, and a new version asks everyone to accept again.
@@ -100,6 +106,12 @@ A periodic review in which reviewers confirm or revoke each person's access, wit
 
 [Learn more](/docs/features/governance/certifications)
 
+### Collection
+
+The kind of a stored record, such as `identities` or `sessions`. Every record lives in the one `iam_records` table, tagged with its collection, so new features never need new tables.
+
+[Learn more](/docs/databases/schema#collections)
+
 ### Condition
 
 An extra test inside a statement that compares a context value with expected values using an operator such as `StringEquals`, `IpAddress`, or `DateBefore`. A missing value never satisfies a condition.
@@ -125,6 +137,18 @@ A hostname an organization controls, such as login.acme.com, verified with a DNS
 [Learn more](/docs/operations/deployment/hosts-and-regions#custom-hostnames)
 
 ## D
+
+### Delegated session
+
+A short session (a `biam_dlg_...` token) an agent opens with its API key under a delegation. Its identity is the person, capped by the delegation's scope, the agent's boundary, and the key's limits; every use re-checks the whole chain.
+
+[Learn more](/docs/features/ai-agents#open-a-delegated-session)
+
+### Delegation
+
+A person's permission for one agent to act for them, within a scope (an action list or a policy) and until it expires or is revoked. The agent uses it to open delegated sessions; it never gives the agent more than the person has.
+
+[Learn more](/docs/features/ai-agents#letting-an-agent-act-for-a-person)
 
 ### Delivery outbox
 
@@ -218,6 +242,14 @@ A guardrail that must stay true whatever roles and policies say, such as "contra
 
 [Learn more](/docs/features/governance/change-safety)
 
+## M
+
+### Meter
+
+Something billed by usage, such as API calls, seat-days, or AI inference. The root tenant defines platform meters billed to every organization; an organization or project can define chargeback meters for its own subtree.
+
+[Learn more](/docs/features/billing#meters-and-prices)
+
 ## O
 
 ### OpenID Connect
@@ -271,6 +303,12 @@ Whoever is making a request after the credential has been checked: the identity 
 [Learn more](/docs/authorization)
 
 ## R
+
+### Rate card
+
+The prices of the meters: per unit, graduated or volume tiers, packages, a free allowance, and negotiated prices for individual organizations. A plan's usage items replace it for the plan's subscribers.
+
+[Learn more](/docs/features/billing#meters-and-prices)
 
 ### Recent authentication
 
@@ -370,6 +408,12 @@ A signed-in period stored in your database. It records how the person authentica
 
 [Learn more](/docs/authentication/sessions)
 
+### Session JWT
+
+A temporary credential issued as a signed JWT instead of an opaque token (`format: 'jwt'` on `sts.getSessionToken`, `roles.assume`, or `sts.assumeRoleWithWebIdentity`), so other services can verify it offline against the published JWKS. Needs `sts.jwt`; user sessions and API keys are never JWTs.
+
+[Learn more](/docs/authentication/tokens#session-jwts)
+
 ### Shared Signals
 
 The OpenID Shared Signals Framework: signed security events, such as a session being revoked (CAEP) or an account being disabled (RISC), pushed to other applications so they can react immediately.
@@ -381,6 +425,12 @@ The OpenID Shared Signals Framework: signed security events, such as a session b
 An organization's own address for signing in, like an AWS account's sign-in URL: a subdomain built from its alias (acme.signin.example.com) or a custom hostname it verified. Requests on it are pinned to that organization.
 
 [Learn more](/docs/operations/deployment/hosts-and-regions)
+
+### Sponsor
+
+The person accountable for an agent or a guest (`sponsorId`): an active, unexpired member of the same organization. An agent's credentials work only while its sponsor is active, so no agent outlives the person answerable for it.
+
+[Learn more](/docs/reference/api/agents#sponsors-and-standing)
 
 ### Standing privilege
 
@@ -425,6 +475,12 @@ An account that people sign in to: your platform's root, an organization, or a p
 Minimum rules for just-in-time elevation in one tenant, such as a maximum activation length or always requiring MFA, that individual bindings cannot weaken.
 
 [Learn more](/docs/features/privileged-access/elevation)
+
+### Token exchange
+
+The OAuth grant (RFC 8693) by which an API trades the access token it received for a new token to call another API as the same person. The new token's `act` claim names the exchanging client, so the downstream API sees both.
+
+[Learn more](/docs/federation/token-exchange)
 
 ### Trust
 
