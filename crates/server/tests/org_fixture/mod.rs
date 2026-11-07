@@ -166,6 +166,31 @@ impl Org {
         org
     }
 
+    /// A root administrator session with MFA (what signing in with password and TOTP gives).
+    pub async fn root_sign_in(&self) -> CredentialInput {
+        let auth = self.iam.auth.clone();
+        let root: Identity =
+            better_iam_server::port::decode(self.get("identities", &self.root_id).await.unwrap())
+                .unwrap();
+        let session = self
+            .iam
+            .store
+            .transaction(|tx| async move {
+                auth.issue_session(
+                    &tx,
+                    &root,
+                    better_iam_auth::service::base::IssueSessionOptions {
+                        mfa: Some(true),
+                        ..Default::default()
+                    },
+                )
+                .await
+            })
+            .await
+            .expect("root session");
+        bearer(&session.token)
+    }
+
     pub fn now(&self) -> f64 {
         *self.clock.lock().unwrap()
     }
