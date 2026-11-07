@@ -166,7 +166,7 @@ func (f *flagFixture) body(format string, args ...any) *core.Object {
 }
 
 // answer fails the test on an error and returns the answer.
-func answer[T any](t *testing.T, out Out[T], err error) any {
+func flagAnswer[T any](t *testing.T, out Out[T], err error) any {
 	t.Helper()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -253,18 +253,6 @@ func expectMatch(t *testing.T, actual any, expected string) {
 	}
 }
 
-// expectCode is rejects.toMatchObject({ code }).
-func expectCode(t *testing.T, err error, code string) {
-	t.Helper()
-	if err == nil {
-		t.Errorf("expected %s, got success", code)
-		return
-	}
-	if known := iamError(t, err); known.Code != code {
-		t.Errorf("expected %s, got %s: %s", code, known.Code, known.Message)
-	}
-}
-
 func (f *flagFixture) createFlag(credential core.CredentialInput, input *core.Object) (any, error) {
 	out, err := f.iam.API.Features.Create(context.Background(), credential, Input[apitypes.FeaturesCreateInput](input))
 	return out.Value, err
@@ -301,7 +289,7 @@ func (f *flagFixture) evaluateAPI(credential core.CredentialInput, input *core.O
 func (f *flagFixture) listTargets(credential core.CredentialInput, tenantID, key string) []*core.Object {
 	f.t.Helper()
 	out, err := f.iam.API.Features.ListTargets(context.Background(), credential, Input[apitypes.FeaturesListTargetsInput](core.NewObject("tenantId", tenantID, "key", key)))
-	return asList(f.t, answer(f.t, out, err))
+	return asList(f.t, flagAnswer(f.t, out, err))
 }
 
 // must fails the test on an error.
@@ -695,7 +683,7 @@ func TestFeaturesTargetsLapseDeleteCleansUpAndChangesAreAudited(t *testing.T) {
 	expectMatch(t, lapsed[0], `{"tenantName":"Acme","active":false}`)
 
 	deleted, err := f.iam.API.Features.Delete(context.Background(), f.rootCred, Input[apitypes.FeaturesDeleteInput](f.body(`{"tenantId":%q,"key":"trial-seats"}`, f.rootID)))
-	if got := toJSON(t, answer(t, deleted, err)); got != `{"success":true,"removedTargets":1}` {
+	if got := toJSON(t, flagAnswer(t, deleted, err)); got != `{"success":true,"removedTargets":1}` {
 		t.Errorf("delete: %s", got)
 	}
 	expectMatch(t, f.evaluateOne(f.tenantID, "trial-seats"), `{"value":false,"reason":"UNKNOWN"}`)
