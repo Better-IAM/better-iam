@@ -69,6 +69,27 @@ fn stricter_limits(
     }
 }
 
+/// A typed record (plan limits, policies) as the JSON object TypeScript builds: integral numbers are JSON integers, as
+/// they are once the record is read back from the store.
+fn plain<T: serde::Serialize>(value: &T) -> Map<String, Value> {
+    fn numbers(value: Value) -> Value {
+        match value {
+            Value::Number(number) => crate::js::number(better_iam_core::js::number_value(&number)),
+            Value::Array(items) => Value::Array(items.into_iter().map(numbers).collect()),
+            Value::Object(map) => Value::Object(
+                map.into_iter()
+                    .map(|(key, item)| (key, numbers(item)))
+                    .collect(),
+            ),
+            other => other,
+        }
+    }
+    match numbers(Value::Object(encode(value))) {
+        Value::Object(map) => map,
+        _ => Map::new(),
+    }
+}
+
 /// The stored record of a tenant the operation already loaded: `{ ...target }` keeps its member order and the
 /// members this port does not declare.
 async fn raw_tenant(tx: &Store, tenant: &Tenant) -> IamResult<Record> {
@@ -339,9 +360,9 @@ impl TenantsApi {
                     // Plan defaults for every new tenant, never looser than its parent's own plan (the stricter
                     // value wins per key), so an organization cannot escape its limits through child projects. The
                     // root tenant's limits are the platform's own and are not passed on.
-                    let defaults = ctx.config.tenant_defaults.limits.as_ref().map(encode);
+                    let defaults = ctx.config.tenant_defaults.limits.as_ref().map(plain);
                     let parent_limits = if parent.parent_id.is_some() {
-                        parent.limits.as_ref().map(encode)
+                        parent.limits.as_ref().map(plain)
                     } else {
                         None
                     };
@@ -350,7 +371,7 @@ impl TenantsApi {
                         realm.insert("limits".into(), limits);
                     }
                     if let Some(policy) = &ctx.config.tenant_defaults.auth_policy {
-                        realm.insert("authPolicy".into(), Value::Object(encode(policy)));
+                        realm.insert("authPolicy".into(), Value::Object(plain(policy)));
                     }
                     if let Some(boundary) = body.get("boundary")
                         && truthy(Some(boundary))
@@ -1055,7 +1076,7 @@ impl TenantsApi {
                     let mut next = raw_tenant(&tx, &target).await?;
                     next.shift_remove("accessPolicy");
                     if body.get("accessPolicy") != Some(&Value::Null) {
-                        let policy = encode(&tenant_access_policy(body.get("accessPolicy"))?);
+                        let policy = plain(&tenant_access_policy(body.get("accessPolicy"))?);
                         if !policy.is_empty() {
                             next.insert("accessPolicy".into(), Value::Object(policy));
                         }
@@ -1129,7 +1150,7 @@ impl TenantsApi {
                     if body.get("authPolicy") != Some(&Value::Null) {
                         let policy = tenant_auth_policy(body.get("authPolicy"))?;
                         ranges = policy.allowed_ip_ranges.clone().unwrap_or_default();
-                        next.insert("authPolicy".into(), Value::Object(encode(&policy)));
+                        next.insert("authPolicy".into(), Value::Object(plain(&policy)));
                     }
                     // Like blockNetwork's self-lockout guard: an allowlist that leaves out the address the caller's
                     // session was issued from, or the one this request comes from, is refused. Only the caller's
@@ -1263,7 +1284,7 @@ impl TenantsApi {
                     next.shift_remove("limits");
                     let mut limits: Option<Map<String, Value>> = None;
                     if body.get("limits") != Some(&Value::Null) {
-                        let parsed = encode(&tenant_limits(body.get("limits"))?);
+                        let parsed = plain(&tenant_limits(body.get("limits"))?);
                         next.insert("limits".into(), Value::Object(parsed.clone()));
                         limits = Some(parsed);
                     }
