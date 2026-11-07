@@ -300,7 +300,8 @@ func schemeHasCaveat(scheme *ClassificationSchemeDefinition, caveat string) bool
 }
 
 func sortedUnique(values []string) []string {
-	out := append([]string(nil), values...)
+	// A non-nil empty list stays non-nil: an empty releasableTo means owner countries only, not unrestricted.
+	out := append(make([]string, 0, len(values)), values...)
 	sort.SliceStable(out, func(i, j int) bool { return compareUTF16(out[i], out[j]) < 0 })
 	return out
 }
