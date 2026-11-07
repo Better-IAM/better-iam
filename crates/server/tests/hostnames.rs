@@ -65,7 +65,8 @@ async fn set_slug(f: &Fixture, tenant_id: &str, slug: &str) {
         json!({ "id": slug, "tenantId": tenant_id, "createdAt": f.now() }),
     )
     .await;
-    f.update("tenants", tenant_id, json!({ "slug": slug })).await;
+    f.update("tenants", tenant_id, json!({ "slug": slug }))
+        .await;
 }
 
 /// Claims and verifies a hostname for Acme.
@@ -192,10 +193,7 @@ fn claims_a_hostname_and_returns_the_dns_records_that_verify_and_route_it() {
                 .is_none()
         );
         let listed = ok(api
-            .list(
-                &h.acme.owner,
-                body(json!({ "tenantId": h.acme.tenant_id })),
-            )
+            .list(&h.acme.owner, body(json!({ "tenantId": h.acme.tenant_id })))
             .await);
         let names: Vec<&Value> = listed
             .as_array()
@@ -231,14 +229,13 @@ fn verifies_through_dns_then_pins_requests_on_the_hostname_to_the_organization()
         let done = ok(verify().await);
         assert_eq!(done["verified"], json!(true));
         assert_eq!(done["hostname"]["status"], json!("verified"));
-        let resolved = h
-            .f
-            .iam
-            .hosts
-            .resolve("login.acme.test")
-            .await
-            .unwrap()
-            .expect("resolves");
+        let resolved =
+            h.f.iam
+                .hosts
+                .resolve("login.acme.test")
+                .await
+                .unwrap()
+                .expect("resolves");
         assert_eq!(resolved.tenant_id, h.acme.tenant_id);
         assert_eq!(resolved.via, "custom");
         assert!(h.f.iam.hosts.allowed("login.acme.test").await.unwrap());
@@ -320,14 +317,13 @@ fn makes_a_verified_hostname_the_primary_sign_in_address_and_releases_it() {
             Some("http://login.acme.test/")
         );
         // Only one hostname is primary at a time.
-        let stored = h
-            .f
-            .iam
-            .store
-            .get("tenantHostnames", hostname["id"].as_str().unwrap())
-            .await
-            .unwrap()
-            .unwrap();
+        let stored =
+            h.f.iam
+                .store
+                .get("tenantHostnames", hostname["id"].as_str().unwrap())
+                .await
+                .unwrap()
+                .unwrap();
         assert_eq!(stored["primary"], json!(true));
         let back = ok(api
             .set_primary(
@@ -337,14 +333,13 @@ fn makes_a_verified_hostname_the_primary_sign_in_address_and_releases_it() {
             .await);
         assert_eq!(back["primary"], Value::Null);
         assert_eq!(back["signInUrl"], json!("http://acme.localhost:3000/"));
-        let stored = h
-            .f
-            .iam
-            .store
-            .get("tenantHostnames", hostname["id"].as_str().unwrap())
-            .await
-            .unwrap()
-            .unwrap();
+        let stored =
+            h.f.iam
+                .store
+                .get("tenantHostnames", hostname["id"].as_str().unwrap())
+                .await
+                .unwrap()
+                .unwrap();
         assert!(stored.get("primary").is_none());
 
         ok(api

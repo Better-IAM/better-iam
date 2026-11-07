@@ -466,9 +466,7 @@ impl Fixture {
             .store
             .find(
                 "audit",
-                &Filter::new()
-                    .eq("tenantId", tenant_id)
-                    .eq("action", action),
+                &Filter::new().eq("tenantId", tenant_id).eq("action", action),
                 &FindOptions::default(),
             )
             .await

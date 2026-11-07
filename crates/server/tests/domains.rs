@@ -252,12 +252,8 @@ fn keeps_one_owner_per_domain_isolates_tenants_and_stops_discovery_on_release_or
 
         let discover = || api.discover(body(json!({ "email": "a@shared.example" })));
         assert_eq!(ok(discover().await)["tenantId"], json!(acme.tenant_id));
-        f.update(
-            "tenants",
-            &acme.tenant_id,
-            json!({ "status": "suspended" }),
-        )
-        .await;
+        f.update("tenants", &acme.tenant_id, json!({ "status": "suspended" }))
+            .await;
         assert_eq!(err(discover().await).status, 404);
         f.update("tenants", &acme.tenant_id, json!({ "status": "active" }))
             .await;
@@ -298,7 +294,11 @@ fn serves_discovery_publicly_over_http_while_management_requires_permission() {
             )
             .await);
         let (status, discovered) = f
-            .post("domains/discover", json!({ "email": "x@web.example" }), None)
+            .post(
+                "domains/discover",
+                json!({ "email": "x@web.example" }),
+                None,
+            )
             .await;
         assert_eq!(status, 200);
         assert_eq!(discovered["data"]["tenantId"], json!(acme.tenant_id));
