@@ -346,13 +346,12 @@ func withinKeyPolicy(outer, inner any) bool {
 // CredentialSummary (api/service-accounts.ts credentialSummary): an API key as administrators see it: label,
 // lifetime, and usage, never token material.
 func CredentialSummary(session *core.Object, now int64) (result *core.Object, err error) {
-	expiresAt, _ := session.Get("expiresAt").(float64)
 	summary := core.NewObject(
 		"id", session.Get("id"),
 		"identityId", session.Get("identityId"),
 		"createdAt", session.Get("createdAt"),
 		"expiresAt", session.Get("expiresAt"),
-		"expired", expiresAt <= float64(now),
+		"expired", jsNumber(session.Get("expiresAt")) <= float64(now),
 		"policy", session.Get("policy"),
 		"credentialAuthorityId", session.Get("credentialAuthorityId"),
 	)
@@ -362,9 +361,8 @@ func CredentialSummary(session *core.Object, now int64) (result *core.Object, er
 	if description := session.Get("description"); !isUndefined(description) {
 		summary.Set("description", description)
 	}
-	lastSeenAt, seen := session.Get("lastSeenAt").(float64)
-	createdAt, created := session.Get("createdAt").(float64)
-	if seen && created && lastSeenAt > createdAt {
+	lastSeenAt := session.Get("lastSeenAt")
+	if jsNumber(lastSeenAt) > jsNumber(session.Get("createdAt")) {
 		summary.Set("lastUsedAt", lastSeenAt)
 	}
 	if scopes, ok := policyScopes(session.Get("policy")); ok {
@@ -446,7 +444,7 @@ func (api *CredentialsAPI) List(ctx context.Context, credential core.CredentialI
 				return nil, err
 			}
 			if filtered {
-				used, _ := coalesce(summary.Get("lastUsedAt"), summary.Get("createdAt")).(float64)
+				used := jsNumber(coalesce(summary.Get("lastUsedAt"), summary.Get("createdAt")))
 				if !(used <= unusedSince) {
 					continue
 				}
