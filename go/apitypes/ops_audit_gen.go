@@ -21,9 +21,9 @@ type AuditExportOutput struct {
 	Format        string                 `json:"format"`
 	Count         float64                `json:"count"`
 	Body          string                 `json:"body"`
-	FirstSequence float64                `json:"firstSequence"`
-	LastSequence  float64                `json:"lastSequence"`
-	NextSequence  float64                `json:"nextSequence"`
+	FirstSequence *float64               `json:"firstSequence,omitzero"`
+	LastSequence  *float64               `json:"lastSequence,omitzero"`
+	NextSequence  *float64               `json:"nextSequence,omitzero"`
 	Head          *AuditExportOutputHead `json:"head"`
 }
 

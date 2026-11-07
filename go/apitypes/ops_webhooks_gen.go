@@ -250,7 +250,7 @@ type WebhooksListDeliveriesInput struct {
 type WebhooksListDeliveriesOutputItem struct {
 	ID          string         `json:"id"`
 	Event       string         `json:"event"`
-	EventID     string         `json:"eventId"`
+	EventID     *string        `json:"eventId,omitzero"`
 	CreatedAt   float64        `json:"createdAt"`
 	Attempts    float64        `json:"attempts"`
 	DeliveredAt *float64       `json:"deliveredAt,omitzero"`

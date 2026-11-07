@@ -26,25 +26,29 @@ type TenantsAcceptInvitationOutput = EnrollmentResult
 
 // TenantsCreateInput is the request body of POST {basePath}/tenants/create (tenants.create).
 //
-// Creates a child tenant in the pending state under a parent and emails an invitation to its first owner.
+// Creates a child tenant in the pending state under a parent and emails an invitation to its first owner, or, for a root principal with activate: true, creates it active with its owner account.
 //
 // See https://better-iam.com/docs/reference/api/tenants#create.
 type TenantsCreateInput struct {
-	ParentID    string          `json:"parentId"`
-	Type        string          `json:"type"`
-	Name        string          `json:"name"`
-	OwnerEmail  string          `json:"ownerEmail"`
-	Slug        *string         `json:"slug,omitzero"`
-	Boundary    *PolicyDocument `json:"boundary,omitzero"`
-	AuthorityID *string         `json:"authorityId,omitzero"`
-	Region      *string         `json:"region,omitzero"`
+	ParentID           string          `json:"parentId"`
+	Type               string          `json:"type"`
+	Name               string          `json:"name"`
+	OwnerEmail         string          `json:"ownerEmail"`
+	Slug               *string         `json:"slug,omitzero"`
+	Boundary           *PolicyDocument `json:"boundary,omitzero"`
+	AuthorityID        *string         `json:"authorityId,omitzero"`
+	Region             *string         `json:"region,omitzero"`
+	Activate           *bool           `json:"activate,omitzero"`
+	OwnerName          *string         `json:"ownerName,omitzero"`
+	OwnerEmailVerified *bool           `json:"ownerEmailVerified,omitzero"`
 }
 
 // TenantsCreateOutput is the data of a successful answer to POST {basePath}/tenants/create (tenants.create).
 type TenantsCreateOutput struct {
-	Tenant       Tenant `json:"tenant"`
-	InvitationID string `json:"invitationId"`
-	OwnerEmail   string `json:"ownerEmail"`
+	Tenant       Tenant          `json:"tenant"`
+	InvitationID *string         `json:"invitationId,omitzero"`
+	OwnerEmail   string          `json:"ownerEmail"`
+	Owner        *PublicIdentity `json:"owner,omitzero"`
 }
 
 // TenantsGetInput is the request body of POST {basePath}/tenants/get (tenants.get).

@@ -97,7 +97,7 @@ type RoleMiningUsageInput struct {
 // RoleMiningUsageOutput is the data of a successful answer to POST {basePath}/roleMining/usage (roleMining.usage).
 type RoleMiningUsageOutput struct {
 	Tracking      bool                               `json:"tracking"`
-	TrackingSince float64                            `json:"trackingSince"`
+	TrackingSince *float64                           `json:"trackingSince,omitzero"`
 	Total         float64                            `json:"total"`
 	Records       []RoleMiningUsageOutputRecordsItem `json:"records"`
 }

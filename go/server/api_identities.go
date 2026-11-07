@@ -77,6 +77,13 @@ func (api *IdentitiesAPI) Invite(ctx context.Context, credential core.Credential
 	return Out[apitypes.IdentitiesInviteOutput]{}, notImplemented("identities.invite")
 }
 
+// LinkProvider is POST {basePath}/identities/linkProvider. Links an external sign-in (OAuth/OIDC or SAML) to an existing account, so that IdP account signs in to it without an account-linking step.
+//
+// STUB: returns NOT_IMPLEMENTED until api/identities.ts is ported.
+func (api *IdentitiesAPI) LinkProvider(ctx context.Context, credential core.CredentialInput, input In[apitypes.IdentitiesLinkProviderInput]) (Out[apitypes.IdentitiesLinkProviderOutput], error) {
+	return Out[apitypes.IdentitiesLinkProviderOutput]{}, notImplemented("identities.linkProvider")
+}
+
 // List is POST {basePath}/identities/list. Lists the tenant's people and service accounts, with filters and paging.
 //
 // STUB: returns NOT_IMPLEMENTED until api/identities.ts is ported.
@@ -103,6 +110,13 @@ func (api *IdentitiesAPI) ListGroups(ctx context.Context, credential core.Creden
 // STUB: returns NOT_IMPLEMENTED until api/identities.ts is ported.
 func (api *IdentitiesAPI) ListInvitations(ctx context.Context, credential core.CredentialInput, input In[apitypes.IdentitiesListInvitationsInput]) (Out[apitypes.IdentitiesListInvitationsOutput], error) {
 	return Out[apitypes.IdentitiesListInvitationsOutput]{}, notImplemented("identities.listInvitations")
+}
+
+// ListProviders is POST {basePath}/identities/listProviders. Lists the external sign-ins linked to an account, sorted by provider.
+//
+// STUB: returns NOT_IMPLEMENTED until api/identities.ts is ported.
+func (api *IdentitiesAPI) ListProviders(ctx context.Context, credential core.CredentialInput, input In[apitypes.IdentitiesListProvidersInput]) (Out[apitypes.IdentitiesListProvidersOutput], error) {
+	return Out[apitypes.IdentitiesListProvidersOutput]{}, notImplemented("identities.listProviders")
 }
 
 // ListReports is POST {basePath}/identities/listReports. Lists the active people whose manager is this identity, by name.
@@ -173,6 +187,13 @@ func (api *IdentitiesAPI) SetOwner(ctx context.Context, credential core.Credenti
 // STUB: returns NOT_IMPLEMENTED until api/identities.ts is ported.
 func (api *IdentitiesAPI) SetStatus(ctx context.Context, credential core.CredentialInput, input In[apitypes.IdentitiesSetStatusInput]) (Out[apitypes.IdentitiesSetStatusOutput], error) {
 	return Out[apitypes.IdentitiesSetStatusOutput]{}, notImplemented("identities.setStatus")
+}
+
+// UnlinkProvider is POST {basePath}/identities/unlinkProvider. Removes a linked external sign-in; that IdP account no longer signs in to this account.
+//
+// STUB: returns NOT_IMPLEMENTED until api/identities.ts is ported.
+func (api *IdentitiesAPI) UnlinkProvider(ctx context.Context, credential core.CredentialInput, input In[apitypes.IdentitiesUnlinkProviderInput]) (Out[apitypes.IdentitiesUnlinkProviderOutput], error) {
+	return Out[apitypes.IdentitiesUnlinkProviderOutput]{}, notImplemented("identities.unlinkProvider")
 }
 
 // Unlock is POST {basePath}/identities/unlock. Clears the rate-limit counters that lock a person out of sign-in, recovery, and MFA after too many attempts.

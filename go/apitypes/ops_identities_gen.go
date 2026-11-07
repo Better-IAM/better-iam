@@ -27,16 +27,18 @@ type IdentitiesAcceptInvitationOutput = EnrollmentResult
 
 // IdentitiesCreateInput is the request body of POST {basePath}/identities/create (identities.create).
 //
-// Creates a person in the tenant, optionally with a password, a manager, and a scheduled deactivation date.
+// Creates a person in the tenant, optionally with a password, a manager, a scheduled deactivation date, a verified email, and linked external sign-ins.
 //
 // See https://better-iam.com/docs/reference/api/identities#create.
 type IdentitiesCreateInput struct {
-	TenantID  string   `json:"tenantId"`
-	Email     string   `json:"email"`
-	Name      string   `json:"name"`
-	Password  *string  `json:"password,omitzero"`
-	ExpiresAt *float64 `json:"expiresAt,omitzero"`
-	ManagerID *string  `json:"managerId,omitzero"`
+	TenantID      string              `json:"tenantId"`
+	Email         string              `json:"email"`
+	Name          string              `json:"name"`
+	Password      *string             `json:"password,omitzero"`
+	ExpiresAt     *float64            `json:"expiresAt,omitzero"`
+	ManagerID     *string             `json:"managerId,omitzero"`
+	EmailVerified *bool               `json:"emailVerified,omitzero"`
+	Providers     []ProviderLinkInput `json:"providers,omitzero"`
 }
 
 // IdentitiesCreateOutput is the data of a successful answer to POST {basePath}/identities/create (identities.create).
@@ -44,7 +46,7 @@ type IdentitiesCreateOutput = PublicIdentity
 
 // IdentitiesCreateManyInput is the request body of POST {basePath}/identities/createMany (identities.createMany).
 //
-// Creates up to 100 people in one transaction, each with optional attributes, roles, groups, password, and expiry.
+// Creates up to 100 people in one transaction, each with optional attributes, roles, groups, password, expiry, verified email, and linked external sign-ins.
 //
 // See https://better-iam.com/docs/reference/api/identities#createmany.
 type IdentitiesCreateManyInput struct {
@@ -53,13 +55,15 @@ type IdentitiesCreateManyInput struct {
 }
 
 type IdentitiesCreateManyInputIdentitiesItem struct {
-	Email      string       `json:"email"`
-	Name       string       `json:"name"`
-	Password   *string      `json:"password,omitzero"`
-	Attributes *core.Object `json:"attributes,omitzero"`
-	RoleIDs    []string     `json:"roleIds,omitzero"`
-	GroupIDs   []string     `json:"groupIds,omitzero"`
-	ExpiresAt  *float64     `json:"expiresAt,omitzero"`
+	Email         string              `json:"email"`
+	Name          string              `json:"name"`
+	Password      *string             `json:"password,omitzero"`
+	Attributes    *core.Object        `json:"attributes,omitzero"`
+	RoleIDs       []string            `json:"roleIds,omitzero"`
+	GroupIDs      []string            `json:"groupIds,omitzero"`
+	ExpiresAt     *float64            `json:"expiresAt,omitzero"`
+	EmailVerified *bool               `json:"emailVerified,omitzero"`
+	Providers     []ProviderLinkInput `json:"providers,omitzero"`
 }
 
 // IdentitiesCreateManyOutput is the data of a successful answer to POST {basePath}/identities/createMany (identities.createMany).
@@ -108,7 +112,7 @@ type IdentitiesExportOutput struct {
 	Links              []IdentitiesExportOutputLinksItem              `json:"links"`
 	Scim               []IdentitiesExportOutputScimItem               `json:"scim"`
 	AuditIncluded      bool                                           `json:"auditIncluded"`
-	Audit              []AuditEvent                                   `json:"audit"`
+	Audit              []AuditEvent                                   `json:"audit,omitzero"`
 }
 
 type IdentitiesExportOutputSessionsItem struct {
@@ -374,6 +378,25 @@ type IdentitiesInviteOutput struct {
 	GroupIDs     []string `json:"groupIds"`
 }
 
+// IdentitiesLinkProviderInput is the request body of POST {basePath}/identities/linkProvider (identities.linkProvider).
+//
+// Links an external sign-in (OAuth/OIDC or SAML) to an existing account, so that IdP account signs in to it without an account-linking step.
+//
+// See https://better-iam.com/docs/reference/api/identities#linkprovider.
+type IdentitiesLinkProviderInput struct {
+	TenantID   string `json:"tenantId"`
+	IdentityID string `json:"identityId"`
+	// The connection's provider key: an OAuth connection's `id`, a SAML connection's `providerId`.
+	ProviderID string `json:"providerId"`
+	// The IdP's issuer exactly as the protocol reports it (OIDC `iss`, SAML IdP entity ID).
+	Issuer string `json:"issuer"`
+	// The person's stable ID at the IdP (OIDC `sub`, SAML NameID).
+	Subject string `json:"subject"`
+}
+
+// IdentitiesLinkProviderOutput is the data of a successful answer to POST {basePath}/identities/linkProvider (identities.linkProvider).
+type IdentitiesLinkProviderOutput = ProviderLink
+
 // IdentitiesListInput is the request body of POST {basePath}/identities/list (identities.list).
 //
 // Lists the tenant's people and service accounts, with filters and paging.
@@ -513,6 +536,19 @@ func (v *IdentitiesListInvitationsOutputItem) UnmarshalJSON(data []byte) error {
 
 // IdentitiesListInvitationsOutput is the data of a successful answer to POST {basePath}/identities/listInvitations (identities.listInvitations).
 type IdentitiesListInvitationsOutput = []IdentitiesListInvitationsOutputItem
+
+// IdentitiesListProvidersInput is the request body of POST {basePath}/identities/listProviders (identities.listProviders).
+//
+// Lists the external sign-ins linked to an account, sorted by provider.
+//
+// See https://better-iam.com/docs/reference/api/identities#listproviders.
+type IdentitiesListProvidersInput struct {
+	TenantID   string `json:"tenantId"`
+	IdentityID string `json:"identityId"`
+}
+
+// IdentitiesListProvidersOutput is the data of a successful answer to POST {basePath}/identities/listProviders (identities.listProviders).
+type IdentitiesListProvidersOutput = []ProviderLink
 
 // IdentitiesListReportsInput is the request body of POST {basePath}/identities/listReports (identities.listReports).
 //
@@ -793,6 +829,20 @@ const (
 
 // IdentitiesSetStatusOutput is the data of a successful answer to POST {basePath}/identities/setStatus (identities.setStatus).
 type IdentitiesSetStatusOutput = PublicIdentity
+
+// IdentitiesUnlinkProviderInput is the request body of POST {basePath}/identities/unlinkProvider (identities.unlinkProvider).
+//
+// Removes a linked external sign-in; that IdP account no longer signs in to this account.
+//
+// See https://better-iam.com/docs/reference/api/identities#unlinkprovider.
+type IdentitiesUnlinkProviderInput struct {
+	TenantID   string `json:"tenantId"`
+	IdentityID string `json:"identityId"`
+	LinkID     string `json:"linkId"`
+}
+
+// IdentitiesUnlinkProviderOutput is the data of a successful answer to POST {basePath}/identities/unlinkProvider (identities.unlinkProvider).
+type IdentitiesUnlinkProviderOutput = ProviderLink
 
 // IdentitiesUnlockInput is the request body of POST {basePath}/identities/unlock (identities.unlock).
 //

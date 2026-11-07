@@ -121,6 +121,7 @@ type PoliciesRestoreVersionOutput struct {
 	ID          string         `json:"id"`
 	TenantID    string         `json:"tenantId"`
 	UniqueKey   *string        `json:"uniqueKey,omitzero"`
+	AuthorityID *string        `json:"authorityId,omitzero"`
 }
 
 // PoliciesSimulateInput is the request body of POST {basePath}/policies/simulate (policies.simulate).

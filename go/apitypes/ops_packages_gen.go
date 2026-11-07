@@ -220,8 +220,8 @@ type PackagesListMineOutput struct {
 }
 
 type PackagesListMineOutputPackagesItem struct {
-	Assignment           PackageAssignmentSummary                       `json:"assignment"`
-	Pending              PackageRequestSummary                          `json:"pending"`
+	Assignment           *PackageAssignmentSummary                      `json:"assignment,omitzero"`
+	Pending              *PackageRequestSummary                         `json:"pending,omitzero"`
 	ApproverGroupName    *string                                        `json:"approverGroupName,omitzero"`
 	Roles                []PackagesListMineOutputPackagesItemRolesItem  `json:"roles"`
 	Groups               []PackagesListMineOutputPackagesItemGroupsItem `json:"groups"`
