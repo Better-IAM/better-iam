@@ -253,7 +253,7 @@ func (api *StsAPI) issueSessionToken(ctx context.Context, credential core.Creden
 		// API keys never carry MFA; a person's session passes its own MFA state on unless a code was verified now.
 		sourceMfa := sourceSession.Get("kind") == "user" && sourceSession.Get("mfa") == true
 		mfa := sourceMfa
-		if truthy(stepUp) {
+		if stepUp != nil {
 			mfa = true
 		}
 		draft := core.NewObject(
@@ -263,7 +263,7 @@ func (api *StsAPI) issueSessionToken(ctx context.Context, credential core.Creden
 			"expiresAt", math.Min(jsNumber(sourceSession.Get("expiresAt")), float64(now)+durationSeconds*1000),
 			"mfa", mfa,
 		)
-		if truthy(stepUp) {
+		if stepUp != nil {
 			draft.Set("mfaAuthenticatedAt", float64(now))
 		} else if at, ok := sourceSession.Get("mfaAuthenticatedAt").(float64); sourceMfa && ok {
 			draft.Set("mfaAuthenticatedAt", at)

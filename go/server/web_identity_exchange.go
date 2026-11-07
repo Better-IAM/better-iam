@@ -314,8 +314,8 @@ func (s *WebIdentityStsAPI) recordDenial(ctx context.Context, trust *core.Object
 	if verified != nil {
 		issuer, _ := verified.Get("issuer").(string)
 		subject, _ := verified.Get("subject").(string)
-		metadata.Set("issuer", sliceUTF16(issuer, 0, 256))
-		metadata.Set("subject", sliceUTF16(subject, 0, 256))
+		metadata.Set("issuer", webIdentitySlice(issuer, 0, 256))
+		metadata.Set("subject", webIdentitySlice(subject, 0, 256))
 	}
 	_ = server.Store.Transaction(ctx, func(ctx context.Context, tx core.IamStore) error {
 		return server.Events.RecordAudit(ctx, tx, core.NewObject(
@@ -530,8 +530,8 @@ func (s *WebIdentityStsAPI) issue(ctx context.Context, tx core.IamStore, request
 	subject, _ := verified.Get("subject").(string)
 	if err := server.Events.Audit(ctx, tx, &Principal{Identity: account, Session: session}, webIdentityAuditAction, tenantID,
 		jsString(role.Get("id")), "allow", false, core.NewObject(
-			"trustId", trust.Get("id"), "providerId", provider.Get("id"), "issuer", sliceUTF16(issuer, 0, 256),
-			"subject", sliceUTF16(subject, 0, 256), "durationSeconds", durationSeconds, "format", request.format,
+			"trustId", trust.Get("id"), "providerId", provider.Get("id"), "issuer", webIdentitySlice(issuer, 0, 256),
+			"subject", webIdentitySlice(subject, 0, 256), "durationSeconds", durationSeconds, "format", request.format,
 			"tagKeys", stringsOf(tagKeys),
 		)); err != nil {
 		return nil, err
@@ -698,4 +698,17 @@ func (s *WebIdentityStsAPI) AssumeRoleWithWebIdentity(ctx context.Context, input
 		return nil, err
 	}
 	return result, nil
+}
+
+// webIdentitySlice is String.prototype.slice(start, end) over UTF-16 code units, used to bound the issuer and
+// subject copied into audit metadata and session rows.
+func webIdentitySlice(s string, start, end int) string {
+	units := core.ToUTF16(s)
+	if end > len(units) {
+		end = len(units)
+	}
+	if start >= end {
+		return ""
+	}
+	return core.FromUTF16(units[start:end])
 }
