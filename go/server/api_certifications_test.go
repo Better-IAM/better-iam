@@ -68,7 +68,7 @@ func newGovFixture(t *testing.T, mutate func(options *BetterIamOptions)) *govFix
 	return f
 }
 
-func (f *govFixture) now() float64      { return float64(f.clock.Load()) }
+func (f *govFixture) now() float64     { return float64(f.clock.Load()) }
 func (f *govFixture) advance(ms int64) { f.clock.Add(ms) }
 
 // role seeds a role (and its policy) issued under the administrator's authority, allowing actions on every resource.
@@ -638,7 +638,7 @@ func TestCertificationsRemindNobodyAndRequireDelivery(t *testing.T) {
 	week := int64(7 * certDay)
 	silent, err := New(&BetterIamOptions{
 		Database: f.iam.Store, Secret: "http-hygiene-test-secret-with-at-least-32-chars", BaseURL: "http://localhost:3000",
-		WallClock: func() int64 { return f.clock.Load() },
+		WallClock:      func() int64 { return f.clock.Load() },
 		Authentication: &auth.Options{Now: func() int64 { return f.clock.Load() }, SessionLifetimeMs: &week, SessionIdleTimeoutMs: &week},
 	})
 	if err != nil {
