@@ -2483,8 +2483,7 @@ impl GuestsApi {
         let ctx = &self.ctx;
         let mutation: Mutation<'_> = Box::new(move |MutationContext { tx, tenant, .. }| {
             Box::pin(async move {
-                // Both reads, as TypeScript makes them (`guestSettings`, then `readGuestSettings`).
-                guest_settings(&tx, &tenant.id).await?;
+                // `guestSettings` and `readGuestSettings` read the same stored record.
                 let stored = read_guest_settings_record(&tx, &tenant.id).await?;
                 Ok(settings_view(
                     &tenant.id,
