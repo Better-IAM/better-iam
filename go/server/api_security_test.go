@@ -64,13 +64,13 @@ func TestNetworkBlocksLetRootBlockANetworkPlatformWide(t *testing.T) {
 	if len(blocks) != 1 || member(blocks[0], "id") != block.Get("id") || member(blocks[0], "active") != true || member(blocks[0], "reason") != "credential stuffing" {
 		t.Fatalf("root blocks: %s", core.MustStringify(blocks))
 	}
-	expectJSON(t, must(f.listBlocks(f.owner, f.tenantID)), `[]`)
+	expectInvariantJSON(t, must(f.listBlocks(f.owner, f.tenantID)), `[]`)
 	// Lifting it restores the network at once.
 	lifted, err := f.iam.API.Security.UnblockNetwork(f.ctx, root, Input[apitypes.SecurityUnblockNetworkInput](core.NewObject("tenantId", f.rootTenantID, "blockId", block.Get("id"))))
 	if err != nil {
 		t.Fatal(err)
 	}
-	expectJSON(t, lifted.Value, `{"success":true}`)
+	expectInvariantJSON(t, lifted.Value, `{"success":true}`)
 	if again := must(f.memberSignIn(f.from("198.51.100.9"), "alice")); !again.Has("token") {
 		t.Fatal("the lifted block still applies")
 	}
@@ -135,7 +135,7 @@ func TestNetworkBlocksLetAnOrganizationBlockNetworksForItself(t *testing.T) {
 	if renewal == nil {
 		t.Fatal("the renewal was not audited as renewed")
 	}
-	expectJSON(t, renewal.Get("metadata"), `{"network":"192.0.2.0/24","reason":"scanner, again","platform":false,"expiresAt":`+core.NumberString(float64(f.now()+120_000))+`,"renewed":true}`)
+	expectInvariantJSON(t, renewal.Get("metadata"), `{"network":"192.0.2.0/24","reason":"scanner, again","platform":false,"expiresAt":`+core.NumberString(float64(f.now()+120_000))+`,"renewed":true}`)
 	// Validation: platform blocks are root's, networks must parse, and the caller cannot block themselves.
 	_, err = f.blockNetwork(owner, core.NewObject("tenantId", f.tenantID, "network", "203.0.113.0/24", "reason", "x", "platform", true))
 	expectError(t, err, "ACCESS_DENIED", "Platform-wide blocks are set by root administrators on the root tenant")

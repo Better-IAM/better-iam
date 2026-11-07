@@ -140,7 +140,7 @@ func TestRetentionSweepsProtocolArtifactsDevicesTuplesAndDispatchedHooks(t *test
 	f.seed("scimConnections", retentionRecord("scim", "expiresAt", past))
 	f.seed("accessRequests", retentionRecord("request", "expiresAt", past, "status", "pending"))
 	f.clock = 0 // `now` overrides both clocks.
-	expectJSON(t, f.sweep(core.NewObject("now", now)),
+	expectInvariantJSON(t, f.sweep(core.NewObject("now", now)),
 		`{"deleted":{"sessions":1,"authDevices":1,"relationships":1,"oauthArtifacts":2,"oauthLoginStates":1,"samlRequests":1,"samlRelays":1,"samlAssertions":1,"ssfDeliveries":2,"auditHooks":2},"total":13,"truncated":false}`)
 	for collection, want := range map[string]string{
 		"sessions": "future-kind,key-old", "relationships": "forever,live", "oauthArtifacts": "grant-recent,live",
@@ -166,7 +166,7 @@ func TestRetentionSweepsSessionTokensAndWebIdentityReplaysKeepingAPIKeys(t *test
 		retentionRecord("replay-old", "providerId", "p", "expiresAt", past),
 		retentionRecord("replay-live", "providerId", "p", "expiresAt", future),
 	)
-	expectJSON(t, f.sweep(core.NewObject("now", now)), `{"deleted":{"sessions":1,"webIdentityReplays":1},"total":2,"truncated":false}`)
+	expectInvariantJSON(t, f.sweep(core.NewObject("now", now)), `{"deleted":{"sessions":1,"webIdentityReplays":1},"total":2,"truncated":false}`)
 	if got := f.ids("sessions"); got != "key-old,sts-live" {
 		t.Fatalf("sessions: %s", got)
 	}
@@ -175,7 +175,7 @@ func TestRetentionSweepsSessionTokensAndWebIdentityReplaysKeepingAPIKeys(t *test
 	}
 	// Within the grace period nothing is due yet.
 	f.seed("webIdentityReplays", retentionRecord("replay-recent", "providerId", "p", "expiresAt", now-1000))
-	expectJSON(t, f.sweep(core.NewObject("now", now)).Get("deleted"), `{}`)
+	expectInvariantJSON(t, f.sweep(core.NewObject("now", now)).Get("deleted"), `{}`)
 }
 
 func TestRetentionHonorsTheGracePeriodAndTheDeliveryRetention(t *testing.T) {
@@ -188,8 +188,8 @@ func TestRetentionHonorsTheGracePeriodAndTheDeliveryRetention(t *testing.T) {
 	)
 	f.seed("sessions", retentionRecord("just-expired", "identityId", "x", "kind", "user", "tokenHash", "h1", "createdAt", now-retentionTestDay,
 		"lastSeenAt", now-retentionTestDay, "authenticatedAt", now-retentionTestDay, "expiresAt", now-60_000, "mfa", false))
-	expectJSON(t, f.sweep(nil).Get("deleted"), `{}`)
-	expectJSON(t, f.sweep(core.NewObject("graceMs", 0)).Get("deleted"), `{"sessions":1}`)
+	expectInvariantJSON(t, f.sweep(nil).Get("deleted"), `{}`)
+	expectInvariantJSON(t, f.sweep(core.NewObject("graceMs", 0)).Get("deleted"), `{"sessions":1}`)
 	f.clock += int64(29 * retentionTestDay)
 	if f.sweep(nil).Get("deleted").(*core.Object).Has("outbox") {
 		t.Fatal("deliveries swept inside the retention")
@@ -203,7 +203,7 @@ func TestRetentionHonorsTheGracePeriodAndTheDeliveryRetention(t *testing.T) {
 	}
 	// A shorter retention applies at once; pending messages are never swept.
 	f.seed("outbox", retentionRecord("sent", "kind", "sms", "createdAt", float64(f.clock), "attempts", 1, "deliveredAt", float64(f.clock)))
-	expectJSON(t, f.sweep(core.NewObject("deliveryRetentionMs", 0)).Get("deleted"), `{"outbox":1}`)
+	expectInvariantJSON(t, f.sweep(core.NewObject("deliveryRetentionMs", 0)).Get("deleted"), `{"outbox":1}`)
 	if got := f.ids("outbox"); got != "pending" {
 		t.Fatalf("outbox: %s", got)
 	}
@@ -218,7 +218,7 @@ func TestRetentionWorksInShortBatchesStopsAtTheLimitAndContinues(t *testing.T) {
 	}
 	f.seed("oauthArtifacts", records...)
 	f.resetCalls()
-	expectJSON(t, f.sweep(core.NewObject("now", now, "batchSize", 5, "limit", 12)), `{"deleted":{"oauthArtifacts":12},"total":12,"truncated":true}`)
+	expectInvariantJSON(t, f.sweep(core.NewObject("now", now, "batchSize", 5, "limit", 12)), `{"deleted":{"oauthArtifacts":12},"total":12,"truncated":true}`)
 	// Oldest first, and never more than one batch per read.
 	var kept []string
 	for index := 0; index < 11; index++ {
@@ -241,7 +241,7 @@ func TestRetentionWorksInShortBatchesStopsAtTheLimitAndContinues(t *testing.T) {
 			t.Fatal("a delete ran outside a transaction")
 		}
 	}
-	expectJSON(t, f.sweep(core.NewObject("now", now, "batchSize", 5)), `{"deleted":{"oauthArtifacts":11},"total":11,"truncated":false}`)
+	expectInvariantJSON(t, f.sweep(core.NewObject("now", now, "batchSize", 5)), `{"deleted":{"oauthArtifacts":11},"total":11,"truncated":false}`)
 }
 
 func TestRetentionStepsOverRecordsItKeeps(t *testing.T) {
@@ -258,7 +258,7 @@ func TestRetentionStepsOverRecordsItKeeps(t *testing.T) {
 	}
 	f.seed("sessions", records...)
 	f.resetCalls()
-	expectJSON(t, f.sweep(core.NewObject("now", now, "batchSize", 5)), `{"deleted":{"sessions":12},"total":12,"truncated":false}`)
+	expectInvariantJSON(t, f.sweep(core.NewObject("now", now, "batchSize", 5)), `{"deleted":{"sessions":12},"total":12,"truncated":false}`)
 	remaining, err := f.database.Find(f.ctx, "sessions", core.NewObject(), nil)
 	if err != nil {
 		t.Fatal(err)

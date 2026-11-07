@@ -29,7 +29,7 @@ func TestLdapNormalizesBaseDns(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%q: %v", input, err)
 		}
-		expectJSON(t, got, want)
+		expectInvariantJSON(t, got, want)
 	}
 	for input, message := range map[any]string{
 		"":                       "Enter a base DN such as dc=acme,dc=com",
@@ -64,7 +64,7 @@ func TestLdapDefaultSettingsDeriveTheBaseDnFromTheSlug(t *testing.T) {
 			t.Fatalf("%q: %s", slug, core.MustStringify(settings))
 		}
 	}
-	expectJSON(t, defaultLdapSettings(core.NewObject("id", "T-1")),
+	expectInvariantJSON(t, defaultLdapSettings(core.NewObject("id", "T-1")),
 		`{"id":"T-1","tenantId":"T-1","enabled":false,"baseDn":"o=t-1","normalizedBaseDn":"o=t-1","uid":"email","peopleBind":true,"serviceBind":true,"requireTls":true,"mfaSuffix":"auto","includeServiceAccounts":false,"attributes":[],"groups":"all","groupIds":[],"updatedAt":0,"updatedBy":""}`)
 }
 
@@ -120,33 +120,33 @@ func TestLdapSettingsDirectoryAndBindNames(t *testing.T) {
 	expectError(t, err, "FEATURE_DISABLED", "The LDAP gateway is off for this organization")
 
 	settings := must(s.update(s.owner, core.NewObject("enabled", true, "baseDn", "dc=acme, dc=test", "includeServiceAccounts", true)))
-	expectJSON(t, settings, `{"tenantId":"`+s.tenantID+`","enabled":true,"baseDn":"dc=acme,dc=test","uid":"email","peopleBind":true,"serviceBind":true,"requireTls":true,"mfaSuffix":"auto","includeServiceAccounts":true,"attributes":[],"groups":"all","groupIds":[],"updatedAt":`+core.NumberString(float64(s.now()))+`,"updatedBy":"`+s.ownerID+`"}`)
+	expectInvariantJSON(t, settings, `{"tenantId":"`+s.tenantID+`","enabled":true,"baseDn":"dc=acme,dc=test","uid":"email","peopleBind":true,"serviceBind":true,"requireTls":true,"mfaSuffix":"auto","includeServiceAccounts":true,"attributes":[],"groups":"all","groupIds":[],"updatedAt":`+core.NumberString(float64(s.now()))+`,"updatedBy":"`+s.ownerID+`"}`)
 	if base := s.get("ldapBases", "dc=acme,dc=test"); base == nil || base.Get("tenantId") != s.tenantID {
 		t.Fatalf("base index: %v", base)
 	}
 
 	// The gateway finds the tenant by its base DN.
 	found := must(runtime.TenantForBase(s.ctx, "dc=acme,dc=test"))
-	expectJSON(t, found, `{"tenantId":"`+s.tenantID+`","tenantName":"Acme","baseDn":"dc=acme,dc=test","normalizedBaseDn":"dc=acme,dc=test","uid":"email","peopleBind":true,"serviceBind":true,"requireTls":true,"mfaSuffix":"auto"}`)
+	expectInvariantJSON(t, found, `{"tenantId":"`+s.tenantID+`","tenantName":"Acme","baseDn":"dc=acme,dc=test","normalizedBaseDn":"dc=acme,dc=test","uid":"email","peopleBind":true,"serviceBind":true,"requireTls":true,"mfaSuffix":"auto"}`)
 	if missing := must(runtime.TenantForBase(s.ctx, "dc=other,dc=test")); missing != nil {
 		t.Fatal("an unknown base DN resolved")
 	}
 	// People resolve by uid (without regard to case), service accounts by name or ID.
-	expectJSON(t, must(runtime.ResolveBindName(s.ctx, s.tenantID, "person", "ALICE@acme.test")), `{"identityId":"`+aliceID+`","email":"alice@acme.test","mfa":"none"}`)
+	expectInvariantJSON(t, must(runtime.ResolveBindName(s.ctx, s.tenantID, "person", "ALICE@acme.test")), `{"identityId":"`+aliceID+`","email":"alice@acme.test","mfa":"none"}`)
 	if nobody := must(runtime.ResolveBindName(s.ctx, s.tenantID, "person", "nobody@acme.test")); nobody != nil {
 		t.Fatal("nobody resolved")
 	}
-	expectJSON(t, must(runtime.ResolveBindName(s.ctx, s.tenantID, "service", "VPN")), `{"identityId":"`+vpnID+`"}`)
-	expectJSON(t, must(runtime.ResolveBindName(s.ctx, s.tenantID, "service", vpnID)), `{"identityId":"`+vpnID+`"}`)
+	expectInvariantJSON(t, must(runtime.ResolveBindName(s.ctx, s.tenantID, "service", "VPN")), `{"identityId":"`+vpnID+`"}`)
+	expectInvariantJSON(t, must(runtime.ResolveBindName(s.ctx, s.tenantID, "service", vpnID)), `{"identityId":"`+vpnID+`"}`)
 	if person := must(runtime.ResolveBindName(s.ctx, s.tenantID, "service", "alice")); person != nil {
 		t.Fatal("a person resolved as a service account")
 	}
 	// MFA: an enrolled authenticator means password + code; required without one cannot be met over LDAP.
 	s.put("authMfa", core.NewObject("id", bobID, "tenantId", s.tenantID, "enabled", true, "secret", "sealed"))
-	expectJSON(t, must(runtime.ResolveBindName(s.ctx, s.tenantID, "person", "bob@acme.test")), `{"identityId":"`+bobID+`","email":"bob@acme.test","mfa":"totp"}`)
+	expectInvariantJSON(t, must(runtime.ResolveBindName(s.ctx, s.tenantID, "person", "bob@acme.test")), `{"identityId":"`+bobID+`","email":"bob@acme.test","mfa":"totp"}`)
 	tenant := s.get("tenants", s.tenantID)
 	s.put("tenants", tenant.Spread(core.NewObject("authPolicy", core.NewObject("requireMfa", true))))
-	expectJSON(t, must(runtime.ResolveBindName(s.ctx, s.tenantID, "person", "alice@acme.test")), `{"identityId":"`+aliceID+`","email":"alice@acme.test","mfa":"unavailable"}`)
+	expectInvariantJSON(t, must(runtime.ResolveBindName(s.ctx, s.tenantID, "person", "alice@acme.test")), `{"identityId":"`+aliceID+`","email":"alice@acme.test","mfa":"unavailable"}`)
 	s.put("tenants", tenant)
 
 	// Without iam:ldap:read a person sees only their own entry, and their groups with only them in it.
@@ -155,9 +155,9 @@ func TestLdapSettingsDirectoryAndBindNames(t *testing.T) {
 	if own.Get("scope") != "self" {
 		t.Fatalf("scope %v", own.Get("scope"))
 	}
-	expectJSON(t, own.Get("people"), `[{"id":"`+aliceID+`","uid":"alice@acme.test","email":"alice@acme.test","name":"alice","emailVerified":true,"attributes":{},"groupIds":["`+jsString(s.engineering.Get("id"))+`"]}]`)
-	expectJSON(t, own.Get("groups"), `[{"id":"`+jsString(s.engineering.Get("id"))+`","name":"Engineering","description":"Builds things","memberIds":["`+aliceID+`"]}]`)
-	expectJSON(t, own.Get("services"), `[]`)
+	expectInvariantJSON(t, own.Get("people"), `[{"id":"`+aliceID+`","uid":"alice@acme.test","email":"alice@acme.test","name":"alice","emailVerified":true,"attributes":{},"groupIds":["`+jsString(s.engineering.Get("id"))+`"]}]`)
+	expectInvariantJSON(t, own.Get("groups"), `[{"id":"`+jsString(s.engineering.Get("id"))+`","name":"Engineering","description":"Builds things","memberIds":["`+aliceID+`"]}]`)
+	expectInvariantJSON(t, own.Get("services"), `[]`)
 	if reads := s.find("audit", core.NewObject("tenantId", s.tenantID, "action", "ldap:directory:read")); len(reads) != 0 {
 		t.Fatal("a self-scoped read was audited")
 	}
@@ -173,12 +173,12 @@ func TestLdapSettingsDirectoryAndBindNames(t *testing.T) {
 	if strings.Join(uids, ",") != "alice@acme.test,bob@acme.test,owner@acme.test,reader@acme.test" {
 		t.Fatalf("people: %v", uids)
 	}
-	expectJSON(t, full.Get("services"), `[{"id":"`+vpnID+`","name":"vpn","kind":"service","groupIds":[]}]`)
+	expectInvariantJSON(t, full.Get("services"), `[{"id":"`+vpnID+`","name":"vpn","kind":"service","groupIds":[]}]`)
 	reads := s.find("audit", core.NewObject("tenantId", s.tenantID, "action", "ldap:directory:read"))
 	if len(reads) != 1 {
 		t.Fatalf("directory reads audited: %d", len(reads))
 	}
-	expectJSON(t, reads[0].Get("metadata"), `{"people":4,"groups":1}`)
+	expectInvariantJSON(t, reads[0].Get("metadata"), `{"people":4,"groups":1}`)
 
 	// Only declared identity attributes can be published; they appear on people's entries.
 	_, err = s.update(s.owner, core.NewObject("attributes", []any{"title"}))
@@ -191,10 +191,10 @@ func TestLdapSettingsDirectoryAndBindNames(t *testing.T) {
 	if member(first, "uid") != "alice" || core.MustStringify(member(first, "attributes")) != `{"department":"R&D"}` {
 		t.Fatalf("first person: %s", core.MustStringify(first))
 	}
-	expectJSON(t, must(runtime.ResolveBindName(s.ctx, s.tenantID, "person", "alice")), `{"identityId":"`+aliceID+`","email":"alice@acme.test","mfa":"none"}`)
+	expectInvariantJSON(t, must(runtime.ResolveBindName(s.ctx, s.tenantID, "person", "alice")), `{"identityId":"`+aliceID+`","email":"alice@acme.test","mfa":"none"}`)
 	// Selected groups only.
 	must(s.update(s.owner, core.NewObject("groups", "selected")))
-	expectJSON(t, must(s.directory(s.reader)).Get("groups"), `[]`)
+	expectInvariantJSON(t, must(s.directory(s.reader)).Get("groups"), `[]`)
 	must(s.update(s.owner, core.NewObject("groupIds", []any{s.engineering.Get("id")})))
 	if groups := must(s.directory(s.reader)).Get("groups").([]any); len(groups) != 1 {
 		t.Fatalf("groups: %d", len(groups))

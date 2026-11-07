@@ -142,7 +142,12 @@ func TestFlowsLinkingRequiresUserProofsAndStoresEachPairOnce(t *testing.T) {
 }
 
 func TestFlowsAssumeRoleUsesRoleSourcePermissionsAndCurrentTrust(t *testing.T) {
-	f := newOpsFixture(t, nil)
+	f := newOpsFixture(t, func(options *BetterIamOptions) {
+		options.Permissions = &core.PermissionsConfig{Actions: []string{"documents:read", "documents:write"}}
+		options.ResolveResource = func(ctx context.Context, reference core.ResourceRef) (*ResolvedResource, error) {
+			return &ResolvedResource{TenantID: reference.TenantID, Type: reference.Type, ID: reference.ID, Attributes: core.NewObject()}, nil
+		}
+	})
 	alice := f.member("alice")
 	credential := f.sessionOf(alice)
 	betaID := f.secondOrganization()

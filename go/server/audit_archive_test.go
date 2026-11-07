@@ -84,7 +84,7 @@ func TestAuditArchiveArchivesEveryChainVerifiedAndInOrderIntoJsonLines(t *testin
 	f := newOpsFixture(t, func(options *BetterIamOptions) { options.AuditArchive = CreateJsonlAuditArchive(root) })
 	heads := f.find("auditChains", core.NewObject())
 	first := f.archive(nil)
-	expectJSON(t, []any{first.Get("failed"), first.Get("gaps"), first.Get("truncated")}, `[[],[],false]`)
+	expectInvariantJSON(t, []any{first.Get("failed"), first.Get("gaps"), first.Get("truncated")}, `[[],[],false]`)
 	archived := first.Get("archived").(*core.Object)
 	for _, head := range heads {
 		if archived.Get(jsString(head.Get("id"))) != head.Get("sequence") {
@@ -113,7 +113,7 @@ func TestAuditArchiveArchivesEveryChainVerifiedAndInOrderIntoJsonLines(t *testin
 		t.Fatalf("cursor: %s", core.MustStringify(cursor))
 	}
 	third := f.archive(nil)
-	expectJSON(t, []any{third.Get("archived"), third.Get("batches")}, `[{},0]`)
+	expectInvariantJSON(t, []any{third.Get("archived"), third.Get("batches")}, `[{},0]`)
 }
 
 func TestAuditArchiveKeepsEventsTheArchiveDoesNotHoldWhenPruning(t *testing.T) {
@@ -134,18 +134,18 @@ func TestAuditArchiveKeepsEventsTheArchiveDoesNotHoldWhenPruning(t *testing.T) {
 		return must(f.iam.PruneAudit(f.ctx, core.NewObject("tenantId", f.tenantID, "retentionMs", 0)))
 	}
 	// Nothing archived yet: pruning everything older than now deletes nothing.
-	expectJSON(t, prune(), `{"deleted":0,"heldForArchive":true}`)
+	expectInvariantJSON(t, prune(), `{"deleted":0,"heldForArchive":true}`)
 	// A failing sink leaves the cursor where it was.
 	failing = true
 	failed := f.archive(core.NewObject("tenantId", f.tenantID))
-	expectJSON(t, failed.Get("failed"), `[{"tenantId":"`+f.tenantID+`","code":"ARCHIVE_WRITE_FAILED","message":"bucket unavailable"}]`)
+	expectInvariantJSON(t, failed.Get("failed"), `[{"tenantId":"`+f.tenantID+`","code":"ARCHIVE_WRITE_FAILED","message":"bucket unavailable"}]`)
 	if prune().Get("deleted") != 0.0 {
 		t.Fatal("pruned events the archive does not hold")
 	}
 	failing = false
 	// Batches of three, chained to each other.
 	archived := f.archive(core.NewObject("tenantId", f.tenantID))
-	expectJSON(t, archived.Get("failed"), `[]`)
+	expectInvariantJSON(t, archived.Get("failed"), `[]`)
 	for index, batch := range written {
 		if len(batch.Events) > 3 {
 			t.Fatalf("batch %d has %d events", index, len(batch.Events))
@@ -216,8 +216,8 @@ func TestAuditArchiveRefusesABrokenChainAndReportsGaps(t *testing.T) {
 		t.Fatal(err)
 	}
 	resumed := g.archive(core.NewObject("tenantId", g.tenantID))
-	expectJSON(t, resumed.Get("failed"), `[]`)
-	expectJSON(t, resumed.Get("gaps"), `[{"tenantId":"`+g.tenantID+`","fromSequence":1,"toSequence":2}]`)
+	expectInvariantJSON(t, resumed.Get("failed"), `[]`)
+	expectInvariantJSON(t, resumed.Get("gaps"), `[{"tenantId":"`+g.tenantID+`","fromSequence":1,"toSequence":2}]`)
 }
 
 func TestAuditArchiveLetsOneRunAtATimeArchiveATenant(t *testing.T) {
@@ -250,13 +250,13 @@ func TestAuditArchiveLetsOneRunAtATimeArchiveATenant(t *testing.T) {
 	// New events arrive while the first run is stuck in its sink; a second run must not race it.
 	f.member("alice")
 	second := f.archive(core.NewObject("tenantId", f.tenantID))
-	expectJSON(t, []any{second.Get("archived"), second.Get("busy")}, `[{},["`+f.tenantID+`"]]`)
+	expectInvariantJSON(t, []any{second.Get("archived"), second.Get("busy")}, `[{},["`+f.tenantID+`"]]`)
 	close(release)
 	first := <-slow
 	if first.err != nil {
 		t.Fatal(first.err)
 	}
-	expectJSON(t, first.result.Get("failed"), `[]`)
+	expectInvariantJSON(t, first.result.Get("failed"), `[]`)
 	f.archive(core.NewObject("tenantId", f.tenantID))
 	head := f.head(f.tenantID)
 	// Everything pruned is in the archive: the files hold the whole chain.
