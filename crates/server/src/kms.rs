@@ -29,6 +29,24 @@ pub struct EncryptionContext {
     pub extra: Map<String, Value>,
 }
 
+/// `KmsServiceUse`: how another module uses a tenant key on behalf of a caller.
+#[derive(Debug, Clone)]
+pub struct KmsServiceUse {
+    /// The module using the key, recorded as `metadata.via` (for example `vault`).
+    pub via: String,
+    /// The caller the module acts for, recorded as the event's actor; otherwise `deployment-operator`.
+    pub principal: Option<better_iam_core::AuthenticatedPrincipal>,
+}
+
+/// What `kmsDataKeyFor` returns: a fresh data key (wipe it after use) and its wrapped form.
+#[derive(Debug, Clone)]
+pub struct ServiceDataKey {
+    pub data_key: Vec<u8>,
+    pub wrapped: String,
+    pub key_id: String,
+    pub key_version: f64,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct GrantConstraints {
     /// The request's encryption context must equal this one exactly.
@@ -550,8 +568,8 @@ pub async fn kms_data_key_for(
     tenant_id: &str,
     key_ref: &str,
     context: &crate::kms::EncryptionContext,
-    r#use: &Value,
-) -> IamResult<Value> {
+    r#use: &crate::kms::KmsServiceUse,
+) -> IamResult<crate::kms::ServiceDataKey> {
     Err(not_ported("kms.ts kmsDataKeyFor"))
 }
 
@@ -590,7 +608,7 @@ pub async fn kms_open_data_key_for(
     tenant_id: &str,
     wrapped: &str,
     context: &crate::kms::EncryptionContext,
-    r#use: &Value,
+    r#use: &crate::kms::KmsServiceUse,
 ) -> IamResult<Vec<u8>> {
     Err(not_ported("kms.ts kmsOpenDataKeyFor"))
 }
