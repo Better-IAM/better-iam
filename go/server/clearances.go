@@ -211,7 +211,7 @@ func SchemeLevel(scheme *core.Object, levelID string) (result *core.Object, err 
 // target's scheme. Unknown session kinds are uncleared.
 //
 // STUB: returns NOT_IMPLEMENTED until the module is ported.
-func SessionParties(ctx context.Context, tx core.IamStore, principal *Principal, target *core.Object, agentScope *core.Object, scheme *core.Object, now int64, root bool) (result []*core.Object, err error) {
+func SessionParties(ctx context.Context, tx core.IamStore, principal *Principal, target *core.Object, agentScope *AgentDecisionScope, scheme *core.Object, now int64, root bool) (result []*core.Object, err error) {
 	err = notImplemented("clearances.ts sessionParties")
 	return
 }
