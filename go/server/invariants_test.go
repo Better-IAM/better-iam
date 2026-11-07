@@ -224,7 +224,7 @@ func expectCode(t *testing.T, err error, code string) *core.IamError {
 	return known
 }
 
-func expectJSON(t *testing.T, value any, want string) {
+func expectInvariantJSON(t *testing.T, value any, want string) {
 	t.Helper()
 	got := core.MustStringify(value)
 	if got != want {
@@ -375,7 +375,7 @@ func TestInvariantsProtectMustAllowInvariantsAndTolerateEarlierViolations(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	expectJSON(t, member(run.Value, "summary"), `{"passed":1,"failed":1,"errors":0}`)
+	expectInvariantJSON(t, member(run.Value, "summary"), `{"passed":1,"failed":1,"errors":0}`)
 	var names []string
 	for _, result := range member(run.Value, "results").([]any) {
 		names = append(names, jsString(member(member(result, "invariant"), "name"))+"="+jsString(member(result, "passed")))
@@ -391,7 +391,7 @@ func TestInvariantsProtectMustAllowInvariantsAndTolerateEarlierViolations(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	expectJSON(t, member(single.Value, "summary"), `{"passed":1,"failed":0,"errors":0}`)
+	expectInvariantJSON(t, member(single.Value, "summary"), `{"passed":1,"failed":0,"errors":0}`)
 
 	// Deleting the group an enforced invariant is about would switch it off silently, so it is refused.
 	err = s.change("iam:groups:delete", s.deleteIn("groups", s.oncallID))
@@ -414,7 +414,7 @@ func TestInvariantsProtectMustAllowInvariantsAndTolerateEarlierViolations(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	expectJSON(t, deleted.Value, `{"deleted":true}`)
+	expectInvariantJSON(t, deleted.Value, `{"deleted":true}`)
 	if err := s.change("iam:bindings:delete", s.deleteIn("bindings", oncallWriterID)); err != nil {
 		t.Fatal(err)
 	}
@@ -431,15 +431,15 @@ func TestInvariantsMonitorOnAScheduleAndAuditBreaksAndRestorationsOnce(t *testin
 		t.Helper()
 		return must(s.iam.CheckInvariants(s.ctx, input))
 	}
-	expectJSON(t, check(nil), `{"checked":1,"broken":[],"restored":[]}`)
+	expectInvariantJSON(t, check(nil), `{"checked":1,"broken":[],"restored":[]}`)
 	// Monitor mode lets the change through; the next check reports it once.
 	binding := s.bindingRecord("identity", s.carolID, s.writerID)
 	if err := s.change("iam:bindings:create", s.insertIn("bindings", binding)); err != nil {
 		t.Fatal(err)
 	}
-	expectJSON(t, check(core.NewObject("tenantId", s.tenantID)),
+	expectInvariantJSON(t, check(core.NewObject("tenantId", s.tenantID)),
 		`{"checked":1,"broken":[{"tenantId":"`+s.tenantID+`","invariantId":"`+invariantID+`","name":"Carol never writes","violations":["`+s.carolID+`"]}],"restored":[]}`)
-	expectJSON(t, check(nil).Get("broken"), `[]`)
+	expectInvariantJSON(t, check(nil).Get("broken"), `[]`)
 	stored := s.get("accessInvariants", invariantID)
 	lastCheck := stored.Get("lastCheck").(*core.Object)
 	if lastCheck.Get("passed") != false || core.MustStringify(lastCheck.Get("violations")) != `["`+s.carolID+`"]` {
@@ -448,7 +448,7 @@ func TestInvariantsMonitorOnAScheduleAndAuditBreaksAndRestorationsOnce(t *testin
 	if err := s.change("iam:bindings:delete", s.deleteIn("bindings", jsString(binding.Get("id")))); err != nil {
 		t.Fatal(err)
 	}
-	expectJSON(t, check(nil).Get("restored"), `[{"tenantId":"`+s.tenantID+`","invariantId":"`+invariantID+`","name":"Carol never writes"}]`)
+	expectInvariantJSON(t, check(nil).Get("restored"), `[{"tenantId":"`+s.tenantID+`","invariantId":"`+invariantID+`","name":"Carol never writes"}]`)
 	events := core.MustStringify(stringsFromRecords(s.find("audit", core.NewObject("tenantId", s.tenantID))))
 	if !strings.Contains(events, "invariant:broken") || !strings.Contains(events, "invariant:restored") {
 		t.Fatalf("audit lacks invariant events: %s", events)
@@ -527,7 +527,7 @@ func TestInvariantsEvaluateReportsUnevaluableInvariants(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	expectJSON(t, member(run.Value, "summary"), `{"passed":0,"failed":0,"errors":1}`)
+	expectInvariantJSON(t, member(run.Value, "summary"), `{"passed":0,"failed":0,"errors":1}`)
 	result := member(run.Value, "results").([]any)[0]
-	expectJSON(t, member(result, "error"), `{"code":"NOT_FOUND","message":"The invariant names an identity that no longer exists"}`)
+	expectInvariantJSON(t, member(result, "error"), `{"code":"NOT_FOUND","message":"The invariant names an identity that no longer exists"}`)
 }
