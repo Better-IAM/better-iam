@@ -2,7 +2,7 @@
   "codes": [
     {
       "code": "ACCESS_DENIED",
-      "occurrences": 179,
+      "occurrences": 180,
       "packages": [
         "@better-iam/cli",
         "@better-iam/nestjs",
@@ -365,92 +365,92 @@
           "via": "OperationDenied"
         },
         {
-          "at": "packages/server/src/api/identities.ts:1185",
+          "at": "packages/server/src/api/identities.ts:1055",
           "message": "Root capability is protected",
           "status": 403
         },
         {
-          "at": "packages/server/src/api/identities.ts:1232",
+          "at": "packages/server/src/api/identities.ts:1116",
+          "message": "Root capability is protected",
+          "status": 403
+        },
+        {
+          "at": "packages/server/src/api/identities.ts:1141",
+          "message": "Only an owner can offboard an owner",
+          "status": 403
+        },
+        {
+          "at": "packages/server/src/api/identities.ts:1398",
+          "message": "Root capability is protected",
+          "status": 403
+        },
+        {
+          "at": "packages/server/src/api/identities.ts:1445",
           "message": "Your own attributes, manager and expiry are changed by another administrator",
           "status": 403,
           "via": "OperationDenied"
         },
         {
-          "at": "packages/server/src/api/identities.ts:1429",
-          "message": "Cannot grant this role",
-          "status": 403
-        },
-        {
-          "at": "packages/server/src/api/identities.ts:1447",
-          "message": "Cannot add members to this group",
-          "status": 403
-        },
-        {
-          "at": "packages/server/src/api/identities.ts:1643",
+          "at": "packages/server/src/api/identities.ts:154",
           "message": "Root capability is protected",
           "status": 403
         },
         {
-          "at": "packages/server/src/api/identities.ts:1680",
+          "at": "packages/server/src/api/identities.ts:1642",
+          "message": "Cannot grant this role",
+          "status": 403
+        },
+        {
+          "at": "packages/server/src/api/identities.ts:1660",
+          "message": "Cannot add members to this group",
+          "status": 403
+        },
+        {
+          "at": "packages/server/src/api/identities.ts:1856",
+          "message": "Root capability is protected",
+          "status": 403
+        },
+        {
+          "at": "packages/server/src/api/identities.ts:1899",
           "message": "Only an owner can transfer ownership",
           "status": 403
         },
         {
-          "at": "packages/server/src/api/identities.ts:1757",
+          "at": "packages/server/src/api/identities.ts:1979",
           "message": "Principal ceilings are platform controlled",
           "status": 403
         },
         {
-          "at": "packages/server/src/api/identities.ts:186",
+          "at": "packages/server/src/api/identities.ts:272",
           "expression": "identity.rootAdmin\n      ? 'Only a root administrator can change a root administrator’s sign-in address or password'\n      : 'Only an owner can change an owner’s sign-in address or password'",
           "status": 403,
           "via": "OperationDenied"
         },
         {
-          "at": "packages/server/src/api/identities.ts:221",
+          "at": "packages/server/src/api/identities.ts:307",
           "expression": "message",
           "status": 403,
           "via": "OperationDenied"
         },
         {
-          "at": "packages/server/src/api/identities.ts:241",
+          "at": "packages/server/src/api/identities.ts:327",
           "message": "Setting attributes or a manager requires iam:identities:update",
           "status": 403,
           "via": "OperationDenied"
         },
         {
-          "at": "packages/server/src/api/identities.ts:418",
+          "at": "packages/server/src/api/identities.ts:520",
           "message": "Cannot grant this role",
           "status": 403
         },
         {
-          "at": "packages/server/src/api/identities.ts:436",
+          "at": "packages/server/src/api/identities.ts:538",
           "message": "Cannot add members to this group",
           "status": 403
         },
         {
-          "at": "packages/server/src/api/identities.ts:68",
-          "message": "Root capability is protected",
-          "status": 403
-        },
-        {
-          "at": "packages/server/src/api/identities.ts:765",
+          "at": "packages/server/src/api/identities.ts:870",
           "message": "Owners and root administrators cannot be impersonated",
-          "status": 403
-        },
-        {
-          "at": "packages/server/src/api/identities.ts:842",
-          "message": "Root capability is protected",
-          "status": 403
-        },
-        {
-          "at": "packages/server/src/api/identities.ts:903",
-          "message": "Root capability is protected",
-          "status": 403
-        },
-        {
-          "at": "packages/server/src/api/identities.ts:928",
-          "message": "Only an owner can offboard an owner",
           "status": 403
         },
         {
@@ -701,17 +701,22 @@
           "template": "Placing a team under ${parent.name} needs iam:teams:update on it"
         },
         {
-          "at": "packages/server/src/api/tenants.ts:307",
+          "at": "packages/server/src/api/tenants.ts:136",
+          "message": "Only a root principal can create an active tenant without an owner invitation",
+          "status": 403
+        },
+        {
+          "at": "packages/server/src/api/tenants.ts:377",
           "message": "The root tenant’s authentication policy is set by root administrators",
           "status": 403
         },
         {
-          "at": "packages/server/src/api/tenants.ts:491",
+          "at": "packages/server/src/api/tenants.ts:561",
           "message": "Only root administrators can sign everyone out of the root tenant",
           "status": 403
         },
         {
-          "at": "packages/server/src/api/tenants.ts:763",
+          "at": "packages/server/src/api/tenants.ts:833",
           "message": "Tenant ceilings are platform controlled",
           "status": 403
         },
@@ -886,7 +891,7 @@
           "status": 403
         },
         {
-          "at": "packages/server/src/federation.ts:294",
+          "at": "packages/server/src/federation.ts:369",
           "expression": "linked.rootAdmin\n              ? 'A root administrator signs in through this connection; only a root administrator can change what it trusts'\n              : 'An owner signs in through this connection; only an owner can change what it trusts'",
           "status": 403
         },
@@ -990,13 +995,23 @@
     },
     {
       "code": "ACCOUNT_LINK_CONFLICT",
-      "occurrences": 1,
+      "occurrences": 3,
       "packages": [
         "@better-iam/server"
       ],
       "sites": [
         {
-          "at": "packages/server/src/federation.ts:98",
+          "at": "packages/server/src/api/identities.ts:112",
+          "message": "External identity is already linked to another account",
+          "status": 409
+        },
+        {
+          "at": "packages/server/src/api/identities.ts:122",
+          "message": "This account is already linked through that provider; unlink it first",
+          "status": 409
+        },
+        {
+          "at": "packages/server/src/federation.ts:135",
           "message": "External identity is already linked to another account",
           "status": 409
         }
@@ -1013,7 +1028,7 @@
       ],
       "sites": [
         {
-          "at": "packages/server/src/federation.ts:146",
+          "at": "packages/server/src/federation.ts:221",
           "message": "Authenticate the existing account before linking this provider",
           "status": 409
         }
@@ -1430,12 +1445,12 @@
           "status": 409
         },
         {
-          "at": "packages/saml/src/index.ts:878",
+          "at": "packages/saml/src/index.ts:1051",
           "message": "A SAML connection with this ID already exists.",
           "status": 409
         },
         {
-          "at": "packages/saml/src/index.ts:938",
+          "at": "packages/saml/src/index.ts:1111",
           "message": "The connection changed while it was being updated; try again.",
           "status": 409
         },
@@ -1670,18 +1685,18 @@
           "status": 409
         },
         {
-          "at": "packages/server/src/api/identities.ts:1529",
-          "message": "Invitation is already consumed or revoked",
-          "status": 409
-        },
-        {
-          "at": "packages/server/src/api/identities.ts:1567",
-          "message": "Invitation is already consumed or revoked",
-          "status": 409
-        },
-        {
-          "at": "packages/server/src/api/identities.ts:64",
+          "at": "packages/server/src/api/identities.ts:150",
           "message": "Identity is already deleted",
+          "status": 409
+        },
+        {
+          "at": "packages/server/src/api/identities.ts:1742",
+          "message": "Invitation is already consumed or revoked",
+          "status": 409
+        },
+        {
+          "at": "packages/server/src/api/identities.ts:1780",
+          "message": "Invitation is already consumed or revoked",
           "status": 409
         },
         {
@@ -1900,12 +1915,12 @@
           "template": "${identity.name} is already in this team"
         },
         {
-          "at": "packages/server/src/api/tenants.ts:687",
+          "at": "packages/server/src/api/tenants.ts:757",
           "message": "Invitation is already consumed or revoked",
           "status": 409
         },
         {
-          "at": "packages/server/src/api/tenants.ts:720",
+          "at": "packages/server/src/api/tenants.ts:790",
           "message": "Invitation is already consumed or revoked",
           "status": 409
         },
@@ -2005,7 +2020,7 @@
       ],
       "sites": [
         {
-          "at": "packages/oauth/src/client.ts:642",
+          "at": "packages/oauth/src/client.ts:665",
           "message": "Linking requires a trusted Origin and X-Better-IAM header.",
           "status": 403
         },
@@ -2015,7 +2030,7 @@
           "status": 403
         },
         {
-          "at": "packages/saml/src/index.ts:1033",
+          "at": "packages/saml/src/index.ts:1206",
           "message": "Linking requires a trusted Origin and X-Better-IAM header.",
           "status": 403
         }
@@ -2054,12 +2069,12 @@
           "status": 403
         },
         {
-          "at": "packages/server/src/http.ts:628",
+          "at": "packages/server/src/http.ts:660",
           "message": "JSON and X-Better-IAM header required",
           "status": 403
         },
         {
-          "at": "packages/server/src/http.ts:630",
+          "at": "packages/server/src/http.ts:662",
           "message": "Cookie requests require Origin",
           "status": 403
         }
@@ -2279,13 +2294,13 @@
           "status": 400
         },
         {
-          "at": "packages/server/src/api/identities.ts:1388",
+          "at": "packages/server/src/api/identities.ts:1601",
           "defaulted": true,
           "message": "Member invitations require an email delivery callback",
           "status": 400
         },
         {
-          "at": "packages/server/src/api/identities.ts:1554",
+          "at": "packages/server/src/api/identities.ts:1767",
           "defaulted": true,
           "message": "Member invitations require an email delivery callback",
           "status": 400
@@ -2303,13 +2318,13 @@
           "status": 400
         },
         {
-          "at": "packages/server/src/api/tenants.ts:709",
+          "at": "packages/server/src/api/tenants.ts:142",
           "defaulted": true,
           "message": "Organization invitations require an email delivery callback",
           "status": 400
         },
         {
-          "at": "packages/server/src/api/tenants.ts:93",
+          "at": "packages/server/src/api/tenants.ts:779",
           "defaulted": true,
           "message": "Organization invitations require an email delivery callback",
           "status": 400
@@ -2691,7 +2706,7 @@
           "status": 403
         },
         {
-          "at": "packages/server/src/federation.ts:133",
+          "at": "packages/server/src/federation.ts:170",
           "message": "Root identity provisioning requires an administrator",
           "status": 403
         }
@@ -2837,7 +2852,7 @@
           "status": 403
         },
         {
-          "at": "packages/server/src/http.ts:660",
+          "at": "packages/server/src/http.ts:692",
           "message": "This address belongs to another organization",
           "status": 403
         }
@@ -2904,12 +2919,12 @@
           "status": 409
         },
         {
-          "at": "packages/server/src/api/identities.ts:1257",
+          "at": "packages/server/src/api/identities.ts:1470",
           "message": "Email is already in use in this tenant",
           "status": 409
         },
         {
-          "at": "packages/server/src/api/identities.ts:1396",
+          "at": "packages/server/src/api/identities.ts:1609",
           "message": "An identity with this email already exists in this tenant",
           "status": 409
         }
@@ -3349,7 +3364,7 @@
     },
     {
       "code": "INVALID_CONFIG",
-      "occurrences": 74,
+      "occurrences": 75,
       "packages": [
         "@better-iam/adapter-libsql",
         "@better-iam/adapter-postgres",
@@ -3654,67 +3669,73 @@
           "status": 400
         },
         {
-          "at": "packages/server/src/options.ts:405",
+          "at": "packages/server/src/options.ts:404",
+          "defaulted": true,
+          "message": "baseURL must be an absolute URL",
+          "status": 400
+        },
+        {
+          "at": "packages/server/src/options.ts:410",
           "defaulted": true,
           "message": "HTTPS is required outside localhost",
           "status": 400
         },
         {
-          "at": "packages/server/src/options.ts:408",
+          "at": "packages/server/src/options.ts:413",
           "defaulted": true,
           "message": "Invalid basePath",
           "status": 400
         },
         {
-          "at": "packages/server/src/options.ts:412",
+          "at": "packages/server/src/options.ts:417",
           "defaulted": true,
           "message": "Hierarchy must define root",
           "status": 400
         },
         {
-          "at": "packages/server/src/options.ts:417",
+          "at": "packages/server/src/options.ts:422",
           "defaulted": true,
           "message": "Invalid allowed child type",
           "status": 400
         },
         {
-          "at": "packages/server/src/options.ts:426",
+          "at": "packages/server/src/options.ts:431",
           "defaulted": true,
           "status": 400,
           "template": "tenantDefaults: ${(error as Error).message}"
         },
         {
-          "at": "packages/server/src/options.ts:483",
+          "at": "packages/server/src/options.ts:488",
           "defaulted": true,
           "message": "clearances must be an object",
           "status": 400
         },
         {
-          "at": "packages/server/src/options.ts:486",
+          "at": "packages/server/src/options.ts:491",
           "defaulted": true,
           "status": 400,
           "template": "clearances.${key} is not a known setting"
         },
         {
-          "at": "packages/server/src/options.ts:488",
+          "at": "packages/server/src/options.ts:493",
           "defaulted": true,
           "message": "clearances.appliesToRoot must be a boolean",
           "status": 400
         },
         {
-          "at": "packages/server/src/options.ts:498",
+          "at": "packages/server/src/options.ts:503",
           "defaulted": true,
           "status": 400,
           "template": "signals.${field} ${detail}"
         },
         {
-          "at": "packages/server/src/options.ts:501",
+          "at": "packages/server/src/options.ts:506",
           "defaulted": true,
           "message": "signals must be an object",
           "status": 400
         },
         {
-          "at": "packages/server/src/options.ts:525",
+          "at": "packages/server/src/options.ts:530",
           "defaulted": true,
           "status": 400,
           "template": "sts.${field} ${detail}"
@@ -4002,21 +4023,21 @@
       ],
       "sites": [
         {
-          "at": "packages/server/src/api/tenants.ts:564",
+          "at": "packages/server/src/api/tenants.ts:147",
+          "defaulted": true,
+          "message": "Child type is not permitted",
+          "status": 400
+        },
+        {
+          "at": "packages/server/src/api/tenants.ts:634",
           "defaulted": true,
           "message": "Child type is not permitted under the new parent",
           "status": 400
         },
         {
-          "at": "packages/server/src/api/tenants.ts:583",
+          "at": "packages/server/src/api/tenants.ts:653",
           "defaulted": true,
           "message": "Cannot move a tenant under its own subtree",
-          "status": 400
-        },
-        {
-          "at": "packages/server/src/api/tenants.ts:98",
-          "defaulted": true,
-          "message": "Child type is not permitted",
           "status": 400
         },
         {
@@ -4089,7 +4110,7 @@
     },
     {
       "code": "INVALID_INPUT",
-      "occurrences": 1031,
+      "occurrences": 1038,
       "packages": [
         "@better-iam/auth",
         "@better-iam/core",
@@ -4215,17 +4236,17 @@
           "status": 400
         },
         {
-          "at": "packages/oauth/src/client.ts:310",
+          "at": "packages/oauth/src/client.ts:332",
           "message": "login_hint must be a short identifier such as an email address.",
           "status": 400
         },
         {
-          "at": "packages/oauth/src/client.ts:322",
+          "at": "packages/oauth/src/client.ts:344",
           "message": "domain_hint must be a domain name.",
           "status": 400
         },
         {
-          "at": "packages/oauth/src/client.ts:327",
+          "at": "packages/oauth/src/client.ts:349",
           "message": "prompt must be login, select_account, consent, or none.",
           "status": 400
         },
@@ -4476,63 +4497,69 @@
           "status": 400
         },
         {
-          "at": "packages/saml/src/index.ts:460",
+          "at": "packages/saml/src/index.ts:1031",
+          "defaulted": true,
+          "message": "Connection IDs are 2-63 lowercase letters, digits, and hyphens.",
+          "status": 400
+        },
+        {
+          "at": "packages/saml/src/index.ts:377",
+          "defaulted": true,
+          "message": "returnTo must be a path on this site, such as /dashboard.",
+          "status": 400
+        },
+        {
+          "at": "packages/saml/src/index.ts:585",
           "defaulted": true,
           "message": "A connection name of at most 200 characters is required.",
           "status": 400
         },
         {
-          "at": "packages/saml/src/index.ts:468",
+          "at": "packages/saml/src/index.ts:593",
           "defaulted": true,
           "message": "The IdP sign-on URL must be an absolute HTTPS URL.",
           "status": 400
         },
         {
-          "at": "packages/saml/src/index.ts:471",
+          "at": "packages/saml/src/index.ts:596",
           "defaulted": true,
           "message": "The IdP sign-on URL must be an absolute HTTPS URL.",
           "status": 400
         },
         {
-          "at": "packages/saml/src/index.ts:473",
+          "at": "packages/saml/src/index.ts:598",
           "defaulted": true,
           "message": "The IdP issuer (entity ID) is required.",
           "status": 400
         },
         {
-          "at": "packages/saml/src/index.ts:475",
+          "at": "packages/saml/src/index.ts:600",
           "defaulted": true,
           "message": "Between one and five IdP signing certificates are required.",
           "status": 400
         },
         {
-          "at": "packages/saml/src/index.ts:488",
+          "at": "packages/saml/src/index.ts:613",
           "defaulted": true,
           "message": "Trusted email domains must be exact domain names.",
           "status": 400
         },
         {
-          "at": "packages/saml/src/index.ts:502",
+          "at": "packages/saml/src/index.ts:627",
           "defaulted": true,
           "message": "attributeMapping maps up to 32 identity attribute names to SAML attribute names.",
           "status": 400
         },
         {
-          "at": "packages/saml/src/index.ts:511",
+          "at": "packages/saml/src/index.ts:636",
           "defaulted": true,
           "message": "Invalid SAML connection settings.",
           "status": 400
         },
         {
-          "at": "packages/saml/src/index.ts:513",
+          "at": "packages/saml/src/index.ts:638",
           "defaulted": true,
           "message": "Encrypted assertions need a service-provider decryption key.",
-          "status": 400
-        },
-        {
-          "at": "packages/saml/src/index.ts:858",
-          "defaulted": true,
-          "message": "Connection IDs are 2-63 lowercase letters, digits, and hyphens.",
           "status": 400
         },
         {
@@ -5877,111 +5904,135 @@
           "status": 400
         },
         {
-          "at": "packages/server/src/api/identities.ts:1178",
-          "defaulted": true,
-          "message": "Nothing to update",
-          "status": 400
-        },
-        {
-          "at": "packages/server/src/api/identities.ts:1239",
-          "defaulted": true,
-          "message": "Service accounts have no email",
-          "status": 400
-        },
-        {
-          "at": "packages/server/src/api/identities.ts:1244",
-          "defaulted": true,
-          "message": "A guest’s email address cannot change: invite the new address instead",
-          "status": 400
-        },
-        {
-          "at": "packages/server/src/api/identities.ts:1633",
-          "defaulted": true,
-          "message": "Invalid identity status",
-          "status": 400
-        },
-        {
-          "at": "packages/server/src/api/identities.ts:1638",
-          "defaulted": true,
-          "message": "Use agents.suspend and agents.resume to stop or restart an agent",
-          "status": 400
-        },
-        {
-          "at": "packages/server/src/api/identities.ts:1687",
-          "defaulted": true,
-          "message": "Invalid owner",
-          "status": 400
-        },
-        {
-          "at": "packages/server/src/api/identities.ts:278",
-          "defaulted": true,
-          "message": "An identity cannot be its own manager",
-          "status": 400
-        },
-        {
-          "at": "packages/server/src/api/identities.ts:280",
-          "defaulted": true,
-          "message": "A manager must be an active identity",
-          "status": 400
-        },
-        {
-          "at": "packages/server/src/api/identities.ts:284",
-          "defaulted": true,
-          "message": "That would make the reporting line circular",
-          "status": 400
-        },
-        {
-          "at": "packages/server/src/api/identities.ts:373",
-          "defaulted": true,
-          "message": "Provide 1-100 identities",
-          "status": 400
-        },
-        {
-          "at": "packages/server/src/api/identities.ts:517",
-          "defaulted": true,
-          "message": "Invalid identity kind",
-          "status": 400
-        },
-        {
-          "at": "packages/server/src/api/identities.ts:522",
-          "defaulted": true,
-          "message": "Invalid identity status",
-          "status": 400
-        },
-        {
-          "at": "packages/server/src/api/identities.ts:66",
-          "defaulted": true,
-          "message": "An identity cannot delete itself",
-          "status": 400
-        },
-        {
-          "at": "packages/server/src/api/identities.ts:761",
-          "defaulted": true,
-          "message": "You cannot impersonate yourself",
-          "status": 400
-        },
-        {
-          "at": "packages/server/src/api/identities.ts:763",
-          "defaulted": true,
-          "message": "Only people can be impersonated",
-          "status": 400
-        },
-        {
-          "at": "packages/server/src/api/identities.ts:833",
+          "at": "packages/server/src/api/identities.ts:1046",
           "defaulted": true,
           "message": "keepApiKeys must be a boolean",
           "status": 400
         },
         {
-          "at": "packages/server/src/api/identities.ts:901",
+          "at": "packages/server/src/api/identities.ts:1114",
           "defaulted": true,
           "message": "You cannot offboard yourself",
           "status": 400
         },
         {
-          "at": "packages/server/src/api/identities.ts:910",
+          "at": "packages/server/src/api/identities.ts:1123",
           "defaulted": true,
           "message": "Successor must be another active identity",
+          "status": 400
+        },
+        {
+          "at": "packages/server/src/api/identities.ts:1391",
+          "defaulted": true,
+          "message": "Nothing to update",
+          "status": 400
+        },
+        {
+          "at": "packages/server/src/api/identities.ts:1452",
+          "defaulted": true,
+          "message": "Service accounts have no email",
+          "status": 400
+        },
+        {
+          "at": "packages/server/src/api/identities.ts:1457",
+          "defaulted": true,
+          "message": "A guest’s email address cannot change: invite the new address instead",
+          "status": 400
+        },
+        {
+          "at": "packages/server/src/api/identities.ts:152",
+          "defaulted": true,
+          "message": "An identity cannot delete itself",
+          "status": 400
+        },
+        {
+          "at": "packages/server/src/api/identities.ts:1846",
+          "defaulted": true,
+          "message": "Invalid identity status",
+          "status": 400
+        },
+        {
+          "at": "packages/server/src/api/identities.ts:1851",
+          "defaulted": true,
+          "message": "Use agents.suspend and agents.resume to stop or restart an agent",
+          "status": 400
+        },
+        {
+          "at": "packages/server/src/api/identities.ts:1906",
+          "defaulted": true,
+          "message": "Invalid owner",
+          "status": 400
+        },
+        {
+          "at": "packages/server/src/api/identities.ts:364",
+          "defaulted": true,
+          "message": "An identity cannot be its own manager",
+          "status": 400
+        },
+        {
+          "at": "packages/server/src/api/identities.ts:366",
+          "defaulted": true,
+          "message": "A manager must be an active identity",
+          "status": 400
+        },
+        {
+          "at": "packages/server/src/api/identities.ts:370",
+          "defaulted": true,
+          "message": "That would make the reporting line circular",
+          "status": 400
+        },
+        {
+          "at": "packages/server/src/api/identities.ts:473",
+          "defaulted": true,
+          "message": "Provide 1-100 identities",
+          "status": 400
+        },
+        {
+          "at": "packages/server/src/api/identities.ts:622",
+          "defaulted": true,
+          "message": "Invalid identity kind",
+          "status": 400
+        },
+        {
+          "at": "packages/server/src/api/identities.ts:627",
+          "defaulted": true,
+          "message": "Invalid identity status",
+          "status": 400
+        },
+        {
+          "at": "packages/server/src/api/identities.ts:70",
+          "defaulted": true,
+          "status": 400,
+          "template": "${name} must be a boolean"
+        },
+        {
+          "at": "packages/server/src/api/identities.ts:77",
+          "defaulted": true,
+          "message": "providers must list at most 10 external sign-ins",
+          "status": 400
+        },
+        {
+          "at": "packages/server/src/api/identities.ts:80",
+          "defaulted": true,
+          "message": "providers must name each provider once",
+          "status": 400
+        },
+        {
+          "at": "packages/server/src/api/identities.ts:866",
+          "defaulted": true,
+          "message": "You cannot impersonate yourself",
+          "status": 400
+        },
+        {
+          "at": "packages/server/src/api/identities.ts:868",
+          "defaulted": true,
+          "message": "Only people can be impersonated",
+          "status": 400
+        },
+        {
+          "at": "packages/server/src/api/identities.ts:940",
+          "defaulted": true,
+          "message": "Only people sign in through external providers",
           "status": 400
         },
         {
@@ -7359,19 +7410,31 @@
           "status": 400
         },
         {
-          "at": "packages/server/src/api/tenants.ts:236",
+          "at": "packages/server/src/api/tenants.ts:122",
+          "defaulted": true,
+          "status": 400,
+          "template": "${field} must be a boolean"
+        },
+        {
+          "at": "packages/server/src/api/tenants.ts:128",
+          "defaulted": true,
+          "message": "ownerName and ownerEmailVerified need activate: true",
+          "status": 400
+        },
+        {
+          "at": "packages/server/src/api/tenants.ts:306",
           "defaulted": true,
           "message": "The root tenant has no parent to inherit a region from",
           "status": 400
         },
         {
-          "at": "packages/server/src/api/tenants.ts:322",
+          "at": "packages/server/src/api/tenants.ts:392",
           "defaulted": true,
           "message": "allowedIpRanges must include your own address",
           "status": 400
         },
         {
-          "at": "packages/server/src/api/tenants.ts:557",
+          "at": "packages/server/src/api/tenants.ts:627",
           "defaulted": true,
           "message": "Tenant is already under this parent",
           "status": 400
@@ -8529,7 +8592,7 @@
           "status": 400
         },
         {
-          "at": "packages/server/src/http.ts:636",
+          "at": "packages/server/src/http.ts:668",
           "defaulted": true,
           "message": "Invalid JSON",
           "status": 400
@@ -10294,7 +10357,7 @@
       ],
       "sites": [
         {
-          "at": "packages/server/src/federation.ts:91",
+          "at": "packages/server/src/federation.ts:128",
           "message": "Invalid verified account-linking proof",
           "status": 403
         },
@@ -10569,7 +10632,7 @@
           "status": 400
         },
         {
-          "at": "packages/server/src/http.ts:757",
+          "at": "packages/server/src/http.ts:789",
           "message": "Invalid request target",
           "status": 400
         }
@@ -10993,7 +11056,7 @@
           "status": 409
         },
         {
-          "at": "packages/server/src/api/identities.ts:1649",
+          "at": "packages/server/src/api/identities.ts:1868",
           "message": "Extend or clear expiresAt before re-enabling an expired identity",
           "status": 409
         },
@@ -11189,49 +11252,49 @@
           "status": 409
         },
         {
-          "at": "packages/server/src/api/tenants.ts:230",
+          "at": "packages/server/src/api/tenants.ts:300",
           "defaulted": true,
           "message": "Deleted tenants cannot be updated",
           "status": 400
         },
         {
-          "at": "packages/server/src/api/tenants.ts:264",
+          "at": "packages/server/src/api/tenants.ts:334",
           "defaulted": true,
           "message": "Deleted tenants cannot be updated",
           "status": 400
         },
         {
-          "at": "packages/server/src/api/tenants.ts:303",
+          "at": "packages/server/src/api/tenants.ts:373",
           "defaulted": true,
           "message": "Deleted tenants cannot be updated",
           "status": 400
         },
         {
-          "at": "packages/server/src/api/tenants.ts:357",
+          "at": "packages/server/src/api/tenants.ts:427",
           "defaulted": true,
           "message": "Deleted tenants cannot be updated",
           "status": 400
         },
         {
-          "at": "packages/server/src/api/tenants.ts:394",
+          "at": "packages/server/src/api/tenants.ts:464",
           "defaulted": true,
           "message": "Deleted tenants cannot be updated",
           "status": 400
         },
         {
-          "at": "packages/server/src/api/tenants.ts:533",
+          "at": "packages/server/src/api/tenants.ts:603",
           "defaulted": true,
           "message": "Deleted tenants cannot be updated",
           "status": 400
         },
         {
-          "at": "packages/server/src/api/tenants.ts:555",
+          "at": "packages/server/src/api/tenants.ts:625",
           "defaulted": true,
           "message": "Tenant cannot be moved",
           "status": 400
         },
         {
-          "at": "packages/server/src/api/tenants.ts:621",
+          "at": "packages/server/src/api/tenants.ts:691",
           "defaulted": true,
           "message": "Tenant cannot make this transition",
           "status": 400
@@ -11489,7 +11552,7 @@
           "status": 400
         },
         {
-          "at": "packages/server/src/api/identities.ts:1573",
+          "at": "packages/server/src/api/identities.ts:1786",
           "defaulted": true,
           "status": 400,
           "template": "${error.message}: revoke this invitation and invite the person again"
@@ -11654,7 +11717,7 @@
           "status": 409
         },
         {
-          "at": "packages/server/src/api/identities.ts:1209",
+          "at": "packages/server/src/api/identities.ts:1422",
           "message": "The last owner without an expiry cannot be given one",
           "status": 409
         },
@@ -11744,7 +11807,7 @@
           "template": "This tenant has reached its member limit (${limit})"
         },
         {
-          "at": "packages/scim/src/provisioning.ts:138",
+          "at": "packages/scim/src/provisioning.ts:146",
           "status": 409,
           "template": "This tenant has reached its ${key === 'identities' ? 'member' : 'group'} limit (${limit})."
         },
@@ -12042,13 +12105,13 @@
       ],
       "sites": [
         {
-          "at": "packages/server/src/api/tenants.ts:100",
+          "at": "packages/server/src/api/tenants.ts:149",
           "defaulted": true,
           "message": "Maximum tenant depth reached",
           "status": 400
         },
         {
-          "at": "packages/server/src/api/tenants.ts:585",
+          "at": "packages/server/src/api/tenants.ts:655",
           "defaulted": true,
           "message": "Maximum tenant depth reached",
           "status": 400
@@ -12100,12 +12163,12 @@
           "status": 405
         },
         {
-          "at": "packages/server/src/http.ts:623",
+          "at": "packages/server/src/http.ts:655",
           "message": "Use POST",
           "status": 405
         },
         {
-          "at": "packages/server/src/http.ts:749",
+          "at": "packages/server/src/http.ts:781",
           "message": "Method is not supported",
           "status": 405
         }
@@ -12283,7 +12346,7 @@
     },
     {
       "code": "NOT_FOUND",
-      "occurrences": 191,
+      "occurrences": 192,
       "packages": [
         "@better-iam/auth",
         "@better-iam/cli",
@@ -12337,7 +12400,7 @@
           "status": 404
         },
         {
-          "at": "packages/oauth/src/client.ts:199",
+          "at": "packages/oauth/src/client.ts:221",
           "message": "OAuth connection not found.",
           "status": 404
         },
@@ -12377,17 +12440,17 @@
           "status": 404
         },
         {
-          "at": "packages/saml/src/index.ts:412",
+          "at": "packages/saml/src/index.ts:531",
           "message": "SAML connection unavailable.",
           "status": 404
         },
         {
-          "at": "packages/saml/src/index.ts:423",
+          "at": "packages/saml/src/index.ts:542",
           "message": "SAML connection unavailable.",
           "status": 404
         },
         {
-          "at": "packages/saml/src/index.ts:550",
+          "at": "packages/saml/src/index.ts:676",
           "message": "SAML connection not found.",
           "status": 404
         },
@@ -12652,8 +12715,13 @@
           "status": 404
         },
         {
-          "at": "packages/server/src/api/identities.ts:1692",
+          "at": "packages/server/src/api/identities.ts:1911",
           "message": "Owner role missing",
+          "status": 404
+        },
+        {
+          "at": "packages/server/src/api/identities.ts:986",
+          "message": "Linked sign-in not found",
           "status": 404
         },
         {
@@ -12927,12 +12995,12 @@
           "status": 404
         },
         {
-          "at": "packages/server/src/api/tenants.ts:191",
+          "at": "packages/server/src/api/tenants.ts:261",
           "message": "Organization not found",
           "status": 404
         },
         {
-          "at": "packages/server/src/api/tenants.ts:214",
+          "at": "packages/server/src/api/tenants.ts:284",
           "message": "Organization not found",
           "status": 404
         },
@@ -13107,37 +13175,37 @@
           "status": 404
         },
         {
-          "at": "packages/server/src/http.ts:429",
+          "at": "packages/server/src/http.ts:461",
           "message": "Endpoint not found",
           "status": 404
         },
         {
-          "at": "packages/server/src/http.ts:431",
+          "at": "packages/server/src/http.ts:463",
           "message": "Endpoint not found",
           "status": 404
         },
         {
-          "at": "packages/server/src/http.ts:434",
+          "at": "packages/server/src/http.ts:466",
           "message": "Endpoint not found",
           "status": 404
         },
         {
-          "at": "packages/server/src/http.ts:446",
+          "at": "packages/server/src/http.ts:478",
           "message": "Endpoint not found",
           "status": 404
         },
         {
-          "at": "packages/server/src/http.ts:469",
+          "at": "packages/server/src/http.ts:501",
           "message": "Endpoint not found",
           "status": 404
         },
         {
-          "at": "packages/server/src/http.ts:527",
+          "at": "packages/server/src/http.ts:559",
           "message": "Endpoint not found",
           "status": 404
         },
         {
-          "at": "packages/server/src/http.ts:551",
+          "at": "packages/server/src/http.ts:583",
           "message": "Endpoint not found",
           "status": 404
         },
@@ -13300,7 +13368,7 @@
       ],
       "sites": [
         {
-          "at": "packages/oauth/src/client.ts:425",
+          "at": "packages/oauth/src/client.ts:447",
           "message": "Unexpected callback URL.",
           "status": 400
         }
@@ -13344,22 +13412,22 @@
       ],
       "sites": [
         {
-          "at": "packages/oauth/src/client.ts:221",
+          "at": "packages/oauth/src/client.ts:243",
           "message": "Microsoft discovery failed.",
           "status": 502
         },
         {
-          "at": "packages/oauth/src/client.ts:225",
+          "at": "packages/oauth/src/client.ts:247",
           "message": "Unexpected Microsoft issuer.",
           "status": 502
         },
         {
-          "at": "packages/oauth/src/client.ts:232",
+          "at": "packages/oauth/src/client.ts:254",
           "message": "Microsoft metadata is incomplete.",
           "status": 502
         },
         {
-          "at": "packages/oauth/src/client.ts:234",
+          "at": "packages/oauth/src/client.ts:256",
           "message": "Microsoft endpoints must use the authority.",
           "status": 502
         }
@@ -13376,37 +13444,37 @@
       ],
       "sites": [
         {
-          "at": "packages/oauth/src/client.ts:257",
+          "at": "packages/oauth/src/client.ts:279",
           "message": "The Microsoft ID token names no directory.",
           "status": 401
         },
         {
-          "at": "packages/oauth/src/client.ts:485",
+          "at": "packages/oauth/src/client.ts:507",
           "message": "Provider profile request failed.",
           "status": 401
         },
         {
-          "at": "packages/oauth/src/client.ts:488",
+          "at": "packages/oauth/src/client.ts:510",
           "message": "Provider subject is missing.",
           "status": 401
         },
         {
-          "at": "packages/oauth/src/client.ts:537",
+          "at": "packages/oauth/src/client.ts:559",
           "message": "Provider profile request failed.",
           "status": 401
         },
         {
-          "at": "packages/oauth/src/client.ts:540",
+          "at": "packages/oauth/src/client.ts:562",
           "message": "Provider profile is invalid.",
           "status": 401
         },
         {
-          "at": "packages/oauth/src/client.ts:543",
+          "at": "packages/oauth/src/client.ts:565",
           "message": "Provider subject is missing.",
           "status": 401
         },
         {
-          "at": "packages/oauth/src/client.ts:558",
+          "at": "packages/oauth/src/client.ts:580",
           "message": "OIDC subject is missing.",
           "status": 401
         }
@@ -13423,12 +13491,12 @@
       ],
       "sites": [
         {
-          "at": "packages/oauth/src/client.ts:428",
+          "at": "packages/oauth/src/client.ts:450",
           "message": "Missing login state.",
           "status": 400
         },
         {
-          "at": "packages/oauth/src/client.ts:438",
+          "at": "packages/oauth/src/client.ts:460",
           "message": "Invalid, expired, or replayed login state.",
           "status": 400
         }
@@ -13445,7 +13513,7 @@
       ],
       "sites": [
         {
-          "at": "packages/oauth/src/client.ts:262",
+          "at": "packages/oauth/src/client.ts:284",
           "message": "This Microsoft directory may not sign in here.",
           "status": 403
         }
@@ -13668,12 +13736,12 @@
           "status": 403
         },
         {
-          "at": "packages/server/src/api/identities.ts:1410",
+          "at": "packages/server/src/api/identities.ts:1623",
           "message": "Use owner transfer for protected roles",
           "status": 403
         },
         {
-          "at": "packages/server/src/api/identities.ts:399",
+          "at": "packages/server/src/api/identities.ts:501",
           "message": "Use owner transfer for protected roles",
           "status": 403
         },
@@ -13816,12 +13884,12 @@
           "status": 403
         },
         {
-          "at": "packages/oauth/src/client.ts:358",
+          "at": "packages/oauth/src/client.ts:380",
           "message": "Linking requires recent authentication to a non-root identity in this tenant.",
           "status": 403
         },
         {
-          "at": "packages/saml/src/index.ts:620",
+          "at": "packages/saml/src/index.ts:751",
           "message": "Linking requires recent authentication to a non-root identity in this tenant.",
           "status": 403
         }
@@ -14134,97 +14202,97 @@
       ],
       "sites": [
         {
-          "at": "packages/saml/src/index.ts:261",
+          "at": "packages/saml/src/index.ts:319",
           "message": "Unsafe SAML document.",
           "status": 401
         },
         {
-          "at": "packages/saml/src/index.ts:280",
+          "at": "packages/saml/src/index.ts:338",
           "message": "SAML response binding is invalid.",
           "status": 401
         },
         {
-          "at": "packages/saml/src/index.ts:296",
+          "at": "packages/saml/src/index.ts:354",
           "message": "An encrypted assertion is required.",
           "status": 401
         },
         {
-          "at": "packages/saml/src/index.ts:304",
+          "at": "packages/saml/src/index.ts:362",
           "message": "SAML subject recipient is invalid.",
           "status": 401
         },
         {
-          "at": "packages/saml/src/index.ts:306",
+          "at": "packages/saml/src/index.ts:364",
           "message": "An unsolicited response cannot answer a request.",
           "status": 401
         },
         {
-          "at": "packages/saml/src/index.ts:660",
+          "at": "packages/saml/src/index.ts:799",
           "message": "Invalid SAML response.",
           "status": 401
         },
         {
-          "at": "packages/saml/src/index.ts:671",
+          "at": "packages/saml/src/index.ts:810",
           "message": "Invalid, expired, or replayed SAML login.",
           "status": 401
         },
         {
-          "at": "packages/saml/src/index.ts:681",
+          "at": "packages/saml/src/index.ts:820",
           "message": "Invalid SAML identity.",
           "status": 401
         },
         {
-          "at": "packages/saml/src/index.ts:689",
+          "at": "packages/saml/src/index.ts:828",
           "message": "SAML assertion recipient is invalid.",
           "status": 401
         },
         {
-          "at": "packages/saml/src/index.ts:736",
+          "at": "packages/saml/src/index.ts:876",
           "message": "Unsolicited SAML responses are not accepted.",
           "status": 401
         },
         {
-          "at": "packages/saml/src/index.ts:749",
+          "at": "packages/saml/src/index.ts:889",
           "message": "Invalid SAML identity.",
           "status": 401
         },
         {
-          "at": "packages/saml/src/index.ts:756",
+          "at": "packages/saml/src/index.ts:896",
           "message": "The assertion has no identifier.",
           "status": 401
         },
         {
-          "at": "packages/saml/src/index.ts:762",
+          "at": "packages/saml/src/index.ts:902",
           "message": "The assertion is too old or not yet valid.",
           "status": 401
         },
         {
-          "at": "packages/saml/src/index.ts:769",
+          "at": "packages/saml/src/index.ts:909",
           "message": "SAML assertion recipient is invalid.",
           "status": 401
         },
         {
-          "at": "packages/saml/src/index.ts:778",
+          "at": "packages/saml/src/index.ts:918",
           "message": "The assertion was already used.",
           "status": 401
         },
         {
-          "at": "packages/saml/src/index.ts:794",
+          "at": "packages/saml/src/index.ts:934",
           "message": "SAML POST binding is required.",
           "status": 415
         },
         {
-          "at": "packages/saml/src/index.ts:797",
+          "at": "packages/saml/src/index.ts:937",
           "message": "SAML response is too large.",
           "status": 413
         },
         {
-          "at": "packages/saml/src/index.ts:800",
+          "at": "packages/saml/src/index.ts:940",
           "message": "Invalid SAML POST parameters.",
           "status": 400
         },
         {
-          "at": "packages/saml/src/index.ts:807",
+          "at": "packages/saml/src/index.ts:947",
           "message": "Invalid SAML POST parameters.",
           "status": 400
         }
@@ -14865,7 +14933,7 @@
       ],
       "sites": [
         {
-          "at": "packages/oauth/src/client.ts:122",
+          "at": "packages/oauth/src/client.ts:131",
           "message": "Tenant is unavailable.",
           "status": 403
         },
@@ -14885,7 +14953,7 @@
           "status": 403
         },
         {
-          "at": "packages/saml/src/index.ts:248",
+          "at": "packages/saml/src/index.ts:306",
           "message": "Tenant unavailable.",
           "status": 403
         },
@@ -14913,19 +14981,19 @@
           "status": 400
         },
         {
-          "at": "packages/server/src/api/identities.ts:1393",
+          "at": "packages/server/src/api/identities.ts:1606",
           "defaulted": true,
           "message": "Tenant must be active",
           "status": 400
         },
         {
-          "at": "packages/server/src/api/identities.ts:1559",
+          "at": "packages/server/src/api/identities.ts:1772",
           "defaulted": true,
           "message": "Tenant must be active",
           "status": 400
         },
         {
-          "at": "packages/server/src/api/identities.ts:375",
+          "at": "packages/server/src/api/identities.ts:475",
           "defaulted": true,
           "message": "Tenant must be active",
           "status": 400
@@ -14951,13 +15019,13 @@
           "status": 403
         },
         {
-          "at": "packages/server/src/api/tenants.ts:562",
+          "at": "packages/server/src/api/tenants.ts:632",
           "defaulted": true,
           "message": "New parent ancestry must be active",
           "status": 400
         },
         {
-          "at": "packages/server/src/api/tenants.ts:629",
+          "at": "packages/server/src/api/tenants.ts:699",
           "defaulted": true,
           "message": "Parent must be active",
           "status": 400
@@ -15323,7 +15391,7 @@
           "status": 401
         },
         {
-          "at": "packages/server/src/http.ts:543",
+          "at": "packages/server/src/http.ts:575",
           "message": "A metrics bearer token is required",
           "status": 401
         },
@@ -15527,7 +15595,7 @@
           "status": 403
         },
         {
-          "at": "packages/server/src/http.ts:604",
+          "at": "packages/server/src/http.ts:636",
           "message": "Origin is not trusted",
           "status": 403
         }
@@ -15544,7 +15612,7 @@
       ],
       "sites": [
         {
-          "at": "packages/server/src/federation.ts:126",
+          "at": "packages/server/src/federation.ts:163",
           "defaulted": true,
           "message": "Federation enrollment needs a verified email",
           "status": 400
@@ -15773,7 +15841,7 @@
     },
     {
       "code": "configuration",
-      "occurrences": 42,
+      "occurrences": 46,
       "packages": [
         "@better-iam/oauth",
         "@better-iam/saml",
@@ -15787,67 +15855,73 @@
           "status": 400
         },
         {
-          "at": "packages/oauth/src/client.ts:114",
+          "at": "packages/oauth/src/client.ts:123",
           "defaulted": true,
           "message": "OAuth endpoints require HTTPS (or explicitly enabled localhost HTTP).",
           "status": 400
         },
         {
-          "at": "packages/oauth/src/client.ts:136",
+          "at": "packages/oauth/src/client.ts:145",
           "defaulted": true,
           "message": "OAuth connection IDs must be unique and configuration complete.",
           "status": 400
         },
         {
-          "at": "packages/oauth/src/client.ts:142",
+          "at": "packages/oauth/src/client.ts:151",
           "defaulted": true,
           "message": "The provider issuer is required.",
           "status": 400
         },
         {
-          "at": "packages/oauth/src/client.ts:152",
+          "at": "packages/oauth/src/client.ts:162",
           "defaulted": true,
           "message": "allowedEmailDomains must list one or more exact domain names.",
           "status": 400
         },
         {
-          "at": "packages/oauth/src/client.ts:160",
+          "at": "packages/oauth/src/client.ts:175",
+          "defaulted": true,
+          "message": "trustScimProvisioned is a boolean or a list of SCIM connection IDs.",
+          "status": 400
+        },
+        {
+          "at": "packages/oauth/src/client.ts:182",
           "defaulted": true,
           "message": "microsoftTenant must be a tenant ID, domain, or alias.",
           "status": 400
         },
         {
-          "at": "packages/oauth/src/client.ts:168",
+          "at": "packages/oauth/src/client.ts:190",
           "defaulted": true,
           "message": "Multi-tenant Microsoft connections need allowedMicrosoftTenants.",
           "status": 400
         },
         {
-          "at": "packages/oauth/src/client.ts:174",
+          "at": "packages/oauth/src/client.ts:196",
           "defaulted": true,
           "message": "GitHub client secret is required.",
           "status": 400
         },
         {
-          "at": "packages/oauth/src/client.ts:176",
+          "at": "packages/oauth/src/client.ts:198",
           "defaulted": true,
           "message": "OAuth callback URLs must be unique per connection.",
           "status": 400
         },
         {
-          "at": "packages/oauth/src/client.ts:184",
+          "at": "packages/oauth/src/client.ts:206",
           "defaulted": true,
           "message": "Generic OAuth2 requires authorization/token/profile endpoints and a trusted profile mapper.",
           "status": 400
         },
         {
-          "at": "packages/oauth/src/client.ts:348",
+          "at": "packages/oauth/src/client.ts:370",
           "defaulted": true,
           "message": "Linking requires an authenticate callback.",
           "status": 400
         },
         {
-          "at": "packages/oauth/src/client.ts:368",
+          "at": "packages/oauth/src/client.ts:390",
           "defaulted": true,
           "message": "Authorization endpoint is missing.",
           "status": 400
@@ -15937,57 +16011,69 @@
           "status": 400
         },
         {
-          "at": "packages/saml/src/index.ts:324",
+          "at": "packages/saml/src/index.ts:1165",
+          "defaulted": true,
+          "message": "Local logout callback is required.",
+          "status": 400
+        },
+        {
+          "at": "packages/saml/src/index.ts:410",
           "defaulted": true,
           "message": "SAML connection configuration is incomplete.",
           "status": 400
         },
         {
-          "at": "packages/saml/src/index.ts:328",
+          "at": "packages/saml/src/index.ts:414",
           "defaulted": true,
           "message": "SAML endpoints require HTTPS.",
           "status": 400
         },
         {
-          "at": "packages/saml/src/index.ts:334",
+          "at": "packages/saml/src/index.ts:420",
           "defaulted": true,
           "message": "Encrypted SAML assertions require decryption key and certificate.",
           "status": 400
         },
         {
-          "at": "packages/saml/src/index.ts:339",
+          "at": "packages/saml/src/index.ts:425",
           "defaulted": true,
           "message": "SAML callback URLs must be unique per connection.",
           "status": 400
         },
         {
-          "at": "packages/saml/src/index.ts:345",
+          "at": "packages/saml/src/index.ts:431",
           "defaulted": true,
           "message": "Trusted SAML email domains must be exact domain names.",
           "status": 400
         },
         {
-          "at": "packages/saml/src/index.ts:361",
+          "at": "packages/saml/src/index.ts:448",
           "defaulted": true,
           "message": "The SAML service provider needs an HTTPS base URL, a private key, and a certificate.",
           "status": 400
         },
         {
-          "at": "packages/saml/src/index.ts:537",
+          "at": "packages/saml/src/index.ts:463",
+          "defaulted": true,
+          "status": 400,
+          "template": "SAML ${name} must be a path or a trusted HTTPS URL."
+        },
+        {
+          "at": "packages/saml/src/index.ts:484",
+          "defaulted": true,
+          "message": "SAML mfaUrl and errorUrl need afterSignIn.",
+          "status": 400
+        },
+        {
+          "at": "packages/saml/src/index.ts:663",
           "defaulted": true,
           "message": "Managed SAML connections need serviceProvider, authorize, and authenticate.",
           "status": 400
         },
         {
-          "at": "packages/saml/src/index.ts:610",
+          "at": "packages/saml/src/index.ts:741",
           "defaulted": true,
           "message": "Linking requires an authenticate callback.",
-          "status": 400
-        },
-        {
-          "at": "packages/saml/src/index.ts:992",
-          "defaulted": true,
-          "message": "Local logout callback is required.",
           "status": 400
         },
         {
@@ -16027,9 +16113,15 @@
           "status": 400
         },
         {
-          "at": "packages/scim/src/provisioning.ts:271",
+          "at": "packages/scim/src/provisioning.ts:279",
           "defaulted": true,
           "message": "Role mapping callback is missing.",
+          "status": 400
+        },
+        {
+          "at": "packages/scim/src/provisioning.ts:72",
+          "defaulted": true,
+          "message": "SCIM unsupportedAttributes must be 'ignore' or 'reject'.",
           "status": 400
         }
       ],
@@ -16204,7 +16296,7 @@
           "template": "Use a value filter to modify one value of ${key}."
         },
         {
-          "at": "packages/scim/src/patch.ts:209",
+          "at": "packages/scim/src/patch.ts:214",
           "defaulted": true,
           "status": 400,
           "template": "Invalid attribute \"${name}\"."
@@ -16293,13 +16385,13 @@
           "status": 415
         },
         {
-          "at": "packages/scim/src/provisioning.ts:570",
+          "at": "packages/scim/src/provisioning.ts:580",
           "defaulted": true,
           "message": "PATCH requires the PatchOp schema and 1–100 operations.",
           "status": 400
         },
         {
-          "at": "packages/scim/src/provisioning.ts:599",
+          "at": "packages/scim/src/provisioning.ts:609",
           "defaulted": true,
           "message": "Unsupported PATCH operation.",
           "status": 400
@@ -16400,61 +16492,61 @@
           "status": 400
         },
         {
-          "at": "packages/scim/src/patch.ts:202",
+          "at": "packages/scim/src/patch.ts:207",
           "defaulted": true,
           "message": "A PATCH without a path requires an object value.",
           "status": 400
         },
         {
-          "at": "packages/scim/src/provisioning.ts:223",
+          "at": "packages/scim/src/provisioning.ts:231",
           "defaulted": true,
           "message": "members must contain at most 1000 User references.",
           "status": 400
         },
         {
-          "at": "packages/scim/src/provisioning.ts:229",
+          "at": "packages/scim/src/provisioning.ts:237",
           "defaulted": true,
           "message": "Nested groups are not supported.",
           "status": 400
         },
         {
-          "at": "packages/scim/src/provisioning.ts:233",
+          "at": "packages/scim/src/provisioning.ts:241",
           "defaulted": true,
           "message": "Member is outside this SCIM connection.",
           "status": 400
         },
         {
-          "at": "packages/scim/src/provisioning.ts:290",
+          "at": "packages/scim/src/provisioning.ts:298",
           "defaulted": true,
           "message": "emails must contain at most 20 email values.",
           "status": 400
         },
         {
-          "at": "packages/scim/src/provisioning.ts:296",
+          "at": "packages/scim/src/provisioning.ts:304",
           "defaulted": true,
           "message": "Invalid email address.",
           "status": 400
         },
         {
-          "at": "packages/scim/src/provisioning.ts:298",
+          "at": "packages/scim/src/provisioning.ts:306",
           "defaulted": true,
           "message": "email.primary must be a boolean.",
           "status": 400
         },
         {
-          "at": "packages/scim/src/provisioning.ts:301",
+          "at": "packages/scim/src/provisioning.ts:309",
           "defaulted": true,
           "message": "Only one primary email is allowed.",
           "status": 400
         },
         {
-          "at": "packages/scim/src/provisioning.ts:325",
+          "at": "packages/scim/src/provisioning.ts:334",
           "defaulted": true,
           "message": "Unsupported User schema.",
           "status": 400
         },
         {
-          "at": "packages/scim/src/provisioning.ts:509",
+          "at": "packages/scim/src/provisioning.ts:519",
           "defaulted": true,
           "message": "Unsupported Group schema.",
           "status": 400
@@ -16466,7 +16558,7 @@
           "template": "${field} must be a nonempty string of at most 512 characters."
         },
         {
-          "at": "packages/scim/src/validation.ts:28",
+          "at": "packages/scim/src/validation.ts:32",
           "defaulted": true,
           "message": "active must be a boolean.",
           "status": 400
@@ -16508,17 +16600,17 @@
           "status": 400
         },
         {
-          "at": "packages/scim/src/provisioning.ts:148",
+          "at": "packages/scim/src/provisioning.ts:156",
           "message": "SCIM cannot modify a protected identity.",
           "status": 403
         },
         {
-          "at": "packages/scim/src/provisioning.ts:155",
+          "at": "packages/scim/src/provisioning.ts:163",
           "message": "SCIM cannot modify a deleted identity.",
           "status": 403
         },
         {
-          "at": "packages/scim/src/validation.ts:24",
+          "at": "packages/scim/src/validation.ts:28",
           "defaulted": true,
           "message": "An unsupported or immutable attribute was supplied.",
           "status": 400
@@ -16543,7 +16635,7 @@
           "status": 400
         },
         {
-          "at": "packages/scim/src/patch.ts:200",
+          "at": "packages/scim/src/patch.ts:205",
           "defaulted": true,
           "message": "remove requires a path.",
           "status": 400
@@ -16647,12 +16739,12 @@
       ],
       "sites": [
         {
-          "at": "packages/scim/src/provisioning.ts:100",
+          "at": "packages/scim/src/provisioning.ts:108",
           "message": "Invalid SCIM credential.",
           "status": 401
         },
         {
-          "at": "packages/scim/src/validation.ts:33",
+          "at": "packages/scim/src/validation.ts:37",
           "message": "Inactive tenant.",
           "status": 401
         }
@@ -16669,12 +16761,12 @@
       ],
       "sites": [
         {
-          "at": "packages/scim/src/provisioning.ts:360",
+          "at": "packages/scim/src/provisioning.ts:369",
           "message": "userName already exists.",
           "status": 409
         },
         {
-          "at": "packages/scim/src/provisioning.ts:405",
+          "at": "packages/scim/src/provisioning.ts:414",
           "message": "Email belongs to an existing identity; automatic linking is disabled.",
           "status": 409
         }
@@ -16740,6 +16832,13 @@
       "codeExpression": "failure.code",
       "expression": "failure.message",
       "statusExpression": "failure.status"
+    },
+    {
+      "at": "packages/saml/src/index.ts:392",
+      "codeExpression": "code",
+      "defaulted": true,
+      "message": "trustScimProvisioned is a boolean or a list of SCIM connection IDs.",
+      "status": 400
     },
     {
       "at": "packages/server/src/api/ssh.ts:1208",
