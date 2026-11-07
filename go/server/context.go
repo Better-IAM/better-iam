@@ -25,6 +25,11 @@ type Principal struct {
 	// proofBinding is the session the device proof is bound to when it is not this principal's own (devices.go
 	// WithRequestDevice).
 	proofBinding *ProofBinding
+	// pinnedKey is the device key WithDeviceKey pinned on a principal a job without a request decides for (devices.go),
+	// nil when none.
+	pinnedKey *string
+	// presented caches PresentedDevice for this principal object (devices.go), nil until it ran.
+	presented *presentedCache
 }
 
 // PrincipalFromAuth wraps a principal the auth service verified.
