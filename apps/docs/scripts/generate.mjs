@@ -137,6 +137,11 @@ async function generateApi() {
   }
   function schemaOf(type, depth = 0) {
     if (depth > 12) return {};
+    // A generic method's type parameter (`activate?: Activate` in tenants.create) is described by its constraint.
+    if (type.flags & ts.TypeFlags.TypeParameter) {
+      const constraint = checker.getBaseConstraintOfType(type);
+      return constraint && constraint !== type ? schemaOf(constraint, depth) : {};
+    }
     const f = type.flags;
     if (f & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) return {};
     if (f & ts.TypeFlags.StringLiteral) return { type: 'string', const: type.value };
@@ -1205,7 +1210,16 @@ async function generateApiPages(filter) {
       [
         'Governance',
         'Reviewing, analyzing, and constraining access over time.',
-        ['certifications', 'analysis', 'roleMining', 'sod', 'invariants', 'impact', 'agreements', 'compliance'],
+        [
+          'certifications',
+          'analysis',
+          'roleMining',
+          'sod',
+          'invariants',
+          'impact',
+          'agreements',
+          'compliance',
+        ],
       ],
       [
         'Events and integrations',

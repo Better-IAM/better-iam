@@ -70,7 +70,8 @@ npm i @better-iam/saml
 ```
 
 Create the service with the host callbacks from `iam.protocolHost` and mount it. `basePath` puts the SAML routes
-under the IAM route that Next.js already serves, `app/api/iam/[...path]`.
+under the IAM route that Next.js already serves, `app/api/iam/[...path]`. `afterSignIn`, `mfaUrl`, and `errorUrl`
+are the pages the browser lands on after the assertion (next step).
 
 ```ts title="lib/iam.ts"
 import { readFileSync } from 'node:fs';
@@ -88,6 +89,9 @@ export const saml = createSamlService({
     privateKey: readFileSync(process.env.SAML_SP_KEY_FILE!, 'utf8'),
     publicCertificate: readFileSync(process.env.SAML_SP_CERT_FILE!, 'utf8'),
   },
+  afterSignIn: '/',
+  mfaUrl: '/login/mfa',
+  errorUrl: '/login',
 });
 iam.useProtocol(saml);
 ```
@@ -108,38 +112,27 @@ Each connection now has three fixed URLs under the base URL:
 
 ### Send people into the app after the assertion
 
-When the browser posts Okta's response to the ACS, the IAM handler sets the session cookie and answers `200` with
-the sign-in result as JSON. It does not redirect. Wrap `POST` in the IAM route so a successful SAML sign-in
-continues to your app instead of showing that JSON:
+When the browser posts Okta's response to the ACS, the IAM handler validates it and, because `afterSignIn` is set,
+answers `303` to that page with the session cookie (`__Host-better-iam.session` over HTTPS) already set. The IAM
+route needs nothing beyond the usual `export const { GET, POST, OPTIONS } = iamNext.handlers();`.
 
-```ts title="app/api/iam/[...path]/route.ts"
-import { iamNext } from '@/lib/iam-next';
+- **Where people return.** Sign-in started at `/api/iam/saml/{id}/login?returnTo=/invoices` comes back to `/invoices`
+  instead of `afterSignIn`. `returnTo` must be a path on your site; anything else is refused with `400`.
+  IdP-initiated sign-in (a tile in Okta) always lands on `afterSignIn`.
+- **MFA.** When the organization requires your product's own MFA (`requireMfa` in its policy, or
+  `requireMfaForOwners` for an owner, which the B2B guide's `tenantDefaults` sets for every new organization), no
+  session is issued yet: the browser goes to `mfaUrl` with the challenge in the URL fragment,
+  `#tenantId=…&mfaRequired=true&challenge=…&enrollmentRequired=…`, plus `returnTo` when there was one. Fragments never
+  reach a server or a log. The page reads `location.hash` and finishes with `auth.verifyMfa` (or `auth.beginMfa` and
+  `auth.confirmMfa` when `enrollmentRequired` is `true`). Okta already enforces MFA for Okta sign-ins, so the usual
+  choice for an SSO-only organization is to leave both settings off.
+- **Failures.** A refused assertion goes to `errorUrl` with `?error=CODE` appended, for example
+  `/login?error=ACCOUNT_LINK_REQUIRED` or `/login?error=SAML_INVALID`. Without `errorUrl` the ACS answers `401` with
+  `{ "error": "SAML_INVALID" }`.
 
-export const runtime = 'nodejs';
-
-const handlers = iamNext.handlers();
-export const GET = handlers.GET;
-export const OPTIONS = handlers.OPTIONS;
-
-const acsPath = /^\/api\/iam\/saml\/[^/]+\/acs$/;
-
-export async function POST(request: Request): Promise<Response> {
-  const response = await handlers.POST(request);
-  const cookies = response.headers.getSetCookie();
-  const signedIn = cookies.some((cookie) => cookie.includes('better-iam.session='));
-  if (!acsPath.test(new URL(request.url).pathname) || !response.ok || !signedIn) return response;
-  const headers = new Headers({ location: '/', 'cache-control': 'no-store' });
-  for (const cookie of cookies) headers.append('set-cookie', cookie);
-  return new Response(null, { status: 303, headers });
-}
-```
-
-The session cookie is `__Host-better-iam.session` over HTTPS. A failed assertion answers `401` with
-`{ "error": "SAML_INVALID" }` and no further detail. When the organization requires your product's own MFA
-(`requireMfa` in its policy, or `requireMfaForOwners` for an owner, which the B2B guide's `tenantDefaults` sets for
-every new organization), the ACS answers with an MFA challenge instead of a session and sets no cookie; this
-wrapper then passes the JSON through. Okta already enforces MFA for Okta sign-ins, so the usual choice for an
-SSO-only organization is to leave both off.
+`afterSignIn`, `mfaUrl`, and `errorUrl` are paths, or absolute URLs on one of the deployment's `trustedOrigins`. The
+redirect happens where the service is mounted with `iam.useProtocol` and served by the IAM handler; calling
+`saml.handler` yourself returns the JSON sign-in result instead.
 
 </Step>
 <Step>
@@ -314,6 +307,7 @@ Connection options used here:
 | `trustedEmailDomains` | `string[]` | `[]` | Exact domains whose emails this IdP may vouch for, so a first sign-in can create the account. |
 | `attributeMapping` | `Record<string, string>` | `{}` | Identity attribute name to SAML attribute name, copied on every sign-in. |
 | `allowIdpInitiated` | `boolean` | `false` | Also accept sign-ins started from the Okta dashboard tile. |
+| `trustScimProvisioned` | `boolean \| string[]` | `false` | Link a first sign-in to the account a SCIM connection provisioned for the same verified email: `true` for any of the organization's SCIM connections, or a list of SCIM connection IDs. See [Link existing accounts](#link-existing-accounts). |
 | `enabled` | `boolean` | `true` | `false` stops new sign-ins through the connection at once. |
 
 `trustedEmailDomains` is not checked against verified domains. List only domains the organization verified in the
@@ -415,11 +409,43 @@ rule at once with `packages.reconcile`. See [Automatic assignment](/docs/feature
 
 ### Link existing accounts
 
-Better IAM never joins a SAML login to an existing account by email. A person who already has an account in Acme
-(the owner, members who accepted an invitation, or people a [SCIM](/docs/guides/scim-provisioning) directory
-provisioned) is refused on their first SAML sign-in: the underlying error is `ACCOUNT_LINK_REQUIRED`, which the ACS
-reports as `401 SAML_INVALID` like every other failure. They link once, while signed in to that account by another
-method, within five minutes of signing in:
+Better IAM does not join a SAML login to an existing account by email on its own. A person who already has an
+account in Acme is refused on their first SAML sign-in with `ACCOUNT_LINK_REQUIRED` (the ACS sends them to
+`/login?error=ACCOUNT_LINK_REQUIRED`), unless one of these links the account first:
+
+- **People Okta provisions through SCIM.** When the same Okta org also provisions Acme through
+  [SCIM](/docs/guides/scim-provisioning), set `trustScimProvisioned` on the connection to that SCIM connection's ID
+  (or `true` for any of Acme's SCIM connections). A first sign-in whose email Okta vouches for (a domain in
+  `trustedEmailDomains`) then links to the account SCIM created for that email, marks the email verified, and signs
+  in. Owners, root administrators, accounts SCIM did not create, and accounts already linked through this connection
+  under another `NameID` are never linked this way. Turning it on is a trust change, so it needs a recent sign-in.
+
+  ```ts title="app/[org]/settings/sso/actions.ts"
+  await saml.updateConnection(await iamNext.credential(), {
+    tenantId: session.session.tenantId,
+    connectionId: 'acme-okta',
+    trustScimProvisioned: [scimConnectionId], // from scim.createConnection
+  });
+  ```
+
+- **Accounts an administrator links.** When you know a person's Okta `NameID`, link it ahead of their first sign-in
+  with `identities.linkProvider`. The connection summary's `providerId` and `idpIssuer` identify the connection.
+  Linking needs `iam:identities:update` and a recent sign-in; an owner's account needs another owner or a root
+  administrator.
+
+  ```ts title="app/[org]/settings/sso/link-actions.ts"
+  const connection = await saml.getConnection(credential, { tenantId, connectionId: 'acme-okta' });
+  await iam.api.identities.linkProvider(credential, {
+    tenantId,
+    identityId,
+    providerId: connection.providerId,
+    issuer: connection.idpIssuer,
+    subject: 'ada@acme.com', // the NameID Okta sends for this person
+  });
+  ```
+
+- **The person links it themselves**, while signed in to that account by another method, within five minutes of
+  signing in:
 
 ```tsx title="app/[org]/settings/sso/link-button.tsx"
 'use client';
@@ -468,8 +494,10 @@ export async function requireSso() {
 }
 ```
 
-Make sure every member who had a password account has linked first: after this step, an unlinked account has no
-way to sign in. Other methods fail with `METHOD_NOT_ALLOWED`.
+After this step, an account that is not linked and cannot be linked on its first sign-in has no way to sign in, and
+other methods fail with `METHOD_NOT_ALLOWED`. With `trustScimProvisioned`, SCIM-provisioned people link on their
+first Okta sign-in, so you can require SSO right away; make sure everyone else (the owner, invited members) has
+linked or was linked by an administrator first.
 
 **Route:** `POST /api/iam/tenants/setAuthPolicy`
 
@@ -498,8 +526,8 @@ sequenceDiagram
 ## Verify it works
 
 1. In Okta, assign the app to a test user whose email is in `acme.com` and who has no account in Acme.
-2. On your login page, enter that email. The browser goes to Okta, then back to your app (the `303` from the route
-   wrapper), signed in to Acme.
+2. On your login page, enter that email. The browser goes to Okta, then back to your app (the ACS's `303` to
+   `afterSignIn`), signed in to Acme.
 3. Call `iam.api.identities.list(credential, { tenantId, query: 'test-user@acme.com' })` as an administrator: the new
    identity has `emailVerified: true`. Its `attributes.department` holds the mapped value.
 4. Run `npx better-iam reconcile` and reload a project page: the person now holds the _Member_ role.
@@ -511,8 +539,9 @@ sequenceDiagram
 ## Troubleshooting
 
 <Accordions>
-<Accordion title="The ACS answers 401 with SAML_INVALID">
-  Every validation failure looks the same on purpose. Check, in order: the response and the assertion are both
+<Accordion title="Sign-in ends on /login?error=SAML_INVALID">
+  Every validation failure looks the same on purpose (without `errorUrl`, the ACS answers `401` with
+  `{ "error": "SAML_INVALID" }`). Check, in order: the response and the assertion are both
   signed; **Single sign-on URL** and **Audience URI** match `connection.acsUrl` and `connection.entityId` exactly;
   the server clock is correct (assertions are accepted for five minutes with 30 seconds of skew); and the sign-in
   started at `/login` in the same browser, because the request cookie binds the response to it. A sign-in started
@@ -520,15 +549,17 @@ sequenceDiagram
   [SAML_INVALID](/docs/reference/errors#saml_invalid).
 </Accordion>
 <Accordion title="A new person's first sign-in fails (VERIFIED_EMAIL_REQUIRED)">
-  The ACS reports this as `401 SAML_INVALID`, like every failure; the underlying error is `VERIFIED_EMAIL_REQUIRED`
-  when signatures, URLs, and clock all check out. The email's domain is not in the connection's
+  The ACS sends the browser to `/login?error=VERIFIED_EMAIL_REQUIRED`. The email's domain is not in the connection's
   `trustedEmailDomains`, or Okta sends no `email` (or `mail`) attribute. Add the attribute statement in Okta, or
   update the connection with `saml.updateConnection`. See
   [VERIFIED_EMAIL_REQUIRED](/docs/reference/errors#verified_email_required).
 </Accordion>
 <Accordion title="An existing member's first sign-in fails (ACCOUNT_LINK_REQUIRED)">
-  The ACS reports this as `401 SAML_INVALID` too. An account with that email already exists in the organization.
-  The person links it once, as in the linking step. See
+  The ACS sends the browser to `/login?error=ACCOUNT_LINK_REQUIRED`. An account with that email already exists in the
+  organization and nothing linked it. If SCIM provisioned it, check that the connection's `trustScimProvisioned`
+  names that SCIM connection, the SCIM connection is not revoked, and the email's domain is in
+  `trustedEmailDomains`. Otherwise an administrator links it with `identities.linkProvider`, or the person links it
+  once, as in the [linking step](#link-existing-accounts). See
   [ACCOUNT_LINK_REQUIRED](/docs/reference/errors#account_link_required).
 </Accordion>
 <Accordion title="createConnection is refused with RECENT_AUTH_REQUIRED">
@@ -537,9 +568,14 @@ sequenceDiagram
   [RECENT_AUTH_REQUIRED](/docs/reference/errors#recent_auth_required).
 </Accordion>
 <Accordion title="The browser shows JSON after signing in at Okta">
-  The `POST` wrapper in `app/api/iam/[...path]/route.ts` is missing, or the organization requires your product's MFA
-  (`requireMfa`, or `requireMfaForOwners` for an owner) and the ACS returned an MFA challenge instead of a session.
-  Add the wrapper, or turn those policy settings off for the organization and rely on Okta's MFA.
+  The SAML service has no `afterSignIn`, or it is not served through the IAM handler (`iam.useProtocol(saml)` and the
+  `app/api/iam/[...path]` route): only the IAM handler turns the ACS answer into a redirect with the session cookie.
+  An `afterSignIn` URL on an origin outside `trustedOrigins` is refused when the service is created.
+</Accordion>
+<Accordion title="Okta sign-in lands on the MFA page instead of the app">
+  The organization requires your product's own MFA (`requireMfa`, or `requireMfaForOwners` for an owner), so the ACS
+  sent the browser to `mfaUrl` with a challenge in the fragment. Finish it with `auth.verifyMfa`, or turn those policy
+  settings off for the organization and rely on Okta's MFA.
 </Accordion>
 <Accordion title="Signed in through Okta, but every page answers 403">
   The account was created just in time and has no role yet. Run `better-iam reconcile`, or call `packages.reconcile`,

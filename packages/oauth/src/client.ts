@@ -21,6 +21,8 @@ export interface FederatedIdentity {
   linkingIdentityId?: string;
   /** Identity attributes mapped from the provider's verified claims or profile; validated by the host. */
   attributes?: Record<string, unknown>;
+  /** The connection's `trustScimProvisioned` setting, applied by the host. */
+  trustScimProvisioned?: boolean | string[];
 }
 export interface OAuthLoginConnection {
   id: string;
@@ -52,6 +54,13 @@ export interface OAuthLoginConnection {
    * in `tenantId` on first sign-in — for Google or GitHub, that is anyone with an account there.
    */
   allowedEmailDomains?: string[];
+  /**
+   * Link a first sign-in to the account a SCIM connection of the tenant provisioned for the same verified email,
+   * instead of failing with `ACCOUNT_LINK_REQUIRED`: `true` trusts every SCIM connection of the tenant, a list names
+   * the SCIM connection IDs. Use it with a workforce directory that both provisions (SCIM) and signs people in
+   * (OIDC); never with a consumer provider such as Google or GitHub, whose verified emails no SCIM directory vouches for.
+   */
+  trustScimProvisioned?: boolean | string[];
   /** Generic OAuth2 has no standard identity schema; this trusted server mapper must select a stable provider ID. */
   mapProfile?(profile: Record<string, unknown>): {
     subject: string;
@@ -146,7 +155,8 @@ export function createOAuthLogin(config: OAuthLoginConfig) {
         !connection.allowedEmailDomains.length ||
         connection.allowedEmailDomains.some(
           (domain) =>
-            typeof domain !== 'string' || !/^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?\.[a-z]{2,}$/i.test(domain),
+            typeof domain !== 'string' ||
+            !/^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?\.[a-z]{2,}$/i.test(domain),
         ))
     )
       throw new IamError(
@@ -154,6 +164,18 @@ export function createOAuthLogin(config: OAuthLoginConfig) {
         'allowedEmailDomains must list one or more exact domain names.',
       );
     if (connection.issuer) url(connection.issuer, !!config.allowInsecureLocalhost);
+    const trust = connection.trustScimProvisioned;
+    if (
+      trust !== undefined &&
+      typeof trust !== 'boolean' &&
+      (!Array.isArray(trust) ||
+        trust.length > 20 ||
+        trust.some((id) => typeof id !== 'string' || !id || id.length > 128))
+    )
+      throw new IamError(
+        'configuration',
+        'trustScimProvisioned is a boolean or a list of SCIM connection IDs.',
+      );
     if (connection.kind === 'microsoft') {
       const directory = connection.microsoftTenant ?? 'organizations';
       if (!/^[A-Za-z0-9.-]{1,128}$/.test(directory))
@@ -580,6 +602,7 @@ export function createOAuthLogin(config: OAuthLoginConfig) {
       )
     )
       identity.emailVerified = false;
+    if (item.trustScimProvisioned) identity.trustScimProvisioned = item.trustScimProvisioned;
     if (saved.linkingSessionId && saved.linkingIdentityId) {
       identity.linkingIdentityId = saved.linkingIdentityId;
       identity.linkingSessionId = saved.linkingSessionId;

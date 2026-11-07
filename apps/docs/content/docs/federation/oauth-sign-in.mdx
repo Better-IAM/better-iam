@@ -260,6 +260,7 @@ registration to present. Each connection takes:
     microsoftTenant: { type: 'string', description: 'Which Entra directory to sign in against: organizations, common, consumers, or one tenant ID or domain.', default: "'organizations'" },
     allowedMicrosoftTenants: { type: 'string[]', description: 'Entra tenant IDs (tid) allowed to sign in. Required for multi-tenant directories so only approved companies get in.' },
     allowedEmailDomains: { type: 'string[]', description: 'Email domains whose verified addresses may enroll new accounts. Any other address is treated as unverified, so it creates no account (an identity linked earlier still signs in). Without it, anyone the provider vouches for (for Google or GitHub, anyone with an account there) enrolls in tenantId on first sign-in.' },
+    trustScimProvisioned: { type: 'boolean | string[]', description: 'Link a first sign-in to the account a SCIM connection of the tenant provisioned for the same verified email (true, or a list of SCIM connection IDs), instead of refusing it with ACCOUNT_LINK_REQUIRED. For a workforce IdP that both provisions and signs people in; never for Google or GitHub.', default: 'false' },
     authorizationEndpoint: { type: 'string', description: "OAuth2 only: the provider's HTTPS URL where the browser signs in and approves access." },
     tokenEndpoint: { type: 'string', description: "OAuth2 only: the provider's HTTPS URL where the server exchanges the code for an access token." },
     userInfoEndpoint: { type: 'string', description: 'OAuth2 only: the HTTPS profile API called with the access token to learn who signed in.' },
@@ -316,7 +317,8 @@ External identities are keyed by tenant, provider, issuer, and subject. What hap
 | The external identity is already linked | The linked account signs in. |
 | Not linked, verified email, no account with that email in the tenant | A new account is enrolled with a verified email and linked. The platform (root) tenant is the exception: it refuses with `FORBIDDEN`, because platform accounts are created by an administrator and then linked. |
 | Not linked, email unverified or missing, or outside `allowedEmailDomains` | Refused with `VERIFIED_EMAIL_REQUIRED`. |
-| Not linked, an account with that email already exists | Refused with `ACCOUNT_LINK_REQUIRED` (409): the person must link explicitly. |
+| Not linked, an account with that email already exists | Refused with `ACCOUNT_LINK_REQUIRED` (409): the person must link explicitly, or an administrator links it with [`identities.linkProvider`](/docs/reference/api/identities#linkprovider). |
+| Not linked, verified email of an account a trusted SCIM connection provisioned (`trustScimProvisioned`) | The account is linked, its email marked verified, and it signs in. Never an owner's or root administrator's account, nor one already linked through this connection. |
 
 Same-email identities never merge automatically: otherwise anyone who could set that email address at some
 provider could take over the account. Federation invokes the tenant's local MFA requirements before it issues a

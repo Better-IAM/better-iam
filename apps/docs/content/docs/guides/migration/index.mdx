@@ -28,8 +28,9 @@ both systems side by side while you switch, and how to roll back.
 The short version:
 
 - People, organizations, roles, groups, and role assignments move through the API, 100 people per transaction.
-- Password hashes, authenticator secrets, passkeys, sessions, and links to social or enterprise accounts do not
-  move. Imported people sign in once with a magic link, a reset link, or their identity provider.
+- Verified email status and links to social or enterprise accounts move with each person, so people who signed in
+  through a provider keep doing so. Password hashes, authenticator secrets, passkeys, and sessions do not move:
+  everyone else signs in once with a magic link or a reset link.
 - SSO and SCIM connections are recreated, and each customer's IT team points its identity provider at the new
   connection.
 - You switch over one organization at a time while the old system keeps running, so rolling back means pointing
@@ -63,11 +64,12 @@ The short version:
 | Data | Carries over | How |
 | --- | --- | --- |
 | People (email, display name) | Yes | [`identities.createMany`](/docs/reference/api/identities#createmany), up to 100 per transaction. |
+| Email verification | Yes | `emailVerified: true` on each `createMany` entry whose address the old system verified. |
 | Old user IDs | Yes | As an identity attribute such as `legacyId`, declared in `permissions.identityAttributes`. |
 | Custom profile data (metadata) | Partly | Flat `string`, `number`, and `boolean` attributes declared in `permissions.identityAttributes` (strings up to 2,048 characters). Nested objects and arrays stay in your own database. |
 | Usernames | As data only | Sign-in is by email address. Keep a username as an attribute if you display it. |
 | Phone numbers | No | A phone number is set only when the person verifies it (`auth.startPhoneVerification`). Every identity needs an email address, so phone-only accounts cannot be imported. |
-| Organizations | Yes | `tenants.create`, one <Term id="tenant">tenant</Term> per organization. Each new tenant waits for its owner to accept an emailed invitation. |
+| Organizations | Yes | `tenants.create`, one <Term id="tenant">tenant</Term> per organization. With `activate: true` (root principals only) the tenant and its owner's account are created active, with no invitation; otherwise the tenant waits for its owner to accept an emailed invitation. |
 | Roles and permissions | Yes | `roles.create`, or a [configuration document](/docs/features/privileged-access/config-as-code) applied with `config.apply`. Permission names become actions in your [catalog](/docs/authorization/catalog). |
 | Role assignments | Yes | `roleIds` on each `createMany` entry, or `bindings.create`. |
 | Groups and memberships | Yes | `groups.create` and `groups.addMembers`, or `groups` in a configuration document. |
@@ -76,7 +78,7 @@ The short version:
 | Authenticator apps, SMS factors, recovery codes | No | People enroll again. A tenant that requires MFA asks them on their next sign-in. |
 | Passkeys | No | People register a new passkey after they sign in. |
 | Sessions and refresh tokens | No | Everyone signs in once after the switch. |
-| Links to social and enterprise accounts | No | No API creates them. They are created at a person's first federated sign-in, or when a signed-in person links a provider. |
+| Links to social and enterprise accounts | Yes | `providers` on each `createMany` entry, or `identities.linkProvider` for an existing account: the connection, the provider's issuer, and the person's subject there. See [Social and SSO accounts](#social-and-sso-accounts). |
 | SAML and OIDC connections | Recreated | A new connection per customer; their IT team registers the new service-provider values. |
 | SCIM directories | Recreated | A new SCIM connection per customer; their IT team replaces the URL and token in their identity provider. |
 | Verified domains | Recreated | `domains.add`, then a new DNS TXT record and `domains.verify`. |
@@ -111,21 +113,23 @@ there is no hook that checks a legacy hash at first sign-in. Exporting bcrypt, s
 from the old provider therefore gains nothing: they cannot be loaded. See
 [Hashing](/docs/authentication/email-and-password#importing-passwords-from-another-provider).
 
-People you import without a password are active, have no password, and have an unverified email address. Choose
-how each group of people signs in:
+People you import without a password are active and have no password. Their email address is unverified unless you
+pass `emailVerified: true`, which you should do only when the old system says the address is verified. Choose how
+each group of people signs in:
 
 | People who today | Do this |
 | --- | --- |
-| Sign in with a password or a magic link | Turn on magic links (`authentication.passwordlessEmail: true`). Their first magic-link sign-in also verifies the address. Or send each person a reset link with [`identities.requestPasswordReset`](/docs/reference/api/identities#requestpasswordreset). |
-| Sign in with Google, GitHub, Microsoft, or another social provider | Either do not import them, and let their first sign-in through the [provider](/docs/federation/oauth-sign-in) create the account, or import them and have them [link the provider](/docs/federation/oauth-sign-in#link-an-existing-account) after a magic-link sign-in. |
-| Sign in with their company's SAML or OIDC identity provider | Do not import them. Their first SSO sign-in creates the account when the connection trusts their email domain, or the company's SCIM directory creates them. |
+| Sign in with a password or a magic link | Turn on magic links (`authentication.passwordlessEmail: true`); a magic-link sign-in also verifies an unverified address. Or send each person a reset link with [`identities.requestPasswordReset`](/docs/reference/api/identities#requestpasswordreset). |
+| Sign in with Google, GitHub, Microsoft, or another social provider | Import them with a `providers` entry for that provider's [connection](/docs/federation/oauth-sign-in) ([Social and SSO accounts](#social-and-sso-accounts)). Their first sign-in through it finds their account, with its roles. |
+| Sign in with their company's SAML or OIDC identity provider | Import them with a `providers` entry for the company's connection when you know their subject at its IdP. Or leave them out: their first SSO sign-in creates the account when the connection trusts their email domain, or the company's SCIM directory creates them and the connection's `trustScimProvisioned` links their first SSO sign-in. |
 
 <Callout type="warn" title="Two traps">
-  The public "forgot password" flow (`auth.requestPasswordReset`) sends nothing to an unverified address, so
-  imported people cannot reset a password on their own until a magic link or an `auth.requestEmailVerification`
-  link has verified it (an administrator's reset link sets a password but leaves the address unverified). And an imported account blocks federated sign-in for the same address: accounts are never merged by
-  email, so the first sign-in through a provider fails with `ACCOUNT_LINK_REQUIRED` until the person signs in
-  another way and links the provider.
+  The public "forgot password" flow (`auth.requestPasswordReset`) sends nothing to an unverified address, so people
+  imported without `emailVerified: true` cannot reset a password on their own until a magic link or an
+  `auth.requestEmailVerification` link has verified it (an administrator's reset link sets a password but leaves the
+  address unverified). And accounts are never merged by email: the first sign-in through a provider that has no link
+  to an imported account with the same address fails with `ACCOUNT_LINK_REQUIRED`. Pass `providers` at import, or add
+  the link later with `identities.linkProvider`.
 </Callout>
 
 `identities.requestPasswordReset` needs `iam:identities:update` and recent authentication: a session signed in
@@ -173,8 +177,9 @@ points in mind:
 
 - Passwords must satisfy the Better IAM password policy (at least 12 characters, plus any tenant rules), so shorter
   legacy passwords are refused with `WEAK_PASSWORD` and those people use the fallback.
-- The new identity's email is unverified. With `authentication.requireEmailVerification` on, sign-in fails with
-  `EMAIL_UNVERIFIED` until the person follows the link from `auth.requestEmailVerification`.
+- The new identity's email is unverified unless you also pass `emailVerified: true` (only when the old provider
+  reports the address verified). With `authentication.requireEmailVerification` on, an unverified person's sign-in
+  fails with `EMAIL_UNVERIFIED` until they follow the link from `auth.requestEmailVerification`.
 - Rate-limit the route like any sign-in endpoint, and keep the old provider running until the route is removed.
 
 ### Bridge sign-in through the old provider
@@ -206,9 +211,11 @@ export const login = createOAuthLogin({
 iam.useProtocol(login);
 ```
 
-The same rule applies as for any federated sign-in: do not bulk-import the people who will arrive this way, or
-their first sign-in fails with `ACCOUNT_LINK_REQUIRED`. When you retire the old provider, remove the connection;
-the accounts it created stay, have no password, and sign in with a magic link or a reset link from then on.
+People you import can use the bridge too: give each one a `providers` entry with `providerId: 'legacy'`, the old
+provider's issuer, and the `sub` its ID tokens carry for that person (usually the old user ID), as in
+[Social and SSO accounts](#social-and-sso-accounts). Without that entry, an imported person's first sign-in through
+the bridge fails with `ACCOUNT_LINK_REQUIRED`. When you retire the old provider, remove the connection; its accounts
+stay, have no password, and sign in with a magic link or a reset link from then on.
 
 ### Factors, passkeys, and sessions
 
@@ -217,13 +224,55 @@ bound to the old provider's relying-party domain. People enroll again: if a tena
 people without a factor enroll at their next sign-in ([MFA](/docs/authentication/mfa)). Sessions and refresh
 tokens do not carry over either, so everyone signs in once after the switch.
 
+## Social and SSO accounts
+
+Better IAM finds the account for a federated sign-in by its link: the connection, the provider's issuer, and the
+person's subject at the provider. Create those links at import with `providers` on each `createMany` entry (up to 10
+per person, one per connection), or later with `identities.linkProvider`. The person's first sign-in through a linked
+connection then signs in to the imported account, with its roles, instead of failing with `ACCOUNT_LINK_REQUIRED`.
+
+| Connection | `providerId` | `issuer` | `subject` |
+| --- | --- | --- | --- |
+| Google (`kind: 'google'`) | The connection's `id` | `https://accounts.google.com` | Google's `sub` |
+| GitHub (`kind: 'github'`) | The connection's `id` | `https://github.com` | The numeric GitHub user ID, as a string |
+| OIDC (`kind: 'oidc'` or `'microsoft'`) | The connection's `id` | The provider's `iss`, exactly (Entra ID: `https://login.microsoftonline.com/<tenant-id>/v2.0`; Auth0 keeps the trailing slash) | The ID token's `sub` |
+| SAML connection from `saml.createConnection` | The connection's `providerId` (returned by `createConnection` and `getConnection`) | The connection's `idpIssuer` | The person's NameID |
+
+Old systems record these under their own names, for example a provider called `google-oauth2` or `oauth_google`.
+Map each one to the connection you created for that provider in the person's tenant:
+
+```ts title="scripts/provider-links.ts"
+type LegacyAccount = { provider: string; subject: string }; // from the old system's export
+
+/** The old system's provider name -> the Better IAM connection that replaces it, and that provider's issuer. */
+const connections: Record<string, { providerId: string; issuer: string }> = {
+  google: { providerId: 'app-google', issuer: 'https://accounts.google.com' },
+  github: { providerId: 'app-github', issuer: 'https://github.com' },
+};
+
+export function providerLinks(accounts: LegacyAccount[]) {
+  return accounts.flatMap(({ provider, subject }) => {
+    const connection = connections[provider];
+    return connection ? [{ ...connection, subject }] : []; // other providers: magic link instead
+  });
+}
+```
+
+A subject must be the provider's stable user ID exactly as the connection reports it at sign-in; an email address
+or a display name never matches. An external account links to one identity only, and each identity has at most one
+link per connection: a second link fails with
+[`ACCOUNT_LINK_CONFLICT`](/docs/reference/errors#account_link_conflict). `identities.linkProvider` needs
+`iam:identities:update` and recent authentication, and only another owner or a root principal links an owner;
+`identities.listProviders` and `identities.unlinkProvider` show and remove links.
+
 ## Bulk import APIs
 
 | Method | Route | Batch | Use it for |
 | --- | --- | --- | --- |
-| `tenants.create` | `POST /tenants/create` | 1 | One organization, with an owner invitation. Needs `sendEmail` and recent authentication. |
+| `tenants.create` | `POST /tenants/create` | 1 | One organization. With `activate: true` (root principals only) it is active at once with its owner's account; otherwise the owner gets an invitation, which needs `sendEmail`. Needs recent authentication. |
 | `config.apply` | `POST /config/apply` | One document | Roles, policies, groups with members (by email), and group-to-role bindings, matched by name, in one transaction. `config.plan` previews it. |
-| `identities.createMany` | `POST /identities/createMany` | 1 to 100 | People, with attributes, direct roles, groups, an optional password, and an optional deactivation date. All or nothing per batch. |
+| `identities.createMany` | `POST /identities/createMany` | 1 to 100 | People, with attributes, direct roles, groups, an optional password, an optional deactivation date, verified email status (`emailVerified`), and links to external sign-ins (`providers`). All or nothing per batch. |
+| `identities.linkProvider` | `POST /identities/linkProvider` | 1 | A link to an external sign-in for a person who already exists, such as a tenant's owner. Needs recent authentication. |
 | `groups.addMembers` | `POST /groups/addMembers` | Up to 100 | Adding existing people to one group. |
 | `bindings.create` | `POST /bindings/create` | 1 | A role for a person or group, for example for people who arrived through SSO. |
 | `identities.update` | `POST /identities/update` | 1 | Managers (`managerId`) and attribute corrections after the import. |
@@ -246,8 +295,9 @@ module `iam.ts` that exports `iam`, and a credential for a root administrator or
 
 List what the old system holds and decide where each part goes: people by sign-in method (password, social, SSO),
 organizations and their owners, roles and the permissions they contain, groups, SSO connections, and directory
-connections. Export people as files you keep (JSON Lines works well) and record counts, so you can compare them
-after the import.
+connections. Export people as files you keep (JSON Lines works well), with whether each address is verified and each
+person's user ID at every social or SSO provider they use, and record counts, so you can compare them after the
+import.
 
 Freeze changes you cannot replay: once the export is taken, new sign-ups, role changes, and deletions in the old
 system must either wait or be applied again later. The import below skips people who already exist, so re-running
@@ -259,7 +309,7 @@ it picks up new sign-ups.
 ### Configure the deployment
 
 Declare the attribute that keeps each person's old ID, the actions the old permissions become, and the delivery
-callback that invitations, magic links, and reset links need:
+callback that magic links, reset links, and invitations need:
 
 ```ts title="iam.ts"
 import { betterIam } from 'better-iam';
@@ -271,7 +321,7 @@ export const iam = betterIam({
   secret: process.env.BETTER_IAM_SECRET!,
   baseURL: process.env.BETTER_IAM_BASE_URL!,
   authentication: {
-    sendEmail, // owner invitations, magic links, reset links
+    sendEmail, // magic links, reset links, invitations
     passwordlessEmail: true, // imported people sign in with a magic link the first time
   },
   permissions: {
@@ -293,10 +343,10 @@ snapshot you can return to with `better-iam store-export --config better-iam.con
 
 ### Recreate organizations
 
-Create one tenant per organization. Each starts `pending` and becomes `active` only when its owner accepts the
-emailed invitation with `tenants.acceptInvitation`, which creates the owner's account with a verified email. People
-cannot be added to a pending tenant (`TENANT_INACTIVE`), so send these invitations early and import each
-organization once it is active.
+Create one tenant per organization. With `activate: true`, which only a root principal may pass, the tenant is
+`active` at once and its owner's account exists, so you can import its people straight away. No invitation is sent:
+the owner signs in with a magic link, a reset link, or an external sign-in you link to them with
+`identities.linkProvider`. Pass `ownerEmailVerified: true` only when the old system verified the owner's address.
 
 ```ts title="scripts/create-tenants.ts"
 import { writeFile } from 'node:fs/promises';
@@ -304,9 +354,14 @@ import { iam } from '../iam';
 
 const credential = { token: process.env.BETTER_IAM_TOKEN! }; // a root administrator's session
 const rootTenantId = process.env.ROOT_TENANT_ID!;
-const organizations: Array<{ legacyId: string; name: string; ownerEmail: string }> = JSON.parse(
-  process.env.ORGANIZATIONS_JSON ?? '[]',
-);
+type Organization = {
+  legacyId: string;
+  name: string;
+  ownerEmail: string;
+  ownerName: string;
+  ownerEmailVerified: boolean; // as the old system reports it
+};
+const organizations = JSON.parse(process.env.ORGANIZATIONS_JSON ?? '[]') as Organization[];
 
 const tenantIds: Record<string, string> = {};
 for (const organization of organizations) {
@@ -315,14 +370,19 @@ for (const organization of organizations) {
     type: 'organization',
     name: organization.name,
     ownerEmail: organization.ownerEmail,
+    activate: true, // active now, owner created without an invitation
+    ownerName: organization.ownerName,
+    ownerEmailVerified: organization.ownerEmailVerified,
   });
   tenantIds[organization.legacyId] = tenant.id;
 }
 await writeFile('tenant-map.json', JSON.stringify(tenantIds, null, 2));
 ```
 
-`tenants.create` needs recent authentication, so run it soon after signing in. A product without organizations
-creates one tenant for all of its people.
+`tenants.create` needs recent authentication, so run it soon after signing in. Without `activate`, as when an
+organization's owner signs up on their own, each tenant starts `pending` and becomes `active` only when its owner
+accepts the emailed invitation with `tenants.acceptInvitation`; nobody can be added before that
+(`TENANT_INACTIVE`). A product without organizations creates one tenant for all of its people.
 
 </Step>
 <Step>
@@ -361,14 +421,22 @@ Groups whose members are already imported can go in the same document (`groups` 
 ### Import people
 
 Import 100 people per call, skip anyone who already exists, and keep the mapping from old ID to new ID for your own
-tables. Each batch is one transaction: if one entry fails, nobody in that batch is created, so a stopped script
-resumes at the failed batch.
+tables. Carry over each person's verified email status and their links to social and SSO accounts
+([Social and SSO accounts](#social-and-sso-accounts)). Each batch is one transaction: if one entry fails, nobody in
+that batch is created, so a stopped script resumes at the failed batch.
 
 ```ts title="scripts/import-people.ts"
 import { readFile, writeFile } from 'node:fs/promises';
 import { iam } from '../iam';
 
-type Person = { legacyId: string; email: string; name: string; roles: string[] };
+type Person = {
+  legacyId: string;
+  email: string;
+  emailVerified: boolean; // as the old system reports it
+  name: string;
+  roles: string[];
+  providers: Array<{ providerId: string; issuer: string; subject: string }>; // see providerLinks()
+};
 
 const credential = { token: process.env.BETTER_IAM_TOKEN! };
 
@@ -401,6 +469,8 @@ export async function importPeople(tenantId: string, people: Person[]): Promise<
       identities: batch.map((person) => ({
         email: person.email,
         name: person.name || person.email,
+        emailVerified: person.emailVerified,
+        providers: person.providers,
         attributes: { legacyId: person.legacyId },
         roleIds: person.roles.flatMap((name) => roleIds.get(name) ?? []),
       })),
@@ -433,7 +503,10 @@ For each organization that signs in through its company identity provider:
 2. **Create the connection.** For SAML, `saml.createConnection` with the IdP's metadata file and
    `trustedEmailDomains`, which lets the first sign-in create the account. For OIDC, a `kind: 'oidc'` or
    `kind: 'microsoft'` connection in `createOAuthLogin`. See [SAML](/docs/federation/saml#tenant-managed-connections)
-   and [OAuth and OIDC sign-in](/docs/federation/oauth-sign-in).
+   and [OAuth and OIDC sign-in](/docs/federation/oauth-sign-in). To send people to a page after a SAML sign-in
+   instead of a JSON answer, give `createSamlService` an `afterSignIn` path (and optionally `mfaUrl` and
+   `errorUrl`); mounted with `iam.useProtocol`, the ACS then answers with a redirect that sets the session cookie,
+   and `?returnTo=/path` on the login URL picks the page for one sign-in. The OAuth callback still answers JSON.
 3. **Have the customer register it.** Their IT team adds your new values (the SAML `entityId` and `acsUrl`, or the
    OIDC `redirectUri`) to their identity provider, ideally as a second application next to the old one, so both
    work during the dual run.
@@ -442,12 +515,15 @@ For each organization that signs in through its company identity provider:
    directory then creates its people in Better IAM. Map directory groups to roles with `scim.setRoleMappings`. See
    [SCIM inbound](/docs/federation/scim).
 
-Do not bulk-import people that an identity provider or directory manages. An imported account blocks the first SSO
-sign-in for that address (`ACCOUNT_LINK_REQUIRED`), and a SCIM create for an address that already exists in the
-tenant fails with a `409 uniqueness` error. When a company uses both SCIM and SSO, the directory creates the
-accounts and each person links the SSO connection once while signed in another way; see
-[Link existing accounts](/docs/guides/enterprise-sso-okta#link-existing-accounts). Restrict the organization to
-`allowedMethods: ['federated']` with `tenants.setAuthPolicy` only after that.
+Do not bulk-import people a SCIM directory manages: a SCIM create for an address that already exists in the tenant
+fails with a `409 uniqueness` error. Let the directory create them, and set `trustScimProvisioned` on the SSO
+connection (`true` for any SCIM connection of the tenant, or a list of SCIM connection IDs): a person's first SSO
+sign-in with a verified email (for SAML, a domain in `trustedEmailDomains`) then links to the account the directory
+created. SSO users without a directory can be imported with a `providers` entry for the connection, or left for
+their first SSO sign-in to create. Either way you can restrict the organization to `allowedMethods: ['federated']`
+with `tenants.setAuthPolicy` as soon as its connection works; nobody has to link anything first. The exception is
+the tenant's owner: `trustScimProvisioned` never links an owner, so link theirs with `identities.linkProvider` before
+you turn off other methods.
 
 </Step>
 <Step>
@@ -510,16 +586,17 @@ Better IAM:
 | Code | When |
 | --- | --- |
 | [`IDENTITY_EXISTS`](/docs/reference/errors#identity_exists) | A batch contains an address that already exists in the tenant. Skip people already imported and deduplicate the export. |
-| [`TENANT_INACTIVE`](/docs/reference/errors#tenant_inactive) | The tenant is still `pending`: its owner has not accepted the invitation. |
+| [`TENANT_INACTIVE`](/docs/reference/errors#tenant_inactive) | The tenant is still `pending`: it was created without `activate: true` and its owner has not accepted the invitation. |
 | [`INVALID_INPUT`](/docs/reference/errors#invalid_input) | An empty batch or more than 100 entries, an invalid email, or an attribute that is undeclared or of the wrong type. |
 | [`INVALID_ACTION`](/docs/reference/errors#invalid_action) | A role names a permission that is not declared in `permissions.resourceTypes`. |
 | [`GRANT_AUTHORITY_REQUIRED`](/docs/reference/errors#grant_authority_required) | The caller assigns roles but holds no active grant authority in the tenant. |
-| [`ACCESS_DENIED`](/docs/reference/errors#access_denied) | The caller may not create people, grant one of the roles, or fill one of the groups. |
+| [`ACCESS_DENIED`](/docs/reference/errors#access_denied) | The caller may not create people, grant one of the roles, or fill one of the groups; or `tenants.create` with `activate: true` from a caller who is not a root principal. |
 | [`LIMIT_EXCEEDED`](/docs/reference/errors#limit_exceeded) | The tenant's plan limit on identities, roles, or groups is reached. |
-| [`DELIVERY_REQUIRED`](/docs/reference/errors#delivery_required) | `tenants.create` or `identities.invite` without `authentication.sendEmail`. |
-| [`RECENT_AUTH_REQUIRED`](/docs/reference/errors#recent_auth_required) | `tenants.create`, `identities.requestPasswordReset`, or `saml.createConnection` from a session older than `recentAuthenticationMs`. |
+| [`DELIVERY_REQUIRED`](/docs/reference/errors#delivery_required) | `tenants.create` without `activate: true`, or `identities.invite`, without `authentication.sendEmail`. |
+| [`RECENT_AUTH_REQUIRED`](/docs/reference/errors#recent_auth_required) | `tenants.create`, `identities.linkProvider`, `identities.requestPasswordReset`, or `saml.createConnection` from a session older than `recentAuthenticationMs`. |
 | [`WEAK_PASSWORD`](/docs/reference/errors#weak_password) | A password passed to `identities.create` or `createMany` breaks the password policy. |
-| [`ACCOUNT_LINK_REQUIRED`](/docs/reference/errors#account_link_required) | A first federated sign-in used an address that already belongs to an imported account. |
+| [`ACCOUNT_LINK_CONFLICT`](/docs/reference/errors#account_link_conflict) | A `providers` entry or `identities.linkProvider` names an external account already linked to another identity, or a connection the identity already has a link through. |
+| [`ACCOUNT_LINK_REQUIRED`](/docs/reference/errors#account_link_required) | A first federated sign-in used an address that belongs to an imported account with no link for that connection. |
 
 ## Next steps
 

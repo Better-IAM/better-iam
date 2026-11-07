@@ -58,6 +58,7 @@ Mount both paths under the IAM handler's path, and forward `PUT`, `PATCH`, and `
     adminBasePath: { type: 'string', description: 'Where the JSON administration routes for your admin UI are served. Must be absolute and must not overlap basePath.', default: "'/scim/admin'" },
     mapAttributes: { type: '(user: ProvisionedUser) => Record<string, unknown> | undefined', description: 'Turns provisioned SCIM fields (title, department, cost center) into your declared identity attributes, so policies can use them. Return undefined to leave attributes untouched.' },
     mapManager: { type: 'boolean', description: "Sets each person's manager from the enterprise extension's manager field, so approvals route to the directory's reporting line.", default: 'true' },
+    unsupportedAttributes: { type: "'ignore' | 'reject'", description: "What happens to attributes the service does not store (addresses, phoneNumbers, preferredLanguage, password, foreign extension schemas): accepted and dropped, or refused with 400 mutability. Read-only attributes (id, meta, groups) are ignored either way.", default: "'ignore'" },
     'store, authorize, authenticate, validateIdentityAttributes, syncRoleMappings': { type: 'host callbacks', description: 'Database access, permission checks for administration, attribute validation, and the trusted callback that applies group role mappings. Supplied by iam.protocolHost.', required: true },
     'identityStatusChanged, groupDeleted': { type: 'host callbacks', description: "Trusted callbacks, run in the provisioning transaction: when the directory deactivates, reactivates or deletes a person, what follows their status (license seats) moves at once; when it deletes a group, what was given to the group (license assignments) goes with it. Supplied by iam.protocolHost." },
   }}
@@ -144,6 +145,17 @@ PATCH, and delete. These fields are stored and returned as provisioned:
 | `urn:ietf:params:scim:schemas:core:2.0:User` | `userName` (required), `displayName`, `externalId`, `active`, `name` (`formatted`, `familyName`, `givenName`, `middleName`, `honorificPrefix`, `honorificSuffix`), `emails` (up to 20, one primary), `title` |
 | `urn:ietf:params:scim:schemas:extension:enterprise:2.0:User` | `employeeNumber`, `costCenter`, `organization`, `division`, `department`, `manager` |
 
+Other attributes are accepted and dropped, so identity providers' default mappings work unchanged (RFC 7644 lets a
+service provider ignore what it does not store):
+
+- Read-only attributes (`id`, `meta`, and a user's `groups`) in a `POST` or `PUT` body or a pathless `PATCH` value are always ignored (RFC 7644 §3.5.1). A `PATCH` whose path targets one still fails with `400` (§3.5.2).
+- Core User attributes the service does not store (`nickName`, `profileUrl`, `userType`, `preferredLanguage`,
+  `locale`, `timezone`, `password`, `phoneNumbers`, `ims`, `photos`, `addresses`, `entitlements`, `roles`,
+  `x509Certificates`) and extension schemas other than the enterprise extension are ignored with
+  `unsupportedAttributes: 'ignore'` (the default). `PATCH` operations on them are skipped; the rest of the request
+  applies. With `'reject'` they fail with `400 mutability`.
+- An attribute no supported schema defines, such as a misspelled name, always fails with `400 mutability`.
+
 The second row is the **enterprise user extension**, a standard add-on schema for HR-style fields. Supply
 `mapAttributes` to turn any of these into the identity attributes the product declares
 (`permissions.identityAttributes`). `validateIdentityAttributes` from `iam.protocolHost` validates the mapping, so
@@ -153,6 +165,11 @@ a directory can drive `principal.department`-style [policy conditions](/docs/aut
   (or the first one, or `userName` when it is an email address).
 - **No takeover.** A provisioning request cannot take over an existing local account based on email. An email
   that belongs to another identity in the tenant fails with `409 uniqueness`.
+- **Single sign-on.** Provisioned emails are stored unverified, and SCIM never links an IdP sign-in. When the same
+  IdP signs people in, set `trustScimProvisioned` on the SAML or OIDC connection (`true`, or this connection's ID):
+  a person's first sign-in with an email the IdP vouches for links to the account this connection provisioned,
+  instead of failing with `ACCOUNT_LINK_REQUIRED`. See
+  [First sign-in and account linking](/docs/federation/saml#first-sign-in-and-account-linking).
 - **Deactivation.** `active: false` disables the local identity and revokes its user, API, and assumed-role
   <Term id="session">sessions</Term>, so access ends at once. `active: true` enables it again.
 - **Deletion.** `DELETE` disables the identity, revokes its sessions, and removes it from the connection's groups.
@@ -369,7 +386,7 @@ SCIM endpoints answer with the SCIM error schema (`urn:ietf:params:scim:api:mess
 | `invalidValue` | 400 | A field has the wrong type or an unacceptable value. |
 | `invalidFilter` | 400 | A filter that does not parse, uses an unsupported operator or attribute, or exceeds the filter limits. |
 | `invalidPath`, `noTarget` | 400 | A PATCH or Bulk path that is invalid or matched nothing. |
-| `mutability` | 400, 403 | Removing a required attribute, or changing a protected or deleted identity. |
+| `mutability` | 400, 403 | An attribute no supported schema defines (or, with `unsupportedAttributes: 'reject'`, one the service does not store), removing a required attribute, or changing a protected or deleted identity. |
 | `uniqueness` | 409 | The `userName` or email belongs to another identity. Provisioning never takes over an existing account. |
 | `LIMIT_EXCEEDED` | 409 | Creating a user or group would exceed the tenant's member or group limit (`Tenant.limits`). |
 | `invalidVers` | 412 | `If-Match` names an older version. |

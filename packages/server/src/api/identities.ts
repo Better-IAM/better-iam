@@ -50,6 +50,92 @@ import { revokeAssignment } from './packages.js';
 const seatsMessage =
   'A group you add people to carries license seats; adding them needs iam:licenses:assign';
 
+/** An external sign-in an administrator links to an account ahead of its first federated sign-in. */
+export interface ProviderLinkInput {
+  /** The connection's provider key: an OAuth connection's `id`, a SAML connection's `providerId`. */
+  providerId: string;
+  /** The IdP's issuer exactly as the protocol reports it (OIDC `iss`, SAML IdP entity ID). */
+  issuer: string;
+  /** The person's stable ID at the IdP (OIDC `sub`, SAML NameID). */
+  subject: string;
+}
+/** A linked external sign-in as administrators see it. */
+export interface ProviderLink extends ProviderLinkInput {
+  id: string;
+  identityId: string;
+  createdAt?: number;
+}
+const flag = (value: unknown, name: string): boolean => {
+  if (value === undefined) return false;
+  if (typeof value !== 'boolean') throw new IamError('INVALID_INPUT', `${name} must be a boolean`);
+  return value;
+};
+/** Up to 10 links per person, each a distinct provider. */
+function providerLinks(value: unknown): ProviderLinkInput[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.length > 10)
+    throw new IamError('INVALID_INPUT', 'providers must list at most 10 external sign-ins');
+  const links = value.map(providerLinkInput);
+  if (new Set(links.map((link) => link.providerId)).size !== links.length)
+    throw new IamError('INVALID_INPUT', 'providers must name each provider once');
+  return links;
+}
+function providerLinkInput(value: unknown): ProviderLinkInput {
+  const link = object(value);
+  return {
+    providerId: text(link.providerId, 'providerId', 256),
+    issuer: text(link.issuer, 'issuer', 1024),
+    subject: text(link.subject, 'subject', 512),
+  };
+}
+const providerLinkView = (row: Record<string, unknown>): ProviderLink => ({
+  id: String(row.id),
+  identityId: String(row.identityId),
+  providerId: String(row.providerId),
+  issuer: String(row.issuer),
+  subject: String(row.subject),
+  ...(typeof row.createdAt === 'number' ? { createdAt: row.createdAt } : {}),
+});
+/**
+ * Records a link the federation callback (federation.ts) finds by `[providerId, issuer, subject]`. An external account
+ * signs in to one identity only, and an identity has at most one link per provider (unlink before relinking).
+ */
+async function insertProviderLink(
+  tx: IamStore,
+  tenantId: string,
+  identityId: string,
+  link: ProviderLinkInput,
+  now: number,
+): Promise<ProviderLink> {
+  const uniqueKey = JSON.stringify([link.providerId, link.issuer, link.subject]);
+  if ((await tx.find('externalIdentities', { tenantId, uniqueKey })).length)
+    throw new IamError(
+      'ACCOUNT_LINK_CONFLICT',
+      'External identity is already linked to another account',
+      409,
+    );
+  if (
+    (await tx.find('externalIdentities', { tenantId, identityId })).some(
+      (row) => row.providerId === link.providerId,
+    )
+  )
+    throw new IamError(
+      'ACCOUNT_LINK_CONFLICT',
+      'This account is already linked through that provider; unlink it first',
+      409,
+    );
+  return providerLinkView(
+    await tx.insert('externalIdentities', {
+      id: id(),
+      tenantId,
+      uniqueKey,
+      identityId,
+      ...link,
+      createdAt: now,
+    }),
+  );
+}
+
 /**
  * Deletes an identity: every credential, factor, binding, membership, boundary, and link is removed or revoked in the same
  * transaction, and a tombstone without email or secrets remains so audit records keep a resolvable principal.
@@ -293,7 +379,9 @@ export function createIdentitiesApi(ctx: ServerContext) {
   return {
     /**
      * `expiresAt` schedules deactivation (contractors): credentials stop working at that time and the worker disables
-     * the identity. A `managerId` also needs iam:identities:update on the tenant.
+     * the identity. A `managerId` also needs iam:identities:update on the tenant. `emailVerified` records an address
+     * another system already verified (a migration); `providers` links external sign-ins ahead of the first one, so
+     * that sign-in finds this account instead of failing with `ACCOUNT_LINK_REQUIRED`.
      */
     create: (
       credential: CredentialInput,
@@ -305,6 +393,10 @@ export function createIdentitiesApi(ctx: ServerContext) {
         expiresAt?: number;
         /** The person's manager (another active identity of the tenant). */
         managerId?: string;
+        /** The address was verified elsewhere (default false). */
+        emailVerified?: boolean;
+        /** External sign-ins (OAuth/OIDC, SAML) to link to the new account. */
+        providers?: ProviderLinkInput[];
       },
     ) =>
       operation(
@@ -317,12 +409,17 @@ export function createIdentitiesApi(ctx: ServerContext) {
             input.expiresAt !== undefined ? ctx.bindingExpiry(input.expiresAt) : undefined;
           if (input.managerId !== undefined)
             await assertMaySetProfile(ctx, tx, principal, input.tenantId);
+          const emailVerified = flag(input.emailVerified, 'emailVerified');
+          const providers = providerLinks(input.providers);
           const identity = await auth.createIdentity(tx, {
             tenantId: input.tenantId,
             email: email(input.email),
             name: text(input.name, 'name'),
             password: input.password,
+            emailVerified,
           });
+          for (const link of providers)
+            await insertProviderLink(tx, input.tenantId, identity.id, link, ctx.now());
           const managerId =
             input.managerId !== undefined
               ? await managerFor(ctx, tx, identity, input.managerId)
@@ -342,7 +439,8 @@ export function createIdentitiesApi(ctx: ServerContext) {
      * Creates up to 100 identities atomically with optional attributes, roles, and groups (bulk onboarding). Roles and
      * groups are authorized once like invitations: `iam:bindings:create` on each role under the caller's grant
      * authority and `iam:groups:update` on each group (plus iam:licenses:assign when a license product is assigned to
-     * one of them); attributes need iam:identities:update on the tenant. One failure rejects the whole batch.
+     * one of them); attributes need iam:identities:update on the tenant. One failure rejects the whole batch. Per
+     * person, `emailVerified` and `providers` work as in `create` (migrations from another identity provider).
      */
     createMany: (
       credential: CredentialInput,
@@ -356,6 +454,8 @@ export function createIdentitiesApi(ctx: ServerContext) {
           roleIds?: string[];
           groupIds?: string[];
           expiresAt?: number;
+          emailVerified?: boolean;
+          providers?: ProviderLinkInput[];
         }>;
       },
     ) =>
@@ -384,6 +484,8 @@ export function createIdentitiesApi(ctx: ServerContext) {
               groupIds: [...new Set(strings(value.groupIds ?? [], 'groupIds'))],
               expiresAt:
                 value.expiresAt !== undefined ? ctx.bindingExpiry(value.expiresAt) : undefined,
+              emailVerified: flag(value.emailVerified, 'emailVerified'),
+              providers: providerLinks(value.providers),
             };
           });
           if (items.some((item) => Object.keys(item.attributes).length))
@@ -450,7 +552,10 @@ export function createIdentitiesApi(ctx: ServerContext) {
               email: item.email,
               name: item.name,
               password: item.password,
+              emailVerified: item.emailVerified,
             });
+            for (const link of item.providers)
+              await insertProviderLink(tx, realm.id, identity.id, link, ctx.now());
             if (Object.keys(item.attributes).length || item.expiresAt !== undefined)
               identity = await tx.put('identities', {
                 ...identity,
@@ -809,6 +914,114 @@ export function createIdentitiesApi(ctx: ServerContext) {
             'allow',
           );
           return { queued: true, email: identity.email };
+        },
+      ),
+    /**
+     * Links an external sign-in (OAuth/OIDC or SAML) to an existing account, so that IdP account signs in to it with
+     * no account-linking step: migrations, or a person whose IdP subject is known before their first sign-in.
+     * Whoever links an external account controls the account, so this needs what changing its sign-in address needs:
+     * recent authentication, iam:identities:update, and for an owner another owner or a root principal (a root
+     * administrator only by a root principal). Audited as `identity:link-provider`.
+     */
+    linkProvider: (
+      credential: CredentialInput,
+      input: { tenantId: string; identityId: string } & ProviderLinkInput,
+    ) =>
+      operation(
+        credential,
+        input.tenantId,
+        'iam:identities:update',
+        input.identityId,
+        async ({ tx, principal }) => {
+          auth.requireRecent(principal);
+          const link = providerLinkInput(input);
+          const identity = await ctx.activeIdentity(tx, input.identityId, input.tenantId);
+          if (identity.kind !== 'user')
+            throw new IamError('INVALID_INPUT', 'Only people sign in through external providers');
+          await assertAccountControl(ctx, tx, principal, identity);
+          const created = await insertProviderLink(
+            tx,
+            input.tenantId,
+            identity.id,
+            link,
+            ctx.now(),
+          );
+          await ctx.events.audit(
+            tx,
+            principal,
+            'identity:link-provider',
+            input.tenantId,
+            identity.id,
+            'allow',
+            false,
+            { providerId: link.providerId, linkId: created.id },
+          );
+          return created;
+        },
+      ),
+    /**
+     * Removes a linked external sign-in (`listProviders` gives the IDs); that IdP account no longer signs in to this
+     * account. Requires recent authentication and iam:identities:update; audited as `identity:unlink-provider`.
+     */
+    unlinkProvider: (
+      credential: CredentialInput,
+      input: { tenantId: string; identityId: string; linkId: string },
+    ) =>
+      operation(
+        credential,
+        input.tenantId,
+        'iam:identities:update',
+        input.identityId,
+        async ({ tx, principal }) => {
+          auth.requireRecent(principal);
+          const identity = await ctx.scoped<Identity>(
+            tx,
+            'identities',
+            input.identityId,
+            input.tenantId,
+          );
+          await assertAccountControl(ctx, tx, principal, identity);
+          const link = await tx.get('externalIdentities', text(input.linkId, 'linkId'));
+          if (!link || link.tenantId !== input.tenantId || link.identityId !== identity.id)
+            throw new IamError('NOT_FOUND', 'Linked sign-in not found', 404);
+          await tx.delete('externalIdentities', link.id);
+          await ctx.events.audit(
+            tx,
+            principal,
+            'identity:unlink-provider',
+            input.tenantId,
+            identity.id,
+            'allow',
+            false,
+            { providerId: String(link.providerId), linkId: link.id },
+          );
+          return providerLinkView(link);
+        },
+      ),
+    /** The external sign-ins linked to an account (iam:identities:read). */
+    listProviders: (credential: CredentialInput, input: { tenantId: string; identityId: string }) =>
+      operation(
+        credential,
+        input.tenantId,
+        'iam:identities:read',
+        input.identityId,
+        async ({ tx }) => {
+          const identity = await ctx.scoped<Identity>(
+            tx,
+            'identities',
+            input.identityId,
+            input.tenantId,
+          );
+          return (
+            await tx.find('externalIdentities', {
+              tenantId: input.tenantId,
+              identityId: identity.id,
+            })
+          )
+            .map(providerLinkView)
+            .sort((a, b) =>
+              a.providerId < b.providerId ? -1 : a.providerId > b.providerId ? 1 : 0,
+            );
         },
       ),
     /**
@@ -1642,7 +1855,13 @@ export function createIdentitiesApi(ctx: ServerContext) {
           if (identity.rootAdmin && !(await ctx.rootPrincipal(tx, principal)))
             throw new IamError('ACCESS_DENIED', 'Root capability is protected', 403);
           if (input.status === 'disabled') {
-            await assertOwnerControl(ctx, tx, principal, identity, 'Only an owner can disable an owner');
+            await assertOwnerControl(
+              ctx,
+              tx,
+              principal,
+              identity,
+              'Only an owner can disable an owner',
+            );
             await ctx.protectLastOwner(tx, identity);
           }
           if (input.status === 'active' && ctx.identityExpired(identity))
@@ -1733,7 +1952,10 @@ export function createIdentitiesApi(ctx: ServerContext) {
               roleId: ownerRole.id,
             })) {
               await tx.delete('bindings', binding.id);
-              const authority = await tx.get<GrantAuthority>('grantAuthorities', binding.authorityId);
+              const authority = await tx.get<GrantAuthority>(
+                'grantAuthorities',
+                binding.authorityId,
+              );
               if (authority?.identityId === identity.id && successorId !== undefined)
                 await tx.put('grantAuthorities', { ...authority, identityId: successorId });
             }

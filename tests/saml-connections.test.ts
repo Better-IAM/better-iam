@@ -388,4 +388,228 @@ describe('tenant-managed SAML connections', () => {
       }),
     ).toThrow(/HTTPS/);
   });
+
+  it('passes trustScimProvisioned to the host, gated as a trust change, and shows the provider key', async () => {
+    const trustChanges: string[] = [];
+    const principal = {
+      identity: { id: 'admin-a', tenantId: 'a' },
+      session: { id: 'session', kind: 'user', authenticatedAt: Date.now() },
+    } as unknown as AuthenticatedPrincipal;
+    const trusting = createSamlService({
+      store,
+      serviceProvider: {
+        baseUrl: 'https://iam.test',
+        privateKey: sp.private,
+        publicCertificate: sp.cert,
+      },
+      authenticate: async () => principal,
+      authorize: async () => undefined,
+      assertTrustChange: async (_credential, input) => {
+        trustChanges.push(input.providerId);
+      },
+      completeAuthentication: async (input) => {
+        completed.push(input);
+        return { signedIn: input.subject };
+      },
+    });
+    const created = await trusting.createConnection(admin, {
+      tenantId: 'a',
+      id: 'okta',
+      name: 'Okta',
+      metadataXml: metadata([idp.cert]),
+      trustedEmailDomains: ['acme.test'],
+    });
+    expect(created.trustScimProvisioned).toBe(false);
+    expect(created.providerId).toMatch(/^saml:okta:/);
+    expect(trustChanges).toEqual([created.providerId]);
+    // Trusting SCIM-provisioned accounts widens what the connection can sign in to; narrowing does not.
+    const scim = await trusting.updateConnection(admin, {
+      tenantId: 'a',
+      connectionId: 'okta',
+      trustScimProvisioned: ['scim-1', 'scim-1'],
+    });
+    expect(scim.trustScimProvisioned).toEqual(['scim-1']);
+    expect(trustChanges).toHaveLength(2);
+    await trusting.updateConnection(admin, {
+      tenantId: 'a',
+      connectionId: 'okta',
+      trustScimProvisioned: true,
+    });
+    expect(trustChanges).toHaveLength(3);
+    await trusting.updateConnection(admin, {
+      tenantId: 'a',
+      connectionId: 'okta',
+      trustScimProvisioned: ['scim-1'],
+    });
+    expect(trustChanges).toHaveLength(3);
+    await expect(
+      trusting.updateConnection(admin, {
+        tenantId: 'a',
+        connectionId: 'okta',
+        trustScimProvisioned: 'yes' as unknown as boolean,
+      }),
+    ).rejects.toMatchObject({ code: 'INVALID_INPUT' });
+
+    const login = await trusting.handler(new Request('https://iam.test/saml/okta/login'));
+    const location = new URL(login!.headers.get('location')!);
+    const requestId = /\bID="([^"]+)"/.exec(
+      inflateRawSync(Buffer.from(location.searchParams.get('SAMLRequest')!, 'base64')).toString(),
+    )![1]!;
+    await trusting.handler(
+      new Request('https://iam.test/saml/okta/acs', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/x-www-form-urlencoded',
+          cookie: login!.headers.get('set-cookie')!.split(';')[0]!,
+        },
+        body: new URLSearchParams({
+          SAMLResponse: response(requestId, created.acsUrl, created.entityId),
+          RelayState: location.searchParams.get('RelayState')!,
+        }),
+      }),
+    );
+    expect(completed.at(-1)).toMatchObject({
+      providerId: created.providerId,
+      emailVerified: true,
+      trustScimProvisioned: ['scim-1'],
+    });
+    expect(() =>
+      createSamlService({
+        store,
+        connections: [
+          {
+            id: 'bad',
+            tenantId: 'a',
+            entryPoint: 'https://idp.test/login',
+            idpIssuer: 'https://idp.test',
+            idpCertificates: [idp.cert],
+            entityId: 'https://iam.test/bad',
+            callbackUrl: 'https://iam.test/bad/callback',
+            privateKey: sp.private,
+            publicCertificate: sp.cert,
+            trustScimProvisioned: [42 as unknown as string],
+          },
+        ],
+        completeAuthentication: async () => undefined,
+      }),
+    ).toThrow(/trustScimProvisioned/);
+  });
+
+  it('asks the host to redirect after sign-in: afterSignIn, returnTo, MFA fragment, error page', async () => {
+    let outcome: unknown = { token: 'session-token', session: { expiresAt: Date.now() + 60_000 } };
+    const redirecting = createSamlService({
+      store,
+      serviceProvider: {
+        baseUrl: 'https://iam.test',
+        privateKey: sp.private,
+        publicCertificate: sp.cert,
+      },
+      authenticate: async () => {
+        throw new IamError('UNAUTHENTICATED', 'No', 401);
+      },
+      authorize: async () => undefined,
+      trustedOrigins: ['https://app.example.test'],
+      afterSignIn: 'https://app.example.test/home',
+      mfaUrl: '/mfa',
+      errorUrl: '/login?sso=1',
+      completeAuthentication: async (input) => {
+        completed.push(input);
+        if (outcome instanceof Error) throw outcome;
+        return outcome;
+      },
+    });
+    const created = await service.createConnection(admin, {
+      tenantId: 'a',
+      id: 'acme',
+      name: 'Acme',
+      metadataXml: metadata([idp.cert]),
+    });
+    const signIn = async (query = '') => {
+      const login = await redirecting.handler(
+        new Request(`https://iam.test/saml/acme/login${query}`),
+      );
+      expect(login?.status).toBe(302);
+      const location = new URL(login!.headers.get('location')!);
+      const requestId = /\bID="([^"]+)"/.exec(
+        inflateRawSync(Buffer.from(location.searchParams.get('SAMLRequest')!, 'base64')).toString(),
+      )![1]!;
+      return (await redirecting.handler(
+        new Request('https://iam.test/saml/acme/acs', {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/x-www-form-urlencoded',
+            cookie: login!.headers.get('set-cookie')!.split(';')[0]!,
+          },
+          body: new URLSearchParams({
+            SAMLResponse: response(requestId, created.acsUrl, created.entityId),
+            RelayState: location.searchParams.get('RelayState')!,
+          }),
+        }),
+      ))!;
+    };
+    // A session: the JSON stays (the host turns it into a 303 with the cookie), the hint names the page.
+    const plain = await signIn();
+    expect(plain.status).toBe(200);
+    expect(plain.headers.get('x-better-iam-redirect')).toBe('https://app.example.test/home');
+    expect(await plain.json()).toMatchObject({ token: 'session-token' });
+    const back = await signIn('?returnTo=%2Finvoices%3Fpage%3D2');
+    expect(back.headers.get('x-better-iam-redirect')).toBe('/invoices?page=2');
+
+    // MFA: the challenge goes in the fragment, to the MFA page, with returnTo.
+    outcome = { mfaRequired: true, challenge: 'challenge-1', enrollmentRequired: false };
+    const mfa = await signIn('?returnTo=/reports');
+    const target = mfa.headers.get('x-better-iam-redirect')!;
+    expect(target.startsWith('/mfa#')).toBe(true);
+    expect(Object.fromEntries(new URLSearchParams(target.split('#')[1]))).toEqual({
+      tenantId: 'a',
+      mfaRequired: 'true',
+      challenge: 'challenge-1',
+      enrollmentRequired: 'false',
+      returnTo: '/reports',
+    });
+
+    // Failures go to the error page with the host's code; the JSON body stays generic.
+    outcome = new IamError('ACCOUNT_LINK_REQUIRED', 'Link first', 409);
+    const failed = await signIn();
+    expect(failed.status).toBe(401);
+    expect(failed.headers.get('x-better-iam-redirect')).toBe(
+      '/login?sso=1&error=ACCOUNT_LINK_REQUIRED',
+    );
+    expect(await failed.json()).toEqual({ error: 'SAML_INVALID' });
+
+    // returnTo must be a path on this site.
+    for (const bad of ['https://evil.test/', '//evil.test', '/\\evil.test', 'relative'])
+      expect(
+        (await redirecting.handler(
+          new Request(`https://iam.test/saml/acme/login?returnTo=${encodeURIComponent(bad)}`),
+        ))!.status,
+        bad,
+      ).toBe(400);
+    // Without afterSignIn nothing changes: no hint.
+    outcome = { token: 'session-token', session: { expiresAt: Date.now() + 60_000 } };
+    const login = await service.handler(
+      new Request('https://iam.test/saml/acme/login?returnTo=/x'),
+    );
+    expect(login?.status).toBe(302);
+
+    const options = {
+      store,
+      serviceProvider: {
+        baseUrl: 'https://iam.test',
+        privateKey: sp.private,
+        publicCertificate: sp.cert,
+      },
+      completeAuthentication: async () => undefined,
+    };
+    expect(() => createSamlService({ ...options, afterSignIn: 'https://evil.test/' })).toThrow(
+      /afterSignIn/,
+    );
+    expect(() => createSamlService({ ...options, afterSignIn: '//evil.test/' })).toThrow(
+      /afterSignIn/,
+    );
+    expect(() => createSamlService({ ...options, mfaUrl: '/mfa' })).toThrow(/need afterSignIn/);
+    expect(() =>
+      createSamlService({ ...options, afterSignIn: 'https://iam.test/welcome' }),
+    ).not.toThrow();
+  });
 });

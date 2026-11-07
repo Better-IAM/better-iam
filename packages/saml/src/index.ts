@@ -59,6 +59,12 @@ export interface SamlConnection {
    */
   allowIdpInitiated?: boolean;
   /**
+   * Link a first sign-in to the account a SCIM connection of the tenant provisioned for the same verified email,
+   * instead of failing with `ACCOUNT_LINK_REQUIRED`: `true` trusts every SCIM connection of the tenant, a list names
+   * the SCIM connection IDs. Only emails in `trustedEmailDomains` count as verified. Off by default.
+   */
+  trustScimProvisioned?: boolean | string[];
+  /**
    * Maps the validated assertion attributes (Node-SAML profile) to identity attributes declared by the product;
    * they are validated by the host and stored on every sign-in. Return undefined to leave them untouched.
    */
@@ -89,6 +95,12 @@ export interface ManagedSamlConnectionInput {
   attributeMapping?: Record<string, string>;
   /** Accept IdP-initiated sign-in (app tiles in the IdP portal); each assertion is accepted once. */
   allowIdpInitiated?: boolean;
+  /**
+   * Link a first sign-in to the account a SCIM connection of the tenant provisioned for the same verified email
+   * (`true`: any of the tenant's SCIM connections; a list: those SCIM connection IDs). Turning it on, or trusting
+   * another SCIM connection, is a trust change.
+   */
+  trustScimProvisioned?: boolean | string[];
   enabled?: boolean;
 }
 
@@ -105,6 +117,12 @@ export interface ManagedSamlConnection {
   requireEncryptedAssertions: boolean;
   attributeMapping: Record<string, string>;
   allowIdpInitiated: boolean;
+  trustScimProvisioned: boolean | string[];
+  /**
+   * The provider key accounts linked through this connection are stored under: the `providerId` to give
+   * `identities.linkProvider` (with `idpIssuer` as the issuer and the person's NameID as the subject).
+   */
+  providerId: string;
   /** Service-provider entity ID (audience) to register at the IdP. */
   entityId: string;
   /** Assertion consumer service URL (HTTP-POST) to register at the IdP. */
@@ -125,6 +143,7 @@ interface ConnectionRecord extends StoredRecord {
   requireEncryptedAssertions: boolean;
   attributeMapping: Record<string, string>;
   allowIdpInitiated?: boolean;
+  trustScimProvisioned?: boolean | string[];
   /** `SamlConnection.providerId`; absent on connections created before it existed (their ID is used). */
   providerKey?: string;
   createdAt: number;
@@ -151,6 +170,7 @@ export interface SamlConfigOptions {
     linkingSessionId?: string;
     linkingIdentityId?: string;
     attributes?: Record<string, unknown>;
+    trustScimProvisioned?: boolean | string[];
   }): Promise<unknown>;
   authenticate?(credential: CredentialInput): Promise<AuthenticatedPrincipal>;
   /**
@@ -164,6 +184,24 @@ export interface SamlConfigOptions {
     input: { tenantId: string; providerId: string },
   ): Promise<unknown>;
   trustedOrigins?: string[];
+  /**
+   * Where the assertion consumer service sends the browser after a sign-in, instead of answering JSON: a path on this
+   * site (`/dashboard`) or an absolute URL on one of `trustedOrigins` (or the service provider's origin). Served
+   * through `iam.useProtocol`, the ACS then answers 303 to it with the session cookie set. A `returnTo` path given to
+   * `{basePath}/{id}/login?returnTo=/path` takes its place for that sign-in.
+   */
+  afterSignIn?: string;
+  /**
+   * With `afterSignIn`: where to send the browser when the person still has to pass MFA (default `afterSignIn`). The
+   * challenge travels in the URL fragment (`#tenantId=…&challenge=…&enrollmentRequired=…`, plus `returnTo`), which
+   * never reaches a server or a log; the page finishes with `auth.verifyMfa` / `auth.confirmMfa`.
+   */
+  mfaUrl?: string;
+  /**
+   * With `afterSignIn`: where to send the browser when a sign-in fails, with `?error=CODE` appended (for example
+   * `SAML_INVALID`, `ACCOUNT_LINK_REQUIRED`). Without it a failure answers 401 JSON as before.
+   */
+  errorUrl?: string;
   /** Revokes the local IAM session; upstream SAML sessions are not modified. */
   revokeSession?(credential: CredentialInput): Promise<unknown>;
 }
@@ -174,6 +212,8 @@ interface Relay extends StoredRecord {
   expiresAt: number;
   linkingSessionId?: string;
   linkingIdentityId?: string;
+  /** The path `afterSignIn` is replaced by for this sign-in (`?returnTo=` on the login route). */
+  returnTo?: string;
 }
 interface CachedRequest extends StoredRecord {
   value: string;
@@ -186,22 +226,40 @@ const connectionName = /^[a-z0-9][a-z0-9-]{1,62}$/;
 
 /**
  * Whether new settings make a connection trust more than before: another IdP issuer, an added signing certificate,
- * unsolicited sign-in, or more trusted email domains. Removing trust (a certificate rollover finishing) is not.
+ * unsolicited sign-in, more trusted email domains, or SCIM-provisioned accounts it did not link before. Removing trust (a certificate rollover finishing) is not.
  */
 function trustWidened(
   current: ConnectionRecord,
   next: Pick<
     ConnectionRecord,
-    'idpIssuer' | 'idpCertificates' | 'allowIdpInitiated' | 'trustedEmailDomains'
+    | 'idpIssuer'
+    | 'idpCertificates'
+    | 'allowIdpInitiated'
+    | 'trustedEmailDomains'
+    | 'trustScimProvisioned'
   >,
 ): boolean {
+  const before = current.trustScimProvisioned ?? false;
+  const after = next.trustScimProvisioned ?? false;
+  const scimWidened =
+    after === true
+      ? before !== true
+      : Array.isArray(after) &&
+        before !== true &&
+        after.some((id) => !(Array.isArray(before) && before.includes(id)));
   return (
+    scimWidened ||
     next.idpIssuer !== current.idpIssuer ||
     next.idpCertificates.some((certificate) => !current.idpCertificates.includes(certificate)) ||
     (next.allowIdpInitiated === true && current.allowIdpInitiated !== true) ||
     next.trustedEmailDomains.some((domain) => !current.trustedEmailDomains.includes(domain))
   );
 }
+/**
+ * Response header a protocol sets to ask the host to answer with a 303 to this URL instead (`iam.useProtocol` does,
+ * adding the session cookie when the JSON body issued a session, and stripping the header).
+ */
+const REDIRECT_HEADER = 'x-better-iam-redirect';
 const PROTOCOL_NS = 'urn:oasis:names:tc:SAML:2.0:protocol';
 const ASSERTION_NS = 'urn:oasis:names:tc:SAML:2.0:assertion';
 
@@ -307,6 +365,34 @@ export function validateSamlEnvelope(
   }
 }
 
+/** A same-site path to return to after sign-in: an absolute path, never scheme-relative, without control characters. */
+function returnPath(value: unknown): string {
+  if (
+    typeof value !== 'string' ||
+    value.length > 1024 ||
+    !value.startsWith('/') ||
+    value.startsWith('//') ||
+    /[\u0000-\u001f\u007f\\]/.test(value)
+  )
+    throw new IamError(
+      'INVALID_INPUT',
+      'returnTo must be a path on this site, such as /dashboard.',
+    );
+  return value;
+}
+
+/** Validates `trustScimProvisioned`: a boolean, or up to 20 distinct SCIM connection IDs (deduplicated). */
+function scimTrust(value: unknown, code: string): boolean | string[] {
+  if (value === undefined || typeof value === 'boolean') return value ?? false;
+  if (
+    !Array.isArray(value) ||
+    value.length > 20 ||
+    value.some((id) => typeof id !== 'string' || !id || id.length > 128)
+  )
+    throw new IamError(code, 'trustScimProvisioned is a boolean or a list of SCIM connection IDs.');
+  return value.length ? [...new Set(value as string[])] : false;
+}
+
 export function createSamlService(config: SamlConfigOptions) {
   const basePath = (config.basePath ?? '/saml').replace(/\/$/, '');
   const connections = new Map<string, SamlConnection>();
@@ -343,6 +429,7 @@ export function createSamlService(config: SamlConfigOptions) {
       )
     )
       throw new IamError('configuration', 'Trusted SAML email domains must be exact domain names.');
+    scimTrust(item.trustScimProvisioned, 'configuration');
     connections.set(item.id, { ...item, idpCertificates: [...item.idpCertificates] });
   }
   const sp = config.serviceProvider;
@@ -364,6 +451,37 @@ export function createSamlService(config: SamlConfigOptions) {
       );
     spBase = `${parsed.origin}${parsed.pathname.replace(/\/$/, '')}`;
   }
+  // Redirect targets: a path on this site, or a URL on an origin this service already trusts.
+  const redirectOrigins = new Set<string>([
+    ...(config.trustedOrigins ?? []),
+    ...(spBase ? [new URL(spBase).origin] : []),
+    ...[...connections.values()].map((item) => new URL(item.callbackUrl).origin),
+  ]);
+  const redirectTarget = (value: string | undefined, name: string): string | undefined => {
+    if (value === undefined) return undefined;
+    const invalid = () =>
+      new IamError('configuration', `SAML ${name} must be a path or a trusted HTTPS URL.`);
+    if (typeof value === 'string' && value.startsWith('/')) {
+      try {
+        return returnPath(value);
+      } catch {
+        throw invalid();
+      }
+    }
+    let parsed: URL;
+    try {
+      parsed = new URL(String(value));
+    } catch {
+      throw invalid();
+    }
+    if (parsed.username || parsed.password || !redirectOrigins.has(parsed.origin)) throw invalid();
+    return parsed.href;
+  };
+  const afterSignIn = redirectTarget(config.afterSignIn, 'afterSignIn');
+  const mfaUrl = redirectTarget(config.mfaUrl, 'mfaUrl');
+  const errorUrl = redirectTarget(config.errorUrl, 'errorUrl');
+  if ((mfaUrl || errorUrl) && !afterSignIn)
+    throw new IamError('configuration', 'SAML mfaUrl and errorUrl need afterSignIn.');
   const managedUrls = (id: string) => {
     const root = `${spBase}${basePath}/${encodeURIComponent(id)}`;
     return {
@@ -391,6 +509,7 @@ export function createSamlService(config: SamlConfigOptions) {
       decryptionCertificate: sp!.decryptionCertificate,
       requireEncryptedAssertions: record.requireEncryptedAssertions,
       allowIdpInitiated: record.allowIdpInitiated === true,
+      trustScimProvisioned: record.trustScimProvisioned ?? false,
       trustedEmailDomains: [...record.trustedEmailDomains],
       ...(mapping.length
         ? {
@@ -436,6 +555,8 @@ export function createSamlService(config: SamlConfigOptions) {
       requireEncryptedAssertions: record.requireEncryptedAssertions,
       attributeMapping: { ...record.attributeMapping },
       allowIdpInitiated: record.allowIdpInitiated === true,
+      trustScimProvisioned: record.trustScimProvisioned ?? false,
+      providerId: record.providerKey ?? record.id,
       ...managedUrls(record.id),
       createdAt: record.createdAt,
       updatedAt: record.updatedAt,
@@ -456,6 +577,10 @@ export function createSamlService(config: SamlConfigOptions) {
       input.requireEncryptedAssertions ?? current?.requireEncryptedAssertions ?? false;
     const enabled = input.enabled ?? current?.enabled ?? true;
     const allowIdpInitiated = input.allowIdpInitiated ?? current?.allowIdpInitiated ?? false;
+    const trustScimProvisioned = scimTrust(
+      input.trustScimProvisioned ?? current?.trustScimProvisioned ?? false,
+      'INVALID_INPUT',
+    );
     if (typeof name !== 'string' || !name.trim() || name.length > 200)
       throw new IamError(
         'INVALID_INPUT',
@@ -523,6 +648,7 @@ export function createSamlService(config: SamlConfigOptions) {
       attributeMapping: { ...mapping },
       requireEncryptedAssertions,
       allowIdpInitiated,
+      trustScimProvisioned,
       enabled,
     };
   }
@@ -598,8 +724,13 @@ export function createSamlService(config: SamlConfigOptions) {
     };
     return new SAML(options);
   }
-  async function begin(connectionId: string, linkingCredential?: CredentialInput) {
+  async function begin(
+    connectionId: string,
+    linkingCredential?: CredentialInput,
+    options: { returnTo?: string } = {},
+  ) {
     const item = await connection(connectionId);
+    const returnTo = options.returnTo === undefined ? undefined : returnPath(options.returnTo);
     const requestId = `_${randomUUID()}`;
     const relayState = randomBytes(32).toString('base64url');
     const binding = randomBytes(32).toString('base64url');
@@ -641,6 +772,7 @@ export function createSamlService(config: SamlConfigOptions) {
         expiresAt: Date.now() + 600_000,
         linkingSessionId,
         linkingIdentityId,
+        ...(returnTo ? { returnTo } : {}),
       });
       return destination;
     });
@@ -650,6 +782,13 @@ export function createSamlService(config: SamlConfigOptions) {
     connectionId: string,
     input: { samlResponse: string; relayState: string; binding: string },
   ) {
+    return (await consume(connectionId, input)).result;
+  }
+  /** `callback`, also returning the `returnTo` path the sign-in was started with. */
+  async function consume(
+    connectionId: string,
+    input: { samlResponse: string; relayState: string; binding: string },
+  ): Promise<{ result: unknown; returnTo?: string }> {
     const item = await connection(connectionId);
     if (
       !input.binding ||
@@ -689,7 +828,7 @@ export function createSamlService(config: SamlConfigOptions) {
             throw new IamError('SAML_INVALID', 'SAML assertion recipient is invalid.', 401);
       }
       await tx.delete('samlRelays', relay.id);
-      return finish(item, profile, relay);
+      return { result: await finish(item, profile, relay), returnTo: relay.returnTo };
     });
   }
   /** Hands a validated SAML identity to the host, with a trusted-domain email and mapped attributes. */
@@ -714,6 +853,7 @@ export function createSamlService(config: SamlConfigOptions) {
         ? { linkingSessionId: relay.linkingSessionId, linkingIdentityId: relay.linkingIdentityId }
         : {}),
       ...(attributes !== undefined ? { attributes } : {}),
+      ...(item.trustScimProvisioned ? { trustScimProvisioned: item.trustScimProvisioned } : {}),
     });
   }
   /** Whether a base64 SAML response carries `InResponseTo` (SP-initiated). Unparseable input counts as solicited. */
@@ -800,8 +940,8 @@ export function createSamlService(config: SamlConfigOptions) {
         throw new IamError('SAML_INVALID', 'Invalid SAML POST parameters.', 400);
       // Responses that answer no request are IdP-initiated; only connections that opt in accept them.
       if (item.allowIdpInitiated && !answersRequest(form.get('SAMLResponse')!))
-        return Response.json(await unsolicited(item.id, form.get('SAMLResponse')!), {
-          headers: { 'cache-control': 'no-store' },
+        return signedIn(item, await unsolicited(item.id, form.get('SAMLResponse')!), undefined, {
+          'cache-control': 'no-store',
         });
       if (form.getAll('RelayState').length !== 1)
         throw new IamError('SAML_INVALID', 'Invalid SAML POST parameters.', 400);
@@ -813,23 +953,56 @@ export function createSamlService(config: SamlConfigOptions) {
           .map((value) => value.trim())
           .find((value) => value.startsWith(`${cookieName}=`))
           ?.slice(cookieName.length + 1) ?? '';
-      const result = await callback(item.id, {
+      const { result, returnTo } = await consume(item.id, {
         samlResponse: form.get('SAMLResponse')!,
         relayState: form.get('RelayState')!,
         binding,
       });
-      return Response.json(result, {
-        headers: {
-          'cache-control': 'no-store',
-          'set-cookie': `${cookieName}=; Path=/; HttpOnly; Secure; SameSite=None; Max-Age=0`,
-        },
+      return signedIn(item, result, returnTo, {
+        'cache-control': 'no-store',
+        'set-cookie': `${cookieName}=; Path=/; HttpOnly; Secure; SameSite=None; Max-Age=0`,
       });
-    } catch {
-      return Response.json(
-        { error: 'SAML_INVALID' },
-        { status: 401, headers: { 'cache-control': 'no-store' } },
-      );
+    } catch (error) {
+      const headers: Record<string, string> = { 'cache-control': 'no-store' };
+      // The specific code only goes to the configured error page; the JSON answer stays generic.
+      if (errorUrl) {
+        const code =
+          error instanceof IamError && /^[A-Z_]{2,64}$/.test(error.code)
+            ? error.code
+            : 'SAML_INVALID';
+        const target = new URL(errorUrl, 'https://placeholder.invalid');
+        target.searchParams.set('error', code);
+        headers[REDIRECT_HEADER] = errorUrl.startsWith('/')
+          ? `${target.pathname}${target.search}${target.hash}`
+          : target.href;
+      }
+      return Response.json({ error: 'SAML_INVALID' }, { status: 401, headers });
     }
+  }
+  /**
+   * The ACS answer for a completed SAML exchange: the host's result as JSON and, with `afterSignIn`, the redirect hint
+   * the host's protocol mount turns into a 303 (with the session cookie when a session was issued). An MFA challenge
+   * goes to `mfaUrl` in the fragment, so it never reaches a server log or a Referer header.
+   */
+  function signedIn(
+    item: SamlConnection,
+    result: unknown,
+    returnTo: string | undefined,
+    headers: Record<string, string>,
+  ): Response {
+    if (afterSignIn && result && typeof result === 'object') {
+      const value = result as Record<string, unknown>;
+      if (value.mfaRequired === true && typeof value.challenge === 'string') {
+        const fragment = new URLSearchParams({ tenantId: item.tenantId });
+        for (const [key, field] of Object.entries(value))
+          if (typeof field === 'string' || typeof field === 'boolean')
+            fragment.set(key, String(field));
+        if (returnTo) fragment.set('returnTo', returnTo);
+        headers = { ...headers, [REDIRECT_HEADER]: `${mfaUrl ?? afterSignIn}#${fragment}` };
+      } else if (typeof value.token === 'string')
+        headers = { ...headers, [REDIRECT_HEADER]: returnTo ?? afterSignIn };
+    }
+    return Response.json(result, { headers });
   }
   return {
     begin,
@@ -1036,9 +1209,11 @@ export function createSamlService(config: SamlConfigOptions) {
               403,
             );
         }
+        const returnTo = requestUrl.searchParams.get('returnTo');
         const result = await begin(
           id,
           request.method === 'POST' ? { headers: request.headers } : undefined,
+          returnTo === null ? {} : { returnTo },
         );
         const headers = {
           'cache-control': 'no-store',

@@ -1,5 +1,5 @@
 {
- "generatedAt": "2026-10-07T15:33:30.556Z",
+ "generatedAt": "2026-11-07T09:58:49.633Z",
  "basePath": "/api/iam",
  "groups": [
   {
@@ -12563,7 +12563,7 @@
       }
      ],
      "async": true,
-     "result": "{\n  status: 'pending' | 'revoked' | 'approved';\n  active: boolean;\n  controlKey: string;\n  subject: string;\n  reason: string;\n  expiresAt: number;\n  createdBy: string;\n  createdAt: number;\n  approvedBy?: string;\n  approvedAt?: number;\n  revokedBy?: string;\n  revokedAt?: number;\n  id: string;\n  tenantId: string;\n  uniqueKey?: string;\n}[]",
+     "result": "{\n  status: 'revoked' | 'pending' | 'approved';\n  active: boolean;\n  controlKey: string;\n  subject: string;\n  reason: string;\n  expiresAt: number;\n  createdBy: string;\n  createdAt: number;\n  approvedBy?: string;\n  approvedAt?: number;\n  revokedBy?: string;\n  revokedAt?: number;\n  id: string;\n  tenantId: string;\n  uniqueKey?: string;\n}[]",
      "resultSchema": {
       "type": "array",
       "items": {
@@ -18678,7 +18678,7 @@
       {
        "name": "input",
        "optional": false,
-       "type": "{\n  tenantId: string;\n  email: string;\n  name: string;\n  password?: string;\n  expiresAt?: number;\n  managerId?: string;\n}",
+       "type": "{\n  tenantId: string;\n  email: string;\n  name: string;\n  password?: string;\n  expiresAt?: number;\n  managerId?: string;\n  emailVerified?: boolean;\n  providers?: ProviderLinkInput[];\n}",
        "schema": {
         "type": "object",
         "properties": {
@@ -18699,6 +18699,15 @@
          },
          "managerId": {
           "type": "string"
+         },
+         "emailVerified": {
+          "type": "boolean"
+         },
+         "providers": {
+          "type": "array",
+          "items": {
+           "$ref": "#/components/schemas/ProviderLinkInput"
+          }
          }
         },
         "required": [
@@ -18734,7 +18743,7 @@
       {
        "name": "input",
        "optional": false,
-       "type": "{\n  tenantId: string;\n  identities: Array<{\n    email: string;\n    name: string;\n    password?: string;\n    attributes?: Record<string, Json>;\n    roleIds?: string[];\n    groupIds?: string[];\n    expiresAt?: number;\n  }>;\n}",
+       "type": "{\n  tenantId: string;\n  identities: Array<{\n    email: string;\n    name: string;\n    password?: string;\n    attributes?: Record<string, Json>;\n    roleIds?: string[];\n    groupIds?: string[];\n    expiresAt?: number;\n    emailVerified?: boolean;\n    providers?: ProviderLinkInput[];\n  }>;\n}",
        "schema": {
         "type": "object",
         "properties": {
@@ -18776,6 +18785,15 @@
             },
             "expiresAt": {
              "type": "number"
+            },
+            "emailVerified": {
+             "type": "boolean"
+            },
+            "providers": {
+             "type": "array",
+             "items": {
+              "$ref": "#/components/schemas/ProviderLinkInput"
+             }
             }
            },
            "required": [
@@ -19615,6 +19633,56 @@
      }
     },
     {
+     "name": "linkProvider",
+     "http": "POST /identities/linkProvider",
+     "credential": "required",
+     "description": "",
+     "tags": [],
+     "params": [
+      {
+       "name": "credential",
+       "optional": false,
+       "type": "CredentialInput",
+       "schema": {
+        "$ref": "#/components/schemas/CredentialInput"
+       }
+      },
+      {
+       "name": "input",
+       "optional": false,
+       "type": "{ tenantId: string; identityId: string } & ProviderLinkInput",
+       "schema": {
+        "allOf": [
+         {
+          "type": "object",
+          "properties": {
+           "tenantId": {
+            "type": "string"
+           },
+           "identityId": {
+            "type": "string"
+           }
+          },
+          "required": [
+           "tenantId",
+           "identityId"
+          ],
+          "additionalProperties": false
+         },
+         {
+          "$ref": "#/components/schemas/ProviderLinkInput"
+         }
+        ]
+       }
+      }
+     ],
+     "async": true,
+     "result": "ProviderLink",
+     "resultSchema": {
+      "$ref": "#/components/schemas/ProviderLink"
+     }
+    },
+    {
      "name": "list",
      "http": "POST /identities/list",
      "credential": "required",
@@ -19887,6 +19955,52 @@
         "tenantId"
        ],
        "additionalProperties": {}
+      }
+     }
+    },
+    {
+     "name": "listProviders",
+     "http": "POST /identities/listProviders",
+     "credential": "required",
+     "description": "",
+     "tags": [],
+     "params": [
+      {
+       "name": "credential",
+       "optional": false,
+       "type": "CredentialInput",
+       "schema": {
+        "$ref": "#/components/schemas/CredentialInput"
+       }
+      },
+      {
+       "name": "input",
+       "optional": false,
+       "type": "{ tenantId: string; identityId: string }",
+       "schema": {
+        "type": "object",
+        "properties": {
+         "tenantId": {
+          "type": "string"
+         },
+         "identityId": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "tenantId",
+         "identityId"
+        ],
+        "additionalProperties": false
+       }
+      }
+     ],
+     "async": true,
+     "result": "ProviderLink[]",
+     "resultSchema": {
+      "type": "array",
+      "items": {
+       "$ref": "#/components/schemas/ProviderLink"
       }
      }
     },
@@ -20712,6 +20826,53 @@
      "result": "PublicIdentity",
      "resultSchema": {
       "$ref": "#/components/schemas/PublicIdentity"
+     }
+    },
+    {
+     "name": "unlinkProvider",
+     "http": "POST /identities/unlinkProvider",
+     "credential": "required",
+     "description": "",
+     "tags": [],
+     "params": [
+      {
+       "name": "credential",
+       "optional": false,
+       "type": "CredentialInput",
+       "schema": {
+        "$ref": "#/components/schemas/CredentialInput"
+       }
+      },
+      {
+       "name": "input",
+       "optional": false,
+       "type": "{ tenantId: string; identityId: string; linkId: string }",
+       "schema": {
+        "type": "object",
+        "properties": {
+         "tenantId": {
+          "type": "string"
+         },
+         "identityId": {
+          "type": "string"
+         },
+         "linkId": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "tenantId",
+         "identityId",
+         "linkId"
+        ],
+        "additionalProperties": false
+       }
+      }
+     ],
+     "async": true,
+     "result": "ProviderLink",
+     "resultSchema": {
+      "$ref": "#/components/schemas/ProviderLink"
      }
     },
     {
@@ -38925,7 +39086,7 @@
       {
        "name": "input",
        "optional": false,
-       "type": "{\n  parentId: string;\n  type: string;\n  name: string;\n  ownerEmail: string;\n  slug?: string;\n  boundary?: PolicyDocument;\n  authorityId?: string;\n  region?: string;\n}",
+       "type": "{\n  parentId: string;\n  type: string;\n  name: string;\n  ownerEmail: string;\n  slug?: string;\n  boundary?: PolicyDocument;\n  authorityId?: string;\n  region?: string;\n  activate?: Activate;\n  ownerName?: string;\n  ownerEmailVerified?: boolean;\n}",
        "schema": {
         "type": "object",
         "properties": {
@@ -38952,6 +39113,15 @@
          },
          "region": {
           "type": "string"
+         },
+         "activate": {
+          "type": "boolean"
+         },
+         "ownerName": {
+          "type": "string"
+         },
+         "ownerEmailVerified": {
+          "type": "boolean"
          }
         },
         "required": [
@@ -38965,15 +39135,12 @@
       }
      ],
      "async": true,
-     "result": "{ tenant: Tenant; invitationId: string; ownerEmail: string }",
+     "result": "Activate extends true ? ActivatedTenant : InvitedTenant",
      "resultSchema": {
       "type": "object",
       "properties": {
        "tenant": {
         "$ref": "#/components/schemas/Tenant"
-       },
-       "invitationId": {
-        "type": "string"
        },
        "ownerEmail": {
         "type": "string"
@@ -38981,7 +39148,6 @@
       },
       "required": [
        "tenant",
-       "invitationId",
        "ownerEmail"
       ],
       "additionalProperties": false
@@ -39872,7 +40038,7 @@
       }
      ],
      "async": true,
-     "result": "{\n  deletedAt?: number;\n  status: 'suspended' | 'deleted' | 'active';\n  name: string;\n  type: string;\n  parentId: string | null;\n  slug?: string;\n  region?: string;\n  boundary?: PolicyDocument;\n  authPolicy?: TenantAuthPolicy;\n  accessPolicy?: TenantAccessPolicy;\n  limits?: TenantLimits;\n  createdAt: number;\n  id: string;\n  tenantId: string;\n  uniqueKey?: string;\n}",
+     "result": "{\n  deletedAt?: number;\n  status: 'active' | 'deleted' | 'suspended';\n  name: string;\n  type: string;\n  parentId: string | null;\n  slug?: string;\n  region?: string;\n  boundary?: PolicyDocument;\n  authPolicy?: TenantAuthPolicy;\n  accessPolicy?: TenantAccessPolicy;\n  limits?: TenantLimits;\n  createdAt: number;\n  id: string;\n  tenantId: string;\n  uniqueKey?: string;\n}",
      "resultSchema": {
       "type": "object",
       "properties": {
@@ -62250,6 +62416,29 @@
    ],
    "additionalProperties": false
   },
+  "ProviderLinkInput": {
+   "type": "object",
+   "properties": {
+    "providerId": {
+     "type": "string",
+     "description": "The connection's provider key: an OAuth connection's `id`, a SAML connection's `providerId`."
+    },
+    "issuer": {
+     "type": "string",
+     "description": "The IdP's issuer exactly as the protocol reports it (OIDC `iss`, SAML IdP entity ID)."
+    },
+    "subject": {
+     "type": "string",
+     "description": "The person's stable ID at the IdP (OIDC `sub`, SAML NameID)."
+    }
+   },
+   "required": [
+    "providerId",
+    "issuer",
+    "subject"
+   ],
+   "additionalProperties": false
+  },
   "Relationship": {
    "type": "object",
    "properties": {
@@ -62304,6 +62493,40 @@
     "tenantId"
    ],
    "additionalProperties": {}
+  },
+  "ProviderLink": {
+   "type": "object",
+   "properties": {
+    "id": {
+     "type": "string"
+    },
+    "identityId": {
+     "type": "string"
+    },
+    "createdAt": {
+     "type": "number"
+    },
+    "providerId": {
+     "type": "string",
+     "description": "The connection's provider key: an OAuth connection's `id`, a SAML connection's `providerId`."
+    },
+    "issuer": {
+     "type": "string",
+     "description": "The IdP's issuer exactly as the protocol reports it (OIDC `iss`, SAML IdP entity ID)."
+    },
+    "subject": {
+     "type": "string",
+     "description": "The person's stable ID at the IdP (OIDC `sub`, SAML NameID)."
+    }
+   },
+   "required": [
+    "id",
+    "identityId",
+    "providerId",
+    "issuer",
+    "subject"
+   ],
+   "additionalProperties": false
   },
   "ImpactChange": {
    "type": "object",
@@ -84926,7 +85149,7 @@
     "_construct": {
      "description": "Function (not serializable)"
     },
-    "__@captureRejectionSymbol@14019": {
+    "__@captureRejectionSymbol@14063": {
      "description": "Function (not serializable)"
     }
    },
@@ -85028,7 +85251,7 @@
      "type": "boolean",
      "description": "If `false` then the stream will automatically end the writable side when the\nreadable side ends. Set initially by the `allowHalfOpen` constructor option,\nwhich defaults to `true`.\n\nThis can be changed manually to change the half-open behavior of an existing\n`Duplex` stream instance, but must be changed before the `'end'` event is emitted."
     },
-    "__@captureRejectionSymbol@14019": {
+    "__@captureRejectionSymbol@14063": {
      "description": "Function (not serializable)"
     },
     "readableAborted": {
@@ -85617,7 +85840,7 @@
     "_construct": {
      "description": "Function (not serializable)"
     },
-    "__@captureRejectionSymbol@14019": {
+    "__@captureRejectionSymbol@14063": {
      "description": "Function (not serializable)"
     }
    },

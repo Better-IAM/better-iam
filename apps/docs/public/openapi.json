@@ -28279,8 +28279,8 @@
     "tags": [
      "identities"
     ],
-    "summary": "Creates a person in the tenant, optionally with a password, a manager, and a scheduled deactivation date.",
-    "description": "- **Permission:** `iam:identities:create` on the tenant.\n- **Audited as:** `iam:identities:create`.\n- **Errors:** `IDENTITY_EXISTS` (409) when the email is already used in this tenant; `LIMIT_EXCEEDED` at the\n  tenant's member limit; `WEAK_PASSWORD` or `BREACHED_PASSWORD` for a password the rules refuse; `INVALID_INPUT`\n  for an `expiresAt` that is not in the future or is more than ten years ahead, or a manager who is not active;\n  `NOT_FOUND` when the manager is not in this tenant; `INVARIANT_VIOLATION` when the new person would break an\n  enforced [access invariant](/docs/features/governance/change-safety).\n\nThe account starts active, with an unverified email and no roles. Without a password the person cannot sign in\nwith one: send them a reset link with [`requestPasswordReset`](#requestpasswordreset), or use [`invite`](#invite)\ninstead, which lets them choose it. `expiresAt` (epoch milliseconds) schedules deactivation. Declared attributes\nare set with [`update`](#update) or [`createMany`](#createmany). After the call commits,\n[automatic access-package rules](/docs/features/privileged-access/access-packages#automatic-assignment) are\nreconciled for the new person, so a matching package applies right away.\n\n```ts\nconst contractor = await iam.api.identities.create(credential, {\n  tenantId,\n  email: 'sam@contractor.example',\n  name: 'Sam Rivera',\n  managerId: teamLeadId,\n  expiresAt: Date.parse('2026-12-31T23:59:59Z'),\n});\n```",
+    "summary": "Creates a person in the tenant, optionally with a password, a manager, a scheduled deactivation date, a verified email, and linked external sign-ins.",
+    "description": "- **Permission:** `iam:identities:create` on the tenant.\n- **Audited as:** `iam:identities:create`.\n- **Errors:** `IDENTITY_EXISTS` (409) when the email is already used in this tenant; `LIMIT_EXCEEDED` at the\n  tenant's member limit; `WEAK_PASSWORD` or `BREACHED_PASSWORD` for a password the rules refuse; `INVALID_INPUT`\n  for an `expiresAt` that is not in the future or is more than ten years ahead, or a manager who is not active;\n  `NOT_FOUND` when the manager is not in this tenant; `INVARIANT_VIOLATION` when the new person would break an\n  enforced [access invariant](/docs/features/governance/change-safety); `ACCOUNT_LINK_CONFLICT` (409) when one of\n  `providers` is already linked to another account.\n\nThe account starts active, with no roles, and with an unverified email unless `emailVerified: true` records that\nanother system already verified it (a migration). `providers` links up to 10 external sign-ins, one per provider,\nas [`linkProvider`](#linkprovider) does, so the person's first sign-in through that connection finds this\naccount instead of failing with `ACCOUNT_LINK_REQUIRED`. Without a password the person cannot sign in\nwith one: send them a reset link with [`requestPasswordReset`](#requestpasswordreset), or use [`invite`](#invite)\ninstead, which lets them choose it. `expiresAt` (epoch milliseconds) schedules deactivation. Declared attributes\nare set with [`update`](#update) or [`createMany`](#createmany). After the call commits,\n[automatic access-package rules](/docs/features/privileged-access/access-packages#automatic-assignment) are\nreconciled for the new person, so a matching package applies right away.\n\n```ts\nconst contractor = await iam.api.identities.create(credential, {\n  tenantId,\n  email: 'sam@contractor.example',\n  name: 'Sam Rivera',\n  managerId: teamLeadId,\n  expiresAt: Date.parse('2026-12-31T23:59:59Z'),\n});\n```",
     "externalDocs": {
      "url": "http://localhost:4000/docs/reference/api/identities#create"
     },
@@ -28321,6 +28321,15 @@
          },
          "managerId": {
           "type": "string"
+         },
+         "emailVerified": {
+          "type": "boolean"
+         },
+         "providers": {
+          "type": "array",
+          "items": {
+           "$ref": "#/components/schemas/ProviderLinkInput"
+          }
          }
         },
         "required": [
@@ -28364,8 +28373,8 @@
     "tags": [
      "identities"
     ],
-    "summary": "Creates up to 100 people in one transaction, each with optional attributes, roles, groups, password, and expiry.",
-    "description": "- **Permission:** `iam:identities:create` on the tenant. With roles, also `iam:bindings:create` on each role and an\n  active grant authority; with groups, `iam:groups:update` on each group and authority over each of its role\n  bindings, and `iam:licenses:assign` when a license product is assigned to one of the groups or to a team it syncs\n  into.\n- **Audited as:** `iam:identities:create`.\n- **Errors:** `INVALID_INPUT` for an empty list, more than 100 entries, or an undeclared or mistyped attribute;\n  `ACCESS_DENIED` without the right to grant one of the roles or fill one of the groups; `PROTECTED_RESOURCE` for\n  the Owner role; `GRANT_AUTHORITY_REQUIRED` when roles are given and you hold no active grant authority;\n  `IDENTITY_EXISTS`, `LIMIT_EXCEEDED`, `SOD_CONFLICT`, and `INVARIANT_VIOLATION` as for single creation. Any\n  failure rejects the whole batch.\n\nUse it for migrations and cohort onboarding. Roles are bound directly to each person under your grant authority and\ngroup memberships are permanent. An entry's `expiresAt` is that identity's deactivation date, not an expiry for its\ngrants. Attributes are checked against `permissions.identityAttributes`. The rights to grant each role and fill\neach group are checked once for the whole batch, so an import can never grant more than you could bind by hand.\n\n```ts\nconst { identities } = await iam.api.identities.createMany(credential, {\n  tenantId,\n  identities: newHires.map((hire) => ({\n    email: hire.email,\n    name: hire.name,\n    attributes: { department: hire.department }, // declared in permissions.identityAttributes\n    groupIds: [everyoneGroupId],\n  })),\n});\n```",
+    "summary": "Creates up to 100 people in one transaction, each with optional attributes, roles, groups, password, expiry, verified email, and linked external sign-ins.",
+    "description": "- **Permission:** `iam:identities:create` on the tenant. With roles, also `iam:bindings:create` on each role and an\n  active grant authority; with groups, `iam:groups:update` on each group and authority over each of its role\n  bindings, and `iam:licenses:assign` when a license product is assigned to one of the groups or to a team it syncs\n  into.\n- **Audited as:** `iam:identities:create`.\n- **Errors:** `INVALID_INPUT` for an empty list, more than 100 entries, or an undeclared or mistyped attribute;\n  `ACCESS_DENIED` without the right to grant one of the roles or fill one of the groups; `PROTECTED_RESOURCE` for\n  the Owner role; `GRANT_AUTHORITY_REQUIRED` when roles are given and you hold no active grant authority;\n  `IDENTITY_EXISTS`, `LIMIT_EXCEEDED`, `SOD_CONFLICT`, `INVARIANT_VIOLATION`, and `ACCOUNT_LINK_CONFLICT` as for\n  single creation. Any failure rejects the whole batch.\n\nUse it for migrations and cohort onboarding. Roles are bound directly to each person under your grant authority and\ngroup memberships are permanent. An entry's `expiresAt` is that identity's deactivation date, not an expiry for its\ngrants. Attributes are checked against `permissions.identityAttributes`. The rights to grant each role and fill\neach group are checked once for the whole batch, so an import can never grant more than you could bind by hand.\nPer entry, `emailVerified` and `providers` work as in [`create`](#create): people imported from another identity\nprovider keep their verified status, and their social or SSO sign-ins are linked before their first sign-in here.\n\n```ts\nconst { identities } = await iam.api.identities.createMany(credential, {\n  tenantId,\n  identities: exported.map((user) => ({\n    email: user.email,\n    name: user.name,\n    emailVerified: user.email_verified,\n    attributes: { department: user.department }, // declared in permissions.identityAttributes\n    groupIds: [everyoneGroupId],\n    // An OAuth connection's id, the provider's issuer exactly, and the person's subject there.\n    providers: user.googleSub\n      ? [{ providerId: 'google', issuer: 'https://accounts.google.com', subject: user.googleSub }]\n      : [],\n  })),\n});\n```",
     "externalDocs": {
      "url": "http://localhost:4000/docs/reference/api/identities#createmany"
     },
@@ -28427,6 +28436,15 @@
             },
             "expiresAt": {
              "type": "number"
+            },
+            "emailVerified": {
+             "type": "boolean"
+            },
+            "providers": {
+             "type": "array",
+             "items": {
+              "$ref": "#/components/schemas/ProviderLinkInput"
+             }
             }
            },
            "required": [
@@ -29430,6 +29448,85 @@
     }
    }
   },
+  "/identities/linkProvider": {
+   "post": {
+    "operationId": "identities.linkProvider",
+    "tags": [
+     "identities"
+    ],
+    "summary": "Links an external sign-in (OAuth/OIDC or SAML) to an existing account, so that IdP account signs in to it without an account-linking step.",
+    "description": "- **Permission:** `iam:identities:update` on the person, with recent authentication. For an owner you must be\n  another owner of the same tenant or root; for a root administrator, root.\n- **Audited as:** `iam:identities:update` and `identity:link-provider` (with `{ providerId, linkId }`).\n- **Errors:** `ACCOUNT_LINK_CONFLICT` (409) when the external account is linked to another account, or this account\n  already has a link through that provider (unlink it first); `INVALID_INPUT` for a service account or a missing\n  value; `ACCESS_DENIED` for an owner or root administrator you may not control; `NOT_FOUND`;\n  `RECENT_AUTH_REQUIRED`.\n\nFederated sign-in looks accounts up by `providerId`, `issuer`, and `subject`:\n\n| Connection | `providerId` | `issuer` | `subject` |\n| --- | --- | --- | --- |\n| OAuth or OIDC login connection | The connection's `id` | The provider's `iss` exactly (`https://accounts.google.com`, `https://github.com`) | The `sub` claim (GitHub: the numeric user ID) |\n| Tenant-managed SAML connection | The connection summary's `providerId` | Its `idpIssuer` | The person's `NameID` |\n\nWhoever links an external account to an account controls it, which is why the rules match those for changing its\nsign-in address. It returns the link: `{ id, identityId, providerId, issuer, subject, createdAt }`.\n\n```ts\nawait iam.api.identities.linkProvider(credential, {\n  tenantId,\n  identityId,\n  providerId: 'google', // the OAuth connection's id\n  issuer: 'https://accounts.google.com',\n  subject: '109876543210987654321',\n});\n```",
+    "externalDocs": {
+     "url": "http://localhost:4000/docs/reference/api/identities#linkprovider"
+    },
+    "parameters": [
+     {
+      "$ref": "#/components/parameters/XBetterIam"
+     }
+    ],
+    "security": [
+     {
+      "bearerAuth": []
+     },
+     {
+      "sessionCookie": []
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "allOf": [
+         {
+          "type": "object",
+          "properties": {
+           "tenantId": {
+            "type": "string"
+           },
+           "identityId": {
+            "type": "string"
+           }
+          },
+          "required": [
+           "tenantId",
+           "identityId"
+          ],
+          "additionalProperties": false
+         },
+         {
+          "$ref": "#/components/schemas/ProviderLinkInput"
+         }
+        ]
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "Success. The result is wrapped in `data`.",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object",
+         "required": [
+          "data"
+         ],
+         "properties": {
+          "data": {
+           "$ref": "#/components/schemas/ProviderLink"
+          }
+         }
+        }
+       }
+      }
+     },
+     "default": {
+      "$ref": "#/components/responses/Error"
+     }
+    }
+   }
+  },
   "/identities/list": {
    "post": {
     "operationId": "identities.list",
@@ -29809,6 +29906,81 @@
              "tenantId"
             ],
             "additionalProperties": {}
+           }
+          }
+         }
+        }
+       }
+      }
+     },
+     "default": {
+      "$ref": "#/components/responses/Error"
+     }
+    }
+   }
+  },
+  "/identities/listProviders": {
+   "post": {
+    "operationId": "identities.listProviders",
+    "tags": [
+     "identities"
+    ],
+    "summary": "Lists the external sign-ins linked to an account, sorted by provider.",
+    "description": "- **Permission:** `iam:identities:read` on the person.\n- **Errors:** `NOT_FOUND` when the identity is not in this tenant.\n\nEach entry is `{ id, identityId, providerId, issuer, subject, createdAt }`; pass `id` to\n[`unlinkProvider`](#unlinkprovider).",
+    "externalDocs": {
+     "url": "http://localhost:4000/docs/reference/api/identities#listproviders"
+    },
+    "parameters": [
+     {
+      "$ref": "#/components/parameters/XBetterIam"
+     }
+    ],
+    "security": [
+     {
+      "bearerAuth": []
+     },
+     {
+      "sessionCookie": []
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "tenantId": {
+          "type": "string"
+         },
+         "identityId": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "tenantId",
+         "identityId"
+        ],
+        "additionalProperties": false
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "Success. The result is wrapped in `data`.",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object",
+         "required": [
+          "data"
+         ],
+         "properties": {
+          "data": {
+           "type": "array",
+           "items": {
+            "$ref": "#/components/schemas/ProviderLink"
            }
           }
          }
@@ -30924,6 +31096,82 @@
          "properties": {
           "data": {
            "$ref": "#/components/schemas/PublicIdentity"
+          }
+         }
+        }
+       }
+      }
+     },
+     "default": {
+      "$ref": "#/components/responses/Error"
+     }
+    }
+   }
+  },
+  "/identities/unlinkProvider": {
+   "post": {
+    "operationId": "identities.unlinkProvider",
+    "tags": [
+     "identities"
+    ],
+    "summary": "Removes a linked external sign-in; that IdP account no longer signs in to this account.",
+    "description": "- **Permission:** as for [`linkProvider`](#linkprovider).\n- **Audited as:** `iam:identities:update` and `identity:unlink-provider`.\n- **Errors:** `NOT_FOUND` when the link is not one of this person's; `ACCESS_DENIED`;\n  `RECENT_AUTH_REQUIRED`.\n\nA later sign-in from that IdP account is treated as a first sign-in again. It returns the removed link.",
+    "externalDocs": {
+     "url": "http://localhost:4000/docs/reference/api/identities#unlinkprovider"
+    },
+    "parameters": [
+     {
+      "$ref": "#/components/parameters/XBetterIam"
+     }
+    ],
+    "security": [
+     {
+      "bearerAuth": []
+     },
+     {
+      "sessionCookie": []
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "tenantId": {
+          "type": "string"
+         },
+         "identityId": {
+          "type": "string"
+         },
+         "linkId": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "tenantId",
+         "identityId",
+         "linkId"
+        ],
+        "additionalProperties": false
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "Success. The result is wrapped in `data`.",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object",
+         "required": [
+          "data"
+         ],
+         "properties": {
+          "data": {
+           "$ref": "#/components/schemas/ProviderLink"
           }
          }
         }
@@ -58167,8 +58415,8 @@
     "tags": [
      "tenants"
     ],
-    "summary": "Creates a child tenant in the pending state under a parent and emails an invitation to its first owner.",
-    "description": "- **Permission:** `iam:tenants:create` on the parent tenant, with recent authentication, and an active grant\n  authority in the parent.\n- **Audited as:** `iam:tenants:create`, in the parent tenant's log.\n- **Errors:** `INVALID_HIERARCHY` when `type` is not an allowed child of the parent's type; `MAX_DEPTH` when the\n  parent is already at the deepest level; `DELIVERY_REQUIRED` without an email delivery callback; `SLUG_TAKEN` or\n  `INVALID_INPUT` for a slug in use or badly formed; `GRANT_AUTHORITY_REQUIRED` without an active grant authority,\n  or `ACCESS_DENIED` when `authorityId` is not one of yours; `INVALID_POLICY` or `INVALID_ACTION` for an invalid\n  boundary; `INVALID_INPUT` for a `region` the deployment does not know, or one other than its own when regions\n  keep separate databases; `RECENT_AUTH_REQUIRED`.\n\nThe new tenant receives `tenantDefaults` (limits and authentication policy), the optional `slug`, and an optional\n`boundary`. In a multi-region deployment, `region` sets its home region; without it the tenant inherits its\nparent's, and an organization directly under the (region-less) root is homed in the region that creates it. A grant authority is reserved for the future owner as a child of yours (or of `authorityId`, one of\nyour own authorities in the parent). That keeps the owner within your authority chain: if your authority is\nrevoked, the invitation can no longer be accepted and the owner's grants stop applying. The token goes only into\nthe `owner-invitation` email; the result has the tenant, the invitation ID, and the owner's address.\n\nNobody but a root administrator can act inside the tenant until the owner accepts. If they never do, a root\nadministrator can re-send or revoke the invitation, or delete the tenant.\n\n```ts\nconst { tenant, invitationId } = await iam.api.tenants.create(credential, {\n  parentId: rootTenantId,\n  type: 'organization',\n  name: 'Acme',\n  ownerEmail: 'owner@acme.example',\n  slug: 'acme',\n});\n// tenant.status === 'pending' until the owner accepts\n```",
+    "summary": "Creates a child tenant in the pending state under a parent and emails an invitation to its first owner, or, for a root principal with activate: true, creates it active with its owner account.",
+    "description": "- **Permission:** `iam:tenants:create` on the parent tenant, with recent authentication, and an active grant\n  authority in the parent.\n- **Audited as:** `iam:tenants:create`, in the parent tenant's log.\n- **Errors:** `ACCESS_DENIED` for `activate` without a root principal; `INVALID_HIERARCHY` when `type` is not an allowed child of the parent's type; `MAX_DEPTH` when the\n  parent is already at the deepest level; `DELIVERY_REQUIRED` without an email delivery callback (unless\n  `activate`); `INVALID_INPUT` for `ownerName` or `ownerEmailVerified` without `activate`; `SLUG_TAKEN` or\n  `INVALID_INPUT` for a slug in use or badly formed; `GRANT_AUTHORITY_REQUIRED` without an active grant authority,\n  or `ACCESS_DENIED` when `authorityId` is not one of yours; `INVALID_POLICY` or `INVALID_ACTION` for an invalid\n  boundary; `INVALID_INPUT` for a `region` the deployment does not know, or one other than its own when regions\n  keep separate databases; `RECENT_AUTH_REQUIRED`.\n\nThe new tenant receives `tenantDefaults` (limits and authentication policy), the optional `slug`, and an optional\n`boundary`. In a multi-region deployment, `region` sets its home region; without it the tenant inherits its\nparent's, and an organization directly under the (region-less) root is homed in the region that creates it. A grant authority is reserved for the future owner as a child of yours (or of `authorityId`, one of\nyour own authorities in the parent). That keeps the owner within your authority chain: if your authority is\nrevoked, the invitation can no longer be accepted and the owner's grants stop applying. The token goes only into\nthe `owner-invitation` email; the result has the tenant, the invitation ID, and the owner's address.\n\nNobody but a root administrator can act inside the tenant until the owner accepts. If they never do, a root\nadministrator can re-send or revoke the invitation, or delete the tenant.\n\nFor bulk imports and migrations, a root principal passes `activate: true`: the tenant is `active` at once, the\nowner account is created (named `ownerName`, default the address; with a verified email when `ownerEmailVerified`\nis `true`) and bound to the protected Owner role, no invitation is sent, and members can be imported right away.\nThe owner has no password: they sign in with a magic link, a password reset, or an external sign-in linked with\n[`identities.linkProvider`](/docs/reference/api/identities#linkprovider). The result is\n`{ tenant, ownerEmail, owner }` instead of `{ tenant, invitationId, ownerEmail }`, and the activation is audited\nas `tenant:activate`. Skipping the invitation skips the owner's consent, which is why only root may.\n\n```ts\nconst { tenant, invitationId } = await iam.api.tenants.create(credential, {\n  parentId: rootTenantId,\n  type: 'organization',\n  name: 'Acme',\n  ownerEmail: 'owner@acme.example',\n  slug: 'acme',\n});\n// tenant.status === 'pending' until the owner accepts\n```",
     "externalDocs": {
      "url": "http://localhost:4000/docs/reference/api/tenants#create"
     },
@@ -58215,6 +58463,15 @@
          },
          "region": {
           "type": "string"
+         },
+         "activate": {
+          "type": "boolean"
+         },
+         "ownerName": {
+          "type": "string"
+         },
+         "ownerEmailVerified": {
+          "type": "boolean"
          }
         },
         "required": [
@@ -58245,16 +58502,12 @@
             "tenant": {
              "$ref": "#/components/schemas/Tenant"
             },
-            "invitationId": {
-             "type": "string"
-            },
             "ownerEmail": {
              "type": "string"
             }
            },
            "required": [
             "tenant",
-            "invitationId",
             "ownerEmail"
            ],
            "additionalProperties": false
@@ -83911,6 +84164,29 @@
     ],
     "additionalProperties": false
    },
+   "ProviderLinkInput": {
+    "type": "object",
+    "properties": {
+     "providerId": {
+      "type": "string",
+      "description": "The connection's provider key: an OAuth connection's `id`, a SAML connection's `providerId`."
+     },
+     "issuer": {
+      "type": "string",
+      "description": "The IdP's issuer exactly as the protocol reports it (OIDC `iss`, SAML IdP entity ID)."
+     },
+     "subject": {
+      "type": "string",
+      "description": "The person's stable ID at the IdP (OIDC `sub`, SAML NameID)."
+     }
+    },
+    "required": [
+     "providerId",
+     "issuer",
+     "subject"
+    ],
+    "additionalProperties": false
+   },
    "Relationship": {
     "type": "object",
     "properties": {
@@ -83965,6 +84241,40 @@
      "tenantId"
     ],
     "additionalProperties": {}
+   },
+   "ProviderLink": {
+    "type": "object",
+    "properties": {
+     "id": {
+      "type": "string"
+     },
+     "identityId": {
+      "type": "string"
+     },
+     "createdAt": {
+      "type": "number"
+     },
+     "providerId": {
+      "type": "string",
+      "description": "The connection's provider key: an OAuth connection's `id`, a SAML connection's `providerId`."
+     },
+     "issuer": {
+      "type": "string",
+      "description": "The IdP's issuer exactly as the protocol reports it (OIDC `iss`, SAML IdP entity ID)."
+     },
+     "subject": {
+      "type": "string",
+      "description": "The person's stable ID at the IdP (OIDC `sub`, SAML NameID)."
+     }
+    },
+    "required": [
+     "id",
+     "identityId",
+     "providerId",
+     "issuer",
+     "subject"
+    ],
+    "additionalProperties": false
    },
    "ImpactChange": {
     "type": "object",
@@ -106587,7 +106897,7 @@
      "_construct": {
       "description": "Function (not serializable)"
      },
-     "__@captureRejectionSymbol@14019": {
+     "__@captureRejectionSymbol@14063": {
       "description": "Function (not serializable)"
      }
     },
@@ -106689,7 +106999,7 @@
       "type": "boolean",
       "description": "If `false` then the stream will automatically end the writable side when the\nreadable side ends. Set initially by the `allowHalfOpen` constructor option,\nwhich defaults to `true`.\n\nThis can be changed manually to change the half-open behavior of an existing\n`Duplex` stream instance, but must be changed before the `'end'` event is emitted."
      },
-     "__@captureRejectionSymbol@14019": {
+     "__@captureRejectionSymbol@14063": {
       "description": "Function (not serializable)"
      },
      "readableAborted": {
@@ -107278,7 +107588,7 @@
      "_construct": {
       "description": "Function (not serializable)"
      },
-     "__@captureRejectionSymbol@14019": {
+     "__@captureRejectionSymbol@14063": {
       "description": "Function (not serializable)"
      }
     },

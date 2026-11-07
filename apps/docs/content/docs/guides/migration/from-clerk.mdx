@@ -59,8 +59,9 @@ The general plan behind these steps is in [Migration guides](/docs/guides/migrat
 
 <Callout type="warn" title="What does not move">
   Passwords (no Better IAM API accepts a password digest, whatever your Clerk export contains), MFA enrollments,
-  passkeys, phone numbers, active sessions, and the links between users and their social or enterprise accounts.
-  People sign in once with a magic link, a reset link, or their identity provider.
+  passkeys, phone numbers, and active sessions. People who used a password sign in once with a magic link or a reset
+  link. Verified email status and links to Google or GitHub accounts are carried over by the import, so social users
+  keep signing in through their provider.
 </Callout>
 
 ## Prerequisites
@@ -87,14 +88,16 @@ returns them; the import script reads the fields named here.
 
 | File | Contents |
 | --- | --- |
-| `clerk/users.ndjson` | One Clerk user object per line. The script reads `id`, `first_name`, `last_name`, `primary_email_address_id`, `email_addresses` (`id`, `email_address`), `public_metadata`, and `banned`. |
+| `clerk/users.ndjson` | One Clerk user object per line. The script reads `id`, `first_name`, `last_name`, `primary_email_address_id`, `email_addresses` (`id`, `email_address`, `verification.status`), `external_accounts` (`provider`, `provider_user_id`), `public_metadata`, and `banned`. |
 | `clerk/organizations.json` | `[{ id, name, ownerUserId }]`. Pick one owner per organization: an admin who should control it in Better IAM. |
 | `clerk/memberships-<org_id>.json` | `[{ userId, role }]`: each membership's user ID and role key, such as `org:admin`. |
 | `clerk/roles.json` | `[{ key, name, permissions: [permission_key] }]` for every organization role. |
 | `clerk/sso.json` | Which organizations use enterprise SSO, with their email domains and connection type. |
 
-People who sign in through a customer's enterprise SSO should not be imported; list their email domains in
-`ENTERPRISE_DOMAINS` in the import script.
+An external account's `provider_user_id` is the person's ID at that provider: Google's `sub` for `oauth_google`, the
+numeric user ID for `oauth_github`. The import links those accounts to your new connections. People who sign in
+through a customer's enterprise SSO are left out by default, so their first SSO sign-in creates their account; list
+their email domains in `ENTERPRISE_DOMAINS` in the import script.
 
 </Step>
 <Step>
@@ -141,8 +144,9 @@ npx better-iam store-export --config better-iam.config.mjs --output before-clerk
 ### Create tenants
 
 Create one tenant per Clerk organization, and one more for people who do not belong to any organization, owned by
-someone on your team (`PERSONAL_OWNER_USER_ID` is their Clerk user ID). Each tenant stays `pending` until its owner accepts the emailed
-invitation, and members can be imported only after that.
+someone on your team (`PERSONAL_OWNER_USER_ID` is their Clerk user ID). With `activate: true`, which your root
+administrator session may pass, each tenant is `active` at once with its owner's account, so members can be imported
+right away. No invitation is sent: owners sign in with a magic link, a reset link, or a provider you link to them.
 
 ```ts title="scripts/clerk-create-tenants.ts"
 import { createReadStream } from 'node:fs';
@@ -153,19 +157,23 @@ import { iam } from '../iam';
 type ClerkOrganization = { id: string; name: string; ownerUserId: string };
 type ClerkUser = {
   id: string;
+  first_name: string | null;
+  last_name: string | null;
   primary_email_address_id: string | null;
-  email_addresses: Array<{ id: string; email_address: string }>;
+  email_addresses: Array<{ id: string; email_address: string; verification?: { status: string } | null }>;
 };
 
 const credential = { token: process.env.BETTER_IAM_TOKEN! };
 const rootTenantId = process.env.ROOT_TENANT_ID!;
 
-const emails = new Map<string, string>();
+const owners = new Map<string, { email: string; verified: boolean; name: string }>();
 for await (const line of createInterface({ input: createReadStream('clerk/users.ndjson'), crlfDelay: Infinity })) {
   if (!line.trim()) continue;
   const user = JSON.parse(line) as ClerkUser;
   const primary = user.email_addresses.find((address) => address.id === user.primary_email_address_id);
-  if (primary) emails.set(user.id, primary.email_address);
+  if (!primary) continue;
+  const name = [user.first_name, user.last_name].filter(Boolean).join(' ') || primary.email_address;
+  owners.set(user.id, { email: primary.email_address, verified: primary.verification?.status === 'verified', name });
 }
 
 const organizations = JSON.parse(await readFile('clerk/organizations.json', 'utf8')) as ClerkOrganization[];
@@ -173,13 +181,16 @@ organizations.push({ id: 'personal', name: 'Personal accounts', ownerUserId: pro
 
 const tenantMap: Record<string, string> = {};
 for (const organization of organizations) {
-  const ownerEmail = emails.get(organization.ownerUserId);
-  if (!ownerEmail) throw new Error(`No email for the owner of ${organization.name}`);
+  const owner = owners.get(organization.ownerUserId);
+  if (!owner) throw new Error(`No email for the owner of ${organization.name}`);
   const { tenant } = await iam.api.tenants.create(credential, {
     parentId: rootTenantId,
     type: 'organization',
     name: organization.name,
-    ownerEmail,
+    ownerEmail: owner.email,
+    activate: true, // active now; the owner's account is created without an invitation
+    ownerName: owner.name,
+    ownerEmailVerified: owner.verified,
   });
   tenantMap[organization.id] = tenant.id;
 }
@@ -190,16 +201,17 @@ await writeFile('clerk/tenant-map.json', JSON.stringify(tenantMap, null, 2));
 npx tsx scripts/clerk-create-tenants.ts
 ```
 
-`tenants.create` needs recent authentication, so run it within five minutes of `better-iam login`. An owner who
-already has an account in another tenant can link it while accepting, by passing `linkCredential` to
-`tenants.acceptInvitation`.
+`tenants.create` needs recent authentication, so run it within five minutes of `better-iam login`. Only a root
+principal may pass `activate`; without it, the owner receives an emailed invitation and the tenant stays `pending`
+until they accept it. An owner with accounts in several tenants links them afterwards with `links.create`
+([account linking](/docs/concepts/tenants-and-identities#account-linking)).
 
 </Step>
 <Step>
 
 ### Recreate organization roles
 
-Build one configuration document from `clerk/roles.json` and apply it to each active tenant. Role names in Better
+Build one configuration document from `clerk/roles.json` and apply it to each tenant. Role names in Better
 IAM are display names, so `org:admin` becomes `Admin`; keep the mapping for the import.
 
 ```ts title="scripts/clerk-roles.ts"
@@ -264,14 +276,24 @@ type ClerkUser = {
   first_name: string | null;
   last_name: string | null;
   primary_email_address_id: string | null;
-  email_addresses: Array<{ id: string; email_address: string }>;
+  email_addresses: Array<{ id: string; email_address: string; verification?: { status: string } | null }>;
+  external_accounts?: Array<{ provider: string; provider_user_id: string }>;
   public_metadata: Record<string, unknown>;
   banned: boolean;
 };
 type Membership = { userId: string; role: string };
+type Link = { providerId: string; issuer: string };
 
 // Email domains of customers who sign in through their own SSO: never imported.
 const ENTERPRISE_DOMAINS = new Set(['acme.com']);
+
+// Clerk external account provider -> the OAuth connection that replaces it, per Clerk organization ('personal' for
+// people without one). providerId is the connection's id in sso.ts; issuer is the provider's `iss`, exactly.
+const OAUTH_CONNECTIONS: Record<string, Record<string, Link>> = {
+  personal: {
+    oauth_google: { providerId: 'personal-google', issuer: 'https://accounts.google.com' },
+  },
+};
 
 const credential = { token: process.env.BETTER_IAM_TOKEN! };
 
@@ -283,11 +305,19 @@ for await (const line of createInterface({ input: createReadStream('clerk/users.
   }
 }
 
-function primaryEmail(user: ClerkUser): string | undefined {
-  return user.email_addresses
-    .find((address) => address.id === user.primary_email_address_id)
-    ?.email_address.trim()
-    .toLowerCase();
+function primaryAddress(user: ClerkUser) {
+  return user.email_addresses.find((address) => address.id === user.primary_email_address_id);
+}
+
+/** One link per Better IAM connection, from the user's Clerk external accounts. */
+function providerLinks(user: ClerkUser, clerkOrgId: string) {
+  const targets = OAUTH_CONNECTIONS[clerkOrgId] ?? {};
+  const links = new Map<string, Link & { subject: string }>();
+  for (const account of user.external_accounts ?? []) {
+    const target = targets[account.provider];
+    if (target) links.set(target.providerId, { ...target, subject: account.provider_user_id });
+  }
+  return [...links.values()];
 }
 
 async function existingEmails(tenantId: string): Promise<Set<string>> {
@@ -300,15 +330,14 @@ async function existingEmails(tenantId: string): Promise<Set<string>> {
 }
 
 async function importTenant(clerkOrgId: string, tenantId: string, memberships: Membership[]): Promise<void> {
-  const tenant = await iam.api.tenants.get(credential, { tenantId });
-  if (tenant.status !== 'active') return console.log(`${clerkOrgId}: waiting for its owner`);
   const roleIds = await applyClerkRoles(tenantId);
   const seen = await existingEmails(tenantId);
 
   const rows = memberships.flatMap(({ userId, role }) => {
     const user = users.get(userId);
-    const email = user && primaryEmail(user);
-    if (!user || !email || user.banned) return []; // no email, or banned: not imported
+    const address = user && primaryAddress(user);
+    const email = address?.email_address.trim().toLowerCase();
+    if (!user || !address || !email || user.banned) return []; // no email, or banned: not imported
     if (ENTERPRISE_DOMAINS.has(email.split('@')[1]!)) return []; // arrives through SSO
     if (seen.has(email)) return []; // already imported, or the owner
     seen.add(email);
@@ -319,6 +348,8 @@ async function importTenant(clerkOrgId: string, tenantId: string, memberships: M
       entry: {
         email,
         name,
+        emailVerified: address.verification?.status === 'verified',
+        providers: providerLinks(user, clerkOrgId),
         attributes: { clerkId: user.id, ...(typeof plan === 'string' ? { plan } : {}) },
         roleIds: roleIds.has(role) ? [roleIds.get(role)!] : [],
       },
@@ -356,8 +387,14 @@ await importTenant('personal', tenantMap.personal!, personal);
 npx tsx scripts/clerk-import-members.ts
 ```
 
-- Run it again after more owners accept, and during the dual run to pick up new Clerk sign-ups: existing addresses
-  are skipped.
+- Run it again during the dual run to pick up new Clerk sign-ups: existing addresses are skipped.
+- `emailVerified` is set only for addresses Clerk verified. Each Google account in `OAUTH_CONNECTIONS` becomes a
+  link, so that person's first Google sign-in finds their imported account. Add an entry for every provider and
+  tenant you recreate (`oauth_github` with `https://github.com`, for example); accounts without one get no link, and
+  those people sign in with a magic link.
+- The owner already exists, so the script skips them. If they sign in with Google, link it with
+  `iam.api.identities.linkProvider(credential, { tenantId, identityId, providerId, issuer, subject })`, which needs a
+  sign-in from the last five minutes.
 - Each batch of 100 is one transaction; a failed batch creates nobody, so fix the cause and run the script again.
 - The `id-map-*.json` files map each Clerk user ID to the new identity ID. Use them to rewrite user IDs stored in
   your own tables, and to move nested or private metadata into your database.
@@ -403,15 +440,18 @@ export const login = createOAuthLogin({
 iam.useProtocol(login);
 ```
 
-People who signed in to Clerk with Google and were imported (they were not excluded by domain) first sign in with a
-magic link, then [link Google](/docs/federation/oauth-sign-in#link-an-existing-account). An imported account blocks
-the first Google sign-in for the same address with `ACCOUNT_LINK_REQUIRED`.
+The connection `id` is the `providerId` in the import script's `OAUTH_CONNECTIONS`, so people who signed in to
+Clerk with Google sign in to their imported account, with its role, on their first Google sign-in. Someone who was
+not in the export is created on their first sign-in with a verified email.
 
 For a customer on Clerk's enterprise SAML, create a SAML connection in their tenant from their IdP's metadata with
 `saml.createConnection`, including `trustedEmailDomains`, and have their IT team add a second application in their
 IdP with the returned `entityId` and `acsUrl`. The steps are in [SAML](/docs/federation/saml#tenant-managed-connections)
 and [SAML single sign-on with Okta](/docs/guides/enterprise-sso-okta). Their people's first SSO sign-in creates
-their accounts, because the import skipped their domains.
+their accounts, because the import skipped their domains. To keep their Clerk roles instead, remove the domain from
+`ENTERPRISE_DOMAINS` once the connection exists and give each person a `providers` entry for it: the connection's
+`providerId` and `idpIssuer` (from `saml.createConnection` or `saml.getConnection`) and the NameID their IdP sends
+for them. For an OIDC connection such as `acme-entra`, use its `id`, its issuer, and the person's `sub`.
 
 </Step>
 <Step>
@@ -463,9 +503,10 @@ Switch one tenant at a time (or the whole application at once, if it has only th
 
 1. Check counts and sample people ([Verify it works](#verify-it-works)).
 2. Route that organization's sign-in to Better IAM. Clerk sessions already open keep working until they end.
-3. Tell people how to sign in the first time: a magic link, their company's SSO, or Google.
-4. For SSO customers, once everyone has signed in, restrict the tenant with `tenants.setAuthPolicy` and
-   `allowedMethods: ['federated']`.
+3. Tell people how to sign in the first time: a magic link, their company's SSO, or Google as before.
+4. For SSO customers, restrict the tenant with `tenants.setAuthPolicy` and `allowedMethods: ['federated']` once the
+   connection works and the owner's SSO account is linked (`identities.linkProvider`); people's first SSO sign-in
+   creates or finds their accounts without any other method.
 
 Keep the Clerk instance unchanged until the rollback window ends. To roll a tenant back, route it to Clerk again;
 accounts created and passwords set in Better IAM after the switch do not exist in Clerk. See
@@ -503,8 +544,12 @@ for (const [clerkOrgId, tenantId] of Object.entries(tenantMap)) {
   flat strings, numbers, or booleans). Declare it, or keep that metadata in your own database. See
   [INVALID_INPUT](/docs/reference/errors#invalid_input).
 </Accordion>
+<Accordion title="tenants.create fails with ACCESS_DENIED">
+  Only a root principal may pass `activate: true`. Sign in to the CLI as the root administrator and export that
+  token. See [ACCESS_DENIED](/docs/reference/errors#access_denied).
+</Accordion>
 <Accordion title="createMany fails with TENANT_INACTIVE">
-  The tenant's owner has not accepted the invitation yet. Resend it with `tenants.resendInvitation`. See
+  The tenant was created without `activate: true` and its owner has not accepted the invitation yet. See
   [TENANT_INACTIVE](/docs/reference/errors#tenant_inactive).
 </Accordion>
 <Accordion title="config.apply fails with INVALID_ACTION">
@@ -517,8 +562,15 @@ for (const [clerkOrgId, tenantId] of Object.entries(tenantMap)) {
   [Account linking](/docs/concepts/tenants-and-identities#account-linking).
 </Accordion>
 <Accordion title="Google sign-in fails with ACCOUNT_LINK_REQUIRED">
-  The person was imported, so an account with that email already exists. They sign in with a magic link and link
-  Google. See [ACCOUNT_LINK_REQUIRED](/docs/reference/errors#account_link_required).
+  The person was imported without a link to this connection: their Clerk user had no Google external account, or
+  `OAUTH_CONNECTIONS` had no entry for their tenant when they were imported. Add the link with
+  `identities.linkProvider` (Google's `sub` as the subject). See
+  [ACCOUNT_LINK_REQUIRED](/docs/reference/errors#account_link_required).
+</Accordion>
+<Accordion title="createMany fails with ACCOUNT_LINK_CONFLICT">
+  Two Clerk users in the same tenant list the same external account, or a person already has a link through that
+  connection. Fix the export, or find the existing link with `identities.listProviders`. See
+  [ACCOUNT_LINK_CONFLICT](/docs/reference/errors#account_link_conflict).
 </Accordion>
 </Accordions>
 
