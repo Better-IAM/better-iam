@@ -879,7 +879,8 @@ func (api *RoleMiningAPI) Suggest(ctx context.Context, credential core.Credentia
 			return Out[apitypes.RoleMiningSuggestOutput]{}, fmt.Errorf("%s is not iterable", jsString(raw))
 		}
 		for _, kind := range kinds.Values() {
-			if _, ok := miningKindRank[kind]; !ok {
+			// `kind in kindRank` also sees what every object inherits.
+			if _, ok := miningKindRank[kind]; !ok && !objectPrototypeNames[kind] {
 				return Out[apitypes.RoleMiningSuggestOutput]{}, invalidInput("Unknown suggestion kind")
 			}
 		}
@@ -953,7 +954,8 @@ func (api *RoleMiningAPI) Outliers(ctx context.Context, credential core.Credenti
 	if peerBy != "manager" && !byAttribute {
 		return Out[apitypes.RoleMiningOutliersOutput]{}, invalidInput("peerBy must be manager or attribute:{name}")
 	}
-	if byAttribute && (server.Catalog.IdentityAttributes == nil || !server.Catalog.IdentityAttributes.Has(attribute)) {
+	// `attribute in ctx.catalog.identityAttributes` also sees what every object inherits.
+	if byAttribute && !objectPrototypeNames[attribute] && (server.Catalog.IdentityAttributes == nil || !server.Catalog.IdentityAttributes.Has(attribute)) {
 		return Out[apitypes.RoleMiningOutliersOutput]{}, invalidInput("Unknown identity attribute " + attribute)
 	}
 	share := func(value any, fallback float64, name string) (float64, error) {
@@ -990,7 +992,16 @@ func (api *RoleMiningAPI) Outliers(ctx context.Context, credential core.Credenti
 					return nil, "", false
 				}
 			} else {
-				value = member(identity.Get("attributes"), attribute)
+				attributes := identity.Get("attributes")
+				value = member(attributes, attribute)
+				if isUndefined(value) && isPlainObject(attributes) && objectPrototypeNames[attribute] {
+					// An inherited member: Object.prototype itself (an object), or a method whose String() is its
+					// source text.
+					if attribute == "__proto__" {
+						return nil, "", false
+					}
+					value = "function " + attribute + "() { [native code] }"
+				}
 				if nullish(value) || typeOf(value) == "object" {
 					return nil, "", false
 				}

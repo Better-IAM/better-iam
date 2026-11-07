@@ -13,6 +13,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Better-IAM/better-iam/go/auth"
 	"github.com/Better-IAM/better-iam/go/core"
 )
 
@@ -174,6 +175,21 @@ func (f *directoryFixture) anaAgreement(tenantID, name, content string) *core.Ob
 func (f *directoryFixture) anaMember(tenantID, name string) (*core.Object, core.CredentialInput) {
 	f.t.Helper()
 	return f.person(tenantID, name)
+}
+
+// anaIdentity creates a member of a tenant with a password, as identities.create does, without signing it in.
+func (f *directoryFixture) anaIdentity(tenantID, name string) *core.Object {
+	f.t.Helper()
+	identity, err := core.Transact(f.ctx, f.iam.Store, func(ctx context.Context, tx core.IamStore) (*core.Object, error) {
+		return f.iam.Auth.CreateIdentity(ctx, tx, auth.CreateIdentityInput{
+			TenantID: tenantID, Email: name + "@acme.test", Name: name, Password: "a strong " + name + " password",
+			HasPassword: true, EmailVerified: true,
+		})
+	})
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	return identity
 }
 
 func anaID(record *core.Object) string { return jsString(record.Get("id")) }
