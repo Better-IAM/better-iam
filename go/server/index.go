@@ -25,12 +25,12 @@ type IamSessionTokens struct {
 // Jwks is the public signing and verification keys, as served at {basePath}/.well-known/jwks.json.
 func (t *IamSessionTokens) Jwks() (*core.Object, error) { return t.signer.PublicJwks() }
 
-// Verify verifies a session JWT for audience ("": the issuer) and then requires its stored session to be live: the
-// row, its identity and every revocation condition are re-validated. A revoked token fails with
+// Verify verifies a session JWT for options.Audience ("": the issuer) and then requires its stored session to be
+// live: the row, its identity and every revocation condition are re-validated. A revoked token fails with
 // SessionTokenError reason `revoked`.
-func (t *IamSessionTokens) Verify(ctx context.Context, token string, audience string) (*core.Object, error) {
+func (t *IamSessionTokens) Verify(ctx context.Context, token string, options SessionTokenVerifyOptions) (*core.Object, error) {
 	server := t.server
-	claims, err := t.signer.Verify(ctx, token, audience)
+	claims, err := t.signer.Verify(ctx, token, options.Audience)
 	if err != nil {
 		return nil, err
 	}
