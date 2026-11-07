@@ -327,9 +327,17 @@ func TestTrustUpdateComparesTagKeysAsSets(t *testing.T) {
 	if relabelled.Get("sessionsRevokedBefore") != cleared.Get("sessionsRevokedBefore") {
 		t.Fatalf("relabelled = %s", stringify(relabelled))
 	}
+	// Reordering the same keys is a change (trust.ts canonical() compares lists in order) but not a tightening, so
+	// the watermark stays.
 	f.patch("trusts", trustID, core.NewObject("allowedTagKeys", items("env", "team")))
-	_, err = f.updateTrust(f.rootCred, trustID, "allowedTagKeys", items("team", "env"))
-	trustExpectCode(t, err, "INVALID_INPUT")
+	f.advance(1000)
+	reordered, err := f.updateTrust(f.rootCred, trustID, "allowedTagKeys", items("team", "env"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stringify(reordered.Get("allowedTagKeys")) != `["team","env"]` || reordered.Get("sessionsRevokedBefore") != cleared.Get("sessionsRevokedBefore") {
+		t.Fatalf("reordered = %s", stringify(reordered))
+	}
 }
 
 func TestTrustUpdateRefusesNonRootNoOpsForeignFieldsRevokedAndStale(t *testing.T) {
@@ -737,7 +745,6 @@ func TestLinksCreateAndSwitchUseTheFlows(t *testing.T) {
 	_, betaOwner := f.organization("Beta", "owner@beta.test")
 	_, err := f.iam.API.Links.Create(f.ctx, f.owner, Input[apitypes.LinksCreateInput](body("targetCredential", core.NewObject("token", betaOwner.Token))))
 	trustSkipOnStub(t, err)
-	if err != nil {
-		t.Fatal(err)
-	}
+	// links.create delegates to the flows: this fixture's onboarding is not linked, so the flow refuses.
+	expectError(t, err, "LINKING_DISABLED", "Account linking disabled")
 }
