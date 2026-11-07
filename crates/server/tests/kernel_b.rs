@@ -307,8 +307,10 @@ fn composes_and_bootstraps_once() {
         let error = better_iam(options(|options| options.base_url = "not a url".into()))
             .err()
             .expect("refused");
-        // TypeScript throws a TypeError for an invalid baseURL, which the server reports as INTERNAL_ERROR.
-        assert_eq!(error.code, "INTERNAL_ERROR");
+        assert_eq!(
+            (error.code.as_str(), error.message.as_str()),
+            ("INVALID_CONFIG", "baseURL must be an absolute URL")
+        );
         let error = better_iam(options(|options| {
             options.http = Some(HttpOptions {
                 cookie_same_site: Some("none".into()),
@@ -1154,5 +1156,103 @@ fn inherited_roles_attached_policies_and_context_conditions() {
         .await;
         assert_eq!(refused.status(), 403);
         assert_eq!(json_of(&refused)["error"]["code"], json!("ACCESS_DENIED"));
+    });
+}
+
+/// A protocol mount answering every request with a JSON sign-in result, a cookie of its own and, when set, the
+/// `x-better-iam-redirect` hint (as the SAML ACS does for `afterSignIn`).
+struct SignInProtocol {
+    redirect: Option<&'static str>,
+}
+
+#[async_trait::async_trait]
+impl better_iam_server::http::ProtocolService for SignInProtocol {
+    fn base_path(&self) -> &str {
+        "/sso"
+    }
+    async fn handler(
+        &self,
+        _request: &http::Request<Bytes>,
+    ) -> better_iam_core::IamResult<Option<http::Response<Bytes>>> {
+        let mut builder = http::Response::builder()
+            .status(200)
+            .header("content-type", "application/json")
+            .header("set-cookie", "relay=1; Path=/sso");
+        if let Some(redirect) = self.redirect {
+            builder = builder.header("x-better-iam-redirect", redirect);
+        }
+        let body =
+            json!({ "token": "session-token", "session": { "expiresAt": 4_102_444_800_000_u64 } });
+        Ok(Some(builder.body(Bytes::from(body.to_string())).unwrap()))
+    }
+}
+
+#[test]
+fn protocol_redirect_hints_are_followed_only_to_trusted_targets() {
+    run(|| async {
+        let answer = |redirect: Option<&'static str>| async move {
+            let iam = better_iam(options(|options| {
+                options.trusted_origins = Some(vec!["https://app.example.com".into()]);
+            }))
+            .expect("server");
+            iam.use_protocol(Arc::new(SignInProtocol { redirect }));
+            iam.handler(request(Method::POST, "/sso/acs", &[], None))
+                .await
+        };
+        let cookies = |response: &http::Response<Bytes>| -> Vec<String> {
+            response
+                .headers()
+                .get_all("set-cookie")
+                .iter()
+                .map(|value| value.to_str().unwrap().to_owned())
+                .collect()
+        };
+        for (hint, location) in [
+            ("/home", "/home"),
+            (
+                "https://app.example.com/welcome?x=1",
+                "https://app.example.com/welcome?x=1",
+            ),
+            (
+                "https://iam.example.com/console",
+                "https://iam.example.com/console",
+            ),
+        ] {
+            let response = answer(Some(hint)).await;
+            assert_eq!(response.status(), 303, "{hint}");
+            assert_eq!(response.headers()["location"], location);
+            assert_eq!(response.headers()["cache-control"], "no-store");
+            assert!(
+                response.body().is_empty(),
+                "the token stays out of the page"
+            );
+            let set = cookies(&response);
+            assert_eq!(set.len(), 2, "{set:?}");
+            assert_eq!(set[0], "relay=1; Path=/sso");
+            assert!(
+                set[1].contains("better-iam.session=session-token"),
+                "{set:?}"
+            );
+        }
+        for hint in [
+            "//evil.example/x",
+            "https://evil.example/x",
+            "https://user:pass@app.example.com/x",
+            r"/a\b",
+            "/a\tb",
+            "",
+            "relative/path",
+        ] {
+            let response = answer(Some(hint)).await;
+            assert_eq!(response.status(), 200, "{hint:?}");
+            assert!(response.headers().get("x-better-iam-redirect").is_none());
+            assert!(response.headers().get("location").is_none());
+            let set = cookies(&response);
+            assert_eq!(set.len(), 2, "{set:?}");
+            assert!(!response.body().is_empty());
+        }
+        let response = answer(None).await;
+        assert_eq!(response.status(), 200);
+        assert_eq!(cookies(&response).len(), 2);
     });
 }

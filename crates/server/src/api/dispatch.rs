@@ -307,10 +307,12 @@ pub const ROUTE_PATHS: &[&str] = &[
     "identities/get",
     "identities/impersonate",
     "identities/invite",
+    "identities/linkProvider",
     "identities/list",
     "identities/listBindings",
     "identities/listGroups",
     "identities/listInvitations",
+    "identities/listProviders",
     "identities/listReports",
     "identities/listSessions",
     "identities/offboard",
@@ -321,6 +323,7 @@ pub const ROUTE_PATHS: &[&str] = &[
     "identities/setBoundary",
     "identities/setOwner",
     "identities/setStatus",
+    "identities/unlinkProvider",
     "identities/unlock",
     "identities/update",
     "impact/preview",
@@ -1539,6 +1542,9 @@ pub async fn dispatch(
         "identities/invite" => {
             answer(Box::pin(api.identities.invite(credential, Body::new(body))).await)
         }
+        "identities/linkProvider" => {
+            answer(Box::pin(api.identities.link_provider(credential, Body::new(body))).await)
+        }
         "identities/list" => {
             answer(Box::pin(api.identities.list(credential, Body::new(body))).await)
         }
@@ -1550,6 +1556,9 @@ pub async fn dispatch(
         }
         "identities/listInvitations" => {
             answer(Box::pin(api.identities.list_invitations(credential, Body::new(body))).await)
+        }
+        "identities/listProviders" => {
+            answer(Box::pin(api.identities.list_providers(credential, Body::new(body))).await)
         }
         "identities/listReports" => {
             answer(Box::pin(api.identities.list_reports(credential, Body::new(body))).await)
@@ -1592,6 +1601,9 @@ pub async fn dispatch(
         }
         "identities/setStatus" => {
             answer(Box::pin(api.identities.set_status(credential, Body::new(body))).await)
+        }
+        "identities/unlinkProvider" => {
+            answer(Box::pin(api.identities.unlink_provider(credential, Body::new(body))).await)
         }
         "identities/unlock" => {
             answer(Box::pin(api.identities.unlock(credential, Body::new(body))).await)

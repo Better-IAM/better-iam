@@ -832,8 +832,34 @@ impl Http {
             .push(Arc::new(MountedProtocol(protocol)));
     }
 
+    /// `followableRedirect(value)`: a redirect a protocol asks for (`x-better-iam-redirect`, the SAML ACS's
+    /// `afterSignIn`): a path on this site or a URL on this deployment's origin or one of `trustedOrigins`. Anything
+    /// else is not followed.
+    fn followable_redirect(&self, value: Option<&str>) -> Option<String> {
+        let value = value.filter(|value| !value.is_empty())?;
+        if value.encode_utf16().count() > 4096
+            || value
+                .chars()
+                .any(|c| c <= '\u{1f}' || c == '\u{7f}' || c == '\\')
+        {
+            return None;
+        }
+        if value.starts_with('/') {
+            return (!value.starts_with("//")).then(|| value.to_owned());
+        }
+        let target = url::Url::parse(value).ok()?;
+        (target.username().is_empty()
+            && target.password().is_none()
+            && self
+                .ctx
+                .config
+                .trusted_origins
+                .contains(&crate::hosts::url_origin(&target)))
+        .then(|| target.as_str().to_owned())
+    }
+
     /// `protocolResponse(request)`: the first mount that answers; a JSON answer with `token` and `session.expiresAt`
-    /// sets the session cookie.
+    /// sets the session cookie, and a followable `x-better-iam-redirect` turns the answer into a 303 to that page.
     async fn protocol_response(&self, request: &HttpRequest) -> IamResult<Option<HttpResponse>> {
         let mounts: Vec<Arc<dyn ProtocolMount>> = self
             .ctx
@@ -845,6 +871,12 @@ impl Http {
             let Some(mut response) = protocol.handle(request).await? else {
                 continue;
             };
+            let hint = header_joined(response.headers(), "x-better-iam-redirect");
+            let redirect = self.followable_redirect(hint.as_deref());
+            if hint.is_some() {
+                response.headers_mut().remove("x-better-iam-redirect");
+            }
+            let mut cookie = None;
             let json = response.status().is_success()
                 && header_str(response.headers(), "content-type")
                     .is_some_and(|value| value.contains("application/json"));
@@ -858,9 +890,31 @@ impl Http {
                         .and_then(Value::as_f64),
                 )
             {
-                let cookie =
-                    self.session_cookie(token, expires_at, self.persistent_for(request.headers()));
-                append_header(response.headers_mut(), "set-cookie", &cookie);
+                cookie = Some(self.session_cookie(
+                    token,
+                    expires_at,
+                    self.persistent_for(request.headers()),
+                ));
+            }
+            // A browser sign-in that finishes on a page: 303 there, carrying the protocol's cookies and the session
+            // cookie, never the body (the token stays out of the page).
+            if let Some(redirect) = redirect {
+                let mut headers = HeaderMap::new();
+                append_header(&mut headers, "location", &redirect);
+                append_header(&mut headers, "cache-control", "no-store");
+                for value in response.headers().get_all("set-cookie") {
+                    headers.append(http::header::SET_COOKIE, value.clone());
+                }
+                if let Some(cookie) = &cookie {
+                    append_header(&mut headers, "set-cookie", cookie);
+                }
+                let mut redirected = HttpResponse::new(Bytes::new());
+                *redirected.status_mut() = StatusCode::SEE_OTHER;
+                *redirected.headers_mut() = headers;
+                return Ok(Some(redirected));
+            }
+            if let Some(cookie) = &cookie {
+                append_header(response.headers_mut(), "set-cookie", cookie);
             }
             return Ok(Some(response));
         }

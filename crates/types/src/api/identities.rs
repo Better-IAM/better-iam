@@ -34,7 +34,7 @@ impl crate::routes::Operation for AcceptInvitation {
     };
 }
 
-/// Creates a person in the tenant, optionally with a password, a manager, and a scheduled deactivation date.
+/// Creates a person in the tenant, optionally with a password, a manager, a scheduled deactivation date, a verified email, and linked external sign-ins.
 ///
 /// `POST {basePath}/identities/create`: input [`CreateInput`], output [`CreateOutput`].
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
@@ -57,7 +57,7 @@ impl crate::routes::Operation for Create {
     };
 }
 
-/// Creates up to 100 people in one transaction, each with optional attributes, roles, groups, password, and expiry.
+/// Creates up to 100 people in one transaction, each with optional attributes, roles, groups, password, expiry, verified email, and linked external sign-ins.
 ///
 /// `POST {basePath}/identities/createMany`: input [`CreateManyInput`], output [`CreateManyOutput`].
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
@@ -195,6 +195,29 @@ impl crate::routes::Operation for Invite {
     };
 }
 
+/// Links an external sign-in (OAuth/OIDC or SAML) to an existing account, so that IdP account signs in to it without an account-linking step.
+///
+/// `POST {basePath}/identities/linkProvider`: input [`LinkProviderInput`], output [`LinkProviderOutput`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub struct LinkProvider;
+
+impl crate::routes::Operation for LinkProvider {
+    type Input = LinkProviderInput;
+    type Output = LinkProviderOutput;
+    const ROUTE: crate::routes::Route = crate::routes::Route {
+        path: "identities/linkProvider",
+        group: "identities",
+        method: "linkProvider",
+        public: false,
+        call: crate::routes::Call::CredentialInput,
+        tenant_bound: false,
+        sets_session_cookie: false,
+        reads_device_cookie: false,
+        input: "api::identities::LinkProviderInput",
+        output: "api::identities::LinkProviderOutput",
+    };
+}
+
 /// Lists the tenant's people and service accounts, with filters and paging.
 ///
 /// `POST {basePath}/identities/list`: input [`ListInput`], output [`ListOutput`].
@@ -284,6 +307,29 @@ impl crate::routes::Operation for ListInvitations {
         reads_device_cookie: false,
         input: "api::identities::ListInvitationsInput",
         output: "api::identities::ListInvitationsOutput",
+    };
+}
+
+/// Lists the external sign-ins linked to an account, sorted by provider.
+///
+/// `POST {basePath}/identities/listProviders`: input [`ListProvidersInput`], output [`ListProvidersOutput`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub struct ListProviders;
+
+impl crate::routes::Operation for ListProviders {
+    type Input = ListProvidersInput;
+    type Output = ListProvidersOutput;
+    const ROUTE: crate::routes::Route = crate::routes::Route {
+        path: "identities/listProviders",
+        group: "identities",
+        method: "listProviders",
+        public: false,
+        call: crate::routes::Call::CredentialInput,
+        tenant_bound: false,
+        sets_session_cookie: false,
+        reads_device_cookie: false,
+        input: "api::identities::ListProvidersInput",
+        output: "api::identities::ListProvidersOutput",
     };
 }
 
@@ -517,6 +563,29 @@ impl crate::routes::Operation for SetStatus {
     };
 }
 
+/// Removes a linked external sign-in; that IdP account no longer signs in to this account.
+///
+/// `POST {basePath}/identities/unlinkProvider`: input [`UnlinkProviderInput`], output [`UnlinkProviderOutput`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub struct UnlinkProvider;
+
+impl crate::routes::Operation for UnlinkProvider {
+    type Input = UnlinkProviderInput;
+    type Output = UnlinkProviderOutput;
+    const ROUTE: crate::routes::Route = crate::routes::Route {
+        path: "identities/unlinkProvider",
+        group: "identities",
+        method: "unlinkProvider",
+        public: false,
+        call: crate::routes::Call::CredentialInput,
+        tenant_bound: false,
+        sets_session_cookie: false,
+        reads_device_cookie: false,
+        input: "api::identities::UnlinkProviderInput",
+        output: "api::identities::UnlinkProviderOutput",
+    };
+}
+
 /// Clears the rate-limit counters that lock a person out of sign-in, recovery, and MFA after too many attempts.
 ///
 /// `POST {basePath}/identities/unlock`: input [`UnlockInput`], output [`UnlockOutput`].
@@ -590,6 +659,10 @@ pub struct CreateInput {
     pub expires_at: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub manager_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub email_verified: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub providers: Option<Vec<crate::schemas::ProviderLinkInput>>,
 }
 
 /// Result (`data`) of `identities/create`.
@@ -618,6 +691,10 @@ pub struct CreateManyInputIdentitiesItem {
     pub group_ids: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expires_at: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub email_verified: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub providers: Option<Vec<crate::schemas::ProviderLinkInput>>,
 }
 
 /// Result (`data`) of `identities/createMany`.
@@ -1025,6 +1102,23 @@ pub struct InviteOutput {
     pub group_ids: Vec<String>,
 }
 
+/// Request body of `identities/linkProvider`.
+#[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LinkProviderInput {
+    pub tenant_id: String,
+    pub identity_id: String,
+    /// The connection's provider key: an OAuth connection's `id`, a SAML connection's `providerId`.
+    pub provider_id: String,
+    /// The IdP's issuer exactly as the protocol reports it (OIDC `iss`, SAML IdP entity ID).
+    pub issuer: String,
+    /// The person's stable ID at the IdP (OIDC `sub`, SAML NameID).
+    pub subject: String,
+}
+
+/// Result (`data`) of `identities/linkProvider`.
+pub type LinkProviderOutput = crate::schemas::ProviderLink;
+
 /// Request body of `identities/list`.
 #[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1140,6 +1234,17 @@ pub struct ListInvitationsOutputItemItem {
 
 /// Result (`data`) of `identities/listInvitations`.
 pub type ListInvitationsOutput = Vec<ListInvitationsOutputItemItem>;
+
+/// Request body of `identities/listProviders`.
+#[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ListProvidersInput {
+    pub tenant_id: String,
+    pub identity_id: String,
+}
+
+/// Result (`data`) of `identities/listProviders`.
+pub type ListProvidersOutput = Vec<crate::schemas::ProviderLink>;
 
 /// Request body of `identities/listReports`.
 #[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
@@ -1440,6 +1545,18 @@ string_enum! {
 
 /// Result (`data`) of `identities/setStatus`.
 pub type SetStatusOutput = crate::schemas::PublicIdentity;
+
+/// Request body of `identities/unlinkProvider`.
+#[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UnlinkProviderInput {
+    pub tenant_id: String,
+    pub identity_id: String,
+    pub link_id: String,
+}
+
+/// Result (`data`) of `identities/unlinkProvider`.
+pub type UnlinkProviderOutput = crate::schemas::ProviderLink;
 
 /// Request body of `identities/unlock`.
 #[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]

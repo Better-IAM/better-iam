@@ -100,6 +100,14 @@ impl IdentitiesApi {
     ) -> IamResult<Reply<identities::InviteOutput>> {
         Err(not_ported("identities invite"))
     }
+    /// `identities/linkProvider`.
+    pub async fn link_provider(
+        &self,
+        credential: &CredentialInput,
+        input: Body<identities::LinkProviderInput>,
+    ) -> IamResult<Reply<identities::LinkProviderOutput>> {
+        Err(not_ported("identities linkProvider"))
+    }
     /// `identities/list`.
     pub async fn list(
         &self,
@@ -131,6 +139,14 @@ impl IdentitiesApi {
         input: Body<identities::ListInvitationsInput>,
     ) -> IamResult<Reply<identities::ListInvitationsOutput>> {
         Err(not_ported("identities listInvitations"))
+    }
+    /// `identities/listProviders`.
+    pub async fn list_providers(
+        &self,
+        credential: &CredentialInput,
+        input: Body<identities::ListProvidersInput>,
+    ) -> IamResult<Reply<identities::ListProvidersOutput>> {
+        Err(not_ported("identities listProviders"))
     }
     /// `identities/listReports`.
     pub async fn list_reports(
@@ -211,6 +227,14 @@ impl IdentitiesApi {
         input: Body<identities::SetStatusInput>,
     ) -> IamResult<Reply<identities::SetStatusOutput>> {
         Err(not_ported("identities setStatus"))
+    }
+    /// `identities/unlinkProvider`.
+    pub async fn unlink_provider(
+        &self,
+        credential: &CredentialInput,
+        input: Body<identities::UnlinkProviderInput>,
+    ) -> IamResult<Reply<identities::UnlinkProviderOutput>> {
+        Err(not_ported("identities unlinkProvider"))
     }
     /// `identities/unlock`.
     pub async fn unlock(

@@ -10313,6 +10313,17 @@ string_enum! {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderLinkInput {
+    /// The connection's provider key: an OAuth connection's `id`, a SAML connection's `providerId`.
+    pub provider_id: String,
+    /// The IdP's issuer exactly as the protocol reports it (OIDC `iss`, SAML IdP entity ID).
+    pub issuer: String,
+    /// The person's stable ID at the IdP (OIDC `sub`, SAML NameID).
+    pub subject: String,
+}
+
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Relationship {
@@ -10340,6 +10351,21 @@ string_enum! {
         Identity = "identity",
         Group = "group",
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderLink {
+    pub id: String,
+    pub identity_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created_at: Option<f64>,
+    /// The connection's provider key: an OAuth connection's `id`, a SAML connection's `providerId`.
+    pub provider_id: String,
+    /// The IdP's issuer exactly as the protocol reports it (OIDC `iss`, SAML IdP entity ID).
+    pub issuer: String,
+    /// The person's stable ID at the IdP (OIDC `sub`, SAML NameID).
+    pub subject: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
@@ -29260,12 +29286,12 @@ pub struct IncomingMessage {
     pub construct: Option<serde_json::Value>,
     /// Function (not serializable)
     #[serde(
-        rename = "__@captureRejectionSymbol@14019",
+        rename = "__@captureRejectionSymbol@14063",
         default,
         skip_serializing_if = "Option::is_none",
         with = "crate::runtime::present"
     )]
-    pub capture_rejection_symbol_14019: Option<serde_json::Value>,
+    pub capture_rejection_symbol_14063: Option<serde_json::Value>,
 }
 
 string_enum! {
@@ -29356,12 +29382,12 @@ pub struct Socket {
     pub allow_half_open: bool,
     /// Function (not serializable)
     #[serde(
-        rename = "__@captureRejectionSymbol@14019",
+        rename = "__@captureRejectionSymbol@14063",
         default,
         skip_serializing_if = "Option::is_none",
         with = "crate::runtime::present"
     )]
-    pub capture_rejection_symbol_14019: Option<serde_json::Value>,
+    pub capture_rejection_symbol_14063: Option<serde_json::Value>,
     /// Returns whether the stream was destroyed or errored before emitting `'end'`.
     pub readable_aborted: bool,
     /// Is `true` if it is safe to call {@link read}, which means
@@ -29903,12 +29929,12 @@ pub struct ServerResponse {
     pub construct: Option<serde_json::Value>,
     /// Function (not serializable)
     #[serde(
-        rename = "__@captureRejectionSymbol@14019",
+        rename = "__@captureRejectionSymbol@14063",
         default,
         skip_serializing_if = "Option::is_none",
         with = "crate::runtime::present"
     )]
-    pub capture_rejection_symbol_14019: Option<serde_json::Value>,
+    pub capture_rejection_symbol_14063: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
