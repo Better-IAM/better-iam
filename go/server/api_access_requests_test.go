@@ -38,7 +38,7 @@ func TestAccessRequestsApproveUnderTheReviewersAuthority(t *testing.T) {
 	_, err = call(api.Create, aliceToken, core.NewObject("tenantId", tenant, "roleIds", []any{"missing"}))
 	expectError(t, err, "NOT_FOUND", "Resource not found")
 	_, err = call(api.Create, reviewerToken, core.NewObject("tenantId", tenant, "roleIds", []any{admin}))
-	expectCode(t, err, "ACCESS_DENIED", 403)
+	expectCodeStatus(t, err, "ACCESS_DENIED", 403)
 	request := f.obj(call(api.Create, aliceToken, core.NewObject("tenantId", tenant, "roleIds", []any{admin, admin}, "justification", "Incident 42", "durationSeconds", 2*3600.0)))
 	requestID := jsString(request.Get("id"))
 	expectJSON(t, "request", request, `{"id":"`+requestID+`","tenantId":"`+tenant+`","requesterId":"`+aliceID+`","roleIds":["role-docadmin"],"status":"pending","createdAt":`+
@@ -49,7 +49,7 @@ func TestAccessRequestsApproveUnderTheReviewersAuthority(t *testing.T) {
 		t.Errorf("listMine = %s", stringify(certRecordList(mine)))
 	}
 	_, err = call(api.List, aliceToken, core.NewObject("tenantId", tenant))
-	expectCode(t, err, "ACCESS_DENIED", 403)
+	expectCodeStatus(t, err, "ACCESS_DENIED", 403)
 	if pending := f.list(call(api.List, reviewerToken, core.NewObject("tenantId", tenant, "status", "pending"))); len(pending) != 1 || pending[0].Get("id") != requestID {
 		t.Errorf("pending = %s", stringify(certRecordList(pending)))
 	}
@@ -64,7 +64,7 @@ func TestAccessRequestsApproveUnderTheReviewersAuthority(t *testing.T) {
 	}
 	// A requester cannot approve their own request, and a reviewer needs a grant authority.
 	_, err = call(api.Approve, aliceToken, core.NewObject("tenantId", tenant, "requestId", requestID))
-	expectCode(t, err, "ACCESS_DENIED", 403)
+	expectCodeStatus(t, err, "ACCESS_DENIED", 403)
 	_, err = call(api.Approve, reviewerToken, core.NewObject("tenantId", tenant, "requestId", requestID))
 	expectError(t, err, "GRANT_AUTHORITY_REQUIRED", "An active delegated grant authority is required")
 	f.seed("grantAuthorities", core.NewObject("id", "authority-reviewer", "tenantId", tenant, "identityId", reviewerID,
@@ -101,7 +101,7 @@ func TestAccessRequestsApproveUnderTheReviewersAuthority(t *testing.T) {
 	}
 	third := f.obj(call(api.Create, aliceToken, core.NewObject("tenantId", tenant, "roleIds", []any{admin})))
 	_, err = call(api.Cancel, reviewerToken, core.NewObject("tenantId", tenant, "requestId", third.Get("id")))
-	expectCode(t, err, "ACCESS_DENIED", 403)
+	expectCodeStatus(t, err, "ACCESS_DENIED", 403)
 	cancelled := f.obj(call(api.Cancel, aliceToken, core.NewObject("tenantId", tenant, "requestId", third.Get("id"))))
 	if cancelled.Get("status") != "cancelled" || cancelled.Get("reviewedAt") != f.now() {
 		t.Errorf("cancelled = %s", stringify(cancelled))

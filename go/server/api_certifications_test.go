@@ -199,7 +199,7 @@ func okList(t *testing.T, value any, err error) []*core.Object {
 	return out
 }
 
-func expectCode(t *testing.T, err error, code string, status int) {
+func expectCodeStatus(t *testing.T, err error, code string, status int) {
 	t.Helper()
 	if err == nil {
 		t.Fatalf("expected %s, got no error", code)
@@ -218,8 +218,6 @@ func skipUnported(t *testing.T, err error) {
 		t.Skipf("blocked on an unported module: %s", known.Message)
 	}
 }
-
-func stringify(value any) string { return core.MustStringify(value) }
 
 func expectJSON(t *testing.T, label string, value any, want string) {
 	t.Helper()
@@ -272,7 +270,7 @@ func TestCertificationsSnapshotDecideAndClose(t *testing.T) {
 	rootBinding := f.bind("b6", writers, "identity", aliceID, f.authority)
 
 	_, err := call(api.Create, f.adminToken, core.NewObject("tenantId", tenant, "name", "Bad", "reviewerIds", []any{"missing"}))
-	expectCode(t, err, "", 404)
+	expectCodeStatus(t, err, "", 404)
 	campaign := f.obj(call(api.Create, f.adminToken, core.NewObject("tenantId", tenant, "name", "Q3 access review", "reviewerIds", []any{carolID}, "undecided", "revoke")))
 	// Owner bindings (protected roles) are never part of a campaign.
 	if campaign.Get("items") != 6.0 || campaign.Get("status") != "open" || campaign.Get("reviewerMode") != "named" {
@@ -305,14 +303,14 @@ func TestCertificationsSnapshotDecideAndClose(t *testing.T) {
 	}
 	carolOwn := itemWhere(allItems, "carol@acme.test", "Reviewers")
 	_, err = call(api.Decide, carolToken, core.NewObject("tenantId", tenant, "campaignId", campaignID, "decisions", decisionList(decision(jsString(carolOwn.Get("id")), "keep"))))
-	expectCode(t, err, "SELF_REVIEW", 403)
+	expectCodeStatus(t, err, "SELF_REVIEW", 403)
 	aliceReaders := jsString(itemWhere(allItems, "alice@acme.test", "Readers").Get("id"))
 	// Dave holds the review permission but is not a reviewer of this campaign.
 	_, err = call(api.Decide, f.token(dave), core.NewObject("tenantId", tenant, "campaignId", campaignID, "decisions", decisionList(decision(aliceReaders, "keep"))))
-	expectCode(t, err, "", 403)
+	expectCodeStatus(t, err, "", 403)
 	// Alice lacks iam:certifications:review altogether.
 	_, err = call(api.Decide, f.token(alice), core.NewObject("tenantId", tenant, "campaignId", campaignID, "decisions", decisionList(decision(aliceReaders, "keep"))))
-	expectCode(t, err, "", 403)
+	expectCodeStatus(t, err, "", 403)
 	// Input checks.
 	_, err = call(api.Decide, carolToken, core.NewObject("tenantId", tenant, "campaignId", campaignID, "decisions", []any{}))
 	expectError(t, err, "INVALID_INPUT", "decisions must contain 1 to 200 entries")
@@ -376,7 +374,7 @@ func TestCertificationsSnapshotDecideAndClose(t *testing.T) {
 		t.Errorf("binding deletions audited: %d", len(deletes))
 	}
 	_, err = call(api.Decide, f.adminToken, core.NewObject("tenantId", tenant, "campaignId", campaignID, "decisions", decisionList(decision(jsString(failed.Get("id")), "keep"))))
-	expectCode(t, err, "CONFLICT", 409)
+	expectCodeStatus(t, err, "CONFLICT", 409)
 	_, err = call(api.Close, f.adminToken, core.NewObject("tenantId", tenant, "campaignId", campaignID))
 	expectError(t, err, "CONFLICT", "The campaign is already closed")
 	expectJSON(t, "delete", f.obj(call(api.Delete, f.adminToken, core.NewObject("tenantId", tenant, "campaignId", campaignID))), `{"deleted":true}`)
@@ -517,12 +515,12 @@ func TestCertificationsManagerReviewsAndReminders(t *testing.T) {
 	}
 	f.seed("tenants", core.NewObject("id", "other", "tenantId", "other", "name", "Other", "type", "organization", "parentId", tenant, "status", "active", "createdAt", 1.0))
 	_, err = call(api.ListMine, miaToken, core.NewObject("tenantId", "other"))
-	expectCode(t, err, "ACCESS_DENIED", 403)
+	expectCodeStatus(t, err, "ACCESS_DENIED", 403)
 
 	// Reminders before anyone decided: Mia for her three, Nina for the five fallback items.
 	ninaToken := f.token(people["nina"])
 	_, err = call(api.Remind, ninaToken, core.NewObject("tenantId", tenant, "campaignId", campaignID))
-	expectCode(t, err, "", 403)
+	expectCodeStatus(t, err, "", 403)
 	expectJSON(t, "remind", f.obj(call(api.Remind, f.adminToken, core.NewObject("tenantId", tenant, "campaignId", campaignID))), `{"reminded":2,"pending":8}`)
 	f.dispatch()
 	var reminders []string
@@ -543,16 +541,16 @@ func TestCertificationsManagerReviewsAndReminders(t *testing.T) {
 		return call(api.Decide, token, core.NewObject("tenantId", tenant, "campaignId", campaignID, "decisions", decisionList(decision(itemID, "keep"))))
 	}
 	_, err = decideAs(miaToken, item("alice@acme.test", "Readers"))
-	expectCode(t, err, "", 403)
+	expectCodeStatus(t, err, "", 403)
 	_, err = decideAs(ninaToken, item("alice@acme.test", "Readers"))
 	expectError(t, err, "ACCESS_DENIED", "This item is assigned to the person's manager")
 	_, err = decideAs(ninaToken, item("nina@acme.test", "Reviewers"))
-	expectCode(t, err, "SELF_REVIEW", 403)
+	expectCodeStatus(t, err, "SELF_REVIEW", 403)
 	rexToken := f.token(people["rex"])
 	_, err = decideAs(rexToken, item("carl@acme.test", "Readers"))
 	expectError(t, err, "ACCESS_DENIED", "You are not a reviewer of this campaign")
 	_, err = decideAs(rexToken, item("bob@acme.test", "Readers"))
-	expectCode(t, err, "ACCESS_DENIED", 403)
+	expectCodeStatus(t, err, "ACCESS_DENIED", 403)
 	expectJSON(t, "nina decides", f.obj(call(api.Decide, ninaToken, core.NewObject("tenantId", tenant, "campaignId", campaignID, "decisions", decisionList(
 		decision(item("carl@acme.test", "Readers"), "keep"),
 		decision(item("dana@acme.test", "Readers"), "revoke"),
@@ -567,9 +565,9 @@ func TestCertificationsManagerReviewsAndReminders(t *testing.T) {
 	_, err = review(miaToken, decisionList(decision(item("carl@acme.test", "Readers"), "keep")), tenant)
 	expectError(t, err, "ACCESS_DENIED", "This item is not assigned to you")
 	_, err = review(miaToken, decisionList(decision("missing", "keep")), tenant)
-	expectCode(t, err, "ACCESS_DENIED", 403)
+	expectCodeStatus(t, err, "ACCESS_DENIED", 403)
 	_, err = review(miaToken, decisionList(decision(item("alice@acme.test", "Readers"), "keep")), "other")
-	expectCode(t, err, "", 403)
+	expectCodeStatus(t, err, "", 403)
 	_, err = review(miaToken, []any{}, tenant)
 	expectError(t, err, "INVALID_INPUT", "decisions must contain 1 to 200 entries")
 	_, err = review(miaToken, []any{"x"}, tenant)
@@ -577,7 +575,7 @@ func TestCertificationsManagerReviewsAndReminders(t *testing.T) {
 	_, err = review(miaToken, decisionList(core.NewObject("decision", "keep")), tenant)
 	expectError(t, err, "INVALID_INPUT", "Invalid itemId")
 	_, err = review(rexToken, decisionList(decision(item("alice@acme.test", "Readers"), "keep")), tenant)
-	expectCode(t, err, "ACCESS_DENIED", 403)
+	expectCodeStatus(t, err, "ACCESS_DENIED", 403)
 	expectJSON(t, "review", f.obj(review(miaToken, decisionList(
 		decision(item("alice@acme.test", "Readers"), "keep"),
 		decision(item("alice@acme.test", "Writers"), "revoke", "note", "Moved team"),
@@ -613,7 +611,7 @@ func TestCertificationsManagerReviewsAndReminders(t *testing.T) {
 	_, err = review(miaToken, decisionList(decision(item("bob@acme.test", "Readers"), "keep")), tenant)
 	expectError(t, err, "CONFLICT", "The campaign is closed")
 	_, err = call(api.Remind, f.adminToken, core.NewObject("tenantId", tenant, "campaignId", campaignID))
-	expectCode(t, err, "CONFLICT", 409)
+	expectCodeStatus(t, err, "CONFLICT", 409)
 	if list := f.list(call(api.ListMine, miaToken, core.NewObject("tenantId", tenant))); len(list) != 0 {
 		t.Errorf("worklist after close = %d", len(list))
 	}
@@ -786,7 +784,7 @@ func TestCertificationWorkerWithoutRevocations(t *testing.T) {
 	_, err := f.iam.CloseOverdueCertifications(ctx, core.NewObject("tenantId", 5.0))
 	expectError(t, err, "INVALID_INPUT", "Invalid tenantId")
 	_, err = f.iam.CloseOverdueCertifications(ctx, core.NewObject("tenantId", "missing"))
-	expectCode(t, err, "NOT_FOUND", 404)
+	expectCodeStatus(t, err, "NOT_FOUND", 404)
 	f.advance(2 * certDay)
 	result := must(f.iam.CloseOverdueCertifications(ctx, core.NewObject("tenantId", tenant)))
 	closedList, _ := result.Get("closed").([]any)

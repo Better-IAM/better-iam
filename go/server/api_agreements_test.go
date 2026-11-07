@@ -161,7 +161,7 @@ func TestAgreementsPolicyNamesOptionalAndSelfService(t *testing.T) {
 
 	// Management needs permissions; names are unique; members only accept for themselves.
 	_, err := call(api.Create, s.aliceToken, core.NewObject("tenantId", tenant, "name", "Mine", "content", "x"))
-	expectCode(t, err, "ACCESS_DENIED", 403)
+	expectCodeStatus(t, err, "ACCESS_DENIED", 403)
 	_, err = call(api.Create, s.adminToken, core.NewObject("tenantId", tenant, "name", "beta PROGRAM", "content", "x"))
 	expectError(t, err, "CONFLICT", "An agreement with this name exists")
 	_, err = call(api.Create, s.adminToken, core.NewObject("tenantId", tenant, "name", "Linked", "content", "x", "url", "javascript:alert(1)"))
