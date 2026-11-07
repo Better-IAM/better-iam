@@ -182,7 +182,7 @@ pub async fn packages_naming(
     let groups: IndexSet<&String> = backing_group_ids.unwrap_or(&[]).iter().collect();
     let mut names: Vec<String> = Vec::new();
     for pkg in find(reader, "accessPackages", tenant_id).await? {
-        let rule = pkg.get("autoAssign");
+        let rule = pkg.get("autoAssign").filter(|rule| !rule.is_null());
         let names_it = rule_values(rule, key)?
             .iter()
             .any(|value| wanted.contains(value))

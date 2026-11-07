@@ -335,9 +335,12 @@ pub async fn suggest_birthright(
         }
         let mut existing: Vec<&Record> = Vec::new();
         for pkg in &packages {
-            if rule_values(pkg.get("autoAssign"), rule_key(kind))?
-                .iter()
-                .any(|value| chain.contains(value))
+            if rule_values(
+                pkg.get("autoAssign").filter(|rule| !rule.is_null()),
+                rule_key(kind),
+            )?
+            .iter()
+            .any(|value| chain.contains(value))
             {
                 existing.push(pkg);
             }
