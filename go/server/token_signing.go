@@ -257,6 +257,12 @@ func CreateSessionTokenSigner(options *SessionTokenSigningOptions, issuer string
 	}, nil
 }
 
+// SessionTokenVerifyOptions are the options of an in-process session JWT verification (`{ audience? }`).
+type SessionTokenVerifyOptions struct {
+	// Audience is the audience the token must name ("": the issuer).
+	Audience string `json:"audience,omitempty"`
+}
+
 // SessionTokenSigner is token-signing.ts SessionTokenSigner.
 type SessionTokenSigner struct {
 	// Issuer The `iss` of every token.
