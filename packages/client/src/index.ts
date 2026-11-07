@@ -144,7 +144,7 @@ const noInputAuthMethods = new Set([
  * Methods outside `auth` whose only server parameter is the credential. `ClientArguments` types them as
  * `(options?)`, so the runtime must read their first argument as call options too, never as the request body.
  */
-const noInputMethods = new Set(['sts/getCallerIdentity', 'links/list']);
+const noInputMethods = new Set(['sts/getCallerIdentity', 'links/list', 'clearances/templates']);
 /** Top-level authorization routes that take a plain input instead of a group/method pair. */
 const topLevelRoutes = new Set(['authorize', 'authorizeMany', 'listAccessible']);
 /**

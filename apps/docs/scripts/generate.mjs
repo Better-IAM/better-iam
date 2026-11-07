@@ -312,29 +312,80 @@ async function* walk(dir) {
   }
 }
 
+/**
+ * The error classes whose first constructor argument is a stable code, and where each one surfaces: `http` errors
+ * reach callers as the `{ error: { code } }` envelope with an HTTP status, `client` errors are raised in the browser
+ * client before or instead of a server answer (status 0 or the raw HTTP status), and `cli` errors end a command.
+ */
+const errorClasses = {
+  IamError: 'http',
+  IamRequestError: 'http',
+  IamH3Error: 'http',
+  IamClientError: 'client',
+  CliError: 'cli',
+};
+/** Files whose `{ allowed, reason }` literals are authorization decisions (the core evaluator and the server's steps). */
+const decisionSources = [
+  'packages/core/src/policy.ts',
+  'packages/server/src/decisions.ts',
+  'packages/server/src/clearances.ts',
+  'packages/server/src/agents.ts',
+];
+/** The `## reason:{name}` sections of errors.md describe decision reasons rather than error codes. */
+const reasonPrefix = 'reason:';
+const messageLiteral = String.raw`(\`(?:[^\`\\]|\\.)*\`|'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*"|[^,)]+)`;
+
 async function generateErrors() {
   const codes = new Map();
-  const pattern =
-    /new IamError\(\s*'([A-Z][A-Z0-9_]+)'\s*,\s*(`(?:[^`\\]|\\.)*`|'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*"|[^,)]+)\s*(?:,\s*(\d{3}))?/g;
+  const classNames = Object.keys(errorClasses).join('|');
+  // Codes are SCREAMING_SNAKE_CASE, except SCIM's RFC 7644 `scimType` values (`invalidFilter`) and `configuration`.
+  const pattern = new RegExp(
+    String.raw`new (${classNames})\(\s*'([A-Za-z][A-Za-z0-9_]+)'\s*,\s*${messageLiteral}\s*(?:,\s*(\d{3}))?`,
+    'g',
+  );
   // Codes raised through subclasses: `class SessionNetworkMismatch extends IamError { constructor() { super('CODE', …, 401) } }`.
-  const subclass =
-    /class\s+\w+\s+extends\s+IamError[\s\S]{0,600}?super\(\s*'([A-Z][A-Z0-9_]+)'\s*,\s*(`(?:[^`\\]|\\.)*`|'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*"|[^,)]+)\s*(?:,\s*(\d{3}))?/g;
+  const subclass = new RegExp(
+    String.raw`class\s+\w+\s+extends\s+(IamError)[\s\S]{0,600}?super\(\s*'([A-Z][A-Z0-9_]+)'\s*,\s*${messageLiteral}\s*(?:,\s*(\d{3}))?`,
+    'g',
+  );
+  // Local helpers that take the code as their first parameter: `const refuse = async (code: string, …) => … new IamError(code, …)`.
+  const helper = new RegExp(
+    String.raw`(?:(?:const|let)\s+(\w+)\s*=\s*(?:async\s*)?|function\s+(\w+)\s*)\(\s*(\w+)\s*:\s*string\b[\s\S]{0,600}?new (${classNames})\(\s*\3\s*,`,
+    'g',
+  );
   for (const pkg of await readdir(join(root, 'packages'))) {
     const src = join(root, 'packages', pkg, 'src');
     try {
       for await (const file of walk(src)) {
         const text = await readFile(file, 'utf8');
-        for (const match of [...text.matchAll(pattern), ...text.matchAll(subclass)]) {
-          const [, code, rawMessage, status] = match;
+        const matches = [...text.matchAll(pattern), ...text.matchAll(subclass)].map(
+          ([, className, code, rawMessage, status]) => ({ className, code, rawMessage, status }),
+        );
+        for (const [, constName, functionName, , className] of text.matchAll(helper)) {
+          const name = constName ?? functionName;
+          const calls = new RegExp(
+            String.raw`(?<![\w$.])${name}\(\s*'([A-Za-z][A-Za-z0-9_]+)'\s*,\s*${messageLiteral}\s*(?:,\s*(\d{3}))?`,
+            'g',
+          );
+          for (const [, code, rawMessage, status] of text.matchAll(calls))
+            matches.push({ className, code, rawMessage, status });
+        }
+        for (const { className, code, rawMessage, status } of matches) {
+          const kind = errorClasses[className];
           const entry = codes.get(code) ?? {
             code,
             statuses: new Set(),
             messages: new Set(),
             packages: new Set(),
+            kinds: new Set(),
+            classes: new Set(),
             count: 0,
           };
           entry.count++;
-          entry.statuses.add(Number(status ?? 400));
+          entry.kinds.add(kind);
+          entry.classes.add(className);
+          // Only server errors carry an HTTP status; client errors use 0 or the response's own status.
+          if (kind === 'http') entry.statuses.add(Number(status ?? 400));
           entry.packages.add(`@better-iam/${pkg}`.replace('@better-iam/better-iam', 'better-iam'));
           const literal = rawMessage.trim();
           if (/^['"`]/.test(literal)) {
@@ -357,12 +408,39 @@ async function generateErrors() {
       statuses: [...entry.statuses].sort(),
       messages: [...entry.messages],
       packages: [...entry.packages].sort(),
+      kinds: [...entry.kinds].sort(),
+      classes: [...entry.classes].sort(),
       occurrences: entry.count,
     }))
     .sort((a, b) => a.code.localeCompare(b.code));
   await writeFile(join(out, 'errors.json'), JSON.stringify(list, null, 1));
+
+  // Decision reasons: the `reason` of a `Decision`, returned (not thrown) by evaluatePolicy and the simulation APIs.
+  const reasons = new Map();
+  for (const file of decisionSources) {
+    const text = await readFile(join(root, file), 'utf8');
+    for (const [, allowed, reason] of text.matchAll(
+      /\ballowed:\s*(true|false),\s*reason:\s*'([A-Za-z][\w-]*)'/g,
+    )) {
+      const entry = reasons.get(reason) ?? {
+        reason,
+        allowed: allowed === 'true',
+        sources: new Set(),
+      };
+      entry.sources.add(file.replace(/^packages\/(\w+)\/src\/.*/, '@better-iam/$1'));
+      reasons.set(reason, entry);
+    }
+  }
+  await writeFile(
+    join(out, 'decision-reasons.json'),
+    JSON.stringify(
+      [...reasons.values()].map((entry) => ({ ...entry, sources: [...entry.sources].sort() })),
+      null,
+      1,
+    ),
+  );
   await writeStats({ errorCodes: list.length });
-  return `${list.length} error codes`;
+  return `${list.length} error codes, ${reasons.size} decision reasons`;
 }
 
 // ---------------------------------------------------------------------------------------------------------
@@ -1372,9 +1450,21 @@ async function generateErrorsPage() {
   ];
   const codes = new Set(errors.map((error) => error.code));
   for (const [heading, body] of curated.sections)
-    if (!codes.has(heading)) lines.push(`## ${heading}`, '', body, '');
+    if (!codes.has(heading) && !heading.startsWith(reasonPrefix))
+      lines.push(`## ${heading}`, '', body, '');
   const byStatus = new Map();
+  const scim = [];
+  const local = [];
   for (const error of errors) {
+    // SCIM `scimType` values are lowercase; codes no server path throws surface only in the client or the CLI.
+    if (/^[a-z]/.test(error.code) && error.packages.every((name) => name === '@better-iam/scim')) {
+      scim.push(error);
+      continue;
+    }
+    if (!error.kinds.includes('http')) {
+      local.push(error);
+      continue;
+    }
     const primary =
       error.statuses.includes(400) && error.statuses.length > 1
         ? error.statuses.find((status) => status !== 400)
@@ -1391,11 +1481,9 @@ async function generateErrorsPage() {
       .sort()
       .map((status) => [status, `HTTP ${status}`, '']),
   ];
-  for (const [status, title, text] of all) {
-    const bucket = byStatus.get(status);
-    if (!bucket?.length) continue;
-    lines.push(`## ${status} ${title}`, '');
-    if (text) lines.push(prose(text), '');
+  const packageList = (error) => error.packages.map((name) => `\`${name}\``).join(', ');
+  /** The summary table and one `###` section per code. */
+  const section = (bucket, origin) => {
     lines.push('| Code | Meaning |', '| --- | --- |');
     for (const error of bucket) {
       const body = curated.sections.get(error.code);
@@ -1411,25 +1499,87 @@ async function generateErrorsPage() {
       lines.push(`### ${error.code}`, '');
       const body = curated.sections.get(error.code);
       if (body) lines.push(body, '');
-      const statuses = error.statuses.map((value) => `\`${value}\``).join(', ');
-      lines.push(
-        `<small>HTTP ${statuses} · thrown by ${error.packages.map((name) => `\`${name}\``).join(', ')}</small>`,
-        '',
-      );
+      lines.push(`<small>${origin(error)}</small>`, '');
       if (error.messages.length) {
         lines.push('Example messages:', '');
         for (const message of error.messages) lines.push(`- ${prose(message)}`);
         lines.push('');
       }
     }
+  };
+  const httpOrigin = (error) =>
+    `HTTP ${error.statuses.map((value) => `\`${value}\``).join(', ')} · thrown by ${packageList(error)}`;
+  for (const [status, title, text] of all) {
+    const bucket = byStatus.get(status);
+    if (!bucket?.length) continue;
+    lines.push(`## ${status} ${title}`, '');
+    if (text) lines.push(prose(text), '');
+    section(bucket, httpOrigin);
+  }
+  if (scim.length) {
+    lines.push(
+      '## SCIM error types',
+      '',
+      prose(
+        'The SCIM endpoints (`@better-iam/scim`) answer failures in the RFC 7644 error format: `{ "schemas": ["urn:ietf:params:scim:api:messages:2.0:Error"], "status", "scimType", "detail" }`. `scimType` carries the code, in the lowercase form the RFC defines, and `status` the HTTP status. Identity providers branch on `scimType`; the codes below are the ones Better IAM sends. Better IAM errors raised while provisioning (an `ACCESS_DENIED`, say) keep their uppercase code in `scimType`.',
+      ),
+      '',
+    );
+    section(scim, httpOrigin);
+  }
+  if (local.length) {
+    lines.push(
+      '## Client and CLI codes',
+      '',
+      prose(
+        'These codes never come from the server. The browser client (`@better-iam/client`) throws them as `IamClientError` when it cannot send a request or read the answer: `status` is `0`, or the raw HTTP status for a response that is not a Better IAM envelope. The `better-iam` command line throws them as `CliError` (an `IamError` with an optional `hint`), prints `CODE: message`, and exits with status 1 (2 for the usage mistakes `INVALID_ARGUMENT` and `INVALID_COMMAND`).',
+      ),
+      '',
+    );
+    section(local, (error) => {
+      const as = error.classes.map((name) => `\`${name}\``).join(', ');
+      return `No HTTP status · thrown by ${packageList(error)} as ${as}`;
+    });
+  }
+  let reasons = [];
+  try {
+    reasons = JSON.parse(await readFile(join(out, 'decision-reasons.json'), 'utf8'));
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+  }
+  if (reasons.length) {
+    lines.push(
+      '## Decision reasons',
+      '',
+      prose(
+        'A decision is returned, not thrown: `{ allowed, reason, matched }`. `evaluatePolicy` from `@better-iam/core` and the administrator simulation APIs (`policies.simulate`, `policies.whoCan`, `accessPaths.find`) report the `reason`; public responses turn every denial into [`ACCESS_DENIED`](#access_denied). Lowercase reasons come from the policy evaluator, uppercase ones from the server steps around it. [How decisions work](/docs/authorization/how-decisions-work#decision-reasons) shows the step that produces each.',
+      ),
+      '',
+      '| Reason | Outcome | Meaning |',
+      '| --- | --- | --- |',
+    );
+    for (const entry of reasons) {
+      const body = curated.sections.get(`${reasonPrefix}${entry.reason}`) ?? '';
+      // A reason that is also an error code (or has a section of its own) links to it.
+      const name = `\`${entry.reason}\``;
+      const label =
+        codes.has(entry.reason) || curated.sections.has(entry.reason)
+          ? `[${name}](#${entry.reason.toLowerCase()})`
+          : name;
+      lines.push(`| ${label} | ${entry.allowed ? 'Allowed' : 'Denied'} | ${cell(body) || '—'} |`);
+    }
+    lines.push('');
   }
   await writeFile(join(app, 'content/docs/reference/errors.mdx'), lines.join('\n'));
-  const missing = errors
-    .filter((error) => !curated.sections.has(error.code))
-    .map((error) => error.code);
+  const missing = [
+    ...errors.filter((error) => !curated.sections.has(error.code)).map((error) => error.code),
+    ...reasons
+      .filter((entry) => !curated.sections.has(`${reasonPrefix}${entry.reason}`))
+      .map((entry) => `${reasonPrefix}${entry.reason}`),
+  ];
   if (missing.length && process.env.DOCS_COVERAGE)
     console.log(`  undocumented codes (${missing.length}): ${missing.join(', ')}`);
-  return `errors page; curated descriptions for ${errors.length - missing.length}/${errors.length} codes`;
+  return `errors page; curated descriptions for ${errors.length + reasons.length - missing.length}/${errors.length + reasons.length} codes and reasons`;
 }
 
 async function generateCliPage() {
@@ -1765,6 +1915,19 @@ async function readGuides() {
   return pages;
 }
 
+/**
+ * Entry points with a page of their own (and their umbrella subpaths): their exports link there instead of to
+ * the page that mentions them most, which for a shared package is often an overview of several frameworks.
+ */
+const entryPages = {
+  '@better-iam/middleware/express': '/docs/integrations/express',
+  '@better-iam/middleware/hono': '/docs/integrations/hono',
+  '@better-iam/middleware/fastify': '/docs/integrations/fastify',
+  'better-iam/express': '/docs/integrations/express',
+  'better-iam/hono': '/docs/integrations/hono',
+  'better-iam/fastify': '/docs/integrations/fastify',
+};
+
 /** Packages that integrate one framework; a page about one of them never explains another's exports. */
 const frameworkPackages = new Set([
   '@better-iam/react',
@@ -1887,7 +2050,10 @@ async function generateExportsPage() {
         if (!text) missing.push(`${entry.specifier} ${item.name}`);
         if (item.from) text = `${text}${text ? ' ' : ''}Re-exported from \`${item.from}\`.`;
         if (item.deprecated) text = `**Deprecated.** ${text}`;
-        const page = explainingPage(item.name, pkg.name, item.from, guides);
+        const own = entryPages[entry.specifier];
+        const page =
+          (own && guides.find((guide) => guide.url === own)) ??
+          explainingPage(item.name, pkg.name, item.from, guides);
         lines.push(
           `| \`${label}\` | ${cell(prose(text || 'No description yet.'))} | ${page ? `[${cell(page.title)}](${page.url})` : ''} |`,
         );
