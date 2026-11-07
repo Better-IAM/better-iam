@@ -320,6 +320,10 @@ func New(options *BetterIamOptions) (*BetterIam, error) {
 	authAPI := CreateAuthAPI(authService, observe, func(headers http.Header) *core.SessionClientInfo {
 		return ClientFromHeaders(options, headers, config.BaseURL.Href)
 	})
+	// createDomainsApi refuses a domains.recordName that is not a single DNS label (INVALID_CONFIG).
+	if err := CheckDomainOptions(options); err != nil {
+		return nil, err
+	}
 	api := CreateAPI(server, authAPI)
 	retention := CreateRetention(server)
 	federation := CreateFederation(server, api.Bindings)
