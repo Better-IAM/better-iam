@@ -352,30 +352,62 @@ export function createHttp(
       ?.slice(deviceCookieName.length + 1);
   const deviceTokenRoutes = new Set(['auth/signIn', 'auth/finishPasswordless']);
 
+  /**
+   * A redirect a protocol asks for (`x-better-iam-redirect`, the SAML ACS's `afterSignIn`): a path on this site or a
+   * URL on this deployment's origin or one of `trustedOrigins`. Anything else is not followed.
+   */
+  const followableRedirect = (value: string | null): string | undefined => {
+    if (!value || value.length > 4096 || /[\u0000-\u001f\u007f\\]/.test(value)) return undefined;
+    if (value.startsWith('/')) return value.startsWith('//') ? undefined : value;
+    try {
+      const target = new URL(value);
+      return !target.username && !target.password && trustedOrigins.has(target.origin)
+        ? target.href
+        : undefined;
+    } catch {
+      return undefined;
+    }
+  };
   async function protocolResponse(request: Request): Promise<Response | undefined> {
     for (const protocol of mountedProtocols) {
-      const response = await protocol.handle?.(request);
+      let response = await protocol.handle?.(request);
       if (!response) continue;
+      const hint = response.headers.get('x-better-iam-redirect');
+      const redirect = followableRedirect(hint);
+      if (hint !== null) {
+        const headers = new Headers(response.headers);
+        headers.delete('x-better-iam-redirect');
+        response = new Response(response.body, { status: response.status, headers });
+      }
+      let cookie: string | undefined;
       if (response.ok && response.headers.get('content-type')?.includes('application/json')) {
         try {
           const result = (await response.clone().json()) as {
             token?: unknown;
             session?: { expiresAt?: unknown };
           };
-          if (typeof result.token === 'string' && typeof result.session?.expiresAt === 'number') {
-            const headers = new Headers(response.headers);
-            headers.append(
-              'set-cookie',
-              sessionCookie(
-                { token: result.token, session: { expiresAt: result.session.expiresAt } },
-                persistentFor(request),
-              ),
+          if (typeof result.token === 'string' && typeof result.session?.expiresAt === 'number')
+            cookie = sessionCookie(
+              { token: result.token, session: { expiresAt: result.session.expiresAt } },
+              persistentFor(request),
             );
-            return new Response(response.body, { status: response.status, headers });
-          }
         } catch {
           /* A non-authentication protocol response does not issue an IAM cookie. */
         }
+      }
+      // A browser sign-in that finishes on a page: 303 there, carrying the protocol's cookies and the session cookie,
+      // never the body (the token stays out of the page).
+      if (redirect) {
+        const headers = new Headers({ location: redirect, 'cache-control': 'no-store' });
+        for (const value of response.headers.getSetCookie()) headers.append('set-cookie', value);
+        if (cookie) headers.append('set-cookie', cookie);
+        await response.body?.cancel();
+        return new Response(null, { status: 303, headers });
+      }
+      if (cookie) {
+        const headers = new Headers(response.headers);
+        headers.append('set-cookie', cookie);
+        return new Response(response.body, { status: response.status, headers });
       }
       return response;
     }

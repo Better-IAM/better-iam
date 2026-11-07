@@ -620,6 +620,7 @@ describe('OAuth provider and login', () => {
           clientId: 'login',
           redirectUri: `${origin}/callback`,
           mapAttributes: (claims) => ({ upstreamSubject: claims.sub }),
+          trustScimProvisioned: ['scim-1'],
         },
       ],
       allowInsecureLocalhost: true,
@@ -652,8 +653,27 @@ describe('OAuth provider and login', () => {
         emailVerified: true,
         name: 'Federated',
         attributes: { upstreamSubject: 'stable-subject' },
+        trustScimProvisioned: ['scim-1'],
       },
     ]);
+    expect(() =>
+      createOAuthLogin({
+        store,
+        connections: [
+          {
+            id: 'bad-trust',
+            tenantId: 'a',
+            kind: 'oidc',
+            issuer: origin,
+            clientId: 'login',
+            redirectUri: `${origin}/other-callback`,
+            trustScimProvisioned: 'yes' as unknown as boolean,
+          },
+        ],
+        allowInsecureLocalhost: true,
+        completeAuthentication: async () => undefined,
+      }),
+    ).toThrow(/trustScimProvisioned/);
     const again = await login.begin('login-a');
     const anotherUrl = new URL(again.url);
     nonce = anotherUrl.searchParams.get('nonce')!;

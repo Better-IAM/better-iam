@@ -18,7 +18,11 @@ export function text(value: unknown, field: string, optional = false): string | 
     );
   return value.trim();
 }
-/** SCIM rejects unknown or immutable attributes instead of ignoring them. */
+/**
+ * Rejects attributes outside `allowed`. Resource bodies pass through `withoutIgnored` (attributes.ts) first, so what
+ * reaches this is an attribute no supported schema defines (or, with `unsupportedAttributes: 'reject'`, one this
+ * service does not store).
+ */
 export function fields(value: ObjectValue, allowed: string[]): void {
   if (Object.keys(value).some((key) => !allowed.includes(key)))
     throw new IamError('mutability', 'An unsupported or immutable attribute was supplied.');

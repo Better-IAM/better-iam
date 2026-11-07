@@ -25,8 +25,8 @@ their identity provider. You will:
 - create a Better IAM tenant per organization and re-verify its domains;
 - recreate each SAML or OIDC connection and each SCIM directory, with the customer's IT team registering the new
   values next to the old ones;
-- import AuthKit users who sign in with a password or Magic Auth, and leave SSO and directory users to their
-  identity provider;
+- import AuthKit users with their roles, verified email status, and links to their SSO and social accounts, and
+  leave people a SCIM directory manages to that directory;
 - replace WorkOS calls in your sign-in flow, then cut over one organization at a time.
 
 The general plan behind these steps is in [Migration guides](/docs/guides/migration).
@@ -40,7 +40,7 @@ The general plan behind these steps is in [Migration guides](/docs/guides/migrat
 | Organization domain | `domains.add` and `domains.verify` | A new DNS TXT record per domain. `domains.discover` maps an email address to its organization. |
 | SSO connection (SAML) | SAML connection, `saml.createConnection` | Created at runtime per tenant from the IdP's metadata. |
 | SSO connection (OIDC) | `createOAuthLogin` connection, `kind: 'oidc'` or `'microsoft'` | Fixed in the deployment configuration; each connection serves one tenant. |
-| SSO profile | The identity and its external-identity link | Created at the person's first SSO sign-in; profile IDs do not carry over. |
+| SSO profile | The identity and its external-identity link | The profile's `idp_id` becomes the link's subject at import; for people not imported, the link is created at their first SSO sign-in. Profile IDs do not carry over. |
 | Directory (SCIM) | SCIM connection, `scim.createConnection` | The customer replaces the SCIM URL and token in their IdP. |
 | Directory read through an API (for example Google Workspace or an HR system) | No equivalent | Better IAM receives SCIM 2.0 only. Keep people current with your own job calling `identities.createMany` and `identities.setStatus`, or rely on SSO sign-in. |
 | Directory user | <Term id="identity">Identity</Term> created by SCIM | |
@@ -57,9 +57,10 @@ The general plan behind these steps is in [Migration guides](/docs/guides/migrat
 | Fine-Grained Authorization | [Relationships](/docs/authorization/relationships) | Relations declared per resource type, tuples written with `relationships.create`. |
 
 <Callout type="warn" title="What does not move">
-  Password hashes (no Better IAM API accepts one), MFA enrollments, passkeys, sessions, and the links between people
-  and their SSO or social accounts. SSO and SCIM connections are recreated, and each customer's IT team must register
-  the new values in their identity provider; WorkOS's endpoints cannot be pointed at Better IAM from your side.
+  Password hashes (no Better IAM API accepts one), MFA enrollments, passkeys, and sessions. Links to SSO and social
+  accounts are recreated at import from each person's `idp_id`. SSO and SCIM connections are recreated, and each
+  customer's IT team must register the new values in their identity provider; WorkOS's endpoints cannot be pointed at
+  Better IAM from your side.
 </Callout>
 
 ## Prerequisites
@@ -100,13 +101,17 @@ organization memberships through the WorkOS API, and save them in this shape:
 
 | Field | Meaning |
 | --- | --- |
-| `ownerEmail` | Who will own the tenant in Better IAM. They receive the owner invitation. |
+| `ownerEmail` | Who will own the tenant in Better IAM. Their account is created with the tenant. |
 | `sso` | `saml`, `oidc`, or `null`: the organization's active connection type. |
 | `directory` | `scim` when the customer's IdP pushes to WorkOS, `api` when WorkOS reads a directory through an API, or `null`. |
 
-With AuthKit, also write `workos/users.ndjson` (one `{ id, email, first_name, last_name }` per line) and
-`workos/memberships.json` (`[{ organizationId, userId, roleSlug }]`). If your own database holds your users and
-WorkOS only handles SSO and directories, export them from that database in the same shape instead.
+With AuthKit, also write `workos/users.ndjson` and `workos/memberships.json` (`[{ organizationId, userId, roleSlug }]`).
+Each user line holds `{ id, email, email_verified, first_name, last_name, identities }`, where `identities` lists the
+person's external accounts as `{ provider, idp_id }`: AuthKit's identities for the user (`provider` such as
+`GoogleOAuth`), plus `{ provider: 'SSO', idp_id }` from the person's SSO profile, whose `idp_id` is their ID at the
+customer's IdP (the NameID for SAML, `sub` for OIDC). If your own database holds your users and WorkOS only handles
+SSO and directories, export them from that database in the same shape instead, with the `idp_id` of the SSO
+profile your application received at sign-in.
 
 For each SAML connection, get the customer's IdP metadata file (or its sign-on URL, entity ID, and signing
 certificate) from the connection's details or from the customer's IT team.
@@ -152,6 +157,8 @@ export const saml = createSamlService({
     privateKey: readFileSync(process.env.SAML_SP_KEY_FILE!, 'utf8'),
     publicCertificate: readFileSync(process.env.SAML_SP_CERT_FILE!, 'utf8'),
   },
+  afterSignIn: '/dashboard', // the ACS redirects here with the session cookie set
+  errorUrl: '/login', // failed sign-ins land here with ?error=CODE
 });
 
 export const scim = createScimService({
@@ -166,8 +173,10 @@ iam.useProtocol(saml);
 iam.useProtocol(scim);
 ```
 
-Route every method (`GET`, `POST`, `PUT`, `PATCH`, `DELETE`) under `/api/iam` to `iam.handler`, so identity
-providers reach the SAML and SCIM endpoints ([Protocol mounts](/docs/operations/deployment/protocol-mounts)). If you
+With `afterSignIn`, the SAML ACS answers a completed sign-in with a redirect to that page instead of JSON;
+`?returnTo=/path` on a connection's `loginUrl` picks the page for one sign-in, and an optional `mfaUrl` receives
+people who still have to pass MFA. Route every method (`GET`, `POST`, `PUT`, `PATCH`, `DELETE`) under `/api/iam` to
+`iam.handler`, so identity providers reach the SAML and SCIM endpoints ([Protocol mounts](/docs/operations/deployment/protocol-mounts)). If you
 add OIDC connections, route `/oauth/login/*` and each connection's `redirectUri` path to `iam.handler` as well. Then
 migrate and take a snapshot:
 
@@ -205,14 +214,18 @@ for (const organization of organizations) {
     type: 'organization',
     name: organization.name,
     ownerEmail: organization.ownerEmail,
+    activate: true, // active now; the owner's account is created without an invitation
   });
   tenantMap[organization.id] = tenant.id;
 }
 await writeFile('workos/tenant-map.json', JSON.stringify(tenantMap, null, 2));
 ```
 
-Each tenant stays `pending` until its owner accepts the emailed invitation with `tenants.acceptInvitation`. Once a
-tenant is active, claim its domains and send the customer the TXT records to publish:
+With `activate: true`, which only a root principal may pass, each tenant is `active` at once and its owner's account
+exists, so you can claim domains and import people right away. No invitation is sent: the owner signs in with an
+emailed code, a reset link, or their SSO account once you link it (see the import step). Without `activate`, the
+tenant stays `pending` until its owner accepts an emailed invitation. Claim each tenant's domains and send the
+customer the TXT records to publish:
 
 ```ts title="scripts/workos-claim-domains.ts"
 import { readFile } from 'node:fs/promises';
@@ -226,7 +239,6 @@ const tenantMap = JSON.parse(await readFile('workos/tenant-map.json', 'utf8')) a
 
 for (const organization of organizations) {
   const tenantId = tenantMap[organization.id]!;
-  if ((await iam.api.tenants.get(credential, { tenantId })).status !== 'active') continue;
   const claimed = await iam.api.domains.list(credential, { tenantId });
   for (const domain of organization.domains) {
     const existing = claimed.find((item) => item.domain === domain);
@@ -273,8 +285,9 @@ console.log({ entityId: connection.entityId, acsUrl: connection.acsUrl, loginUrl
 ```
 
 The customer sets the new application's audience (SP entity ID) to `entityId` and its ACS URL to `acsUrl`, signs
-both the response and the assertion, and sends an `email` attribute. `trustedEmailDomains` lets each person's first
-sign-in create their account. Store `loginUrl` with your organization record; sign-in starts there. See
+both the response and the assertion, and sends an `email` attribute. `trustedEmailDomains` lets the first sign-in
+of a person who was not imported create their account. The import step links imported people to this connection
+with its `providerId` and `idpIssuer`. Store `loginUrl` with your organization record; sign-in starts there. See
 [SAML](/docs/federation/saml#register-the-app-at-the-idp).
 
 </Tab>
@@ -318,7 +331,7 @@ For each organization whose directory pushes through SCIM, create a connection a
 token:
 
 ```ts title="scripts/workos-scim-acme.ts"
-import { scim } from '../protocols';
+import { saml, scim } from '../protocols';
 
 const credential = { token: process.env.BETTER_IAM_TOKEN! };
 
@@ -328,6 +341,13 @@ const connection = await scim.createConnection(credential, {
 });
 console.log('SCIM base URL:', `${process.env.BETTER_IAM_BASE_URL}${connection.path}`);
 console.log('Bearer token (shown once):', connection.token);
+
+// People this directory creates link to the SSO connection at their first SSO sign-in.
+await saml.updateConnection(credential, {
+  tenantId: process.env.ACME_TENANT_ID!,
+  connectionId: 'acme-okta',
+  trustScimProvisioned: [connection.id],
+});
 ```
 
 In the provisioning settings of the new application, the customer enters this URL and token and assigns the same
@@ -347,33 +367,57 @@ await scim.setRoleMappings(credential, {
 });
 ```
 
-People the directory creates have no link to the SSO connection yet, so each person's first SSO sign-in fails with
-`ACCOUNT_LINK_REQUIRED` until they sign in once with an emailed code or magic link and link the connection; see
-[Link existing accounts](/docs/guides/enterprise-sso-okta#link-existing-accounts). Directories that WorkOS read
-through an API have no SCIM endpoint to re-point; for those organizations, rely on SSO sign-in to create accounts,
-or feed `identities.createMany` and `identities.setStatus` from your own job.
+With `trustScimProvisioned` on the SSO connection, a person the directory created signs in through SSO the first
+time with no other step: their verified email (a domain in `trustedEmailDomains`) links the SSO account to the
+directory's account. Updating the connection's trust needs a sign-in from the last five minutes. For an OIDC
+connection, set `trustScimProvisioned` (`true`, or a list of SCIM connection IDs) on its entry in
+`createOAuthLogin`. Directories that WorkOS read through an API have no SCIM endpoint to re-point; import those
+organizations' people with links to their SSO connection (next step), and keep them current with
+`identities.createMany` and `identities.setStatus` from your own job.
 
 </Step>
 <Step>
 
 ### Import AuthKit users
 
-Import only people who sign in with a password, Magic Auth, or a social provider. Members of organizations with SSO
-or a SCIM directory arrive through their identity provider; importing them would block their first SSO sign-in and
-make the directory's create fail with a `409 uniqueness` error.
+Import everyone except members of organizations with a SCIM directory: the directory creates those people, and
+importing them would make its create fail with a `409 uniqueness` error. Each imported person is linked to their
+organization's SSO connection (and to any social connection you recreate) by their `idp_id`, so their first sign-in
+through it finds their imported account, with its role.
 
 ```ts title="scripts/workos-import-users.ts"
 import { createReadStream } from 'node:fs';
 import { readFile, writeFile } from 'node:fs/promises';
 import { createInterface } from 'node:readline';
 import { iam } from '../iam';
+import { saml } from '../protocols';
 
 type WorkosOrganization = { id: string; sso: string | null; directory: string | null };
-type WorkosUser = { id: string; email: string; first_name: string | null; last_name: string | null };
+type WorkosUser = {
+  id: string;
+  email: string;
+  email_verified?: boolean;
+  first_name: string | null;
+  last_name: string | null;
+  identities?: Array<{ provider: string; idp_id: string }>;
+};
 type Membership = { organizationId: string; userId: string; roleSlug: string };
+type Link = { providerId: string; issuer: string };
 
 // WorkOS role slug -> Better IAM role name in every tenant.
 const roleNames: Record<string, string> = { admin: 'Admin', member: 'Member' };
+
+// WorkOS identity provider -> the Better IAM connection that replaces it, per WorkOS organization. 'SSO' is the
+// organization's SSO connection; SAML connections are read from the tenant below, OIDC ones are listed here with
+// their id and exact issuer.
+const CONNECTIONS: Record<string, Record<string, Link>> = {
+  org_globex: {
+    SSO: {
+      providerId: 'globex-entra',
+      issuer: `https://login.microsoftonline.com/${process.env.GLOBEX_ENTRA_TENANT_ID}/v2.0`,
+    },
+  },
+};
 
 const credential = { token: process.env.BETTER_IAM_TOKEN! };
 const organizations = JSON.parse(await readFile('workos/organizations.json', 'utf8')) as WorkosOrganization[];
@@ -398,9 +442,17 @@ async function existingEmails(tenantId: string): Promise<Set<string>> {
 }
 
 for (const organization of organizations) {
-  if (organization.sso || organization.directory) continue; // arrives through its identity provider
+  if (organization.directory === 'scim') continue; // the directory creates these people
   const tenantId = tenantMap[organization.id]!;
-  if ((await iam.api.tenants.get(credential, { tenantId })).status !== 'active') continue;
+  const targets: Record<string, Link> = { ...CONNECTIONS[organization.id] };
+  if (organization.sso === 'saml') {
+    const [connection] = await saml.listConnections(credential, { tenantId });
+    if (connection) targets.SSO = { providerId: connection.providerId, issuer: connection.idpIssuer };
+  }
+  if (organization.sso && !targets.SSO) {
+    console.log(`${organization.id}: recreate its SSO connection first`);
+    continue;
+  }
 
   await iam.api.config.apply(credential, {
     tenantId,
@@ -423,11 +475,18 @@ for (const organization of organizations) {
       if (!user || !email || seen.has(email)) return [];
       seen.add(email);
       const roleId = roleIds.get(roleNames[membership.roleSlug] ?? '');
+      const providers = new Map<string, Link & { subject: string }>();
+      for (const identity of user.identities ?? []) {
+        const target = targets[identity.provider];
+        if (target) providers.set(target.providerId, { ...target, subject: identity.idp_id });
+      }
       return [{
         workosId: user.id,
         entry: {
           email,
           name: [user.first_name, user.last_name].filter(Boolean).join(' ') || email,
+          emailVerified: user.email_verified === true,
+          providers: [...providers.values()],
           attributes: { workosId: user.id },
           roleIds: roleId ? [roleId] : [],
         },
@@ -452,9 +511,19 @@ for (const organization of organizations) {
 npx tsx scripts/workos-import-users.ts
 ```
 
-Imported people have no password and an unverified email. They sign in the first time with an emailed code or magic
-link, which also verifies the address. The script skips addresses that already exist, so run it again during the
-dual run to pick up new sign-ups.
+Imported people have no password. Their email is verified where WorkOS says `email_verified: true`; the others
+verify it with their first emailed code or magic link. People with an SSO link sign in through their company's IdP
+as before. The script skips addresses that already exist, so run it again during the dual run to pick up new
+sign-ups.
+
+- Add an entry under an organization in `CONNECTIONS` for each social connection you recreate in its tenant, for
+  example `GoogleOAuth: { providerId: 'acme-google', issuer: 'https://accounts.google.com' }`. Identities without an
+  entry get no link.
+- The owner already exists, so the script skips them. Link their SSO account with
+  `iam.api.identities.linkProvider(credential, { tenantId, identityId, providerId, issuer, subject })`, which needs a
+  sign-in from the last five minutes.
+- An external account listed under two users of the same organization fails the batch with
+  [`ACCOUNT_LINK_CONFLICT`](/docs/reference/errors#account_link_conflict).
 
 </Step>
 <Step>
@@ -487,7 +556,7 @@ export async function POST(request: Request) {
 | WorkOS call | Better IAM |
 | --- | --- |
 | Get an SSO authorization URL for an organization | The SAML connection's `loginUrl`, or `/oauth/login/{connectionId}` for OIDC |
-| Get the SSO profile after the callback | Nothing to do: the callback sets the Better IAM session cookie |
+| Get the SSO profile after the callback | Nothing to do for SAML: the ACS sets the Better IAM session cookie and redirects to `afterSignIn`. The OIDC callback sets the cookie and answers JSON |
 | List directory users and groups | `iam.api.identities.list` and `iam.api.groups.list` in the tenant |
 | Directory Sync webhooks | [Webhooks](/docs/concepts/events/webhooks) on the audit events SCIM writes (`iam:scim:*`) |
 | Generate an Admin Portal link | Your settings page calling `saml.createConnection`, `scim.createConnection`, and `domains.add` |
@@ -504,9 +573,9 @@ Switch one organization at a time:
    people and groups.
 2. Route its sign-in to Better IAM: domain discovery now returns its tenant, and your record holds the new
    `loginUrl`.
-3. Its people sign in once with an emailed code and link the SSO connection, if the directory created them.
-4. Once everyone has signed in, require SSO with `tenants.setAuthPolicy` and `allowedMethods: ['federated']`.
-5. The customer turns off provisioning in the WorkOS application, then removes it after the rollback window.
+3. Require SSO with `tenants.setAuthPolicy` and `allowedMethods: ['federated']`, after linking the owner's SSO
+   account. Imported people are linked already, and people the directory created link at their first SSO sign-in.
+4. The customer turns off provisioning in the WorkOS application, then removes it after the rollback window.
 
 To roll an organization back, route it to WorkOS again: its WorkOS application in the customer's identity provider
 still works, as long as they have not removed it. Changes made only in Better IAM while it was live (role mappings,
@@ -548,15 +617,20 @@ for (const [workosOrgId, tenantId] of Object.entries(tenantMap)) {
 ## Troubleshooting
 
 <Accordions>
+<Accordion title="tenants.create fails with ACCESS_DENIED">
+  Only a root principal may pass `activate: true`. Sign in to the CLI as the root administrator, in the root tenant,
+  and export that token. See [ACCESS_DENIED](/docs/reference/errors#access_denied).
+</Accordion>
 <Accordion title="The first SSO sign-in fails with VERIFIED_EMAIL_REQUIRED">
   The person's email domain is not in the connection's `trustedEmailDomains`, or the IdP sends no `email` (or
   `mail`) attribute. Update the connection with `saml.updateConnection`, or ask the customer to add the attribute.
   See [VERIFIED_EMAIL_REQUIRED](/docs/reference/errors#verified_email_required).
 </Accordion>
 <Accordion title="The first SSO sign-in fails with ACCOUNT_LINK_REQUIRED">
-  An account with that email already exists in the tenant, created by SCIM or by an import. The person signs in with
-  an emailed code and links the connection once. See
-  [ACCOUNT_LINK_REQUIRED](/docs/reference/errors#account_link_required).
+  An account with that email exists in the tenant but has no link for this connection. If the directory created it,
+  set `trustScimProvisioned` on the connection (the owner is never linked that way). If it was imported, the user
+  had no `SSO` identity in the export or its `idp_id` differs from what the IdP sends: add the link with
+  `identities.linkProvider`. See [ACCOUNT_LINK_REQUIRED](/docs/reference/errors#account_link_required).
 </Accordion>
 <Accordion title="The directory reports 409 uniqueness when it creates a user">
   Someone with that email already exists in the tenant, usually because they were imported. Leave members of SCIM

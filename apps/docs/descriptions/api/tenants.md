@@ -121,13 +121,15 @@ const result = await client.tenants.acceptInvitation({
 
 ## create
 
-Creates a child tenant in the `pending` state under a parent and emails an invitation to its first owner.
+Creates a child tenant in the `pending` state under a parent and emails an invitation to its first owner, or, for
+a root principal with `activate: true`, creates it active with its owner account.
 
 - **Permission:** `iam:tenants:create` on the parent tenant, with recent authentication, and an active grant
   authority in the parent.
 - **Audited as:** `iam:tenants:create`, in the parent tenant's log.
-- **Errors:** `INVALID_HIERARCHY` when `type` is not an allowed child of the parent's type; `MAX_DEPTH` when the
-  parent is already at the deepest level; `DELIVERY_REQUIRED` without an email delivery callback; `SLUG_TAKEN` or
+- **Errors:** `ACCESS_DENIED` for `activate` without a root principal; `INVALID_HIERARCHY` when `type` is not an allowed child of the parent's type; `MAX_DEPTH` when the
+  parent is already at the deepest level; `DELIVERY_REQUIRED` without an email delivery callback (unless
+  `activate`); `INVALID_INPUT` for `ownerName` or `ownerEmailVerified` without `activate`; `SLUG_TAKEN` or
   `INVALID_INPUT` for a slug in use or badly formed; `GRANT_AUTHORITY_REQUIRED` without an active grant authority,
   or `ACCESS_DENIED` when `authorityId` is not one of yours; `INVALID_POLICY` or `INVALID_ACTION` for an invalid
   boundary; `INVALID_INPUT` for a `region` the deployment does not know, or one other than its own when regions
@@ -142,6 +144,14 @@ the `owner-invitation` email; the result has the tenant, the invitation ID, and 
 
 Nobody but a root administrator can act inside the tenant until the owner accepts. If they never do, a root
 administrator can re-send or revoke the invitation, or delete the tenant.
+
+For bulk imports and migrations, a root principal passes `activate: true`: the tenant is `active` at once, the
+owner account is created (named `ownerName`, default the address; with a verified email when `ownerEmailVerified`
+is `true`) and bound to the protected Owner role, no invitation is sent, and members can be imported right away.
+The owner has no password: they sign in with a magic link, a password reset, or an external sign-in linked with
+[`identities.linkProvider`](/docs/reference/api/identities#linkprovider). The result is
+`{ tenant, ownerEmail, owner }` instead of `{ tenant, invitationId, ownerEmail }`, and the activation is audited
+as `tenant:activate`. Skipping the invitation skips the owner's consent, which is why only root may.
 
 ```ts
 const { tenant, invitationId } = await iam.api.tenants.create(credential, {

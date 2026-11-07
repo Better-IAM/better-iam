@@ -20,7 +20,7 @@ import { slug, type ServerContext } from '../context.js';
 import type { GrantAuthority, OwnerInvitation, TenantAlias } from '../models.js';
 import { assertNoTenantLegalHold } from '../privacy.js';
 import { tenantAuthPolicy, tenantLimits } from '../tenant-policy.js';
-import { all, hash, id, token } from '../utils.js';
+import { all, hash, id, publicIdentity, token, type PublicIdentity } from '../utils.js';
 import { email, text } from '../validation.js';
 
 export { tenantAuthPolicy, tenantLimits } from '../tenant-policy.js';
@@ -36,6 +36,19 @@ export interface TenantDiscovery {
   region?: string;
   /** Its canonical sign-in URL, when organization addresses or regions are configured. */
   signInUrl?: string;
+}
+
+/** `tenants.create`'s result when the owner is invited (the default): the tenant stays `pending` until they accept. */
+export interface InvitedTenant {
+  tenant: Tenant;
+  invitationId: string;
+  ownerEmail: string;
+}
+/** `tenants.create`'s result with `activate: true`: the tenant is active and its owner account exists. */
+export interface ActivatedTenant {
+  tenant: Tenant;
+  ownerEmail: string;
+  owner: PublicIdentity;
 }
 
 /** Per key, the stricter of two sets of plan limits (a key either one sets applies); undefined when neither sets any. */
@@ -64,8 +77,14 @@ export function createTenantsApi(ctx: ServerContext) {
     };
   };
   return {
-    /** Creates a pending child tenant and sends its owner an invitation; the creator's grant authority becomes the parent of the owner's. */
-    create: (
+    /**
+     * Creates a pending child tenant and sends its owner an invitation; the creator's grant authority becomes the parent
+     * of the owner's. With `activate: true` (root principals only: bulk imports and migrations) the tenant is active at
+     * once instead: the owner account is created without a password or invitation (they sign in with a magic link, a
+     * password reset, or a provider linked to them), `ownerName` and `ownerEmailVerified` describe it, and members can
+     * be imported right away. Audited as `tenant:activate`.
+     */
+    create: <Activate extends boolean | undefined = undefined>(
       credential: CredentialInput,
       input: {
         parentId: string;
@@ -77,9 +96,15 @@ export function createTenantsApi(ctx: ServerContext) {
         authorityId?: string;
         /** Home region in a multi-region deployment; defaults to the parent's region (or this deployment's). */
         region?: string;
+        /** Root principals only: create the tenant active, with its owner account, instead of inviting the owner. */
+        activate?: Activate;
+        /** With `activate`: the owner's display name (default: the email address). */
+        ownerName?: string;
+        /** With `activate`: the owner's address was verified elsewhere (default false). */
+        ownerEmailVerified?: boolean;
       },
-    ) =>
-      operation(
+    ): Promise<Activate extends true ? ActivatedTenant : InvitedTenant> =>
+      operation<ActivatedTenant | InvitedTenant>(
         credential,
         input.parentId,
         'iam:tenants:create',
@@ -89,7 +114,31 @@ export function createTenantsApi(ctx: ServerContext) {
           const type = text(input.type, 'type');
           const name = text(input.name, 'name');
           const ownerEmail = email(input.ownerEmail);
-          if (!options.authentication?.sendEmail)
+          for (const [field, value] of [
+            ['activate', input.activate],
+            ['ownerEmailVerified', input.ownerEmailVerified],
+          ] as const)
+            if (value !== undefined && typeof value !== 'boolean')
+              throw new IamError('INVALID_INPUT', `${field} must be a boolean`);
+          const activate = input.activate === true;
+          if (
+            !activate &&
+            (input.ownerName !== undefined || input.ownerEmailVerified !== undefined)
+          )
+            throw new IamError(
+              'INVALID_INPUT',
+              'ownerName and ownerEmailVerified need activate: true',
+            );
+          const ownerName =
+            input.ownerName !== undefined ? text(input.ownerName, 'ownerName') : ownerEmail;
+          // The invitation is the owner's consent to own the organization; skipping it is a platform decision.
+          if (activate && !(await ctx.rootPrincipal(tx, principal)))
+            throw new IamError(
+              'ACCESS_DENIED',
+              'Only a root principal can create an active tenant without an owner invitation',
+              403,
+            );
+          if (!activate && !options.authentication?.sendEmail)
             throw new IamError(
               'DELIVERY_REQUIRED',
               'Organization invitations require an email delivery callback',
@@ -110,7 +159,7 @@ export function createTenantsApi(ctx: ServerContext) {
             name,
             type,
             parentId: parent.id,
-            status: 'pending',
+            status: activate ? 'active' : 'pending',
             boundary: input.boundary,
             createdAt: Date.now(),
           };
@@ -138,6 +187,27 @@ export function createTenantsApi(ctx: ServerContext) {
             ceiling: all,
             revoked: false,
           });
+          if (activate) {
+            const owner = await auth.createIdentity(tx, {
+              tenantId: realm.id,
+              email: ownerEmail,
+              name: ownerName,
+              owner: true,
+              emailVerified: input.ownerEmailVerified === true,
+            });
+            await ctx.ownerSetup(tx, realm, owner, authority);
+            await ctx.events.audit(
+              tx,
+              principal,
+              'tenant:activate',
+              realm.id,
+              realm.id,
+              'allow',
+              false,
+              { ownerId: owner.id, invitation: false },
+            );
+            return { tenant: realm, ownerEmail, owner: publicIdentity(owner) };
+          }
           const inviteToken = token();
           const invitation = await tx.insert<OwnerInvitation>('ownerInvitations', {
             id: id(),
@@ -170,7 +240,7 @@ export function createTenantsApi(ctx: ServerContext) {
           });
           return { tenant: realm, invitationId: invitation.id, ownerEmail };
         },
-      ),
+      ) as Promise<Activate extends true ? ActivatedTenant : InvitedTenant>,
     acceptInvitation: (input: {
       tenantId: string;
       token: string;

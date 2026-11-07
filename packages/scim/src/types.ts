@@ -117,6 +117,14 @@ export interface ScimConfig {
    */
   mapManager?: boolean;
   /**
+   * What happens to attributes this service provider does not store. `'ignore'` (default) accepts and drops core User
+   * attributes it has no place for (`addresses`, `phoneNumbers`, `preferredLanguage`, `locale`, `password`, …) and the
+   * attributes of extension schemas other than the enterprise User extension, in POST, PUT and PATCH alike, as identity
+   * providers such as Entra ID send them by default. `'reject'` answers 400 `mutability` for them. Read-only attributes
+   * (`id`, `meta`, `groups`) are ignored either way (RFC 7644 §3.5.1), and attributes no schema defines are always an error.
+   */
+  unsupportedAttributes?: 'ignore' | 'reject';
+  /**
    * Maps a provisioned user's SCIM attributes (core `title`, the enterprise extension's `department`, `division`,
    * `manager`, …) to the identity attributes the product declares; return undefined to leave attributes untouched.
    */

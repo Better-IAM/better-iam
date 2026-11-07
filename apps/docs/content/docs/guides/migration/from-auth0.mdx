@@ -21,7 +21,8 @@ switch one organization at a time, so you can point any organization back to Aut
 
 - export users, Organizations, roles, and permissions from Auth0;
 - declare Auth0 API permissions as actions and recreate roles in every tenant;
-- create one Better IAM tenant per Auth0 Organization and import its members with their roles;
+- create one Better IAM tenant per Auth0 Organization and import its members with their roles, verified email
+  status, and links to their social and enterprise identities;
 - recreate social, enterprise (SAML and OIDC), and SCIM connections, and have each customer point its identity
   provider at them;
 - optionally keep Auth0 as an upstream OpenID Connect provider during the dual run, so people keep their passwords
@@ -57,8 +58,9 @@ The general plan behind these steps, and the reasons for each rule, are in [Migr
 
 <Callout type="warn" title="What does not move">
   Password hashes (no Better IAM API accepts a hash, and Auth0's bcrypt hashes could not be loaded anyway), Guardian
-  and other MFA enrollments, WebAuthn passkeys, sessions and refresh tokens, and the links between users and their
-  social or enterprise identities. People sign in once with a magic link, a reset link, or their identity provider.
+  and other MFA enrollments, WebAuthn passkeys, and sessions and refresh tokens. People who signed in with a password
+  sign in once with a magic link or a reset link. Links to social and enterprise identities are recreated at import
+  from each user's `identities`, so those people keep signing in through their provider.
 </Callout>
 
 ## Prerequisites
@@ -87,7 +89,7 @@ background job that writes newline-delimited JSON; choose the fields below.
 | File | Contents | Source in Auth0 |
 | --- | --- | --- |
 | `auth0/organizations.json` | `[{ id, name, display_name, ownerEmail }]` | List Organizations. Pick one owner per Organization: a member who should control it in Better IAM. |
-| `auth0/members-<org_id>.ndjson` | One line per member: `{ user_id, email, name, connection, roles }` | List the Organization's members and each member's roles, joined with the user export for `email`, `name`, and the connection the user signs in with. |
+| `auth0/members-<org_id>.ndjson` | One line per member: `{ user_id, email, email_verified, name, connection, identities, roles }` | List the Organization's members and each member's roles, joined with the user export for `email`, `email_verified`, `name`, the connection the user signs in with, and `identities` (each with `connection` and `user_id`). |
 | `auth0/members-default.ndjson` | The same shape, for users outside any Organization | The user export, joined with each user's roles. |
 | `auth0/roles.json` | `[{ name, permissions: [permission_name] }]` | List roles and each role's permissions. |
 | `auth0/connections.json` | Names and types of social and enterprise connections, and which Organizations use them | List connections and each Organization's enabled connections. |
@@ -95,8 +97,14 @@ background job that writes newline-delimited JSON; choose the fields below.
 Every line in a members file must look like this; the import script reads exactly these fields:
 
 ```json title="auth0/members-org_abc123.ndjson"
-{"user_id":"auth0|65f1c2","email":"ada@acme.com","name":"Ada Lovelace","connection":"Username-Password-Authentication","roles":["Admin"]}
+{"user_id":"auth0|65f1c2","email":"ada@acme.com","email_verified":true,"name":"Ada Lovelace","connection":"Username-Password-Authentication","identities":[{"connection":"Username-Password-Authentication","user_id":"65f1c2"}],"roles":["Admin"]}
+{"user_id":"google-oauth2|1098765","email":"grace@acme.com","email_verified":true,"name":"Grace Hopper","connection":"google-oauth2","identities":[{"connection":"google-oauth2","user_id":"1098765"}],"roles":["Member"]}
 ```
+
+In `identities`, `user_id` is the person's ID at that connection without Auth0's `provider|` prefix: Google's `sub`
+for `google-oauth2`, the numeric user ID for `github`, and for enterprise connections the IdP's `sub` (OIDC) or, by
+default, the NameID (SAML). Check one test user of each enterprise connection against what their IdP sends before
+you import a whole customer.
 
 Auth0 does not include password hashes in user exports. Do not request them for this migration: Better IAM has no
 way to load them.
@@ -146,9 +154,11 @@ npx better-iam store-export --config better-iam.config.mjs --output before-auth0
 
 ### Create tenants for Organizations
 
-Each Auth0 Organization becomes a tenant. `tenants.create` emails the chosen owner an invitation; the tenant stays
-`pending` until they accept it with `tenants.acceptInvitation`, and nobody else can be imported before that. Users
-outside any Organization go into one tenant you create for them (with your own address as its owner).
+Each Auth0 Organization becomes a tenant. With `activate: true`, which your root administrator session may pass,
+`tenants.create` makes the tenant `active` at once and creates the chosen owner's account, so its members can be
+imported right away. No invitation is sent: the owner signs in with a magic link, a reset link, or a provider you
+link to them (see the import step). Users outside any Organization go into one tenant you create for them (with your
+own address as its owner).
 
 ```ts title="scripts/auth0-create-tenants.ts"
 import { readFile, writeFile } from 'node:fs/promises';
@@ -168,9 +178,10 @@ for (const organization of organizations) {
     type: 'organization',
     name: organization.display_name ?? organization.name,
     ownerEmail: organization.ownerEmail,
+    activate: true, // active now; the owner's account is created without an invitation
   });
   tenantMap[organization.id] = tenant.id;
-  console.log(`${organization.name}: tenant ${tenant.id}, invitation sent to ${organization.ownerEmail}`);
+  console.log(`${organization.name}: tenant ${tenant.id}, owner ${organization.ownerEmail}`);
 }
 
 await writeFile('auth0/tenant-map.json', JSON.stringify(tenantMap, null, 2));
@@ -181,7 +192,9 @@ npx tsx scripts/auth0-create-tenants.ts
 ```
 
 `tenants.create` needs recent authentication: run it within five minutes of `better-iam login`, or sign in again.
-`tenants.resendInvitation` sends a fresh link when an owner's expires.
+Add `ownerName` to set the owner's display name, and `ownerEmailVerified: true` when Auth0 reports their address
+verified. Only a root principal may pass `activate`; without it, `tenants.create` emails the owner an invitation
+instead, and the tenant stays `pending` until they accept it.
 
 </Step>
 <Step>
@@ -189,7 +202,7 @@ npx tsx scripts/auth0-create-tenants.ts
 ### Recreate roles in each tenant
 
 Auth0 roles are global to your Auth0 tenant; Better IAM roles belong to one tenant. Build one configuration document
-from `auth0/roles.json` and apply it to each active tenant. `config.apply` matches roles by name, so running it again
+from `auth0/roles.json` and apply it to each tenant. `config.apply` matches roles by name, so running it again
 changes nothing.
 
 ```ts title="scripts/auth0-roles.ts"
@@ -232,29 +245,59 @@ export async function applyAuth0Roles(tenantId: string): Promise<void> {
 
 ### Import members
 
-The import script sorts each member by the Auth0 connection they sign in with:
+The import script sorts each member by the Auth0 connection they sign in with, and links every Auth0 identity it can
+map to a Better IAM connection, so the person's first sign-in through that connection finds their imported account:
 
 | Connection | What the script does | How they sign in afterwards |
 | --- | --- | --- |
 | Database or passwordless connection | Imports them with their roles. | Magic link, or a reset link. |
-| Social connection | Imports them when `SOCIAL_USERS=import`, otherwise records them for later. | Imported: magic link, then they link the provider. Not imported: the provider, which creates the account on first sign-in. |
-| Enterprise connection | Records them for later; never imports them. | Their company's SSO creates the account, or its SCIM directory does. |
+| Social connection | Imports them with their roles and a link to the tenant's connection for that provider. | Through the provider, as before. |
+| Enterprise connection | Imports them with their roles and a link to the customer's connection, once you have created it (next steps); until then, leaves them for a later run. | Their company's SSO. |
+| Enterprise connection whose directory provisions people through SCIM | Never imports them. | Their company's SSO; the directory creates the account and the connection's `trustScimProvisioned` links it. |
 
 ```ts title="scripts/auth0-import-members.ts"
 import { createReadStream } from 'node:fs';
 import { readFile, writeFile } from 'node:fs/promises';
 import { createInterface } from 'node:readline';
 import { iam } from '../iam';
+import { saml } from '../saml';
 import { applyAuth0Roles } from './auth0-roles';
 
-type Auth0Member = { user_id: string; email?: string; name?: string; connection: string; roles: string[] };
+type Auth0Member = {
+  user_id: string;
+  email?: string;
+  email_verified?: boolean;
+  name?: string;
+  connection: string;
+  identities?: Array<{ connection: string; user_id: string | number }>;
+  roles: string[];
+};
+type Link = { providerId: string; issuer: string };
 
 // Your Auth0 connection names.
 const DATABASE_CONNECTIONS = new Set(['Username-Password-Authentication', 'email']);
-const ENTERPRISE_CONNECTIONS = new Set(['acme-okta', 'globex-entra']);
-const importSocial = process.env.SOCIAL_USERS === 'import';
+const DIRECTORY_CONNECTIONS = new Set(['acme-okta']); // the customer's SCIM directory creates these people
+
+// Auth0 connection name -> the OAuth connection that replaces it, per Auth0 Organization (see the next steps).
+// providerId is the connection's id; issuer is the provider's `iss`, exactly.
+const OAUTH_CONNECTIONS: Record<string, Record<string, Link>> = {
+  org_acme: {
+    'google-oauth2': { providerId: 'acme-google', issuer: 'https://accounts.google.com' },
+  },
+  org_globex: {
+    'globex-okta': { providerId: 'globex-okta', issuer: 'https://globex.okta.com' },
+  },
+};
 
 const credential = { token: process.env.BETTER_IAM_TOKEN! };
+
+/** The tenant's link targets: its OAuth connections, plus each SAML connection under the Auth0 connection's name. */
+async function linkTargets(auth0OrgId: string, tenantId: string): Promise<Map<string, Link>> {
+  const targets = new Map(Object.entries(OAUTH_CONNECTIONS[auth0OrgId] ?? {}));
+  for (const connection of await saml.listConnections(credential, { tenantId }))
+    targets.set(connection.id, { providerId: connection.providerId, issuer: connection.idpIssuer });
+  return targets;
+}
 
 async function readMembers(path: string): Promise<Auth0Member[]> {
   const members: Auth0Member[] = [];
@@ -273,48 +316,53 @@ async function existingEmails(tenantId: string): Promise<Set<string>> {
 }
 
 async function importOrganization(auth0OrgId: string, tenantId: string): Promise<void> {
-  const tenant = await iam.api.tenants.get(credential, { tenantId });
-  if (tenant.status !== 'active') {
-    console.log(`${auth0OrgId}: tenant is ${tenant.status}, waiting for its owner`);
-    return;
-  }
   await applyAuth0Roles(tenantId);
   const roleIds = new Map((await iam.api.roles.list(credential, { tenantId })).map((role) => [role.name, role.id]));
+  const targets = await linkTargets(auth0OrgId, tenantId);
   const seen = await existingEmails(tenantId);
   const members = await readMembers(`auth0/members-${auth0OrgId}.ndjson`);
 
-  const toImport: Auth0Member[] = [];
-  const later: Auth0Member[] = [];
+  const toImport: Array<{ member: Auth0Member; providers: Array<Link & { subject: string }> }> = [];
+  let waiting = 0;
   for (const member of members) {
     if (!member.email) continue; // Better IAM needs an email address
     const email = member.email.trim().toLowerCase();
     if (seen.has(email)) continue; // already imported, or the tenant's owner
-    const local = DATABASE_CONNECTIONS.has(member.connection);
-    const enterprise = ENTERPRISE_CONNECTIONS.has(member.connection);
-    if (local || (!enterprise && importSocial)) {
-      seen.add(email);
-      toImport.push(member);
-    } else later.push(member);
+    if (DIRECTORY_CONNECTIONS.has(member.connection)) continue; // the directory creates them
+    if (!DATABASE_CONNECTIONS.has(member.connection) && !targets.has(member.connection)) {
+      waiting++; // their connection is not recreated in this tenant yet: a later run imports them
+      continue;
+    }
+    // Every Auth0 identity with a Better IAM connection becomes a link (one per connection).
+    const providers = new Map<string, Link & { subject: string }>();
+    for (const identity of member.identities ?? []) {
+      const target = targets.get(identity.connection);
+      if (target) providers.set(target.providerId, { ...target, subject: String(identity.user_id) });
+    }
+    seen.add(email);
+    toImport.push({ member, providers: [...providers.values()] });
   }
 
-  const idMap: Record<string, string> = {};
+  const idMapPath = `auth0/id-map-${auth0OrgId}.json`;
+  const idMap: Record<string, string> = JSON.parse(await readFile(idMapPath, 'utf8').catch(() => '{}'));
   for (let start = 0; start < toImport.length; start += 100) {
     const batch = toImport.slice(start, start + 100);
     const { identities } = await iam.api.identities.createMany(credential, {
       tenantId,
-      identities: batch.map((member) => ({
+      identities: batch.map(({ member, providers }) => ({
         email: member.email!,
         name: member.name || member.email!,
+        emailVerified: member.email_verified === true,
+        providers,
         attributes: { auth0Id: member.user_id },
         roleIds: member.roles.flatMap((name) => roleIds.get(name) ?? []),
       })),
     });
-    batch.forEach((member, i) => (idMap[member.user_id] = identities[i]!.id));
+    batch.forEach(({ member }, i) => (idMap[member.user_id] = identities[i]!.id));
   }
 
-  await writeFile(`auth0/id-map-${auth0OrgId}.json`, JSON.stringify(idMap, null, 2));
-  await writeFile(`auth0/later-${auth0OrgId}.json`, JSON.stringify(later, null, 2));
-  console.log(`${auth0OrgId}: imported ${toImport.length}, ${later.length} arrive through a provider`);
+  await writeFile(idMapPath, JSON.stringify(idMap, null, 2));
+  console.log(`${auth0OrgId}: imported ${toImport.length}, ${waiting} wait for their connection`);
 }
 
 const tenantMap = JSON.parse(await readFile('auth0/tenant-map.json', 'utf8')) as Record<string, string>;
@@ -325,10 +373,22 @@ for (const [auth0OrgId, tenantId] of Object.entries(tenantMap)) await importOrga
 npx tsx scripts/auth0-import-members.ts
 ```
 
-Run it again whenever more owners have accepted, and during the dual run to pick up new Auth0 sign-ups: people
-already imported are skipped. Each batch of 100 is one transaction, so if a batch fails (for example
-`LIMIT_EXCEEDED` on a tenant's plan limit), fix the cause and run the script again. The `id-map-*.json` files map
-each Auth0 `user_id` to the new identity ID for your own tables.
+Run it again after you recreate each customer's enterprise connection, and during the dual run to pick up new Auth0
+sign-ups: people already imported are skipped. Each batch of 100 is one transaction, so if a batch fails (for example
+`LIMIT_EXCEEDED` on a tenant's plan limit, or `ACCOUNT_LINK_CONFLICT` for an Auth0 identity listed under two users),
+fix the cause and run the script again. The `id-map-*.json` files map each Auth0 `user_id` to the new identity ID
+for your own tables.
+
+- `emailVerified` is set only where Auth0 says `email_verified: true`; the others verify their address with their
+  first magic link.
+- The SAML link targets come from the `saml` service you mount in
+  [Recreate enterprise connections](#recreate-enterprise-connections-and-scim), under the connection `id` you give
+  each customer's connection (the Auth0 connection's name here). Drop that loop if you have no SAML customers.
+- An Auth0 connection with no entry, for example a social provider you do not recreate, gets no link; those people
+  sign in with a magic link.
+- The owner already exists, so the script skips them. If they sign in through a provider, link it with
+  `iam.api.identities.linkProvider(credential, { tenantId, identityId, providerId, issuer, subject })`, which takes the
+  same values as a `providers` entry and needs a sign-in from the last five minutes.
 
 </Step>
 <Step>
@@ -360,9 +420,10 @@ export const login = createOAuthLogin({
 iam.useProtocol(login);
 ```
 
-Sign-in starts at `/oauth/login/acme-google`. A person who was not imported is created on their first sign-in with a
-verified email. A person you imported with `SOCIAL_USERS=import` first signs in with a magic link, then
-[links Google](/docs/federation/oauth-sign-in#link-an-existing-account) to their account.
+Sign-in starts at `/oauth/login/acme-google`. The connection `id` is the `providerId` in the import script's
+`OAUTH_CONNECTIONS`, so a person the import linked to `acme-google` signs in to their imported account, with its
+roles, on their first Google sign-in. Someone who was not in the export is created on their first sign-in with a
+verified email.
 
 </Step>
 <Step>
@@ -389,9 +450,15 @@ export const saml = createSamlService({
     privateKey: process.env.SAML_SP_KEY!,
     publicCertificate: process.env.SAML_SP_CERTIFICATE!,
   },
+  afterSignIn: '/dashboard', // the ACS redirects here with the session cookie set
+  errorUrl: '/login', // failed sign-ins land here with ?error=CODE
 });
 iam.useProtocol(saml);
 ```
+
+With `afterSignIn`, the ACS answers a completed sign-in with a redirect instead of JSON, so no route of your own has
+to turn the answer into a page. `?returnTo=/path` on a connection's login URL picks the page for one sign-in, and an
+optional `mfaUrl` receives people who still have to pass MFA.
 
 Then create the customer's connection from their IdP's metadata file:
 
@@ -412,7 +479,10 @@ console.log('Entity ID:', connection.entityId, 'ACS URL:', connection.acsUrl, 'L
 ```
 
 The customer enters the entity ID and ACS URL in the new application, with both the response and the assertion
-signed and an `email` attribute. `trustedEmailDomains` lets each person's first sign-in create their account. See
+signed and an `email` attribute. For a customer without a SCIM directory, run the import again afterwards: it links
+each of the customer's Auth0 users to this connection (`connection.providerId`, `connection.idpIssuer`, and their
+NameID), so their first SSO sign-in finds their imported account. `trustedEmailDomains` lets people who were not
+imported create their account at their first sign-in, and marks their address verified. See
 [SAML](/docs/federation/saml#register-the-app-at-the-idp).
 
 </Tab>
@@ -442,7 +512,8 @@ export const login = createOAuthLogin({
 iam.useProtocol(login);
 ```
 
-The customer registers `redirectUri` as the callback URL. See
+The customer registers `redirectUri` as the callback URL. The import script's `OAUTH_CONNECTIONS` entry for
+`globex-okta` uses this `id` and `issuer`, so imported Globex users are linked to it. See
 [OAuth and OIDC sign-in](/docs/federation/oauth-sign-in#microsoft-entra-id) for Entra ID's tenant pinning.
 
 </Tab>
@@ -465,6 +536,7 @@ iam.useProtocol(scim);
 Then create a connection in the customer's tenant and hand them its URL and token:
 
 ```ts title="scripts/auth0-scim-acme.ts"
+import { saml } from '../saml';
 import { scim } from '../scim';
 
 const credential = { token: process.env.BETTER_IAM_TOKEN! };
@@ -475,6 +547,13 @@ const connection = await scim.createConnection(credential, {
 });
 console.log('SCIM base URL:', `https://app.example.com${connection.path}`);
 console.log('Token (shown once):', connection.token);
+
+// People this directory creates link to the SSO connection at their first SSO sign-in.
+await saml.updateConnection(credential, {
+  tenantId: process.env.ACME_TENANT_ID!,
+  connectionId: 'acme-okta',
+  trustScimProvisioned: [connection.id],
+});
 ```
 
 The customer replaces the Auth0 SCIM URL and token in their provisioning settings with these, and has the
@@ -484,54 +563,12 @@ Setting up the service itself is covered in [SCIM provisioning](/docs/guides/sci
 </Tab>
 </Tabs>
 
-A person the directory creates through SCIM has no link to the SSO connection yet, so their first SSO sign-in fails
-with `ACCOUNT_LINK_REQUIRED`. They sign in once with a magic link and link the connection; see
-[Link existing accounts](/docs/guides/enterprise-sso-okta#link-existing-accounts). Restrict the tenant to federated
-sign-in with `tenants.setAuthPolicy` only after that.
-
-</Step>
-<Step>
-
-### Give late arrivals their roles
-
-People who arrive through SSO or social sign-in were not imported, so they start without the roles they had in
-Auth0. Run this after each wave of first sign-ins (or on a schedule during the dual run). It binds the recorded
-roles to each person who now exists; a role they already hold is skipped.
-
-```ts title="scripts/auth0-reconcile-roles.ts"
-import { readFile } from 'node:fs/promises';
-import { IamError } from 'better-iam';
-import { iam } from '../iam';
-
-type Auth0Member = { user_id: string; email?: string; roles: string[] };
-
-const credential = { token: process.env.BETTER_IAM_TOKEN! };
-const tenantMap = JSON.parse(await readFile('auth0/tenant-map.json', 'utf8')) as Record<string, string>;
-
-for (const [auth0OrgId, tenantId] of Object.entries(tenantMap)) {
-  const later = JSON.parse(await readFile(`auth0/later-${auth0OrgId}.json`, 'utf8')) as Auth0Member[];
-  const roleIds = new Map((await iam.api.roles.list(credential, { tenantId })).map((role) => [role.name, role.id]));
-  for (const member of later) {
-    if (!member.email || member.roles.length === 0) continue;
-    const email = member.email.trim().toLowerCase();
-    const matches = await iam.api.identities.list(credential, { tenantId, kind: 'user', query: email, limit: 20 });
-    const identity = matches.find((candidate) => candidate.email === email);
-    if (!identity) continue; // not signed in yet
-    for (const name of member.roles) {
-      const roleId = roleIds.get(name);
-      if (!roleId) continue;
-      try {
-        await iam.api.bindings.create(credential, { tenantId, roleId, subjectType: 'identity', subjectId: identity.id });
-      } catch (error) {
-        if (!(error instanceof IamError && error.code === 'CONFLICT')) throw error; // already bound
-      }
-    }
-  }
-}
-```
-
-For customers on SCIM, prefer group-to-role mappings (`scim.setRoleMappings`) over per-person bindings, so the
-directory keeps roles current after the migration.
+People a SCIM directory manages are not imported (the directory's create would fail with a `409 uniqueness` error).
+With `trustScimProvisioned`, each one's first SSO sign-in, with an address in the connection's `trustedEmailDomains`,
+links to the account the directory created, with no step in between. For an OIDC connection, set
+`trustScimProvisioned` (`true`, or a list of SCIM connection IDs) on its entry in `createOAuthLogin`. You can
+restrict the tenant to federated sign-in with `tenants.setAuthPolicy` as soon as the connection works; link the
+owner's SSO account with `identities.linkProvider` first, because `trustScimProvisioned` never links an owner.
 
 </Step>
 <Step>
@@ -565,10 +602,22 @@ export const login = createOAuthLogin({
 iam.useProtocol(login);
 ```
 
-People who arrive this way must not be bulk-imported first (their first sign-in would fail with
-`ACCOUNT_LINK_REQUIRED`), so use the bridge for a tenant instead of the import step's database-user import, and give
-them their roles with the reconcile script. When you retire Auth0, remove the connection; those people sign in with a
-magic link or a reset link afterwards.
+Imported people can use the bridge too, keeping the roles the import gave them: link each database-connection
+member of that tenant to it. Auth0's ID tokens carry the full `user_id` (such as `auth0|65f1c2`) as `sub`, so in the
+import script add this to the member's `providers` when the member signs in with a database connection:
+
+```ts title="scripts/auth0-import-members.ts"
+// Inside the loop, for the tenant the bridge serves (APP_TENANT_ID):
+if (tenantId === process.env.APP_TENANT_ID && DATABASE_CONNECTIONS.has(member.connection))
+  providers.set('auth0-bridge', {
+    providerId: 'auth0-bridge',
+    issuer: 'https://your-tenant.us.auth0.com/', // the connection's issuer, trailing slash included
+    subject: member.user_id,
+  });
+```
+
+Without that link, an imported person's first sign-in through the bridge fails with `ACCOUNT_LINK_REQUIRED`. When
+you retire Auth0, remove the connection; those people sign in with a magic link or a reset link afterwards.
 
 </Step>
 <Step>
@@ -594,8 +643,10 @@ Switch one organization at a time:
 1. Confirm its people, roles, and connections ([Verify it works](#verify-it-works)).
 2. Route its sign-in to Better IAM (a flag on your own organization record).
 3. Tell its people how to sign in the first time: a magic link, their company's SSO, or the social provider.
-4. For SSO customers, once everyone has signed in or linked, restrict the tenant with
-   `tenants.setAuthPolicy({ tenantId, authPolicy: { allowedMethods: ['federated'] } })`.
+4. For SSO customers, restrict the tenant with
+   `tenants.setAuthPolicy({ tenantId, authPolicy: { allowedMethods: ['federated'] } })`. Imported people are linked
+   and SCIM-created people link at their first SSO sign-in, so this can happen at the switch, once the owner's SSO
+   account is linked.
 
 Keep Auth0 running, unchanged, until the rollback window ends. To roll an organization back, flip its flag: its
 people sign in to Auth0 again with everything they had there. Accounts created and passwords set in Better IAM after
@@ -627,19 +678,24 @@ const { allowed } = await iam.api.policies.effectiveActions(credential, {
 console.log('allowed actions', allowed);
 ```
 
-- `usage.identities` equals the imported members plus the owner and anyone who already signed in through a
-  provider.
+- `usage.identities` equals the imported members plus the owner and anyone a SCIM directory or a first sign-in
+  created.
 - A person imported from the database connection receives a magic link (`auth.startPasswordless` with
   `channel: 'email'`) and signs in; `auth.getSession` then shows `emailVerified: true` on their identity.
+- A person imported from a social connection signs in through the provider and lands in their imported account with
+  its roles; `identities.listProviders` lists the link the import created.
 - A customer's SSO test user signs in at the connection's `loginUrl` and lands in the right tenant.
 
 ## Troubleshooting
 
 <Accordions>
+<Accordion title="tenants.create fails with ACCESS_DENIED">
+  Only a root principal may pass `activate: true`. Sign in to the CLI as the root administrator, in the root tenant,
+  and export that token. See [ACCESS_DENIED](/docs/reference/errors#access_denied).
+</Accordion>
 <Accordion title="createMany fails with TENANT_INACTIVE">
-  The tenant is still `pending`: its owner has not accepted the invitation. Resend it with
-  `tenants.resendInvitation`, and import that organization after it is accepted. See
-  [TENANT_INACTIVE](/docs/reference/errors#tenant_inactive).
+  The tenant was created without `activate: true`, so it stays `pending` until its owner accepts the invitation.
+  Import that organization after it is accepted. See [TENANT_INACTIVE](/docs/reference/errors#tenant_inactive).
 </Accordion>
 <Accordion title="config.apply fails with INVALID_ACTION">
   A role names an action that is not declared in `permissions.resourceTypes`. Add the action to its resource type,
@@ -651,13 +707,21 @@ console.log('allowed actions', allowed);
   the existing identities first. See [IDENTITY_EXISTS](/docs/reference/errors#identity_exists).
 </Accordion>
 <Accordion title="Imported people say the reset email never arrives">
-  The public "forgot password" flow sends nothing to an unverified address, and imported addresses start unverified.
-  Have them use a magic link first, or send a reset link yourself with `identities.requestPasswordReset`.
+  The public "forgot password" flow sends nothing to an unverified address. Addresses Auth0 had not verified are
+  imported unverified. Have those people use a magic link first, or send a reset link yourself with
+  `identities.requestPasswordReset`.
 </Accordion>
 <Accordion title="First SSO or social sign-in fails with ACCOUNT_LINK_REQUIRED">
-  An account with that email already exists in the tenant, because it was imported or created by SCIM. The person
-  signs in with a magic link and links the provider. Leave enterprise users out of the import to avoid this. See
-  [ACCOUNT_LINK_REQUIRED](/docs/reference/errors#account_link_required).
+  An account with that email exists in the tenant but has no link for this connection. For an imported person, the
+  connection had no entry in `OAUTH_CONNECTIONS` (or no SAML connection under the Auth0 connection's name) when they
+  were imported, or the subject differs from what the provider sends: add the link with `identities.linkProvider`.
+  For a person a SCIM directory created, set `trustScimProvisioned` on the connection and check that their domain is
+  in `trustedEmailDomains`. See [ACCOUNT_LINK_REQUIRED](/docs/reference/errors#account_link_required).
+</Accordion>
+<Accordion title="createMany or linkProvider fails with ACCOUNT_LINK_CONFLICT">
+  The external account is already linked to another identity in the tenant, or the person already has a link through
+  that connection. Find the existing link with `identities.listProviders` and remove a wrong one with
+  `identities.unlinkProvider`. See [ACCOUNT_LINK_CONFLICT](/docs/reference/errors#account_link_conflict).
 </Accordion>
 <Accordion title="tenants.create or saml.createConnection fails with RECENT_AUTH_REQUIRED">
   The session is older than `recentAuthenticationMs` (five minutes by default). Run `better-iam login` again and

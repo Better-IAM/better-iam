@@ -65,22 +65,24 @@ deleted, or demoted (`LAST_OWNER`), and the last active root administrator canno
 deleted (`LAST_ROOT_ADMIN`). A root administrator's status, sessions, expiry, sign-in address, and password can be
 changed only by a root administrator.
 
-<ApiGroupSummary group="identities" methods={24} routed={true} />
+<ApiGroupSummary group="identities" methods={27} routed={true} />
 
 | Method | What it does | Access |
 | --- | --- | --- |
 | [`acceptInvitation`](#acceptinvitation) | Redeems a member invitation: creates the person's account with the invited email, applies the invitation's roles and groups, and signs them in. | Public |
-| [`create`](#create) | Creates a person in the tenant, optionally with a password, a manager, and a scheduled deactivation date. | Credential |
-| [`createMany`](#createmany) | Creates up to 100 people in one transaction, each with optional attributes, roles, groups, password, and expiry. | Credential |
+| [`create`](#create) | Creates a person in the tenant, optionally with a password, a manager, a scheduled deactivation date, a verified email, and linked external sign-ins. | Credential |
+| [`createMany`](#createmany) | Creates up to 100 people in one transaction, each with optional attributes, roles, groups, password, expiry, verified email, and linked external sign-ins. | Credential |
 | [`delete`](#delete) | Removes a person or service account for good, leaving a tombstone so audit records still name who acted. | Credential |
 | [`export`](#export) | Returns everything the tenant stores about one identity as JSON, to answer a data-subject access request. | Credential |
 | [`get`](#get) | Returns one identity by ID, including the tombstone of a deleted identity. | Credential |
 | [`impersonate`](#impersonate) | Opens a short-lived "view as" session as a member, for support and troubleshooting, and returns its token. | Credential |
 | [`invite`](#invite) | Invites a person to the tenant by email, with roles and groups they receive when they accept. | Credential |
+| [`linkProvider`](#linkprovider) | Links an external sign-in (OAuth/OIDC or SAML) to an existing account, so that IdP account signs in to it without an account-linking step. | Credential |
 | [`list`](#list) | Lists the tenant's people and service accounts, with filters and paging. | Credential |
 | [`listBindings`](#listbindings) | Lists an identity's role bindings, direct and through its groups, with their activation and window state. | Credential |
 | [`listGroups`](#listgroups) | Lists the groups an identity currently belongs to, with `membershipExpiresAt` on temporary memberships. | Credential |
 | [`listInvitations`](#listinvitations) | Lists every member invitation of the tenant, pending or not, without tokens. | Credential |
+| [`listProviders`](#listproviders) | Lists the external sign-ins linked to an account, sorted by provider. | Credential |
 | [`listReports`](#listreports) | Lists the active people whose manager is this identity, by name. | Credential |
 | [`listSessions`](#listsessions) | Lists an identity's unexpired sessions and API keys, most recently used first, without token hashes. | Credential |
 | [`offboard`](#offboard) | Disables an identity and removes everything that gave it access in one transaction, handing what it owned to a successor. | Credential |
@@ -91,6 +93,7 @@ changed only by a root administrator.
 | [`setBoundary`](#setboundary) | Sets a root-controlled permissions boundary on one identity, capping what it may do in the tenant whatever its roles grant. | Credential |
 | [`setOwner`](#setowner) | Makes a member an owner of the tenant, or removes their ownership. | Credential |
 | [`setStatus`](#setstatus) | Disables an identity or re-enables it. | Credential |
+| [`unlinkProvider`](#unlinkprovider) | Removes a linked external sign-in; that IdP account no longer signs in to this account. | Credential |
 | [`unlock`](#unlock) | Clears the rate-limit counters that lock a person out of sign-in, recovery, and MFA after too many attempts. | Credential |
 | [`update`](#update) | Changes an identity's name, declared attributes, email, manager, or scheduled deactivation. | Credential |
 
@@ -140,7 +143,7 @@ iam.api.identities.acceptInvitation(
 
 ## create
 
-Creates a person in the tenant, optionally with a password, a manager, and a scheduled deactivation date.
+Creates a person in the tenant, optionally with a password, a manager, a scheduled deactivation date, a verified email, and linked external sign-ins.
 
 <ApiEndpoint group="identities" method="create" http="POST /identities/create" credential="required" />
 
@@ -150,9 +153,13 @@ Creates a person in the tenant, optionally with a password, a manager, and a sch
   tenant's member limit; `WEAK_PASSWORD` or `BREACHED_PASSWORD` for a password the rules refuse; `INVALID_INPUT`
   for an `expiresAt` that is not in the future or is more than ten years ahead, or a manager who is not active;
   `NOT_FOUND` when the manager is not in this tenant; `INVARIANT_VIOLATION` when the new person would break an
-  enforced [access invariant](/docs/features/governance/change-safety).
+  enforced [access invariant](/docs/features/governance/change-safety); `ACCOUNT_LINK_CONFLICT` (409) when one of
+  `providers` is already linked to another account.
 
-The account starts active, with an unverified email and no roles. Without a password the person cannot sign in
+The account starts active, with no roles, and with an unverified email unless `emailVerified: true` records that
+another system already verified it (a migration). `providers` links up to 10 external sign-ins, one per provider,
+as [`linkProvider`](#linkprovider) does, so the person's first sign-in through that connection finds this
+account instead of failing with `ACCOUNT_LINK_REQUIRED`. Without a password the person cannot sign in
 with one: send them a reset link with [`requestPasswordReset`](#requestpasswordreset), or use [`invite`](#invite)
 instead, which lets them choose it. `expiresAt` (epoch milliseconds) schedules deactivation. Declared attributes
 are set with [`update`](#update) or [`createMany`](#createmany). After the call commits,
@@ -181,13 +188,15 @@ iam.api.identities.create(
     password?: string;
     expiresAt?: number;
     managerId?: string;
+    emailVerified?: boolean;
+    providers?: ProviderLinkInput[];
   },
 ): Promise<PublicIdentity>
 ```
 
 ## createMany
 
-Creates up to 100 people in one transaction, each with optional attributes, roles, groups, password, and expiry.
+Creates up to 100 people in one transaction, each with optional attributes, roles, groups, password, expiry, verified email, and linked external sign-ins.
 
 <ApiEndpoint group="identities" method="createMany" http="POST /identities/createMany" credential="required" />
 
@@ -199,22 +208,29 @@ Creates up to 100 people in one transaction, each with optional attributes, role
 - **Errors:** `INVALID_INPUT` for an empty list, more than 100 entries, or an undeclared or mistyped attribute;
   `ACCESS_DENIED` without the right to grant one of the roles or fill one of the groups; `PROTECTED_RESOURCE` for
   the Owner role; `GRANT_AUTHORITY_REQUIRED` when roles are given and you hold no active grant authority;
-  `IDENTITY_EXISTS`, `LIMIT_EXCEEDED`, `SOD_CONFLICT`, and `INVARIANT_VIOLATION` as for single creation. Any
-  failure rejects the whole batch.
+  `IDENTITY_EXISTS`, `LIMIT_EXCEEDED`, `SOD_CONFLICT`, `INVARIANT_VIOLATION`, and `ACCOUNT_LINK_CONFLICT` as for
+  single creation. Any failure rejects the whole batch.
 
 Use it for migrations and cohort onboarding. Roles are bound directly to each person under your grant authority and
 group memberships are permanent. An entry's `expiresAt` is that identity's deactivation date, not an expiry for its
 grants. Attributes are checked against `permissions.identityAttributes`. The rights to grant each role and fill
 each group are checked once for the whole batch, so an import can never grant more than you could bind by hand.
+Per entry, `emailVerified` and `providers` work as in [`create`](#create): people imported from another identity
+provider keep their verified status, and their social or SSO sign-ins are linked before their first sign-in here.
 
 ```ts
 const { identities } = await iam.api.identities.createMany(credential, {
   tenantId,
-  identities: newHires.map((hire) => ({
-    email: hire.email,
-    name: hire.name,
-    attributes: { department: hire.department }, // declared in permissions.identityAttributes
+  identities: exported.map((user) => ({
+    email: user.email,
+    name: user.name,
+    emailVerified: user.email_verified,
+    attributes: { department: user.department }, // declared in permissions.identityAttributes
     groupIds: [everyoneGroupId],
+    // An OAuth connection's id, the provider's issuer exactly, and the person's subject there.
+    providers: user.googleSub
+      ? [{ providerId: 'google', issuer: 'https://accounts.google.com', subject: user.googleSub }]
+      : [],
   })),
 });
 ```
@@ -234,6 +250,8 @@ iam.api.identities.createMany(
       roleIds?: string[];
       groupIds?: string[];
       expiresAt?: number;
+      emailVerified?: boolean;
+      providers?: ProviderLinkInput[];
     }>;
   },
 ): Promise<{ identities: PublicIdentity[] }>
@@ -522,6 +540,49 @@ iam.api.identities.invite(
 }>
 ```
 
+## linkProvider
+
+Links an external sign-in (OAuth/OIDC or SAML) to an existing account, so that IdP account signs in to it without an account-linking step.
+
+<ApiEndpoint group="identities" method="linkProvider" http="POST /identities/linkProvider" credential="required" />
+
+- **Permission:** `iam:identities:update` on the person, with recent authentication. For an owner you must be
+  another owner of the same tenant or root; for a root administrator, root.
+- **Audited as:** `iam:identities:update` and `identity:link-provider` (with `{ providerId, linkId }`).
+- **Errors:** `ACCOUNT_LINK_CONFLICT` (409) when the external account is linked to another account, or this account
+  already has a link through that provider (unlink it first); `INVALID_INPUT` for a service account or a missing
+  value; `ACCESS_DENIED` for an owner or root administrator you may not control; `NOT_FOUND`;
+  `RECENT_AUTH_REQUIRED`.
+
+Federated sign-in looks accounts up by `providerId`, `issuer`, and `subject`:
+
+| Connection | `providerId` | `issuer` | `subject` |
+| --- | --- | --- | --- |
+| OAuth or OIDC login connection | The connection's `id` | The provider's `iss` exactly (`https://accounts.google.com`, `https://github.com`) | The `sub` claim (GitHub: the numeric user ID) |
+| Tenant-managed SAML connection | The connection summary's `providerId` | Its `idpIssuer` | The person's `NameID` |
+
+Whoever links an external account to an account controls it, which is why the rules match those for changing its
+sign-in address. It returns the link: `{ id, identityId, providerId, issuer, subject, createdAt }`.
+
+```ts
+await iam.api.identities.linkProvider(credential, {
+  tenantId,
+  identityId,
+  providerId: 'google', // the OAuth connection's id
+  issuer: 'https://accounts.google.com',
+  subject: '109876543210987654321',
+});
+```
+
+<ApiShape id="identities.linkProvider" http />
+
+```ts title="Signature"
+iam.api.identities.linkProvider(
+  credential: CredentialInput,
+  input: { tenantId: string; identityId: string } & ProviderLinkInput,
+): Promise<ProviderLink>
+```
+
 ## list
 
 Lists the tenant's people and service accounts, with filters and paging.
@@ -647,6 +708,27 @@ iam.api.identities.listInvitations(
   id: string;
   tenantId: string;
 }[]>
+```
+
+## listProviders
+
+Lists the external sign-ins linked to an account, sorted by provider.
+
+<ApiEndpoint group="identities" method="listProviders" http="POST /identities/listProviders" credential="required" />
+
+- **Permission:** `iam:identities:read` on the person.
+- **Errors:** `NOT_FOUND` when the identity is not in this tenant.
+
+Each entry is `{ id, identityId, providerId, issuer, subject, createdAt }`; pass `id` to
+[`unlinkProvider`](#unlinkprovider).
+
+<ApiShape id="identities.listProviders" http />
+
+```ts title="Signature"
+iam.api.identities.listProviders(
+  credential: CredentialInput,
+  input: { tenantId: string; identityId: string },
+): Promise<ProviderLink[]>
 ```
 
 ## listReports
@@ -1026,6 +1108,28 @@ iam.api.identities.setStatus(
   credential: CredentialInput,
   input: { tenantId: string; identityId: string; status: 'active' | 'disabled' },
 ): Promise<PublicIdentity>
+```
+
+## unlinkProvider
+
+Removes a linked external sign-in; that IdP account no longer signs in to this account.
+
+<ApiEndpoint group="identities" method="unlinkProvider" http="POST /identities/unlinkProvider" credential="required" />
+
+- **Permission:** as for [`linkProvider`](#linkprovider).
+- **Audited as:** `iam:identities:update` and `identity:unlink-provider`.
+- **Errors:** `NOT_FOUND` when the link is not one of this person's; `ACCESS_DENIED`;
+  `RECENT_AUTH_REQUIRED`.
+
+A later sign-in from that IdP account is treated as a first sign-in again. It returns the removed link.
+
+<ApiShape id="identities.unlinkProvider" http />
+
+```ts title="Signature"
+iam.api.identities.unlinkProvider(
+  credential: CredentialInput,
+  input: { tenantId: string; identityId: string; linkId: string },
+): Promise<ProviderLink>
 ```
 
 ## unlock

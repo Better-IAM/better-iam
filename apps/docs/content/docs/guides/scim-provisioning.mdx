@@ -97,6 +97,7 @@ Add `@better-iam/scim` to `serverExternalPackages` in `next.config.mjs` next to 
 | `adminBasePath` | `string` | `'/scim/admin'` | Where the JSON administration routes for your admin UI are served. Must not overlap `basePath`. |
 | `mapAttributes` | `(user: ProvisionedUser) => Record<string, unknown> \| undefined` | none | Turns provisioned fields into declared identity attributes. Return `undefined` to leave attributes untouched. |
 | `mapManager` | `boolean` | `true` | Sets each person's `managerId` from the enterprise extension's `manager`. |
+| `unsupportedAttributes` | `'ignore' \| 'reject'` | `'ignore'` | What happens to attributes Better IAM does not store, such as `addresses` or `phoneNumbers`: dropped, or refused with `400 mutability`. See [Map attributes](#map-attributes). |
 | `store`, `authorize`, `authenticate`, `validateIdentityAttributes`, `syncRoleMappings` | host callbacks | from `iam.protocolHost` | Database access, permission checks, attribute validation, and the trusted callback that applies group role mappings. |
 
 `ProvisionedUser` carries `userName`, `displayName`, `externalId`, `active`, `title`, `emails`, `name`, and
@@ -125,9 +126,8 @@ export const PATCH = handlers.POST;
 export const DELETE = handlers.POST;
 ```
 
-Each export calls the IAM handler with the request unchanged, whatever its method. If you added the SAML assertion
-wrapper from [SAML single sign-on with Okta](/docs/guides/enterprise-sso-okta), keep your `POST` wrapper and forward
-the three SCIM methods to `handlers.POST` as here. The edge middleware's default `protect` (from
+Each export calls the IAM handler with the request unchanged, whatever its method. The edge middleware's default
+`protect` (from
 `createIamMiddleware`) leaves `/api/iam` public, so the directory's requests reach the route without a session
 cookie; a custom `protect` must do the same.
 
@@ -186,8 +186,9 @@ the ones the directory's admin console shows; consoles rename fields between ver
 2. Open **Provisioning** and set **Provisioning Mode** to **Automatic**.
 3. Under **Admin Credentials**, set **Tenant URL** to the connection URL and **Secret Token** to the token, then
    press **Test Connection**.
-4. Under **Mappings**, open the user mapping and delete every mapping whose target attribute Better IAM does not
-   accept (see the next step), such as `addresses`, `phoneNumbers`, and `preferredLanguage`.
+4. Under **Mappings**, review the user mapping. Entra's defaults (`addresses`, `phoneNumbers`, `preferredLanguage`,
+   and so on) can stay: Better IAM accepts and ignores attributes it does not store (see
+   [Map attributes](#map-attributes)). Add the enterprise extension attributes you want to map, such as `department`.
 5. Under **Settings**, choose the **Scope**, usually only assigned users and groups, and assign the people and groups
    who should be provisioned in **Users and groups**.
 6. Set **Provisioning Status** to **On**. To test one person without waiting for a cycle, use **Provision on demand**.
@@ -205,8 +206,8 @@ bare-ID manager values, and member removal by value.
 3. Choose the supported provisioning actions: pushing new users, pushing profile updates, and pushing groups.
 4. In the app's provisioning settings for the app, enable **Create Users**, **Update User Attributes**, and
    **Deactivate Users**.
-5. Review the app's attribute mappings and remove any that target attributes Better IAM does not accept (see the
-   next step).
+5. Review the app's attribute mappings. Attributes Better IAM does not store, such as `locale` or `nickName`, are
+   ignored (see [Map attributes](#map-attributes)); a pushed password is ignored too.
 6. Assign people and groups to the app, and push the groups whose roles you will map.
 
 </Tab>
@@ -221,9 +222,7 @@ once a minute, so the settings page can show whether the directory is still call
 
 ### Map attributes
 
-A SCIM user becomes an identity in the organization. Better IAM stores the fields below and refuses any other
-attribute: a create or replace that carries an unsupported attribute fails with `400` and `scimType: mutability`
-("An unsupported or immutable attribute was supplied"), so the directory reports the person as failed.
+A SCIM user becomes an identity in the organization. Better IAM stores the fields below:
 
 | SCIM attribute | Becomes | Notes |
 | --- | --- | --- |
@@ -237,10 +236,21 @@ attribute: a create or replace that carries an unsupported attribute fails with 
 | Enterprise extension `employeeNumber`, `costCenter`, `organization`, `division`, `department` | `mapAttributes` input (`enterprise`) | Copied to declared attributes by `mapAttributes`. |
 | Enterprise extension `manager` | The identity's `managerId` | With `mapManager` (default on). The value may be the manager's SCIM ID, `externalId`, or `userName`. |
 
-The enterprise extension schema is `urn:ietf:params:scim:schemas:extension:enterprise:2.0:User`. Attributes such as
-`addresses`, `phoneNumbers`, `preferredLanguage`, `locale`, `timezone`, `nickName`, `userType`, `roles`, and
-`password` are not accepted, and neither are read-only attributes such as `id` and `meta` in a request body. Remove
-their mappings in the directory.
+The enterprise extension schema is `urn:ietf:params:scim:schemas:extension:enterprise:2.0:User`. Everything else
+directories commonly send is accepted and dropped, in creates, replaces, and `PATCH` operations alike:
+
+- **Read-only attributes** (`id`, `meta`, `groups`), which directories echo back in a `PUT`. RFC 7644 says to ignore
+  them, so they are ignored whatever `unsupportedAttributes` says. A `PATCH` whose path targets one (`replace meta.created`) still fails with `400`.
+- **Core User attributes Better IAM does not store**: `nickName`, `profileUrl`, `userType`, `preferredLanguage`,
+  `locale`, `timezone`, `password`, `phoneNumbers`, `ims`, `photos`, `addresses`, `entitlements`, `roles`, and
+  `x509Certificates`. A `PATCH` such as `replace phoneNumbers[type eq "work"].value` is skipped while the rest of the
+  request applies.
+- **Extension schemas other than the enterprise extension**, such as a custom Okta extension. Their URN is left out
+  of the stored `schemas`.
+
+An attribute no supported schema defines (a typo such as `titel`, or `badge` inside the enterprise extension) still
+fails with `400` and `scimType: mutability`, so mapping mistakes surface in the directory's provisioning log. Set
+`unsupportedAttributes: 'reject'` to refuse unstored attributes the same way.
 
 The mapped attributes drive policy conditions, for example `StringEquals: { 'principal.department': 'Finance' }`.
 See [Conditions](/docs/authorization/conditions).
@@ -348,12 +358,13 @@ export async function stopProvisioning(connectionId: string) {
 </Step>
 </Steps>
 
-<Callout type="warn" title="SCIM accounts and single sign-on">
-  Provisioned identities are not matched to a SAML or OIDC sign-in by email. A person the directory created is
-  refused on their first federated sign-in (`ACCOUNT_LINK_REQUIRED`, which the SAML assertion consumer service reports
-  as `401 SAML_INVALID`) until they link their account once, while signed in to it by another method the
-  organization allows. Plan that step before you restrict the organization to `federated`
-  sign-in; see [Link existing accounts](/docs/guides/enterprise-sso-okta#link-existing-accounts).
+<Callout title="SCIM accounts and single sign-on">
+  When the same directory also signs people in through SAML or OIDC, set `trustScimProvisioned` on that sign-in
+  connection to this SCIM connection's ID. A person's first federated sign-in, with an email the IdP vouches for
+  (a SAML connection's `trustedEmailDomains`, or a verified OIDC email), then links to the account the directory
+  created and signs them in, so you can restrict the organization to `federated` sign-in from the start. Without it,
+  their first sign-in fails with `ACCOUNT_LINK_REQUIRED`. See
+  [Link existing accounts](/docs/guides/enterprise-sso-okta#link-existing-accounts).
 </Callout>
 
 ## Verify it works
@@ -398,9 +409,10 @@ curl -s -X PATCH "$SCIM_URL/Users/<id>" \
   only with its own connection's path. Rotate the token and paste the new one into the directory.
 </Accordion>
 <Accordion title="Creates fail with 400 and scimType mutability">
-  The request carries an attribute outside the supported list, for example from the directory's attribute mappings
-  (`addresses`, `phoneNumbers`, `preferredLanguage`, `locale`), or a read-only attribute such as `id` or `meta`.
-  Remove those mappings in the directory and retry the failed users.
+  The request carries an attribute no supported schema defines, usually a custom mapping whose target name is
+  misspelled or placed in the enterprise extension although that extension does not define it. Fix the mapping in
+  the directory and retry the failed users. With `unsupportedAttributes: 'reject'`, attributes Better IAM does not
+  store (`addresses`, `phoneNumbers`, `preferredLanguage`, `locale`) fail this way too.
 </Accordion>
 <Accordion title="Creates fail with 409 uniqueness">
   Either another SCIM user of the connection has the same `userName`, or the email already belongs to an identity in

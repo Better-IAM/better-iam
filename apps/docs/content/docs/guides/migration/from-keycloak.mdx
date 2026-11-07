@@ -69,8 +69,8 @@ tenant, whose administrator you create with `bootstrap`, so you do not import it
 | Users without an email | No | `createMany` needs an email; add one in Keycloak first, or leave them out. |
 | Password | No | Magic link, or a reset link from an administrator. |
 | OTP and WebAuthn | No | Enroll again; enforce with `requireMfa`. |
-| Links to brokered identity providers (`federatedIdentities`) | No | Sign in once another way, then link; or sign in through the provider if they were never imported. |
-| Email verification | No | Imported identities start unverified; the first magic link verifies the address. |
+| Links to brokered identity providers (`federatedIdentities`) | Yes, as `providers` on each imported person | Sign in through the same provider, connected directly to Better IAM. |
+| Email verification | Yes, from `emailVerified` | Addresses Keycloak had not verified are verified by the first magic link. |
 
 ## Prerequisites
 
@@ -78,7 +78,7 @@ tenant, whose administrator you create with `bootstrap`, so you do not import it
   against the realm's database. Older distributions export through `standalone.sh` system properties instead.
 - Better IAM installed, migrated, and bootstrapped, following [Installation](/docs/installation) and
   [Quickstart](/docs/quickstart). You need the root tenant's ID from `bootstrap`.
-- An email transport in `authentication.sendEmail`, for the tenant invitation and for magic links.
+- An email transport in `authentication.sendEmail`, for magic links and reset links.
 - A list of what each realm role and client role allows in your applications. Keycloak stores only role names;
   Better IAM roles carry actions.
 
@@ -100,8 +100,9 @@ bin/kc.sh export --file acme-realm.json --realm acme --users realm_file
 for the exact options.
 
 The file contains the realm's `roles.realm`, `groups` (with nested `subGroups`), and `users`. Each user has
-`username`, `email`, `firstName`, `lastName`, `enabled`, `attributes`, `realmRoles`, `groups` (as paths such as
-`/engineering/backend`), `credentials`, and `federatedIdentities`. The file also holds password hashes and client
+`username`, `email`, `emailVerified`, `firstName`, `lastName`, `enabled`, `attributes`, `realmRoles`, `groups` (as
+paths such as `/engineering/backend`), `credentials`, and `federatedIdentities` (each with the identity provider's
+alias as `identityProvider` and the person's ID there as `userId`). The file also holds password hashes and client
 secrets: keep it on an encrypted disk and delete it after the move.
 
 You can read the same data from the Keycloak Admin REST API (`GET /admin/realms/{realm}/users`, `/groups`, `/roles`)
@@ -146,8 +147,10 @@ export const iam = betterIam({
 
 ### Create the tenant
 
-`tenants.create` needs a root sign-in from the last five minutes. The realm's administrator becomes the tenant's
-owner when they accept the invitation; members cannot be created until then.
+`tenants.create` needs a root sign-in from the last five minutes. With `activate: true`, which only a root principal
+may pass, the tenant is `active` at once and the realm's administrator becomes its owner without an invitation, so
+you can import members right away. The owner signs in with a magic link, a reset link, or a provider you link to
+them.
 
 ```bash
 npx better-iam login --config better-iam.config.mjs --tenant <root-tenant-id> --email root@example.com
@@ -166,12 +169,17 @@ const { tenant } = await iam.api.tenants.create(admin, {
   name: 'Acme',
   slug: 'acme', // the realm name works well as the sign-in alias
   ownerEmail: 'it-admin@acme.example',
+  activate: true, // active now; the owner's account is created without an invitation
+  ownerName: 'Acme IT',
+  ownerEmailVerified: true, // only if Keycloak marked this address verified
 });
-await iam.auth.dispatchOutbox();
 console.log('IAM_TENANT_ID =', tenant.id);
 ```
 
 **Route:** `POST /tenants/create`
+
+Without `activate`, the owner receives an emailed invitation instead, and the tenant stays `pending` (no members can
+be created) until they accept it.
 
 </Step>
 <Step>
@@ -256,8 +264,9 @@ here (for example `billing-app:approver`), or fold its meaning into the actions 
 
 ### Import users
 
-The script creates users 100 at a time with their realm roles, groups, `legacyId`, and declared attributes, then
-disables the ones Keycloak had disabled. Keycloak attributes are lists; the script keeps the first value.
+The script creates users 100 at a time with their realm roles, groups, `legacyId`, declared attributes, verified
+email status, and links to the identity providers Keycloak brokered for them, then disables the ones Keycloak had
+disabled. Keycloak attributes are lists; the script keeps the first value.
 
 ```ts title="scripts/keycloak/03-users.ts"
 import { readFile, writeFile } from 'node:fs/promises';
@@ -267,12 +276,24 @@ type KeycloakUser = {
   id: string;
   username: string;
   email?: string;
+  emailVerified?: boolean;
   firstName?: string;
   lastName?: string;
   enabled: boolean;
   attributes?: Record<string, string[]>;
   realmRoles?: string[];
   groups?: string[];
+  federatedIdentities?: Array<{ identityProvider: string; userId: string }>;
+};
+
+// Keycloak identity provider alias -> the Better IAM connection that replaces it (see "Brokered sign-in" below).
+// providerId is the connection's id; issuer is the provider's `iss`, exactly.
+const BROKERED: Record<string, { providerId: string; issuer: string }> = {
+  google: { providerId: 'acme-google', issuer: 'https://accounts.google.com' },
+  'acme-entra': {
+    providerId: 'acme-entra',
+    issuer: `https://login.microsoftonline.com/${process.env.ACME_ENTRA_TENANT_ID}/v2.0`,
+  },
 };
 
 const realm = JSON.parse(await readFile('acme-realm.json', 'utf8')) as { users?: KeycloakUser[] };
@@ -282,7 +303,7 @@ const { roleIds, groupIds } = JSON.parse(await readFile('acme-ids.json', 'utf8')
 };
 const admin = { token: process.env.BETTER_IAM_TOKEN! };
 const tenantId = process.env.IAM_TENANT_ID!;
-const ownerEmail = 'it-admin@acme.example'; // already in the tenant: accepting the invitation created them
+const ownerEmail = 'it-admin@acme.example'; // already in the tenant: tenants.create created them
 
 // Resume support: people already imported are kept in acme-users.json.
 const mapping: Record<string, string> = JSON.parse(await readFile('acme-users.json', 'utf8').catch(() => '{}'));
@@ -304,6 +325,10 @@ for (let start = 0; start < users.length; start += 100) {
     identities: batch.map((user) => ({
       email: user.email!,
       name: [user.firstName, user.lastName].filter(Boolean).join(' ') || user.username,
+      emailVerified: user.emailVerified === true,
+      providers: (user.federatedIdentities ?? []).flatMap((link) =>
+        BROKERED[link.identityProvider] ? [{ ...BROKERED[link.identityProvider]!, subject: link.userId }] : [],
+      ),
       attributes: {
         legacyId: user.id,
         ...(user.attributes?.department?.[0] ? { department: user.attributes.department[0] } : {}),
@@ -330,8 +355,13 @@ for (const user of realm.users ?? [])
   skips users already in `acme-users.json`.
 - `identities.setStatus` needs a sign-in from the last five minutes. If the run outlasts that and stops with
   `RECENT_AUTH_REQUIRED`, run `login` again, export the new token, and rerun the script.
-- The owner is skipped because accepting the invitation already created them. If they are in the export, add their
-  Keycloak user ID and Better IAM identity ID to `acme-users.json` by hand.
+- The owner is skipped because `tenants.create` already created them. If they are in the export, add their
+  Keycloak user ID and Better IAM identity ID to `acme-users.json` by hand, and link their brokered sign-in with
+  `iam.api.identities.linkProvider(admin, { tenantId, identityId, providerId, issuer, subject })`.
+- Brokered identities whose alias has no entry in `BROKERED` get no link; those people sign in with a magic link.
+  Each Keycloak `userId` must be the provider's subject exactly: Google's `sub`, the OIDC `sub` for an OIDC
+  provider, or the NameID for a SAML provider (Keycloak's default principal). Two users linked to the same external
+  account fail the batch with `ACCOUNT_LINK_CONFLICT`.
 - Keycloak can hold two users with the same email when the realm allows duplicate emails; Better IAM cannot
   (`IDENTITY_EXISTS`). Merge or rename them in Keycloak first.
 - `service-account-*` users belong to Keycloak clients. Recreate them as
@@ -342,7 +372,7 @@ for (const user of realm.users ?? [])
 
 ### Let people in
 
-Imported identities are active, have no password, and have an unverified email.
+Imported identities are active and have no password; their email is verified where Keycloak had verified it.
 
 #### Passwords
 
@@ -380,10 +410,42 @@ await iam.api.tenants.setAuthPolicy(admin, {
 
 People who signed in through an identity provider brokered by Keycloak (Google, a customer's Entra ID, a SAML IdP)
 sign in through the same provider directly in Better IAM. Add an [OAuth connection](/docs/federation/oauth-sign-in)
-or [SAML connection](/docs/federation/saml) for it. Imported people's first sign-in through it fails with
-`ACCOUNT_LINK_REQUIRED`, because Better IAM never matches accounts by email: they sign in with a magic link once, then
-[link the provider](/docs/federation/oauth-sign-in#link-an-existing-account). People who only ever signed in through
-the provider can be left out of the import instead: their first sign-in creates the identity, with a verified email.
+or [SAML connection](/docs/federation/saml) for each one, with the `id` and issuer you put in `BROKERED`:
+
+```ts title="protocols.ts"
+import { createOAuthLogin } from 'better-iam/oauth';
+import { iam } from './iam';
+
+iam.useProtocol(
+  createOAuthLogin({
+    ...iam.protocolHost,
+    connections: [
+      {
+        id: 'acme-google', // BROKERED.google.providerId
+        tenantId: process.env.IAM_TENANT_ID!,
+        kind: 'google',
+        clientId: process.env.GOOGLE_CLIENT_ID!,
+        clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
+        redirectUri: 'https://app.acme.example/oauth/acme-google/callback',
+      },
+      {
+        id: 'acme-entra', // BROKERED['acme-entra'].providerId
+        tenantId: process.env.IAM_TENANT_ID!,
+        kind: 'microsoft',
+        microsoftTenant: process.env.ACME_ENTRA_TENANT_ID!,
+        clientId: process.env.ACME_ENTRA_CLIENT_ID!,
+        clientSecret: process.env.ACME_ENTRA_CLIENT_SECRET!,
+        redirectUri: 'https://app.acme.example/oauth/acme-entra/callback',
+      },
+    ],
+  }),
+);
+```
+
+The import linked each person's brokered identity to these connections, so their first sign-in through one finds
+their imported account, with its roles and groups. For a SAML IdP, create the connection with
+`saml.createConnection` before the import and use its `providerId` and `idpIssuer` in `BROKERED`. People who were
+not imported are created at their first sign-in, with a verified email.
 
 </Step>
 <Step>
@@ -432,8 +494,8 @@ Applications that validated Keycloak access tokens and read `realm_access.roles`
 ## Alternative: federate to Keycloak during the transition
 
 If you cannot ask everyone to sign in again on one day, keep Keycloak as the sign-in provider for a while. Add the
-realm as an OpenID Connect connection; people sign in with their Keycloak password, and Better IAM creates each
-identity at first sign-in from the verified `email` claim.
+realm as an OpenID Connect connection; people sign in with their Keycloak password and land in the account you
+imported for them.
 
 ```ts title="protocols.ts"
 import { createOAuthLogin } from 'better-iam/oauth';
@@ -460,13 +522,22 @@ iam.useProtocol(
 );
 ```
 
+Keycloak's ID tokens carry the Keycloak user ID as `sub`, so link every imported person to this connection in
+`03-users.ts`, next to their brokered identities:
+
+```ts title="scripts/keycloak/03-users.ts"
+providers: [
+  { providerId: 'acme-keycloak', issuer: 'https://keycloak.acme.example/realms/acme', subject: user.id },
+  // ...the entries from BROKERED
+],
+```
+
 Trade-offs of this path:
 
-- Do not import users you federate: an imported identity blocks the first federated sign-in for its address with
-  `ACCOUNT_LINK_REQUIRED`.
-- Federated identities arrive without roles or groups. Grant them with
-  [automatic assignment rules](/docs/features/privileged-access/automatic-assignment) on the mapped attributes, or by
-  hand.
+- Imported people keep the roles and groups the import gave them. Without the `acme-keycloak` link, an imported
+  person's first sign-in through it fails with `ACCOUNT_LINK_REQUIRED`; people who were not imported are created at
+  their first sign-in from the verified `email` claim, without roles or groups (grant those with
+  [automatic assignment rules](/docs/features/privileged-access/automatic-assignment) on the mapped attributes).
 - Keycloak's issuer and every discovered endpoint must use HTTPS.
 - Keycloak keeps owning passwords and MFA until you turn the connection off. To finish the move, people set a Better
   IAM credential (a reset link or a passkey) while they can still sign in, and you then remove the connection.
@@ -484,9 +555,13 @@ Trade-offs of this path:
 ## Troubleshooting
 
 <Accordions>
+<Accordion title="tenants.create fails with ACCESS_DENIED">
+  Only a root principal may pass `activate: true`. Sign in to the CLI as the root administrator, in the root tenant,
+  and export that token.
+</Accordion>
 <Accordion title="createMany fails with TENANT_INACTIVE">
-  The realm administrator has not accepted the owner invitation, so the tenant is still `pending`. Accept it, or
-  resend it with `tenants.resendInvitation`.
+  The tenant was created without `activate: true` and the realm administrator has not accepted the owner invitation,
+  so it is still `pending`. Accept it, or resend it with `tenants.resendInvitation`.
 </Accordion>
 <Accordion title="createMany fails with IDENTITY_EXISTS">
   Two Keycloak users share an email address (allowed when the realm permits duplicate emails), or a previous run
@@ -506,7 +581,9 @@ Trade-offs of this path:
   automatic assignment rule.
 </Accordion>
 <Accordion title="Sign-in through a former Keycloak identity provider fails with ACCOUNT_LINK_REQUIRED">
-  The person was imported. They sign in with a magic link, then link the provider from their account settings.
+  The person was imported without a link to this connection: the provider's alias has no entry in `BROKERED`, the
+  user had no `federatedIdentities` entry for it, or the `userId` Keycloak stored differs from the subject the
+  provider sends. Add the link with `identities.linkProvider`, using the subject from the provider.
 </Accordion>
 </Accordions>
 

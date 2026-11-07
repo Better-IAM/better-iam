@@ -129,9 +129,14 @@ Details are in [OAuth and OIDC sign-in](/docs/federation/oauth-sign-in#microsoft
 </Tab>
 </Tabs>
 
-`trustedEmailDomains` (SAML) or a verified-email claim (OIDC) lets the first sign-in create the account. Without
-them, people link the provider to an existing account explicitly. Federation never merges accounts on a matching
-email alone.
+`trustedEmailDomains` (SAML) or a verified-email claim (OIDC) lets the first sign-in create the account. Federation
+never merges accounts on a matching email alone: an existing account is linked explicitly (by the person, or by an
+administrator with [`identities.linkProvider`](/docs/reference/api/identities#linkprovider)), or, for accounts the
+same IdP provisions through SCIM, automatically with `trustScimProvisioned` (see the SCIM step below).
+
+On the SAML service, `afterSignIn` (plus `mfaUrl` and `errorUrl`) sends the browser to your app after the
+assertion, with the session cookie set; see
+[Redirect after sign-in](/docs/federation/saml#redirect-after-sign-in).
 
 </Step>
 <Step>
@@ -186,6 +191,21 @@ await scim.setRoleMappings(credential, {
 
 `createConnection` issues the bearer token the IdP uses to call your SCIM endpoints. `setRoleMappings` lets an
 administrator decide which <Term id="role">roles</Term> a directory <Term id="group">group</Term> grants.
+
+When the same IdP also signs people in, tell the SSO connection to trust this directory, so a provisioned person's
+first sign-in links to the account SCIM created instead of failing with `ACCOUNT_LINK_REQUIRED`:
+
+```ts
+await saml.updateConnection(credential, {
+  tenantId,
+  connectionId: 'acme-okta',
+  trustScimProvisioned: [connection.id],
+});
+```
+
+Only emails the IdP vouches for (`trustedEmailDomains`) link, never an owner's or root administrator's account, and
+each account links once per connection. With that in place, the federated-only policy from the previous step needs
+no per-person linking.
 
 The directory then creates, updates, deactivates, and deletes accounts and groups. Deactivation revokes sessions
 immediately. Mapped groups carry their roles, so joining "Engineering" in Okta grants the engineering role here.
