@@ -326,6 +326,11 @@ func New(options *BetterIamOptions) (*BetterIam, error) {
 	}
 	api := CreateAPI(server, authAPI)
 	retention := CreateRetention(server)
+	// Validates the auditArchive option, so a bad batchSize or leaseMs fails construction with INVALID_CONFIG.
+	auditArchive := CreateAuditArchive(server)
+	if err := auditArchive.ConfigError(); err != nil {
+		return nil, err
+	}
 	federation := CreateFederation(server, api.Bindings)
 	extras := HTTPExtras{Metrics: metrics}
 	if metricsOptions != nil {
@@ -354,7 +359,7 @@ func New(options *BetterIamOptions) (*BetterIam, error) {
 			Origin: urlOrigin(config.BaseURL), BasePath: config.BasePath, Secure: config.BaseURL.Protocol == "https:",
 			CookieSameSite: transport.sameSite, PersistentCookies: transport.persistent == nil || *transport.persistent,
 		},
-		lifecycle: CreateLifecycle(server), retention: retention, auditArchive: CreateAuditArchive(server),
+		lifecycle: CreateLifecycle(server), retention: retention, auditArchive: auditArchive,
 		certificationWorker: CreateCertificationWorker(server), planResources: CreatePlanRuntime(server),
 	}
 	if config.Regions != nil {

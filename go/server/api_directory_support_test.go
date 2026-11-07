@@ -289,17 +289,6 @@ func answerList[T any](out Out[T], err error) []*core.Object {
 	return objects
 }
 
-// expectCode expects an IamError with the code.
-func expectCode(t *testing.T, err error, code string) {
-	t.Helper()
-	if err == nil {
-		t.Fatalf("expected %s, got no error", code)
-	}
-	if known := iamError(t, err); known.Code != code {
-		t.Fatalf("expected %s, got %s %q", code, known.Code, known.Message)
-	}
-}
-
 // expectStatus expects an IamError with the HTTP status.
 func expectStatus(t *testing.T, err error, status int) {
 	t.Helper()
