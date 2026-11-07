@@ -291,6 +291,107 @@ describe('Express, Hono, and Fastify middleware', () => {
     );
   });
 
+  it('authorize callbacks read route parameters with the framework request type, without casts', async () => {
+    const fixture = await organizationFixture();
+    const seen: string[] = [];
+    const rule = (tenantId: string | undefined, via: string) => {
+      seen.push(`${via}:${tenantId}`);
+      return tenantId ?? '';
+    };
+
+    const iamExpress = createIamExpress(fixture.iam);
+    const expressApp = express();
+    expressApp.use(iamExpress.middleware);
+    expressApp.get(
+      '/tenants/:tenantId/admin',
+      iamExpress.authorize('iam:identities:update', {
+        tenantId: (req) => rule(req.params.tenantId, 'express'),
+        resource: (req) => ({ type: 'iam', id: req.params.tenantId! }),
+      }),
+      (_req, res) => {
+        res.json({ ok: true });
+      },
+    );
+    expressApp.get(
+      '/typed/:tenantId',
+      iamExpress.authorize<express.Request<{ tenantId: string }>>('iam:identities:update', {
+        tenantId: (req) => rule(req.params.tenantId, 'express-typed'),
+      }),
+      (_req, res) => {
+        res.json({ ok: true });
+      },
+    );
+    expressApp.use(iamExpress.errorHandler);
+    const viaExpress = await listen(createServer(expressApp));
+
+    const iamHono = createIamHono(fixture.iam);
+    const honoApp = new Hono<{ Variables: IamVariables<typeof fixture.iam> }>();
+    honoApp.use(iamHono.middleware);
+    honoApp.get(
+      '/tenants/:tenantId/admin',
+      iamHono.authorize('iam:identities:update', {
+        tenantId: (c) => rule(c.req.param('tenantId'), 'hono'),
+        resource: (c) => ({ type: 'iam', id: c.req.param('tenantId') ?? '' }),
+      }),
+      (c) => c.json({ ok: true }),
+    );
+    honoApp.onError(iamHono.onError);
+
+    const iamFastify = createIamFastify(fixture.iam);
+    const fastifyApp = Fastify();
+    cleanups.push(() => fastifyApp.close());
+    await fastifyApp.register(iamFastify.plugin);
+    fastifyApp.get(
+      '/tenants/:tenantId/admin',
+      {
+        preHandler: iamFastify.authorize('iam:identities:update', {
+          tenantId: (request) => rule(request.params.tenantId, 'fastify'),
+          resource: (request) => ({ type: 'iam', id: request.params.tenantId! }),
+        }),
+      },
+      () => ({ ok: true }),
+    );
+    fastifyApp.get<{ Params: { tenantId: string } }>(
+      '/typed/:tenantId',
+      {
+        preHandler: iamFastify.authorize<FastifyRequest<{ Params: { tenantId: string } }>>(
+          'iam:identities:update',
+          { tenantId: (request) => rule(request.params.tenantId, 'fastify-typed') },
+        ),
+      },
+      () => ({ ok: true }),
+    );
+    fastifyApp.setErrorHandler(iamFastify.errorHandler);
+    await fastifyApp.listen({ port: 0, host: '127.0.0.1' });
+    const { port } = fastifyApp.server.address() as AddressInfo;
+
+    const signIn = await viaExpress('/api/iam/auth/signIn', {
+      method: 'POST',
+      headers: json,
+      body: JSON.stringify({
+        tenantId: fixture.tenantId,
+        email: 'owner@acme.test',
+        password: 'a strong tenant owner password',
+      }),
+    });
+    const headers = { cookie: cookieOf(signIn)! };
+    const path = `/tenants/${fixture.tenantId}/admin`;
+    expect((await viaExpress(path, { headers })).status).toBe(200);
+    expect((await viaExpress(`/typed/${fixture.tenantId}`, { headers })).status).toBe(200);
+    expect((await honoApp.fetch(new Request(`http://127.0.0.1${path}`, { headers }))).status).toBe(
+      200,
+    );
+    expect((await fetch(`http://127.0.0.1:${port}${path}`, { headers })).status).toBe(200);
+    expect(
+      (await fetch(`http://127.0.0.1:${port}/typed/${fixture.tenantId}`, { headers })).status,
+    ).toBe(200);
+    expect(seen).toEqual(
+      ['express', 'express-typed', 'hono', 'fastify', 'fastify-typed'].map(
+        (via) => `${via}:${fixture.tenantId}`,
+      ),
+    );
+  });
+
   it('Express and Fastify reach node-only protocol mounts listed in `serve`', async () => {
     const fixture = await organizationFixture();
     fixture.iam.useProtocol({

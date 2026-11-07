@@ -84,11 +84,15 @@ function lookupMethod(query: string): string {
 
 function lookupError(code: string): string {
   errors ??= JSON.parse(readGenerated('errors.json'));
-  const entry = errors!.find((item) => item.code === code.trim().toUpperCase());
+  // SCIM error types are camelCase (`invalidFilter`); every other code is upper case.
+  const wanted = code.trim();
+  const entry =
+    errors!.find((item) => item.code === wanted) ??
+    errors!.find((item) => item.code === wanted.toUpperCase());
   if (!entry)
     return `Unknown error code "${code}". See ${siteUrl}/docs/reference/errors for every code.`;
   return [
-    `# ${entry.code} (HTTP ${entry.statuses.join(', ')})`,
+    `# ${entry.code} (${entry.statuses.length ? `HTTP ${entry.statuses.join(', ')}` : 'client or CLI, no HTTP status'})`,
     '',
     section('errors.md', entry.code) ?? '',
     '',

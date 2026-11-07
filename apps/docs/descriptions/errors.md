@@ -14,8 +14,9 @@ the client with `requestId`, the `requestId` it sent as `X-Request-Id`, which yo
 on the server's `http` spans. The [CLI](/docs/reference/cli) prints `CODE: message` to standard error and exits with
 status 1.
 
-Each code below says what went wrong, why it happens, and what the caller should do; codes are grouped by HTTP
-status. On the server, catch `IamError` and compare its `code`:
+Each code below says what went wrong, why it happens, and what the caller should do. Server codes are grouped by
+HTTP status, followed by the SCIM error types, the codes only the browser client and the CLI raise, and the decision
+reasons the simulation APIs return. On the server, catch `IamError` and compare its `code`:
 
 ## Handling errors in a UI
 
@@ -192,6 +193,14 @@ the deployment screens passwords with `authentication.passwordPolicy.isBreached`
 **How to fix:** ask the person to choose a different password, and show the message next to the password field
 ([password screening](/docs/authentication/sign-in-methods#password-screening)).
 
+## CANCELLED
+
+You pressed Ctrl+C at a `better-iam` prompt, such as the password prompt of `login`.
+
+The command stops without changing anything.
+
+**How to fix:** run the command again, or pass the value as a flag or environment variable so no prompt appears.
+
 ## CATALOG_LOCKED
 
 Organizations cannot register their own resource types or actions on this deployment.
@@ -253,6 +262,21 @@ package, or step-up lifts it, so [`accessPaths.find`](/docs/reference/api/access
 label needs, or declassifies the resource. Officers see the failing dimension with
 [`clearances.explain`](/docs/reference/api/clearances#explain).
 
+## COMMAND_FAILED
+
+The program that `better-iam vault-run` started exited with a non-zero status.
+
+`vault-run` injects the secrets into the program's environment and then reports the program's own failure. The
+binary exits with the program's status, so scripts see the same result as if they had run it directly.
+
+**How to fix:** read the program's own output above this line; the secrets were delivered.
+
+## COMMAND_NOT_FOUND
+
+The program named after `--` in `better-iam vault-run` does not exist on the `PATH`.
+
+**How to fix:** check the spelling of the command after `--`, or give its full path.
+
 ## CONFIG_DRIFT
 
 `config-plan --fail-on-drift` found differences between the tenant and the configuration file.
@@ -269,6 +293,27 @@ so a CI job fails when someone changed production outside the reviewed file.
 
 **How to fix:** edit the existing file, or pass `--config` with a new path to generate a fresh one.
 
+## CONFIG_LOAD_FAILED
+
+This Node.js version cannot load a TypeScript configuration file (`better-iam.config.ts`).
+
+The CLI imports the configuration with Node's built-in type stripping, which is on by default from Node.js 22.18.
+
+**How to fix:** upgrade to Node.js 22.18 or later, or rename the file to `better-iam.config.mjs` and remove its type
+annotations.
+
+## CONFIG_NOT_FOUND
+
+The CLI found no configuration to run the command against.
+
+Commands that work on the database look for `better-iam.config.mjs` (or `.js` or `.ts`) in the current directory and
+its parents, unless `--config` or `BETTER_IAM_CONFIG` names one; a path given that way must exist. Without a file, the
+CLI can still build an instance from `BETTER_IAM_DATABASE_URL` and `BETTER_IAM_SECRET`. Commands that call a
+deployment over HTTP also accept `--url` or a profile saved by `better-iam login`.
+
+**How to fix:** run `better-iam init` to create a configuration, pass `--config PATH`, or set the environment
+variables ([CLI](/docs/reference/cli)).
+
 ## CONFIG_WARNINGS
 
 `config-validate --strict` found names in the configuration file that the file itself does not define.
@@ -278,6 +323,16 @@ warnings, because the names may already exist in the tenant. Planning or applyin
 
 **How to fix:** define the missing roles, groups, or other records in the file, correct the names, or drop `--strict`
 when they are meant to exist in the tenant already ([`config-validate`](/docs/reference/cli#config-validate)).
+
+## configuration
+
+An OAuth, SAML, or SCIM option is missing or invalid, so the integration refuses to start.
+
+It is thrown while the integration starts or a connection is configured: an OAuth `encryptionKey` or SCIM provisioning
+key that is not 32 bytes, an endpoint without HTTPS, a provider without an issuer or client secret, duplicate
+connection IDs, or an empty `allowedEmailDomains` list. The message names the option.
+
+**How to fix:** correct the option named in the message and restart.
 
 ## CONFIRMATION_INVALID
 
@@ -621,6 +676,16 @@ that would leave an existing host uncovered.
 **How to fix:** use a name inside the patterns, or widen them with
 [`ssh.updateSettings`](/docs/reference/api/ssh#updatesettings).
 
+## HTTP_ERROR
+
+The server answered with an error status, but the body was not a Better IAM error envelope.
+
+The browser client throws it when the response is JSON without an `error` object, which usually means a proxy, a
+gateway, or another app answered instead of Better IAM. `status` is the HTTP status of that response.
+
+**How to fix:** check that `baseURL` and `basePath` point at the IAM handler, and that nothing in front of it rewrites
+error responses.
+
 ## IDENTITY_EXISTS
 
 An identity with this email address already exists in the tenant.
@@ -766,6 +831,15 @@ attempts count toward rate limits and are recorded.
 **How to fix:** show a generic "email or password is incorrect" message on the form and let the person retry or
 reset their password.
 
+## INVALID_CREDENTIALS_FILE
+
+The file where the CLI saves sessions exists but is not a Better IAM credentials file.
+
+The CLI keeps `login` sessions in one JSON file (`BETTER_IAM_CREDENTIALS`, or `better-iam/credentials.json` in your
+configuration directory). It refuses to overwrite a file it cannot read, in case the path points at something else.
+
+**How to fix:** delete the file, or point `BETTER_IAM_CREDENTIALS` at another path, then run `better-iam login`.
+
 ## INVALID_CSR
 
 A certificate request could not be used.
@@ -862,6 +936,17 @@ and the registered credential; a passkey registered for another identity or orga
 **How to fix:** start the ceremony again and use a passkey registered for this account in this organization
 ([passkeys](/docs/authentication/passkeys)).
 
+## INVALID_PATH
+
+The browser client was asked to call a route whose path is not plain relative segments.
+
+Typed calls (`client.groups.list`) always build valid paths; this comes from `$request` with a path that is empty,
+starts or ends with `/`, or has a segment that does not start with a letter, contains characters other than letters,
+digits, `_`, and `-`, or is a reserved name such as `__proto__`. The client refuses it before sending anything
+(`status` 0).
+
+**How to fix:** pass the route relative to the base path, such as `$request('myPlugin/run', input)`.
+
 ## INVALID_POLICY
 
 A policy document or access-package rule does not follow the policy grammar.
@@ -911,6 +996,16 @@ hold registered resources; other types are resolved by your `resolveResource` ca
 
 **How to fix:** declare or register the type first, and check whether it is managed
 ([resources and catalog](/docs/concepts/resources-and-catalog)).
+
+## INVALID_RESPONSE
+
+The server's answer could not be read as a Better IAM response.
+
+The browser client throws it when the body is not JSON, is not an object, has an `error` that lacks a code or
+message, or has neither `data` nor `error`. `status` is the HTTP status of that response. It usually means the
+request reached something other than the IAM handler, such as a single-page app's HTML fallback.
+
+**How to fix:** check `baseURL` and `basePath`, and that the IAM handler is mounted before any catch-all route.
 
 ## INVALID_SEALED_VALUE
 
@@ -993,6 +1088,66 @@ account before extending `expiresAt`; changing a deleted tenant or making a stat
 allow; pinging or redelivering through a paused webhook; and ending a rule-based package assignment by hand.
 
 **How to fix:** reload the record, check its current status, and take a step that status allows.
+
+## invalidFilter
+
+A SCIM `filter` could not be parsed.
+
+The SCIM endpoints accept the RFC 7644 filter grammar (`userName eq "ada@acme.test"`, `and`, `or`, `not`, `pr`,
+value paths in brackets) over the attributes they support. An unterminated string, an unknown operator or attribute,
+or trailing text after a complete filter is refused.
+
+**How to fix:** correct the filter; the message names the token that failed. Identity providers usually send valid
+filters, so this often points at a hand-written test request.
+
+## invalidMethod
+
+The HTTP method is not supported on this SCIM route (HTTP 405).
+
+`/.search` and `/Bulk` accept `POST` only, and resource routes accept the methods RFC 7644 defines for them.
+Better IAM sends this code for 405 answers; it is not one of the RFC's own `scimType` values.
+
+**How to fix:** use the method the route supports, such as `POST /Users/.search` instead of `GET`.
+
+## invalidPath
+
+A SCIM `PATCH` operation or bulk operation names a path Better IAM cannot apply.
+
+The attribute is unsupported or read-only, a value filter was used on a single-valued attribute, a multi-valued
+attribute was modified without a value filter, or a bulk operation's `path` is not a supported resource route.
+
+**How to fix:** patch only the mutable attributes the [SCIM page](/docs/federation/scim#patch) lists, using value filters
+(`emails[type eq "work"].value`) for one value of a multi-valued attribute.
+
+## invalidSyntax
+
+The SCIM request body is missing or malformed.
+
+A search or bulk request without its body, a bulk request with no operations or an unsupported method, a `POST`
+bulk operation without a `bulkId`, an operation without `data`, or a body that is not JSON. A request without a JSON
+content type is refused with HTTP 415.
+
+**How to fix:** send `Content-Type: application/scim+json` (or `application/json`) and the body RFC 7644 defines for
+the operation.
+
+## invalidValue
+
+A SCIM attribute or query parameter has a value Better IAM does not accept.
+
+Examples: a `sortOrder` other than `ascending` or `descending`, both `attributes` and `excludedAttributes`, more than
+50 attribute names, invalid pagination, a wrong type for an attribute, or a bulk `failOnErrors` that is not a
+positive integer. Circular `bulkId` references in a bulk request are refused with HTTP 409.
+
+**How to fix:** correct the value the message names.
+
+## invalidVers
+
+The `If-Match` version does not match the resource's current version (HTTP 412).
+
+SCIM resources carry a weak ETag (`W/"<version>"`). A request with `If-Match` succeeds only while the resource is
+still at that version, so two provisioning runs never overwrite each other blindly.
+
+**How to fix:** read the resource again, reapply the change, and retry with the new ETag (or send `If-Match: *`).
 
 ## INVARIANTS_BROKEN
 
@@ -1210,6 +1365,22 @@ The person already has an authenticator app enrolled.
 **How to fix:** to replace the authenticator, disable MFA with `auth.disableMfa` where the tenant allows it, then
 enroll again ([managing factors](/docs/authentication/mfa#managing-factors)).
 
+## MFA_EMAIL_UNAVAILABLE
+
+`better-iam login --email-code` was used, but this organization does not send one-time sign-in codes by email.
+
+**How to fix:** run `better-iam login` without `--email-code` and enter a code from your authenticator app, or use a
+recovery code.
+
+## MFA_ENROLLMENT_REQUIRED
+
+The account must enroll an authenticator before it can sign in, and the CLI cannot enroll one.
+
+The organization requires MFA and the account has no factor yet, and the CLI does not enroll factors.
+
+**How to fix:** enroll a factor in the console, then run `better-iam login` again. When the message says so, pass
+`--email-code` to receive a one-time code instead.
+
 ## MFA_NOT_ENROLLED
 
 The operation needs a second factor, but the person has not enrolled one.
@@ -1233,6 +1404,15 @@ framework step-up guards.
 **How to fix:** send the person through the second-factor step and retry; framework integrations treat it as a
 signed-out request ([step-up](/docs/authentication/mfa#step-up)).
 
+## MISSING_DEPENDENCY
+
+The configuration needs an optional package that is not installed.
+
+A `libsql://`, `file:`, `http(s)://`, or `ws(s)://` database URL in `BETTER_IAM_DATABASE_URL` needs
+`@better-iam/adapter-libsql`, which the CLI loads only when such a URL is used.
+
+**How to fix:** install it next to `better-iam` (`npm install @better-iam/adapter-libsql`).
+
 ## MISSING_ENV
 
 A CLI command needs an environment variable that is not set.
@@ -1242,6 +1422,26 @@ Commands that act as a member (`config-export`, `config-plan`, `config-apply`, `
 `recover-root` read `BETTER_IAM_ROOT_EMAIL` and `BETTER_IAM_ROOT_PASSWORD`. Secrets never go on the command line.
 
 **How to fix:** export the variable the message names and run the command again.
+
+## mutability
+
+A SCIM request tried to change something that cannot be changed.
+
+Removing a required attribute, supplying an immutable or unsupported attribute, or modifying an identity SCIM does not
+manage. Owners, root administrators, and deleted identities are refused with HTTP 403, so a misconfigured identity provider
+cannot lock administrators out or revive a deleted account.
+
+**How to fix:** leave read-only attributes out of the request. Change protected identities in the console or through
+the API instead of SCIM.
+
+## NO_CREDENTIALS_FILE
+
+The CLI has nowhere to save the session: `HOME`, `APPDATA`, and `XDG_CONFIG_HOME` are all unset.
+
+This happens in minimal containers and some CI runners.
+
+**How to fix:** set `BETTER_IAM_CREDENTIALS` to a writable file path, or skip `login` and pass `BETTER_IAM_TOKEN`
+to each command.
 
 ## NOT_FOUND
 
@@ -1280,6 +1480,24 @@ Audit archiving was requested, but no archive destination is configured.
 example `createJsonlAuditArchive({ directory })`.
 
 **How to fix:** configure an archive sink ([continuous audit archiving](/docs/operations/jobs#continuous-audit-archiving)).
+
+## noTarget
+
+A SCIM `PATCH` operation has nothing to act on.
+
+A value filter matched no values of the attribute, or a `remove` operation has no `path`.
+
+**How to fix:** check the value filter against the resource's current values, and give every `remove` a `path`.
+
+## notFound
+
+The SCIM resource, schema, or route does not exist (HTTP 404).
+
+The resource ID is unknown to this connection's tenant, the schema or resource type is not one Better IAM serves,
+or, on the administration routes, the connection or group does not exist. Better IAM sends this code for 404 answers;
+it is not one of the RFC's own `scimType` values.
+
+**How to fix:** list the resources again; an identity provider that kept a deleted resource's ID should recreate it.
 
 ## OAUTH_CALLBACK
 
@@ -1408,6 +1626,16 @@ Another person in this organization has already verified this phone number.
 reach exactly one account.
 
 **How to fix:** verify a different number.
+
+## PROFILE_IN_USE
+
+`better-iam login` would replace a saved session that belongs to another deployment.
+
+The current profile already holds a session for a different deployment: another `--url`, another configuration file,
+or the environment configuration. The CLI refuses before signing in, so a new session never silently replaces one you
+still use.
+
+**How to fix:** pass `--profile NAME` to save the new session under another name, or run `better-iam logout` first.
 
 ## PROTECTED_IDENTITY
 
@@ -1640,6 +1868,15 @@ one of their groups.
 **How to fix:** leave the item to another reviewer of the campaign
 ([certifications](/docs/features/governance/certifications)).
 
+## SESSION_EXPIRED
+
+The session saved by `better-iam login` has expired.
+
+The CLI checks the saved expiry before calling the deployment, so the command fails without a network round trip.
+
+**How to fix:** run `better-iam login` again (with `--profile NAME` for a named profile), or pass a fresh
+`BETTER_IAM_TOKEN`.
+
 ## SESSION_EXPIRING
 
 The session asking for an SSH certificate ends within a minute.
@@ -1658,6 +1895,16 @@ client IP are not judged.
 
 **How to fix:** sign in again from the current network; the browser client calls its `onUnauthenticated` hook for
 this code ([binding sessions to their network](/docs/authentication/tenant-policy#binding-sessions-to-their-network)).
+
+## SIGN_IN_INCOMPLETE
+
+`better-iam login` finished the sign-in steps but the server returned no session.
+
+The server accepted the credentials (and the MFA code, when one was asked for) but its answer carried no session
+token, so the CLI has nothing to save.
+
+**How to fix:** sign in once in the console to see whether the account has a step left to complete, then run
+`better-iam login` again.
 
 ## SIGNAL_REJECTED
 
@@ -1864,6 +2111,22 @@ waiting alone does not help.
 **How to fix:** wait for pending requests to be decided, or cancel ones no longer needed with
 [`accessRequests.cancel`](/docs/reference/api/access-requests#cancel), then open the new one.
 
+## tooLarge
+
+The SCIM request body exceeds the size limit (HTTP 413).
+
+Better IAM sends this code for 413 answers; it is not one of the RFC's own `scimType` values.
+
+**How to fix:** send fewer operations or smaller values per request.
+
+## tooMany
+
+A SCIM bulk request has more operations than the server accepts (HTTP 413).
+
+The limit is advertised as `bulk.maxOperations` in `/ServiceProviderConfig`.
+
+**How to fix:** split the bulk request into batches below the advertised limit.
+
 ## TRANSACTION_ABORTED
 
 A database operation failed inside a transaction, so the whole transaction was rolled back.
@@ -1920,6 +2183,34 @@ session whose administrator's session ended.
 **How to fix:** send the person to sign in again; the browser client calls its `onUnauthenticated` hook for this
 code, and framework integrations treat the request as signed out ([sessions](/docs/authentication/sessions)).
 
+## unauthorized
+
+The SCIM bearer token is invalid, or the connection's tenant is not active (HTTP 401).
+
+Each SCIM connection has its own token; a revoked, rotated, or mistyped token, or a token for a suspended tenant, is
+refused. Better IAM sends this code for 401 answers; it is not one of the RFC's own `scimType` values.
+
+**How to fix:** copy the connection's current token into the identity provider, or rotate it and update the provider.
+
+## UNEXPECTED_RESPONSE
+
+The server asked the SSH host commands to write a file outside `/etc/ssh`, so the CLI refused.
+
+`better-iam ssh-host-enroll` and `ssh-host-sync` write the host certificate and trust files the server names, but only
+below `/etc/ssh`. A path elsewhere, or one containing `..`, means the response cannot be trusted.
+
+**How to fix:** check that `--url` points at your Better IAM deployment, and report the response if it does.
+
+## uniqueness
+
+The SCIM request would create a duplicate (HTTP 409).
+
+The `userName` already exists in the tenant, or the user's email belongs to another identity. SCIM never takes over
+an existing account by email, so an identity provider cannot claim an account it did not create.
+
+**How to fix:** filter for the existing user (`userName eq "…"`) and update it instead of creating it. For an email
+that belongs to an account created outside SCIM, change one of the two addresses.
+
 ## UNREADABLE_SECRETS
 
 `rotate-secrets` found stored values that none of the configured secrets can open.
@@ -1939,6 +2230,17 @@ The storage adapter cannot list its collections, which a snapshot or copy needs.
 
 **How to fix:** implement `collections()` in the adapter, or pass the collections to copy explicitly to `exportStore`
 or `copyStore` ([optional adapter methods](/docs/concepts/extensions#optional-methods)).
+
+## UNSUPPORTED_ENVIRONMENT
+
+The runtime lacks something device proofs need.
+
+`createDeviceProver` needs WebCrypto (`crypto.subtle`), which browsers offer only in secure contexts (HTTPS or
+localhost) and Node.js from version 22. `indexedDbKeyStore` needs IndexedDB, and fails the same way when the
+database cannot be opened or refuses a write (private browsing, storage blocked).
+
+**How to fix:** serve the app over HTTPS, and outside browsers pass `store: memoryKeyStore()` or your own
+`DeviceKeyStore`.
 
 ## UNSUPPORTED_FILTER
 
@@ -2077,3 +2379,63 @@ the organization's sign-in URL in its own region (`IamClientError.region` and `.
 
 **How to fix:** redirect the person to `location`. See
 [sign-in addresses and regions](/docs/operations/deployment/hosts-and-regions).
+
+## reason:evaluation-limit
+
+Matching the policies exceeded the evaluator's work budget, so the request is refused as if denied.
+
+## reason:explicit-deny
+
+A `Deny` statement matched, in a grant path or a global boundary. A deny always wins over any allow.
+
+## reason:no-grant
+
+The policy evaluator (`evaluatePolicy`) found no `Allow` statement that matches. The server reports this as `NO_APPLICABLE_GRANT`.
+
+## reason:boundary-deny
+
+A global boundary has no `Allow` that matches, so the request is outside the ceiling even though a grant allows it.
+
+## reason:allowed
+
+A grant allowed the request and nothing refused it.
+
+## reason:ROOT_OVERRIDE
+
+A root administrator in an MFA user session; allowed without evaluating policies.
+
+## reason:TENANT_INACTIVE
+
+The tenant, or one of its ancestors, is suspended or deleted.
+
+## reason:TENANT_MISMATCH
+
+The session belongs to another tenant than the one the request acts in.
+
+## reason:DELEGATION_REVOKED
+
+A delegated session's delegation or agent is revoked, expired, or no longer active.
+
+## reason:CREDENTIAL_AUTHORITY_REVOKED
+
+The authority behind the credential is gone: an API key's issuing authority, a hand-off's issuer, or a web-identity provider's registrar was revoked.
+
+## reason:NO_APPLICABLE_GRANT
+
+No grant path allowed the request within its ceilings (the server's form of `no-grant`).
+
+## reason:UNKNOWN_ACTION
+
+The action is not in the tenant's permission catalog.
+
+## reason:IMPERSONATOR_DENIED
+
+The member being impersonated is allowed, but the administrator impersonating them is not.
+
+## reason:CLEARANCE_REQUIRED
+
+A party of the session lacks a clearance that dominates the resource's classification label.
+
+## reason:CONFIRMATION_REQUIRED
+
+The delegation holds this action until the person confirms it, so the agent must ask first.

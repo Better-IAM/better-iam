@@ -175,6 +175,7 @@ describe('typed browser client transport', () => {
         api: {
           sts: StsApi;
           links: { list(credential: CredentialInput): Promise<{ id: string }[]> };
+          clearances: { templates(credential: CredentialInput): Promise<{ name: string }[]> };
         };
       }
     >({ baseURL: 'https://app.example.com', fetch: fetcher });
@@ -184,7 +185,12 @@ describe('typed browser client transport', () => {
       headers: { 'x-trace': '1' },
     });
     await client.links.list({ signal: controller.signal, headers: { 'x-trace': '2' } });
-    for (const [index, path] of ['sts/getCallerIdentity', 'links/list'].entries()) {
+    await client.clearances.templates({ signal: controller.signal, headers: { 'x-trace': '3' } });
+    for (const [index, path] of [
+      'sts/getCallerIdentity',
+      'links/list',
+      'clearances/templates',
+    ].entries()) {
       const [url, init] = fetcher.mock.calls[index]!;
       expect(String(url)).toBe(`https://app.example.com/api/iam/${path}`);
       expect(JSON.parse(init!.body as string)).toEqual({});

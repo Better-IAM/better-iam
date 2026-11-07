@@ -397,7 +397,12 @@ const defaultHierarchy: HierarchyConfig = {
 
 export function resolveConfig(options: BetterIamOptions): ServerConfig {
   if (!options.database) throw new IamError('INVALID_CONFIG', 'database is required');
-  const baseURL = new URL(options.baseURL);
+  let baseURL: URL;
+  try {
+    baseURL = new URL(options.baseURL);
+  } catch {
+    throw new IamError('INVALID_CONFIG', 'baseURL must be an absolute URL');
+  }
   if (
     baseURL.protocol !== 'https:' &&
     !['localhost', '127.0.0.1', '[::1]'].includes(baseURL.hostname)

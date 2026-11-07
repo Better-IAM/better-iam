@@ -157,11 +157,10 @@ and `Cache-Control: no-store`. A signed-out page navigation to `/me?tab=1` is re
 
 `authorize(action, { resource?, tenantId?, stepUp? })` requires a session allowed to perform `action`. The resource
 defaults to the tenant itself (`iam/{tenantId}`) and the tenant to the session's tenant. `resource` and `tenantId`
-are functions of `(c, session)`. Their `c` is typed with only the context fields the adapter reads, so cast it to
-Hono's `Context` to read route parameters.
+are functions of `(c, session)`. Their `c` reads route parameters with `c.req.param()`. To use Hono's own type, pass
+it, as in `authorize<Context>('projects:read', …)`.
 
 ```ts title="src/routes/projects.ts"
-import type { Context } from 'hono';
 import { app } from '../app.js';
 import { iamHono } from '../iam-hono.js';
 import { loadProject } from '../data.js'; // your data layer
@@ -169,7 +168,7 @@ import { loadProject } from '../data.js'; // your data layer
 app.get(
   '/projects/:id',
   iamHono.authorize('projects:read', {
-    resource: (c) => ({ type: 'project', id: (c as Context).req.param('id') ?? '' }),
+    resource: (c) => ({ type: 'project', id: c.req.param('id') ?? '' }),
   }),
   async (c) => c.json(await loadProject(c.req.param('id'))),
 );
@@ -442,7 +441,6 @@ Pass `tenantId` to check against a different tenant, for example a child organiz
 decides whether the caller's credential may act there.
 
 ```ts title="src/routes/org-members.ts"
-import type { Context } from 'hono';
 import { app } from '../app.js';
 import { iam } from '../iam.js';
 import { iamHono } from '../iam-hono.js';
@@ -450,7 +448,7 @@ import { iamHono } from '../iam-hono.js';
 app.get(
   '/orgs/:tenantId/members',
   iamHono.authorize('iam:identities:read', {
-    tenantId: (c) => (c as Context).req.param('tenantId') ?? '',
+    tenantId: (c) => c.req.param('tenantId') ?? '',
   }),
   async (c) =>
     c.json(

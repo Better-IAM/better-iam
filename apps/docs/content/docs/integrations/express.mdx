@@ -185,11 +185,11 @@ and `Cache-Control: no-store`. A signed-out page navigation to `/me?tab=1` is re
 
 `authorize(action, { resource?, tenantId?, stepUp? })` requires a session allowed to perform `action`. The resource
 defaults to the tenant itself (`iam/{tenantId}`) and the tenant to the session's tenant. `resource` and `tenantId`
-are functions of `(req, session)`. Their `req` is typed with only the Node request fields the adapter reads, so cast
-it to Express's `Request` to read route parameters.
+are functions of `(req, session)`. Their `req` carries the route parameters (`req.params`). For typed parameters, pass
+the request type, as in `authorize<Request<{ id: string }>>('projects:read', …)`.
 
 ```ts title="src/routes/projects.ts"
-import { Router, type Request } from 'express';
+import { Router } from 'express';
 import { iam } from '../iam.js';
 import { iamExpress } from '../iam-express.js';
 import { loadProject } from '../data.js'; // your data layer
@@ -199,7 +199,7 @@ export const projects = Router();
 projects.get(
   '/projects/:id',
   iamExpress.authorize('projects:read', {
-    resource: (req) => ({ type: 'project', id: String((req as Request).params.id) }),
+    resource: (req) => ({ type: 'project', id: String(req.params.id) }),
   }),
   async (req, res) => {
     res.json(await loadProject(String(req.params.id)));
@@ -503,7 +503,7 @@ Pass `tenantId` to check against a different tenant, for example a child organiz
 decides whether the caller's credential may act there.
 
 ```ts title="src/routes/org-members.ts"
-import { Router, type Request } from 'express';
+import { Router } from 'express';
 import { iam } from '../iam.js';
 import { iamExpress } from '../iam-express.js';
 
@@ -512,7 +512,7 @@ export const orgMembers = Router();
 orgMembers.get(
   '/orgs/:tenantId/members',
   iamExpress.authorize('iam:identities:read', {
-    tenantId: (req) => String((req as Request).params.tenantId),
+    tenantId: (req) => String(req.params.tenantId),
   }),
   async (req, res) => {
     const tenantId = String(req.params.tenantId);

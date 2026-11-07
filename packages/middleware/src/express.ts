@@ -22,6 +22,11 @@ export type ExpressRequest = IncomingMessage & {
   rawBody?: unknown;
   iam?: unknown;
 };
+/**
+ * What `authorize` callbacks receive by default: an Express request with its route parameters. Pass your own type
+ * for typed parameters, e.g. `authorize<Request<{ id: string }>>(…)`.
+ */
+export type ExpressRouteRequest = ExpressRequest & { params: Record<string, string> };
 export type ExpressNext = (error?: unknown) => void;
 export type ExpressMiddleware = (
   req: ExpressRequest,
@@ -97,7 +102,7 @@ async function sendResponse(res: ServerResponse, response: Response): Promise<vo
  * ```ts
  * const iamExpress = createIamExpress(iam, { loginPath: '/login' });
  * app.use(iamExpress.middleware); // before express.json()
- * app.get('/projects/:id', iamExpress.authorize('projects:read', { resource: (req) => ({ type: 'project', id: req.params.id }) }), handler);
+ * app.get('/projects/:id', iamExpress.authorize('projects:read', { resource: (req) => ({ type: 'project', id: String(req.params.id) }) }), handler);
  * app.use(iamExpress.errorHandler);
  * ```
  */
@@ -144,13 +149,14 @@ export function createIamExpress<T extends IamLike>(
     res.end(answer.body);
   };
   const guard =
-    (spec: GuardSpec<ExpressRequest, Session>): ExpressMiddleware =>
+    <Req extends ExpressRequest>(spec: GuardSpec<Req, Session>): ExpressMiddleware =>
     async (req, res, next) => {
       try {
         const iam = await resolveIam();
         await enforceGuard(
           helpersFor(req, res),
-          req,
+          // The guard runs as Express route middleware, so the request is the framework's own (`Req`).
+          req as Req,
           spec,
           options.csrf === false
             ? undefined
@@ -217,14 +223,17 @@ export function createIamExpress<T extends IamLike>(
     }) satisfies ExpressMiddleware,
     /** Requires a session (and `stepUp`, when given). */
     requireSession: (spec: Pick<GuardSpec<ExpressRequest, Session>, 'stepUp'> = {}) => guard(spec),
-    /** Requires a session allowed to perform `action` (default resource: the tenant). */
-    authorize: (
+    /**
+     * Requires a session allowed to perform `action` (default resource: the tenant). `resource` and `tenantId`
+     * receive the request as `Req` (default {@link ExpressRouteRequest}, with `req.params`).
+     */
+    authorize: <Req extends ExpressRequest = ExpressRouteRequest>(
       action: string,
-      spec: Omit<NonNullable<GuardSpec<ExpressRequest, Session>['authorize']>, 'action'> &
-        Pick<GuardSpec<ExpressRequest, Session>, 'stepUp'> = {},
-    ) => {
+      spec: Omit<NonNullable<GuardSpec<Req, Session>['authorize']>, 'action'> &
+        Pick<GuardSpec<Req, Session>, 'stepUp'> = {},
+    ): ExpressMiddleware => {
       const { stepUp, ...rule } = spec;
-      return guard({ ...(stepUp ? { stepUp } : {}), authorize: { action, ...rule } });
+      return guard<Req>({ ...(stepUp ? { stepUp } : {}), authorize: { action, ...rule } });
     },
     /** Error middleware: IAM refusals become the JSON error envelope (or a login / step-up redirect for pages). */
     errorHandler: (error: unknown, req: ExpressRequest, res: ServerResponse, next: ExpressNext) =>

@@ -178,8 +178,8 @@ and `Cache-Control: no-store`. A signed-out page navigation to `/me?tab=1` is re
 
 `authorize(action, { resource?, tenantId?, stepUp? })` requires a session allowed to perform `action`. The resource
 defaults to the tenant itself (`iam/{tenantId}`) and the tenant to the session's tenant. `resource` and `tenantId`
-are functions of `(request, session)`. Their `request` is typed with only the fields the plugin reads, so cast it to
-`FastifyRequest` to read route parameters.
+are functions of `(request, session)`. Their `request` carries the route parameters as strings
+(`request.params`). For a route's own types, pass its request type, as below.
 
 ```ts title="src/routes/projects.ts"
 import type { FastifyInstance, FastifyRequest } from 'fastify';
@@ -192,11 +192,8 @@ export async function projects(app: FastifyInstance) {
   app.get<ProjectRoute>(
     '/projects/:id',
     {
-      preHandler: iamFastify.authorize('projects:read', {
-        resource: (request) => ({
-          type: 'project',
-          id: (request as FastifyRequest<ProjectRoute>).params.id,
-        }),
+      preHandler: iamFastify.authorize<FastifyRequest<ProjectRoute>>('projects:read', {
+        resource: (request) => ({ type: 'project', id: request.params.id }),
       }),
     },
     async (request) => loadProject(request.params.id),
@@ -518,8 +515,8 @@ export async function orgMembers(app: FastifyInstance) {
   app.get<OrgRoute>(
     '/orgs/:tenantId/members',
     {
-      preHandler: iamFastify.authorize('iam:identities:read', {
-        tenantId: (request) => (request as FastifyRequest<OrgRoute>).params.tenantId,
+      preHandler: iamFastify.authorize<FastifyRequest<OrgRoute>>('iam:identities:read', {
+        tenantId: (request) => request.params.tenantId,
       }),
     },
     async (request) =>
