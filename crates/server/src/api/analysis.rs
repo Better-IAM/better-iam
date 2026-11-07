@@ -22,7 +22,7 @@ use crate::api::{Body, Reply};
 use crate::context::{ServerContext, Store};
 use crate::contracts::{Mutation, MutationContext};
 use crate::models::{
-    Binding, BindingActivation, Group, GroupMember, Policy, ResourceTypeRecord, Role, Trust,
+    Binding, BindingActivation, Group, GroupMember, Policy, ResourceTypeRecord, Role,
 };
 use crate::policy_lint::{PolicyLintContext, lint_policy};
 use crate::validation::{integer, strings, text};
@@ -217,6 +217,21 @@ async fn find_records(tx: &Store, collection: &str, filter: Filter) -> IamResult
     tx.find(collection, &filter, &FindOptions::default()).await
 }
 
+/// `trustRequiresMfa(trust)` (flows.ts) on a stored trust: only the boolean `false` waives MFA.
+fn trust_requires_mfa(trust: &Record) -> bool {
+    trust.get("requireMfa") != Some(&Value::Bool(false))
+}
+
+/// `trustPassesSourceAttributes(trust)` (flows.ts) on a stored trust: a boolean as stored, true when the field is
+/// missing (legacy trusts), false for any malformed value.
+fn trust_passes_source_attributes(trust: &Record) -> bool {
+    match trust.get("passSourceAttributes") {
+        Some(Value::Bool(value)) => *value,
+        None => true,
+        Some(_) => false,
+    }
+}
+
 fn tenant_filter(tenant_id: &str) -> Filter {
     Filter::new().eq("tenantId", tenant_id)
 }
@@ -372,7 +387,8 @@ async fn scan(
             .collect();
     let groups: Vec<Group> = find_typed(tx, "groups", tenant_filter(tenant_id)).await?;
     let identities: Vec<Identity> = find_typed(tx, "identities", tenant_filter(tenant_id)).await?;
-    let trusts: Vec<Trust> = find_typed(tx, "trusts", tenant_filter(tenant_id)).await?;
+    // Trusts as stored: their flags are read fail-closed, whatever value a record holds.
+    let trusts: Vec<Record> = find_records(tx, "trusts", tenant_filter(tenant_id)).await?;
     let live: Vec<&Binding> = bindings
         .iter()
         .filter(|binding| ctx.live_binding(binding))
@@ -466,9 +482,10 @@ async fn scan(
             );
         }
         let bound = live.iter().any(|binding| binding.role_id == role.id);
-        let trusted = trusts
-            .iter()
-            .any(|trust| !trust.revoked && trust.role_id == role.id);
+        let trusted = trusts.iter().any(|trust| {
+            !crate::js::truthy(trust.get("revoked"))
+                && trust.get("roleId").and_then(Value::as_str) == Some(role.id.as_str())
+        });
         if !bound && !trusted {
             out.add(
                 "unused-role",
@@ -1039,17 +1056,19 @@ async fn scan(
     }
 
     for trust in &trusts {
-        if trust.revoked {
+        if crate::js::truthy(trust.get("revoked")) {
             continue;
         }
-        let web_identity = trust.kind.as_deref() == Some("web-identity");
+        let trust_id = record_str(trust, "id");
+        let web_identity = trust.get("kind").and_then(Value::as_str) == Some("web-identity");
         // Web-identity trusts have no source session to verify; their claim conditions pin the workload.
-        // Stored flags are read through the same fail-closed readers roles.assume enforces with.
-        if !web_identity && !crate::flows::trust_requires_mfa(trust) {
+        // Stored flags are read through the same fail-closed readers roles.assume enforces with
+        // (`trustRequiresMfa`, `trustPassesSourceAttributes`), on the record as stored.
+        if !web_identity && !trust_requires_mfa(trust) {
             out.add(
                 "trust-without-mfa",
                 "medium",
-                subject("trust", &trust.id, None),
+                subject("trust", trust_id, None),
                 "A cross-tenant trust lets its source assume a role without MFA".to_owned(),
                 "Recreate the trust with requireMfa so a stolen password alone cannot assume the role.",
             );
@@ -1057,13 +1076,13 @@ async fn scan(
         // Another tenant controls the source identity's attributes, so they must not satisfy this tenant's
         // ABAC conditions. New cross-tenant trusts keep them out; legacy ones (no field) still pass them.
         if !web_identity
-            && trust.source_tenant_id != tenant_id
-            && crate::flows::trust_passes_source_attributes(trust)
+            && trust.get("sourceTenantId").and_then(Value::as_str) != Some(tenant_id)
+            && trust_passes_source_attributes(trust)
         {
             out.add(
                 "trust-passes-foreign-attributes",
                 "medium",
-                subject("trust", &trust.id, None),
+                subject("trust", trust_id, None),
                 "A cross-tenant trust passes the source account\u{2019}s attributes into role sessions".to_owned(),
                 "The source tenant controls these attributes, so they can satisfy this tenant\u{2019}s attribute conditions. Call trust.update({ passSourceAttributes: false }) and use session tags for the data role sessions need.",
             );
