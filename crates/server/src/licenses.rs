@@ -331,7 +331,19 @@ pub fn live_license_pool(pool: &crate::licenses::LicensePool, now: f64) -> IamRe
     Err(not_ported("licenses.ts liveLicensePool"))
 }
 
-pub async fn load_license_facts(reader: &Store, tenant_id: &str) -> IamResult<Value> {
+/// What `identity.licenses` holds for the people of one tenant, read once (org-rules.ts).
+#[derive(Clone)]
+pub struct TenantLicenseFacts {
+    /// The keys of every product visible to the tenant.
+    pub keys: IndexSet<String>,
+    /// `of(identityId, countedGroupIds)`: the keys of the products a person holds an active seat for. A seat held
+    /// only through groups counts while one of them is in `countedGroupIds` (memberships no access package created),
+    /// so a rule never feeds on what a package granted.
+    #[allow(clippy::type_complexity)]
+    pub of: Arc<dyn Fn(&str, &IndexSet<String>) -> Vec<String> + Send + Sync>,
+}
+
+pub async fn load_license_facts(reader: &Store, tenant_id: &str) -> IamResult<TenantLicenseFacts> {
     Err(not_ported("licenses.ts loadLicenseFacts"))
 }
 
