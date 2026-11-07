@@ -16,7 +16,8 @@ export function baseOptions(): BaseLayoutProps {
       themeSwitch: false,
     },
     links: [
-      { text: 'Documentation', url: '/docs/guides', active: 'nested-url', on: 'nav' },
+      { text: 'Documentation', url: '/docs/introduction', active: 'url', on: 'nav' },
+      { text: 'Guides', url: '/docs/guides', active: 'nested-url', on: 'nav' },
       { text: 'API', url: '/docs/reference/api', active: 'nested-url', on: 'nav' },
       { text: 'Playground', url: '/playground', active: 'url', on: 'nav' },
       { text: 'Changelog', url: '/docs/reference/changelog', active: 'url', on: 'nav' },

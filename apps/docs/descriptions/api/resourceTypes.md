@@ -5,7 +5,7 @@ relations, and parent. Platform types come from your configuration (`permissions
 group lists them all and, when the deployment sets `permissions.mode: 'tenant-defined'`, lets tenant administrators
 add types of their own without a redeploy. That suits products where each customer models different objects, such as
 a workflow tool where one organization tracks "contracts" and another "incidents". The
-[catalog guide](/docs/guides/authorization/catalog#tenant-defined-catalogs) explains the model.
+[catalog guide](/docs/authorization/catalog#tenant-defined-catalogs) explains the model.
 
 ## What a tenant-defined type declares
 
@@ -26,7 +26,7 @@ callback. It declares:
   resource, and policies can read the caller's relations on that parent.
 
 Defining a type or action grants nothing. Access still comes from roles and policies that name the new actions. Types
-can also be managed as code with [configuration sync](/docs/guides/privileged-access/config-as-code).
+can also be managed as code with [configuration sync](/docs/features/privileged-access/config-as-code).
 
 ## delete
 

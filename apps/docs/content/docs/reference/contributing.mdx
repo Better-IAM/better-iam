@@ -1,0 +1,309 @@
+---
+title: Contributing
+description: Set up the Better IAM repository, find your way around the pnpm workspace, run the build, tests, and conformance checks, and regenerate the docs.
+icon: Wrench
+sources:
+  - package.json
+  - pnpm-workspace.yaml
+  - vitest.config.ts
+  - .prettierrc.json
+  - .github/workflows/ci.yml
+  - README.md
+  - apps/docs/README.md
+  - apps/docs/package.json
+  - apps/docs/scripts/generate.mjs
+  - apps/docs/scripts/check-content.mjs
+  - packages/core/src/conformance.ts
+  - scripts/release-version.mjs
+  - scripts/conformance/record.mjs
+  - scripts/conformance/serve.mjs
+  - scripts/conformance/replay.mjs
+  - spec/README.md
+  - spec/BUILDOUT.md
+  - crates/PORTING.md
+---
+
+import { BookOpen, Database, SlidersHorizontal, Puzzle } from '@/lib/icons';
+
+Better IAM is developed in one repository, [github.com/Better-IAM/better-iam](https://github.com/Better-IAM/better-iam):
+a pnpm workspace of TypeScript packages, the reference console, this documentation site, runnable examples, and
+the test suite. This page covers what you need to change the code: the layout, the commands, how the tests and
+the documentation are generated and checked, and what CI runs before a release. Every package is licensed under
+the Apache License 2.0.
+
+## Prerequisites
+
+| Tool | Version | Why |
+| --- | --- | --- |
+| Node.js | 22.12 or newer (`engines` in the root `package.json`) | Runtime for every package, test, and script. CI tests Node 22 and 24. |
+| pnpm | 11.19.0 (`packageManager` in the root `package.json`) | Workspace installs and scripts. |
+| A C/C++ toolchain | only if no prebuilt binary fits your platform | `argon2` and `better-sqlite3` are native modules that install prebuilt binaries for common platforms and fall back to compiling with `node-gyp`. `pnpm-workspace.yaml` allows their install scripts (`allowBuilds`). |
+| PostgreSQL | any recent version | Only for the PostgreSQL test suite. CI uses `postgres:17-alpine`. |
+| Rust (stable) and Go 1.24 | `rust-toolchain.toml`, `go/go.mod` | Only for work on the Rust and Go ports. |
+
+pnpm is also a dev dependency of the workspace, so `node node_modules/pnpm/bin/pnpm.cjs <command>` works where
+`pnpm` is not on your `PATH`.
+
+## Set up the repository
+
+<Steps>
+<Step>
+
+### Clone and install
+
+```bash
+git clone https://github.com/Better-IAM/better-iam.git
+cd better-iam
+pnpm install
+```
+
+</Step>
+<Step>
+
+### Build the packages
+
+```bash
+pnpm build
+```
+
+`pnpm build` runs `tsc -b` over the project references, writing each package's `dist/`. The CLI, the examples,
+the spec generators, and the docs generator import the built output, so build before running them.
+
+</Step>
+<Step>
+
+### Run the tests
+
+```bash
+pnpm test
+```
+
+`pnpm test` runs `vitest run` over `tests/**/*.test.ts` and `tests/**/*.test.tsx`. The Vitest configuration
+aliases every `@better-iam/*` package to its `src/` entry, so the tests run against source and do not need a build.
+Files run one at a time (`fileParallelism: false`) with a 30-second timeout per test.
+
+</Step>
+<Step>
+
+### Run the full check
+
+```bash
+pnpm check
+```
+
+`pnpm check` is what CI runs on every push: `pnpm typecheck`, then `pnpm test`, then `pnpm validate:packages`.
+Run it before you open a pull request.
+
+</Step>
+</Steps>
+
+## Repository layout
+
+<Files>
+  <Folder name="packages" defaultOpen>
+    <File name="core: browser-safe types, policy engine, audit chain, storage contract" />
+    <File name="auth: authentication service (passwords, passkeys, MFA, sessions, outbox)" />
+    <File name="server: betterIam(), the API groups (src/api), HTTP handler, options" />
+    <File name="adapter-postgres, adapter-sqlite, adapter-libsql: storage adapters" />
+    <File name="client: typed browser client" />
+    <File name="react, vue, svelte, next, nuxt, nestjs, react-router, middleware: framework bindings" />
+    <File name="oauth, saml, scim, ldap, mcp, a2a: protocol packages" />
+    <File name="cli: the better-iam command line" />
+    <File name="projects: the reference plugin" />
+    <File name="better-iam: the umbrella package with subpath exports" />
+  </Folder>
+  <Folder name="apps">
+    <File name="console: reference administration panel and cloud console (Next.js)" />
+    <File name="docs: this documentation site (Next.js 16 + Fumadocs)" />
+  </Folder>
+  <Folder name="examples">
+    <File name="sqlite, postgres, nextjs, nestjs, nuxt, sveltekit, react-router, shared" />
+  </Folder>
+  <Folder name="tests">
+    <File name="*.test.ts: the Vitest suite" />
+    <File name="conformance: trace recorder for the Rust and Go ports" />
+  </Folder>
+  <Folder name="docs">
+    <File name="*.md: long-form engineering notes per feature" />
+  </Folder>
+  <Folder name="scripts">
+    <File name="validate-packages, pack, packed-smoke, release-version, conformance, spec" />
+  </Folder>
+  <Folder name="spec">
+    <File name="language-neutral contract generated from the TypeScript sources" />
+  </Folder>
+  <Folder name="crates">
+    <File name="Rust port" />
+  </Folder>
+  <Folder name="go">
+    <File name="Go port" />
+  </Folder>
+</Files>
+
+`pnpm-workspace.yaml` includes `packages/*`, `examples/*`, and `apps/*`. Each directory under `packages/` is one
+published npm package (`@better-iam/<name>`, plus the umbrella `better-iam`); [Packages](/docs/reference/packages)
+lists them with their subpath exports. Server API groups live in `packages/server/src/api/<group>.ts`, and every
+`betterIam()` option is declared in `packages/server/src/options.ts` (see [Options](/docs/reference/options)).
+
+## Workspace scripts
+
+Every script below is defined in the root `package.json` and runs from the repository root.
+
+| Command | What it runs |
+| --- | --- |
+| `pnpm build` | `tsc -b`: builds every package's `dist/`. |
+| `pnpm typecheck` | `tsc -b` plus the type tests in `tests/tsconfig.*.json` (client, application, Next.js, NestJS, Svelte, middleware, React Router) and the console's typecheck. |
+| `pnpm test` | `vitest run`: the whole test suite. |
+| `pnpm test:postgres` | The PostgreSQL suites: `tests/postgres.test.ts`, `tests/server-security.test.ts`, `tests/adapter-conformance.test.ts`, and `tests/storage-query.test.ts`. |
+| `pnpm check` | `pnpm typecheck && pnpm test && pnpm validate:packages`. |
+| `pnpm validate:packages` | `node scripts/validate-packages.mjs`: checks the package manifests. |
+| `pnpm pack:all` | `node scripts/pack.mjs`: packs every publishable package. |
+| `pnpm check:packed-types` | `node scripts/check-packed-types.mjs`: checks the types of the packed packages. |
+| `pnpm test:packed` | `node scripts/packed-smoke.mjs`: a smoke test against the packed packages. |
+| `pnpm bench:scale` | `vitest run --config vitest.bench.config.ts`: scale benchmarks. |
+| `pnpm format` / `pnpm format:check` | Prettier write or check (`singleQuote`, `printWidth` 100, `trailingComma: 'all'`). |
+| `pnpm docs:api` | `node scripts/api-reference.mjs`. |
+| `pnpm spec` / `pnpm spec:check` | Regenerate `spec/`, or regenerate into a temporary directory and fail on any difference. |
+| `pnpm conformance:record` | Record conformance traces from the test suite. |
+| `pnpm conformance:serve` | Start the standalone TypeScript server with the test-control endpoints. |
+| `pnpm conformance:replay` | Replay recorded traces against a server. |
+| `pnpm conformance:baseline` | Write `spec/conformance/BASELINE.md` from a replay report. |
+
+### PostgreSQL tests
+
+The PostgreSQL suites skip themselves unless `BETTER_IAM_POSTGRES_URL` is set:
+
+```bash
+export BETTER_IAM_POSTGRES_URL=postgres://postgres:password@localhost:5432/better_iam_test
+pnpm build
+pnpm test:postgres
+```
+
+### The console
+
+```bash
+pnpm --filter @better-iam/console migrate
+pnpm --filter @better-iam/console bootstrap   # reads BETTER_IAM_ROOT_EMAIL and BETTER_IAM_ROOT_PASSWORD
+pnpm --filter @better-iam/console dev
+```
+
+## Storage adapter conformance
+
+Every storage adapter must pass the same conformance suite, exported from `@better-iam/core/conformance`.
+`runAdapterConformance(createStore)` runs every case against a fresh store (migrating it first and closing it
+after) and returns `{ passed, failed }` instead of stopping at the first failure; `adapterConformanceCases()`
+returns the cases for test runners that want one test per case. The repository runs it for the bundled adapters in
+`tests/adapter-conformance.test.ts`.
+
+```ts title="tests/my-adapter.test.ts"
+import { expect, test } from 'vitest';
+import { runAdapterConformance } from '@better-iam/core/conformance';
+import { myAdapter } from '../src/index.js';
+
+test('my adapter passes the storage conformance suite', async () => {
+  const { failed } = await runAdapterConformance(() => myAdapter({ url: ':memory:' }));
+  expect(failed).toEqual([]);
+});
+```
+
+`myAdapter` stands for your adapter's factory. See [Write a database adapter](/docs/guides/custom-database-adapter)
+and [Adapters and plugins](/docs/concepts/extensions#conformance-suite).
+
+## Documentation site
+
+The site lives in `apps/docs` (package `@better-iam/docs`). Hand-written pages are MDX files in
+`apps/docs/content/docs`. Reference data is generated from the repository by `apps/docs/scripts/generate.mjs`.
+
+```bash
+pnpm build                                   # the generator reads packages/*/dist
+pnpm --filter @better-iam/docs generate      # API, errors, CLI, packages, exports, changelog, glossary, OpenAPI
+pnpm --filter @better-iam/docs dev           # http://localhost:4000
+node apps/docs/scripts/check-content.mjs     # MDX syntax, components, frontmatter, links, and #anchors
+```
+
+| Generator step | Output |
+| --- | --- |
+| `api` | `generated/api.json`: every API group and method with its route and JSON Schemas, read from a live in-memory instance and the built declarations. |
+| `errors` | `generated/errors.json`: every `IamError` code thrown in `packages/*/src`. |
+| `cli` | `generated/cli.json`: every CLI command from its help text. |
+| `packages`, `exports` | `generated/packages.json` and `generated/exports.json`. |
+| `changelog` | `content/docs/reference/changelog.md` from `CHANGELOG.md`. |
+| `api-pages`, `errors-page`, `cli-page`, `exports-page`, `glossary` | The generated reference pages. |
+| `openapi` | `public/openapi.json`. |
+
+Pass step names to run only some of them, with an optional filter: `node scripts/generate.mjs api-pages=groups,roles
+errors-page`. Set `DOCS_COVERAGE=1` to list functions, codes, and commands that still lack a curated description.
+
+Rules for documentation changes:
+
+- Do not edit generated pages (`content/docs/reference/api/*`, `reference/cli.mdx`, `reference/errors.mdx`,
+  `reference/exports.mdx`, `reference/glossary.mdx`, `reference/changelog.md`). Change the source, or the curated
+  text in `apps/docs/descriptions/` (`api/{group}.md`, `cli.md`, `errors.md`, `exports.md`, `glossary.json`,
+  `fields.json`), and regenerate.
+- Every fact on a page (package, import path, method, option, error code, CLI command) must exist in
+  `packages/*/src` or `apps/docs/generated/*.json`. List the files you wrote from in the page's `sources`
+  frontmatter.
+- Each folder's `meta.json` sets the sidebar title, icon, and page order; a page appears in the sidebar only when
+  it is listed there or the list contains `"..."` (every other page, alphabetically).
+- Run `check-content.mjs` with a path prefix (`node apps/docs/scripts/check-content.mjs guides`) to check one
+  section quickly.
+
+`apps/docs/README.md` holds the full authoring conventions: frontmatter fields, voice, MDX escaping, the
+global components, and icons.
+
+## Rust and Go ports
+
+The repository also contains native Rust (`crates/`) and Go (`go/`) implementations, being built toward parity with
+the TypeScript server; `spec/BUILDOUT.md` describes the plan and its status. The TypeScript packages remain the
+single source of truth:
+
+- `spec/` is generated from the TypeScript sources by `pnpm spec` (after `pnpm build`): the OpenAPI document and
+  route table, error codes, the permission catalog, the storage model and migrations, and crypto and format test
+  vectors. Never edit a generated file in `spec/` by hand; change the TypeScript and regenerate. `pnpm spec:check`
+  fails when the checked-in files are out of date.
+- `pnpm conformance:record` runs the Vitest suite with `BETTER_IAM_RECORD` set, recording API traces into
+  `spec/conformance/traces`. `pnpm conformance:replay` replays them over HTTP against any server that implements
+  the conformance flags and control endpoints, the TypeScript one included (`pnpm conformance:serve`).
+- `crates/PORTING.md` explains how to port a server module to Rust.
+
+CI runs `cargo fmt --check`, `cargo clippy`, and `cargo test` for the Rust workspace, and `gofmt`, `go vet`, and
+`go test` for the Go module, each on Linux, Windows, and macOS, plus a PostgreSQL job for each.
+
+## Continuous integration and releases
+
+`.github/workflows/ci.yml` runs on every push to `main` and every pull request:
+
+| Job | Steps |
+| --- | --- |
+| `test` (Ubuntu and Windows, Node 22 and 24) | `pnpm install --frozen-lockfile`, `pnpm check`, `node examples/shared/smoke.mjs`, `pnpm pack:all`, `pnpm check:packed-types`, `node scripts/packed-smoke.mjs` |
+| `postgres` | `pnpm build`, then `pnpm test:postgres` against a PostgreSQL 17 service |
+| `rust`, `rust-postgres`, `go`, `go-postgres` | The Rust and Go checks above |
+
+After every green push to `main`, the release jobs publish any version that is not yet published: npm packages,
+crates on crates.io, and a Go module tag, all at one shared version. The versions must match, so bump them together
+with:
+
+```bash
+node scripts/release-version.mjs 0.4.0
+```
+
+The script rewrites the `version` of every `packages/*/package.json`, the Rust workspace version in `Cargo.toml`,
+and the `Version` constant in `go/version.go`. Then update `CHANGELOG.md` (newest version first) and run
+`pnpm install`, `pnpm check`, `cargo test --workspace`, and `go test ./...` (in `go/`), as the script reminds you.
+
+## Related
+
+<Cards>
+  <Card icon={<SlidersHorizontal />} title="Options" href="/docs/reference/options">
+    Every `betterIam()` option, as declared in `packages/server/src/options.ts`.
+  </Card>
+  <Card icon={<Database />} title="Write a database adapter" href="/docs/guides/custom-database-adapter">
+    Implement the storage contract and pass the conformance suite.
+  </Card>
+  <Card icon={<Puzzle />} title="Create an extension" href="/docs/guides/create-an-extension">
+    Add actions, endpoints, and hooks with a plugin.
+  </Card>
+  <Card icon={<BookOpen />} title="Use the docs with AI" href="/docs/ai">
+    The MCP server, `llms.txt`, and Markdown endpoints this site serves.
+  </Card>
+</Cards>

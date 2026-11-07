@@ -1,0 +1,498 @@
+---
+title: API keys and service accounts
+metaTitle: API keys and service accounts for machine access
+description: Service accounts and their API keys in Better IAM, covering issuance with credentials.create, scopes, expiry, rotation, revocation, unused-key hygiene, and how keys are presented.
+icon: KeySquare
+packages: ['@better-iam/server', '@better-iam/auth', '@better-iam/client']
+sources:
+  - docs/authentication.md
+  - docs/temporary-credentials.md
+  - packages/server/src/api/service-accounts.ts
+  - packages/server/src/principals.ts
+  - packages/server/src/api/sts.ts
+  - packages/auth/src/crypto.ts
+  - packages/core/src/index.ts
+---
+
+import { Bot, Hourglass, ListTree, Ticket } from '@/lib/icons';
+
+Scripts, integrations, and other servers cannot type a password or answer an MFA prompt. They authenticate as a
+<Term id="service-account">service account</Term>, an identity for software that lives in a
+<Term id="tenant">tenant</Term>'s directory next to people, with an **API key**: an opaque bearer token sent as
+`Authorization: Bearer <key>`. Only the key's SHA-256 hash is stored, so a database leak does not reveal usable keys.
+
+A key acts as its service account, with every role, group membership, and relationship the account holds, and can
+be narrowed further with scopes. Every key expires, records when it was last used, and can be rotated or revoked
+on its own. Use API keys for long-running integrations that cannot obtain a token any other way. For CI jobs and
+workloads whose platform issues OpenID Connect tokens, prefer [web-identity federation](/docs/authentication/tokens#web-identity-federation),
+which needs no stored secret at all.
+
+## Setup
+
+<Steps>
+<Step>
+
+### Declare the actions the key will use
+
+Keys are checked against your permission catalog like any other credential, and scopes must name actions the
+catalog knows (`INVALID_ACTION` otherwise). Checks on your own resource types also need a `resolveResource` that
+says which tenant owns a record.
+
+```ts title="iam.ts"
+import { betterIam } from 'better-iam';
+import { sqliteAdapter } from 'better-iam/adapter-sqlite';
+import { findReport } from './reports';
+
+export const iam = betterIam({
+  database: sqliteAdapter({ filename: './iam.db' }),
+  secret: process.env.BETTER_IAM_SECRET!,
+  baseURL: process.env.BETTER_IAM_BASE_URL!,
+  permissions: {
+    resourceTypes: {
+      report: { actions: ['reports:read', 'reports:export'] },
+    },
+  },
+  resolveResource: async ({ type, id }) => {
+    const report = await findReport(id); // your own database
+    return { type, id, tenantId: report.tenantId };
+  },
+});
+```
+
+</Step>
+<Step>
+
+### Migrate the database
+
+API keys are stored as sessions of kind `api-key`; service accounts are identities of kind `service`. Both
+collections come with the standard schema.
+
+```bash
+npx better-iam migrate --config better-iam.config.mjs
+```
+
+</Step>
+<Step>
+
+### Create a service account
+
+`serviceAccounts.create` needs `iam:identities:create` on the tenant and an active
+<Term id="authority">grant authority</Term>. The new account is active but holds no access.
+
+```ts title="scripts/create-service-account.ts"
+import { iam } from './iam';
+
+const exporter = await iam.api.serviceAccounts.create(adminCredential, {
+  tenantId,
+  name: 'Nightly export',
+  description: 'Exports reports to the finance warehouse',
+  expiresAt: Date.parse('2027-06-30T00:00:00Z'), // optional scheduled deactivation
+});
+```
+
+**Route:** `POST /serviceAccounts/create`
+
+</Step>
+<Step>
+
+### Give it access
+
+Bind a role to the account, or add it to a group, exactly as for a person.
+
+```ts title="scripts/grant-exporter.ts"
+import { iam } from './iam';
+
+await iam.api.bindings.create(adminCredential, {
+  tenantId,
+  roleId: reportsReader.id,
+  subjectType: 'identity',
+  subjectId: exporter.id,
+});
+```
+
+</Step>
+</Steps>
+
+## Usage
+
+Every `credentials` method takes the caller's credential first and is authorized against `iam:credentials:*`
+actions on the service account (`iam/{identityId}`) or the key. Browser code calls the same methods on the typed
+client without the credential. Routes are relative to the handler's `basePath` (`/api/iam` by default).
+
+### Issue a key
+
+`credentials.create` issues a key and returns its `token` once. Store it in your secret manager right away; it can
+never be read again.
+
+<Tabs items={['Server', 'Client']}>
+<Tab value="Server">
+
+```ts title="scripts/issue-key.ts"
+import { iam } from './iam';
+
+const { token, credentialId, expiresAt } = await iam.api.credentials.create(adminCredential, {
+  tenantId,
+  identityId: exporter.id,
+  name: 'warehouse-export',
+  description: 'Cron job on the analytics cluster',
+  scopes: ['reports:read', 'reports:export'], // or a session `policy`; not both
+  expiresInSeconds: 30 * 86_400, // 30 days; 90 days when omitted
+});
+```
+
+</Tab>
+<Tab value="Client">
+
+```ts title="settings/api-keys.ts"
+import { client } from './lib/iam-client';
+
+const { token, credentialId } = await client.credentials.create({
+  tenantId,
+  identityId: exporterId,
+  name: 'warehouse-export',
+  scopes: ['reports:read', 'reports:export'],
+});
+showOnce(token); // display it to the administrator a single time
+```
+
+</Tab>
+</Tabs>
+
+**Route:** `POST /credentials/create`
+
+- Requires `iam:credentials:create` on the service account, recent authentication (`RECENT_AUTH_REQUIRED`), and an
+  active grant authority (`GRANT_AUTHORITY_REQUIRED`). Because the permission is checked on the account, you can let
+  a team issue keys for its own integration accounts only.
+- The identity must be an active, unexpired service account, or an AI agent in good standing
+  (`INVALID_IDENTITY`). People never get API keys; they use sessions.
+- `expiresInSeconds` is 60 seconds to 365 days, 90 days by default.
+- `name` is at most 128 characters and `description` at most 512.
+- The key is tied to the issuer's grant authority (`credentialAuthorityId`) and stays within its ceiling. When that
+  authority is revoked, for example because the issuing administrator was offboarded, the key stops working.
+- Audited as `iam:credentials:create` on the service account.
+
+### Limit a key with scopes or a policy
+
+A key can do only what both its service account's grants and its own limit allow. Pass one of:
+
+- `scopes`: a list of actions. It compiles to a session policy that allows exactly those actions on every resource.
+  An empty list fails with `INVALID_INPUT`.
+- `policy`: a full [policy document](/docs/authorization/policies), when the limit depends on resources or
+  conditions.
+
+Passing both fails with `INVALID_INPUT`. A key that itself has scopes or a policy can only issue keys within them
+(`ACCESS_DENIED` otherwise), and a key it issues without its own limit inherits the caller's.
+
+```ts title="scripts/issue-scoped-key.ts"
+import { iam } from './iam';
+
+await iam.api.credentials.create(adminCredential, {
+  tenantId,
+  identityId: exporter.id,
+  name: 'read-one-project',
+  policy: {
+    version: 1,
+    statements: [{ effect: 'allow', actions: ['reports:read'], resources: ['report/project-42-*'] }],
+  },
+});
+```
+
+### Use a key
+
+Present the key as a bearer token. Over HTTP it works for every route, never touches cookies, and needs the JSON
+content type and `X-Better-IAM: 1` like every other call.
+
+<Tabs items={['Server', 'Client', 'HTTP']}>
+<Tab value="Server">
+
+```ts title="app/api/reports/export.ts"
+import { iam } from './iam';
+
+// Your own route, called by the integration with Authorization: Bearer <key>.
+export async function POST(request: Request) {
+  const decision = await iam.authorize({
+    headers: request.headers,
+    tenantId,
+    action: 'reports:export',
+    resource: { type: 'report', id: 'quarterly' },
+  });
+  if (!decision.allowed) return new Response('Forbidden', { status: 403 });
+  return Response.json(await exportReport('quarterly'));
+}
+```
+
+</Tab>
+<Tab value="Client">
+
+```ts title="worker/iam-client.ts"
+import { createIamClient } from 'better-iam/client';
+import type { iam } from './iam';
+
+export const client = createIamClient<typeof iam>({
+  baseURL: 'https://iam.example.com',
+  token: () => process.env.IAM_API_KEY, // read on every call, never stored
+});
+
+const caller = await client.sts.getCallerIdentity();
+```
+
+</Tab>
+<Tab value="HTTP">
+
+```bash
+curl -s https://iam.example.com/api/iam/sts/getCallerIdentity \
+  -H "Authorization: Bearer $IAM_API_KEY" \
+  -H 'Content-Type: application/json' -H 'X-Better-IAM: 1' -d '{}'
+```
+
+</Tab>
+</Tabs>
+
+- Policies see the caller as `principal.kind: 'service'` and `principal.sessionKind: 'api-key'`, so a statement
+  can treat machines differently from people. API key sessions are never MFA-verified (`principal.mfa` is `false`).
+- A key is judged against the address presenting it: a key used from a network blocked with
+  `security.blockNetwork` is refused. The tenant's `allowedIpRanges` allowlist applies to user sessions, session
+  tokens, and role sessions, not to API keys.
+- Operations that need recent authentication accept a key only within `recentAuthenticationMs` (five minutes by
+  default) of its creation or rotation, because a key's authentication time is its creation time.
+- A key is refused as soon as its account is disabled, expires, or is deleted, or its grant authority is revoked.
+
+### List keys and find unused ones
+
+`credentials.list` lists the keys of the tenant, or of one service account with `identityId`, newest first, without
+token material. `unusedForMs` keeps only keys that have not authenticated a request in that long, including keys
+never used since they were issued.
+
+<Tabs items={['Server', 'Client']}>
+<Tab value="Server">
+
+```ts title="scripts/revoke-unused-keys.ts"
+import { iam } from './iam';
+
+const unused = await iam.api.credentials.list(adminCredential, {
+  tenantId,
+  unusedForMs: 60 * 86_400_000, // 60 days
+});
+for (const key of unused) {
+  await iam.api.credentials.revoke(adminCredential, { tenantId, credentialId: key.id });
+}
+```
+
+</Tab>
+<Tab value="Client">
+
+```ts title="settings/api-keys.ts"
+import { client } from './lib/iam-client';
+
+const keys = await client.credentials.list({ tenantId, identityId: exporterId });
+const stale = keys.filter((key) => key.expired || key.lastUsedAt === undefined);
+```
+
+</Tab>
+</Tabs>
+
+**Route:** `POST /credentials/list`
+
+- `lastUsedAt` is recorded at most once a minute and is absent until first use.
+- Expired keys stay listed with `expired: true` until you renew or revoke them.
+- `unusedForMs` must be between 0 and ten years (`INVALID_INPUT`).
+- [`analysis.findings`](/docs/reference/api/analysis#findings) reports unused keys as `stale-api-key`, and
+  [`reports.access`](/docs/reference/api/reports#access) lists keys unused or ending soon.
+
+`credentials.get` returns one key the same way. **Route:** `POST /credentials/get`
+
+### Relabel a key or move its expiry
+
+`credentials.update` changes `name`, `description`, or `expiresAt` without changing the token. Pass `null` to
+clear a label. A new `expiresAt` must be in the future and at most a year away, and can renew an expired key, which
+then works again without a new token.
+
+<Tabs items={['Server', 'Client']}>
+<Tab value="Server">
+
+```ts title="scripts/extend-key.ts"
+import { iam } from './iam';
+
+await iam.api.credentials.update(adminCredential, {
+  tenantId,
+  credentialId,
+  description: null,
+  expiresAt: Date.now() + 90 * 86_400_000,
+});
+```
+
+</Tab>
+<Tab value="Client">
+
+```ts title="settings/api-keys.ts"
+import { client } from './lib/iam-client';
+
+await client.credentials.update({ tenantId, credentialId, name: 'warehouse-export-v2' });
+```
+
+</Tab>
+</Tabs>
+
+**Route:** `POST /credentials/update`
+
+Changing `expiresAt` also needs recent authentication and the key's grant authority: only the issuer, or the
+platform root, may move another administrator's key (`ACCESS_DENIED`).
+
+### Rotate a key
+
+`credentials.rotate` replaces a key with a new token in one transaction. The old token stops working the moment the
+new one exists, so deploy the returned token before anything else.
+
+<Tabs items={['Server', 'Client']}>
+<Tab value="Server">
+
+```ts title="scripts/rotate-key.ts"
+import { iam } from './iam';
+
+const { token, credentialId: newId } = await iam.api.credentials.rotate(adminCredential, {
+  tenantId,
+  credentialId,
+});
+await secrets.put('warehouse-export', token);
+```
+
+</Tab>
+<Tab value="Client">
+
+```ts title="settings/api-keys.ts"
+import { client } from './lib/iam-client';
+
+const { token } = await client.credentials.rotate({ tenantId, credentialId });
+```
+
+</Tab>
+</Tabs>
+
+**Route:** `POST /credentials/rotate`
+
+- The replacement gets a new `credentialId` and keeps the name, description, scopes or policy, and expiry. Its usage
+  history starts over, so it shows as unused until the integration uses it.
+- Requires `iam:credentials:create` on the key and recent authentication. Only the issuer (the holder of the key's
+  grant authority) or the platform root may rotate it (`ACCESS_DENIED`).
+- Rotate on a schedule, or at once when a token may have leaked.
+
+### Revoke a key
+
+`credentials.revoke` deletes a key so it stops working immediately. It cannot be undone.
+
+<Tabs items={['Server', 'Client']}>
+<Tab value="Server">
+
+```ts title="scripts/revoke-key.ts"
+import { iam } from './iam';
+
+await iam.api.credentials.revoke(adminCredential, { tenantId, credentialId });
+```
+
+</Tab>
+<Tab value="Client">
+
+```ts title="settings/api-keys.ts"
+import { client } from './lib/iam-client';
+
+await client.credentials.revoke({ tenantId, credentialId });
+```
+
+</Tab>
+</Tabs>
+
+**Route:** `POST /credentials/revoke`
+
+To stop every key of an account at once, disable the account with `serviceAccounts.setStatus`, or delete it with
+`serviceAccounts.delete`. `identities.revokeSessions` ends every session of an identity and, unless
+`keepApiKeys: true` is passed, its API keys too.
+
+### Derive short-lived tokens from a key
+
+A key is long-lived. For each CI job or batch run, trade it for a session token that lasts minutes to hours and ends
+with the key: `sts.getSessionToken` with the key as the credential. The token keeps the key's scopes and authority.
+See [session tokens](/docs/authentication/tokens#session-tokens).
+
+```ts title="worker/job-token.ts"
+import { iam } from './iam';
+
+const { token, expiresAt } = await iam.api.sts.getSessionToken(
+  { token: process.env.IAM_API_KEY },
+  { durationSeconds: 900, sessionName: 'export-run-118' },
+);
+```
+
+**Route:** `POST /sts/getSessionToken`
+
+## Key format and secret scanning
+
+New keys are 58 characters: `biam_key_`, 43 random base64url characters, and a 6-character CRC-32 checksum.
+Secret scanners can recognize a leaked key with `credentialTokenScanPattern` from `better-iam/auth`:
+
+```ts title="scripts/scan.ts"
+import { credentialTokenScanPattern, parseCredentialToken } from 'better-iam/auth';
+
+const pattern = new RegExp(credentialTokenScanPattern, 'g');
+const leaked = [...source.matchAll(pattern)].map((match) => match[0]);
+parseCredentialToken(leaked[0] ?? ''); // { type: 'key' } when the shape and checksum match
+```
+
+The checksum filters typos and garbage; it authenticates nothing. Keys issued before the format existed keep
+working until they expire. See [token formats](/docs/authentication/tokens#token-formats).
+
+## Options
+
+API keys have no deployment switch: they are always available. These inputs and settings shape them.
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `expiresInSeconds` | `number` | `7776000` (90 days) | Key lifetime at issuance, 60 seconds to 365 days. |
+| `scopes` | `string[]` | none | Action allowlist compiled into a session policy over every resource. |
+| `policy` | `PolicyDocument` | none | A full session policy instead of `scopes`. |
+| `name` | `string` | none | Label for reviews, at most 128 characters. |
+| `description` | `string` | none | Purpose, at most 512 characters. |
+| `authentication.recentAuthenticationMs` | `number` | `300000` (5 minutes) | How long after creation or rotation a key passes recent-authentication checks. |
+| Service account `expiresAt` | `number` (epoch ms) | none | Scheduled deactivation of the account; every key is refused from that instant. |
+
+## Schema
+
+| Collection | Key fields | Purpose |
+| --- | --- | --- |
+| `identities` | `kind: 'service'`, `name`, `description`, `status`, `expiresAt` | The service account. |
+| `sessions` | `kind: 'api-key'`, `tokenHash` (SHA-256), `identityId`, `name`, `description`, `policy`, `credentialAuthorityId`, `createdAt`, `expiresAt`, `lastSeenAt`, `mfa: false` | One row per key. `lastSeenAt` is reported as `lastUsedAt` once the key has been used. |
+
+`credentials.get` and `credentials.list` return a `CredentialSummary`: `id`, `identityId`, `name`, `description`,
+`createdAt`, `expiresAt`, `lastUsedAt`, `expired`, `scopes` (when issued with scopes), `policy`, and
+`credentialAuthorityId`. No summary ever carries the token or its hash.
+
+## Errors
+
+| Code | When |
+| --- | --- |
+| [`INVALID_IDENTITY`](/docs/reference/errors#invalid_identity) | The identity is not an active, unexpired service account (or an agent in good standing). |
+| [`INVALID_INPUT`](/docs/reference/errors#invalid_input) | Both `scopes` and `policy`, an empty `scopes` list, a lifetime outside 60 seconds to a year, or nothing to update. |
+| [`INVALID_ACTION`](/docs/reference/errors#invalid_action) | A scope names an action the catalog does not know. |
+| [`INVALID_POLICY`](/docs/reference/errors#invalid_policy) | The session policy does not validate. |
+| [`GRANT_AUTHORITY_REQUIRED`](/docs/reference/errors#grant_authority_required) | The caller holds no grant authority to issue keys under. |
+| [`RECENT_AUTH_REQUIRED`](/docs/reference/errors#recent_auth_required) | Create, rotate, revoke, or an expiry change from a session that is not recent. |
+| [`ACCESS_DENIED`](/docs/reference/errors#access_denied) | Missing permission, rotating or re-dating another administrator's key, or a scoped key issuing a broader one. |
+| [`INVALID_CREDENTIAL`](/docs/reference/errors#invalid_credential) | The `credentialId` belongs to a session that is not an API key. |
+| [`NOT_FOUND`](/docs/reference/errors#not_found) | The key or account is not in this tenant. |
+| [`IMPERSONATION_RESTRICTED`](/docs/reference/errors#impersonation_restricted) | Creating, rotating, revoking, or re-dating a key from a "view as" session. |
+
+## Next steps
+
+<Cards>
+  <Card icon={<Ticket />} title="Tokens and JWTs" href="/docs/authentication/tokens">
+    Session tokens, session JWTs, and web identity for workloads without stored keys.
+  </Card>
+  <Card icon={<Bot />} title="serviceAccounts API" href="/docs/reference/api/service-accounts">
+    Create, disable, schedule, and delete service accounts.
+  </Card>
+  <Card icon={<ListTree />} title="Access lifecycle" href="/docs/features/privileged-access/lifecycle#api-key-hygiene">
+    Key hygiene, time-bound identities, and offboarding.
+  </Card>
+  <Card icon={<Hourglass />} title="Temporary access" href="/docs/authorization/temporary-access">
+    Role sessions, expiring bindings, and access requests.
+  </Card>
+</Cards>

@@ -3,7 +3,7 @@
 //
 //   node apps/docs/scripts/indexnow.mjs --changed <from-sha> <to-sha>   pages whose sources changed between commits
 //   node apps/docs/scripts/indexnow.mjs --all                          every URL in the live sitemap
-//   node apps/docs/scripts/indexnow.mjs /docs/guides/quickstart ...    specific paths
+//   node apps/docs/scripts/indexnow.mjs /docs/quickstart ...    specific paths
 //
 // Options: --site <origin> (default DOCS_SITE_URL or https://better-iam.com), --dry-run.
 // The key is the file `public/<32 hex characters>.txt`, served at the site root, which proves the site is ours.
@@ -29,13 +29,13 @@ const keyFile = readdirSync(join(app, 'public')).find((name) => /^[0-9a-f]{32}\.
 if (!keyFile) throw new Error('No IndexNow key file (public/<32 hex characters>.txt).');
 const key = readFileSync(join(app, 'public', keyFile), 'utf8').trim();
 
-/** The docs URL a content file is published at: `guides/index.mdx` is `/docs/guides`. */
+/** The docs URL a content file is published at: `guides/index.mdx` is `/docs/introduction`. */
 function contentUrl(file) {
   const slug = file
     .replace(/^apps\/docs\/content\/docs\//, '')
     .replace(/\.mdx?$/, '')
     .replace(/(^|\/)index$/, '');
-  return slug ? `/docs/${slug}` : '/docs/guides';
+  return slug ? `/docs/${slug}` : '/docs/introduction';
 }
 
 function changedPaths(from, to) {

@@ -1,0 +1,338 @@
+---
+title: Schema
+description: The tables, indexes, indexed lookup fields, record rules, and every collection Better IAM stores in your database, generated from the source.
+icon: Layers
+packages: ['@better-iam/core', '@better-iam/server']
+sources:
+  - packages/core/src/sql.ts
+  - packages/core/src/storage.ts
+  - packages/core/src/index.ts
+  - packages/core/src/audit.ts
+  - packages/server/src/lifecycle.ts
+  - packages/server/src/retention.ts
+  - packages/server/src/events.ts
+  - packages/server/src/audit-archive.ts
+  - packages/server/src/flows.ts
+  - packages/oauth/src/adapter.ts
+  - packages/projects/src/index.ts
+---
+
+Better IAM stores every record in one generic table, `iam_records`, as a JSON document tagged with its
+**collection** (the record kind, such as `identities` or `sessions`). There are no per-feature tables, so a new
+feature never needs a new table, and the schema is identical on PostgreSQL, SQLite, and libSQL apart from column
+types and index definitions. This page lists the tables, their indexes, the rules every record follows, and every
+collection the server writes.
+
+Read it to plan capacity, write reporting queries, or review what Better IAM keeps. Never write to these tables
+directly: services enforce references between records inside serialized transactions, and a raw SQL write can
+leave a revoked session alive or break the audit chain.
+
+## Tables
+
+### iam_records
+
+```sql title="PostgreSQL"
+CREATE TABLE IF NOT EXISTS iam_records (
+  collection TEXT COLLATE "C" NOT NULL,
+  id         TEXT COLLATE "C" NOT NULL,
+  tenant_id  TEXT COLLATE "C" NOT NULL,
+  unique_key TEXT COLLATE "C",
+  data       TEXT NOT NULL,
+  PRIMARY KEY (collection, id),
+  UNIQUE (collection, tenant_id, unique_key)
+);
+```
+
+On SQLite and libSQL the same table uses plain `TEXT` columns, whose default `BINARY` collation also orders by
+code point.
+
+| Column | Holds |
+| --- | --- |
+| `collection` | The record kind. Together with `id`, the primary key. |
+| `id` | The record ID, unique within the collection. |
+| `tenant_id` | The owning tenant. It never changes after the record is created; `put` with another tenant fails with `CONFLICT`. |
+| `unique_key` | An optional natural key, unique within `(collection, tenant_id)`, such as one email per tenant. |
+| `data` | The whole record as JSON text, including `id`, `tenantId`, and `uniqueKey`. PostgreSQL casts it to `jsonb` in queries. |
+
+Uniqueness that must hold across all tenants is expressed through the record ID instead: `tenantAliases` uses the
+alias itself as its ID, and `domainOwners` is keyed by the verified domain.
+
+### iam_schema_version and iam_migrations
+
+`iam_schema_version` holds one row with `version = 1`; a database with another version is refused with
+`SCHEMA_VERSION`. `iam_migrations` holds one row per applied schema step (`name`, `applied_at` in epoch
+milliseconds). See [Migrations](/docs/databases/migrations#the-iam_migrations-table).
+
+## Indexes
+
+All index names start with `iam_records_`. Every B-tree index added after `0001_records` ends in `id`, so one
+index both finds rows and returns them in `ORDER BY id` order.
+
+| Index | Step | Columns or expression |
+| --- | --- | --- |
+| `iam_records_tenant` | `0001_records` | `(collection, tenant_id)` |
+| `iam_records_tenant_id` | `0002_query_indexes` | `(collection, tenant_id, id)` |
+| `iam_records_unique_key` | `0002_query_indexes` | `(collection, unique_key, id)` where `unique_key IS NOT NULL` |
+| `iam_records_document` | `0002_query_indexes` | PostgreSQL only: GIN over `(data::jsonb) jsonb_path_ops` |
+| `iam_records_field_{field}` | `0002`, `0005`, `0006` | SQLite and libSQL only: `(collection, json_extract(data, '$."{field}"'), id)` where the field is not null, one per [indexed field](#indexed-fields) |
+| `iam_records_order_timestamp`, `iam_records_order_sequence` | `0003_ordered_indexes` | `(collection, tenant_id, {field}, id)` where the field is a number (PostgreSQL) or not null (SQLite and libSQL) |
+| `iam_records_expiry_expiresAt`, `iam_records_expiry_deliveredAt`, `iam_records_expiry_failedAt` | `0004_expiry_indexes` | `(collection, {field}, id)` where the field is a number (PostgreSQL) or not null (SQLite and libSQL) |
+
+### Indexed fields
+
+`INDEXED_FIELDS` from `better-iam/core` lists the high-cardinality fields that lookups filter on across tenants or
+inside large collections. On SQLite and libSQL each one has its own partial expression index; on PostgreSQL the
+single GIN document index serves them all. The list affects only speed, never results. `LOOKUP_INDEX_STEPS` maps
+each field to the step that indexes it.
+
+| Field | Step | Example lookups |
+| --- | --- | --- |
+| `tokenHash` | `0002_query_indexes` | Sessions and trusted devices by hashed token. |
+| `identityId` | `0002_query_indexes` | Sessions, group memberships, passkeys, devices, and challenges of one identity. |
+| `email` | `0002_query_indexes` | Identities by email address. |
+| `parentId` | `0002_query_indexes` | Child tenants of a tenant. |
+| `subjectId` | `0002_query_indexes` | Bindings and onboarding progress of a subject. |
+| `groupId` | `0002_query_indexes` | Members and bindings of a group. |
+| `roleId` | `0002_query_indexes` | Bindings and role sessions of a role. |
+| `credentialId` | `0002_query_indexes` | Passkeys by WebAuthn credential ID. |
+| `originalIdentityId` | `0002_query_indexes` | Sessions by their original identity. |
+| `impersonatorSessionId` | `0002_query_indexes` | Impersonation sessions, which store the administrator's session ID. |
+| `accountId` | `0002_query_indexes` | OAuth artifacts, which store the account they were issued for. |
+| `clientId` | `0002_query_indexes` | OAuth clients and artifacts by client. |
+| `uidHash` | `0002_query_indexes` | OAuth interaction artifacts. |
+| `userCodeHash` | `0002_query_indexes` | OAuth device-flow artifacts. |
+| `grantIdHash` | `0002_query_indexes` | OAuth artifacts of one grant. |
+| `connectionId` | `0002_query_indexes` | SAML records of one connection. |
+| `targetId` | `0002_query_indexes` | Outbound provisioning links of one target. |
+| `streamId` | `0002_query_indexes` | Shared Signals deliveries of one stream. |
+| `jti` | `0002_query_indexes` | Shared Signals deliveries by token ID. |
+| `sourceSessionId` | `0005_lookup_indexes` | Role and temporary sessions created from a session. |
+| `trustId` | `0005_lookup_indexes` | Sessions created through a trust. |
+| `fingerprint` | `0006_protection_indexes` | Data protection tokens by keyed value fingerprint. |
+
+Two more field lists drive ordered reads (`findOrdered`):
+
+- `ORDERED_FIELDS`: `timestamp` and `sequence`, indexed per tenant for audit paging by time and by chain sequence.
+- `EXPIRY_FIELDS`: `expiresAt`, `deliveredAt`, and `failedAt`, indexed per collection so the
+  <Term id="retention-sweep">retention sweep</Term> finds due records without scanning.
+
+## Record rules
+
+Every adapter enforces the same rules through the shared `RecordStore` base. Breaking one fails with
+`INVALID_RECORD` before anything is written.
+
+| Rule | Limit |
+| --- | --- |
+| Identifiers | `collection`, `id`, `tenantId`, and `uniqueKey` are non-empty strings of at most 512 UTF-8 bytes, without control characters (U+0000 to U+001F) or unpaired surrogates. |
+| Values | JSON only: strings, finite numbers, booleans, `null`, plain objects, and arrays without `undefined` items. No class instances, symbols, or circular references. |
+| Keys | `__proto__`, `constructor`, and `prototype` are refused as property names. |
+| Depth | At most 64 levels of nesting. |
+| Size | The serialized record is at most 1,048,576 characters. |
+
+Field values may hold any string, including U+0000; the PostgreSQL adapter stores such values in a reversible
+encoding ([value encoding](/docs/databases/postgresql#value-encoding)).
+
+## Collections
+
+The lists below are taken from the server source. Every tenant-scoped collection is swept when a deleted tenant is
+purged (`iam.purgeDeleted()`, the `purge` CLI command), except where noted. `better-iam doctor` lists the
+collections that actually hold records in your database, with counts, under `storage.collections`.
+
+### Tenancy and hosts
+
+| Collection | Holds |
+| --- | --- |
+| `tenants` | The tenant tree: the platform root and every tenant below it (organizations and their children). |
+| `tenantAliases` | Sign-in aliases (slugs); the alias is the record ID, so aliases are globally unique. |
+| `tenantDomains` | Domains a tenant claims, with their verification state. |
+| `domainOwners` | Verified domains, keyed by domain, so one domain belongs to one tenant. |
+| `tenantHostnames` | Custom sign-in hostnames of a tenant. |
+| `hostnameOwners` | Custom hostnames, keyed so one hostname belongs to one tenant. |
+| `ownerInvitations` | Pending invitations for a new organization's owner. |
+| `memberInvitations` | Pending invitations for members. |
+
+### Identities and sessions
+
+| Collection | Holds |
+| --- | --- |
+| `identities` | People, service accounts, and agents. Deleted identities stay as tombstones without email or secrets. |
+| `sessions` | User sessions, API keys, role sessions, session tokens, and delegated agent sessions, by token hash. |
+| `externalIdentities` | Links from a federated subject `(provider, issuer, subject)` to an identity. |
+| `identityLinks` | Linked accounts: pairs of ordinary user identities, usually in different tenants. Not tenant-swept; links of purged identities are deleted by the purge. |
+| `trusts` | Cross-tenant trust relationships for role assumption. |
+| `principalBoundaries` | Permission boundaries attached to identities. |
+
+### Authentication
+
+| Collection | Holds |
+| --- | --- |
+| `authMfa` | Enrolled authenticator (TOTP) factors, sealed with the deployment secret. |
+| `authPasskeys` | Registered passkeys. |
+| `authDevices` | Trusted devices. |
+| `authChallenges` | Pending sign-in, MFA, and verification challenges. |
+| `authSignIns` | Per-person sign-in bookkeeping, keyed by identity ID: the last sign-in and failed attempts since, for "last sign-in" notices. Never used for authorization. |
+| `authBlocks` | Network blocks. |
+| `authRateLimits` | Rate-limit windows. |
+| `passwordHistory` | Previous password hashes for reuse checks. |
+| `oidcProviders` | OIDC providers trusted for web identity federation. |
+| `webIdentityReplays` | Redeemed web identity tokens, kept to refuse replays. |
+
+### Access model and catalog
+
+| Collection | Holds |
+| --- | --- |
+| `grantAuthorities` | Delegated grant authorities and their ceilings. |
+| `policies`, `policyVersions` | Stored policies and their version history. |
+| `roles` | Roles. |
+| `bindings` | Role bindings to identities and groups. |
+| `bindingActivations` | Activations of eligible (just-in-time) bindings. |
+| `accessRequests` | Access requests and their decisions. |
+| `groups`, `groupMembers` | Groups and their memberships. |
+| `relationships` | Relationship tuples for relationship-based access. |
+| `actions`, `resourceTypes`, `resources` | The tenant-defined catalog and managed resources. |
+| `classificationSchemes`, `clearances`, `resourceLabels` | Security clearance schemes, people's clearances, and resource labels. |
+
+### Governance
+
+| Collection | Holds |
+| --- | --- |
+| `accessPackages`, `packageAssignments`, `packageRequests`, `packageRuleIssues` | Access packages, their assignments and requests, and automatic-assignment rule problems. |
+| `expiryReminderMarks` | Which expiry reminders were already sent. |
+| `analysisSuppressions` | Suppressed access-analysis findings. |
+| `certificationCampaigns`, `certificationItems` | Access certification campaigns and their review items. |
+| `sodRules` | Separation-of-duties rules. |
+| `accessInvariants` | Access invariants. |
+| `accessUsage`, `accessUsageTracking` | Recorded permission usage and its tracking state. |
+| `agreements`, `agreementAcceptances` | Terms people must accept, and their acceptances. |
+| `workflows`, `workflowRuns`, `workflowSubjects` | Lifecycle workflow definitions, runs, and mover/leaver baselines. |
+| `complianceControls`, `complianceExceptions`, `complianceResults`, `complianceRuns`, `complianceCheckpoints` | The compliance center. |
+| `privacyPurposes`, `privacyConsents`, `privacyConsentEvents`, `privacyRequests`, `privacyExports`, `privacyHolds`, `privacyRestrictions`, `privacySettings` | Consent, data-subject requests and exports, legal holds, and restrictions. |
+| `applications`, `appAssignments`, `appLaunches` | The application catalog, assignments, and launches. |
+
+### Organizations, product features, and billing
+
+| Collection | Holds |
+| --- | --- |
+| `teams`, `teamMembers`, `teamJoinRequests`, `teamReviews`, `teamReviewItems` | Teams, memberships, join requests, and team access reviews. |
+| `departments`, `departmentMembers` | The department chart and its members. |
+| `featureFlags`, `featureTargets` | Feature flags and their targets and overrides. |
+| `onboardingFlows`, `onboardingSettings`, `onboardingProgress` | Onboarding checklists and progress. |
+| `guestInvitations`, `guestAccounts`, `crossTenantAccess` | B2B guest invitations, guest accounts, and cross-tenant access settings. |
+| `licenseProducts`, `licensePools`, `licenseAssignments`, `licenseSeats`, `licenseSettings` | License management. |
+| `quotaPlans`, `quotaAssignments`, `quotaCounters` | API usage plans, assignments, and window counters. |
+| `billingMeters`, `billingPrices`, `billingUsage`, `billingRollups`, `billingBudgets`, `billingBudgetAlerts`, `billingCredits`, `billingProfiles`, `billingStatements`, `billingTerms`, `billingInvoiceItems`, `billingCreditNotes`, `billingPlans`, `billingSubscriptions`, `billingCoupons`, `billingDiscounts` | Meters, prices, usage and roll-ups, budgets, credits, invoices, plans, subscriptions, and coupons. |
+
+### AI agents and inference
+
+| Collection | Holds |
+| --- | --- |
+| `delegations`, `delegationConfirmations`, `delegationTokens` | Delegations people give agents, per-action confirmations, and issued delegation tokens. |
+| `agentCards` | The latest attested A2A card of each agent. |
+| `inferenceProviders`, `inferenceModels`, `inferenceBudgets`, `inferenceCounters`, `inferenceUsage`, `inferenceTickets`, `inferenceResponses` | Inference gateway providers, models, budgets and counters, usage, tickets, and response ownership. |
+
+### Keys, secrets, and certificates
+
+| Collection | Holds |
+| --- | --- |
+| `kmsKeys`, `kmsKeyVersions`, `kmsAliases`, `kmsGrants` | Managed keys, their sealed versions, aliases, and grants. |
+| `pkiAuthorities`, `pkiCertificates` | Private certificate authorities and issued certificates. |
+| `protectionProfiles`, `protectionTokens` | Data protection (tokenization) profiles and tokens. |
+| `vaultSecrets`, `vaultVersions`, `vaultLeases`, `vaultAccess` | Vault secrets, sealed versions, check-outs and leases, and access records. |
+| `sshSettings`, `sshAuthorities`, `sshHosts`, `sshCertificates` | The SSH certificate authority. |
+
+### Security
+
+| Collection | Holds |
+| --- | --- |
+| `threatDetections`, `threatIncidents`, `threatNotes`, `identityRisk`, `threatBaselines`, `threatCursors`, `threatSettings`, `threatPlaybooks`, `threatResponses` | Threat detection and response. |
+| `registeredDevices`, `deviceKeys`, `deviceEnrollments`, `deviceIntegrations`, `deviceSettings` | Device posture. |
+
+### Federation protocols
+
+| Collection | Holds |
+| --- | --- |
+| `oauthClients`, `oauthArtifacts`, `oauthGrantSessions`, `oauthLoginStates`, `oauthRegistrationTokens` | The OAuth/OIDC provider: clients, codes and tokens (hashed), grant sessions, login states, and registration tokens. |
+| `oauthRevokedGrants` | Revoked OAuth grants, by grant hash. Stored under the internal tenant `__protocol__`, so not tenant-swept. |
+| `samlConnections`, `samlRequests`, `samlRelays`, `samlAssertions` | SAML connections, pending requests, relay states, and assertion replay records. |
+| `scimConnections`, `scimUsers`, `scimGroups` | Inbound SCIM connections and their user and group mappings. |
+| `provisioningTargets`, `provisioningLinks`, `provisioningGroupLinks` | Outbound SCIM targets and their links. |
+| `ssfStreams`, `ssfDeliveries` | Shared Signals transmitter streams and deliveries. |
+| `signalSources`, `signalEvents` | Shared Signals receiver transmitters and received events. |
+| `ldapSettings`, `ldapBases` | The LDAP gateway's settings and base DN index. |
+| `vcIssuerKeys`, `vcCredentialTypes`, `vcIssued`, `vcStatusLists`, `vcOffers`, `vcNonces` | Verifiable credential issuance. |
+
+### Delivery and audit
+
+| Collection | Holds |
+| --- | --- |
+| `outbox` | Queued emails, SMS messages, and webhook deliveries, sealed with the deployment secret. |
+| `webhooks` | Webhook subscriptions. |
+| `audit` | Audit events, hash-chained per tenant. Kept when a tenant is purged; removed only by `audit-prune`. |
+| `auditChains` | The head of each tenant's audit chain, keyed by tenant ID. Not tenant-swept. |
+| `auditHooks` | Committed events waiting for plugin hooks, subscribers, and `events.onEvent`. Not tenant-swept; removed by the sweep after dispatch. |
+| `auditArchiveCursors` | How far each tenant's chain has been copied to the audit archive. Not tenant-swept. |
+
+### Plugins
+
+Plugins keep their records in collections of their own, through the same `IamStore`, and remove them in their
+`purge` callback. The reference `@better-iam/projects` plugin stores tenant-scoped records in `projects`.
+
+## What the retention sweep deletes
+
+`iam.sweepExpired()` (the `sweep` CLI command) deletes records the system already treats as dead, oldest first, in
+short batches. Pending deliveries are never swept.
+
+| Collection | Deleted when |
+| --- | --- |
+| `sessions` | Past `expiresAt`, for user, role, session-token, and delegated sessions. API keys stay. |
+| `authDevices`, `relationships`, `webIdentityReplays`, `oauthLoginStates`, `samlRequests`, `samlRelays`, `samlAssertions` | Past `expiresAt`. |
+| `oauthArtifacts` | Past `expiresAt`; grants only 31 days after expiry. |
+| `inferenceUsage`, `inferenceCounters`, `inferenceTickets`, `inferenceResponses`, `delegationConfirmations`, `delegationTokens`, `agentCards`, `teamMembers`, `vaultAccess`, `quotaCounters`, `privacyExports`, `workflowRuns`, `complianceResults`, `complianceRuns`, `appAssignments`, `sshCertificates`, `vcIssued`, `vcOffers`, `vcNonces`, `deviceEnrollments`, `signalEvents`, `licensePools` | Past the `expiresAt` each feature stamps on its records. |
+| `complianceExceptions` | 400 days after `expiresAt`. |
+| `guestInvitations` | 90 days after `expiresAt`, once no longer pending. |
+| `outbox` | Delivered or abandoned longer ago than the delivery retention (30 days by default). |
+| `ssfDeliveries` | Failed longer ago than the delivery retention. |
+| `auditHooks` | Dispatched, after a five-minute grace period. |
+
+Everything else (invitations, access requests, usage records, SCIM connections) is history or can be renewed, so
+the sweep never deletes it by age. See [Scheduled jobs](/docs/operations/jobs#retention-sweep).
+
+## Read the schema at runtime
+
+`IamStore.describe()` (and `doctor`) report the schema version, applied migrations, record counts per collection,
+and adapter settings:
+
+```ts title="scripts/describe.ts"
+import { iam } from '../iam';
+
+const description = await iam.store.describe?.();
+for (const { name, records } of description?.collections ?? []) console.log(name, records);
+await iam.store.close();
+```
+
+```json
+{
+  "adapter": "postgres",
+  "schemaVersion": 1,
+  "migrations": [{ "name": "0001_records", "appliedAt": 1767225600000 }],
+  "collections": [{ "name": "identities", "records": 1204 }],
+  "settings": { "serverVersion": "17.2", "synchronousCommit": "on", "sizeBytes": 18874368, "lockTimeoutMs": 5000 }
+}
+```
+
+`describe()` is optional in the `IamStore` contract; a custom adapter without it makes `doctor` report
+`storage-undescribed`.
+
+## Next steps
+
+<Cards>
+  <Card title="Migrations" href="/docs/databases/migrations">
+    How the tables and indexes are created and upgraded.
+  </Card>
+  <Card title="Data and consistency" href="/docs/concepts/data-and-consistency">
+    Serialized transactions, the outbox, and retention.
+  </Card>
+  <Card title="Write a database adapter" href="/docs/guides/custom-database-adapter">
+    Implement IamStore for another database.
+  </Card>
+</Cards>

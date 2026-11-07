@@ -1,0 +1,508 @@
+---
+title: Installation
+description: Install better-iam, set the secret and base URL, create the betterIam() instance, connect PostgreSQL, SQLite, or libSQL, migrate, mount the HTTP handler in your framework, and create the typed client.
+icon: Download
+packages: ['better-iam', '@better-iam/client']
+sources:
+  - README.md
+  - packages/better-iam/package.json
+  - packages/server/src/options.ts
+  - packages/server/src/lifecycle.ts
+  - packages/cli/src/config.ts
+  - packages/cli/src/commands/setup.ts
+  - packages/client/src/index.ts
+  - packages/next/src/index.ts
+  - packages/nuxt/src/module.ts
+  - packages/svelte/src/kit.ts
+  - packages/react-router/src/index.ts
+  - packages/middleware/src/express.ts
+  - packages/middleware/src/hono.ts
+  - packages/middleware/src/fastify.ts
+  - packages/nestjs/src/module.ts
+---
+
+This page adds Better IAM to an existing application: one package, two environment variables, a configuration
+module, a database, the HTTP handler mounted in your framework, and the typed browser client. When you finish, the
+API answers under `/api/iam` and your server code can call `iam.api` and `iam.require`. The
+[Quickstart](/docs/quickstart) then signs in the first administrator and makes the first authorization check.
+
+## Requirements
+
+| Requirement | Notes |
+| --- | --- |
+| Node.js 22.12 or newer | The engines field of every package. Web-standard `Request`/`Response`, Web Crypto, and `AsyncLocalStorage` are used throughout. |
+| ESM | Packages are ES modules with TypeScript declarations. Use `"type": "module"` or a bundler. |
+| Native modules | `argon2` (password hashing) and, for SQLite, `better-sqlite3`. Allow their install scripts (pnpm: `allowBuilds` / `onlyBuiltDependencies`). |
+| A database | PostgreSQL, SQLite, or libSQL/Turso through the bundled adapters, or your own adapter. |
+| TypeScript (optional) | `moduleResolution` of `bundler`, `node16`, or `nodenext` so subpath exports resolve. |
+
+## Setup
+
+<Steps>
+<Step>
+
+### Install the package
+
+<Tabs items={['Umbrella package', 'Individual packages']} groupId="install-style" persist>
+<Tab value="Umbrella package">
+
+```npm
+npm i better-iam
+```
+
+`better-iam` depends on every `@better-iam/*` package except the Nuxt module and re-exports each one as a subpath
+(`better-iam/adapter-postgres`, `better-iam/client`, `better-iam/next`, and so on). Framework and protocol code
+loads only when you import its subpath, so unused integrations cost nothing at runtime. It also installs the
+`better-iam` command-line tool.
+
+</Tab>
+<Tab value="Individual packages">
+
+```npm
+npm i @better-iam/server @better-iam/adapter-postgres @better-iam/client @better-iam/cli
+```
+
+Installing individual packages keeps `node_modules` smaller in services that only need part of the platform, for
+example a resource server that verifies assertions but never signs anyone in. Replace each `better-iam/<subpath>`
+import on this page with the matching package from [Subpath imports](#subpath-imports).
+
+</Tab>
+</Tabs>
+
+Framework peers (`next`, `react`, `vue`, `svelte`, `@sveltejs/kit`, `react-router`, `@nestjs/*`) are optional peer
+dependencies: install the ones your application already uses. Nuxt projects also install `@better-iam/nuxt`.
+
+</Step>
+<Step>
+
+### Set environment variables
+
+Better IAM derives its signing and encryption keys from one deployment secret of at least 32 characters. Generate
+one with the CLI and append it to your `.env` file:
+
+```bash
+npx better-iam secret --env >> .env
+```
+
+Then add the URL your application is served from:
+
+```ini title=".env"
+BETTER_IAM_SECRET=generated-value
+BETTER_IAM_BASE_URL=http://localhost:3000
+```
+
+| Variable | Used for |
+| --- | --- |
+| `BETTER_IAM_SECRET` | The `secret` option. Keep it stable across restarts and processes, and store it like a database password. Rotate it later with `previousSecrets`; see [Secrets](/docs/operations/deployment/secrets). |
+| `BETTER_IAM_BASE_URL` | The `baseURL` option: the public origin of your application. It becomes the trusted origin for cookie requests. |
+
+Better IAM does not load `.env` files itself. Make the variables available to every process that loads the
+configuration (your server, scripts, and the CLI), for example with your framework's `.env` support or
+`node --env-file=.env`.
+
+</Step>
+<Step>
+
+### Create the instance
+
+Put the options in a configuration module whose default export is the options object. Your application and the
+`better-iam` CLI both load it, so migrations and scheduled jobs always see the same settings.
+
+```js title="better-iam.config.mjs"
+export default {
+  secret: process.env.BETTER_IAM_SECRET,
+  baseURL: process.env.BETTER_IAM_BASE_URL,
+  // database: added in the next step
+};
+```
+
+Then create the one instance the rest of your server code imports:
+
+```ts title="iam.ts"
+import { betterIam } from 'better-iam';
+import config from './better-iam.config.mjs';
+
+export const iam = betterIam(config);
+```
+
+Frameworks expect this file in a server-only place: `lib/iam.ts` in Next.js, `server/iam.ts` in Nuxt,
+`src/lib/server/iam.ts` in SvelteKit, and `app/iam.server.ts` in React Router.
+
+<Callout type="info" title="Generate the configuration instead">
+  `npx better-iam init --database postgres` writes a starter `better-iam.config.mjs` that reads the secret and URLs
+  from the environment (`--typescript` writes a typed `better-iam.config.ts`, which the CLI loads on Node.js 22.18
+  or later). Its default export is a `defineConfig` factory rather than a plain object, so create the instance with
+  `betterIam(await configOptions(config))`, both imported from `better-iam/server`. Importing an `.mjs` module from
+  TypeScript needs `allowJs` in `tsconfig.json` (the `tsconfig.json` that `create-next-app` generates sets it).
+</Callout>
+
+</Step>
+<Step>
+
+### Configure the database
+
+Better IAM keeps all of its records in your database through a storage adapter, passed as the `database` option.
+The three bundled adapters share one schema, so you can start on SQLite and move to PostgreSQL later.
+
+<Tabs items={['PostgreSQL', 'SQLite', 'libSQL']} groupId="database" persist>
+<Tab value="PostgreSQL">
+
+```js title="better-iam.config.mjs"
+import { postgresAdapter } from 'better-iam/adapter-postgres';
+
+export default {
+  database: postgresAdapter({ connectionString: process.env.DATABASE_URL }),
+  secret: process.env.BETTER_IAM_SECRET,
+  baseURL: process.env.BETTER_IAM_BASE_URL,
+};
+```
+
+The recommended production store, through `pg` and `kysely` (both installed with the adapter). Optional
+`poolSize` and `lockTimeoutMs` tune the connection pool and lock waits. See [PostgreSQL](/docs/databases/postgresql).
+
+</Tab>
+<Tab value="SQLite">
+
+```js title="better-iam.config.mjs"
+import { sqliteAdapter } from 'better-iam/adapter-sqlite';
+
+export default {
+  database: sqliteAdapter({ filename: './iam.db' }),
+  secret: process.env.BETTER_IAM_SECRET,
+  baseURL: process.env.BETTER_IAM_BASE_URL,
+};
+```
+
+A single file on local disk through the native `better-sqlite3` driver. Suited to development, tests, and
+single-node deployments. See [SQLite](/docs/databases/sqlite).
+
+</Tab>
+<Tab value="libSQL">
+
+```js title="better-iam.config.mjs"
+import { libsqlAdapter } from 'better-iam/adapter-libsql';
+
+export default {
+  database: libsqlAdapter({ url: process.env.LIBSQL_URL, authToken: process.env.LIBSQL_AUTH_TOKEN }),
+  secret: process.env.BETTER_IAM_SECRET,
+  baseURL: process.env.BETTER_IAM_BASE_URL,
+};
+```
+
+SQLite-compatible storage over the network (Turso) or in a local `file:` URL, through `@libsql/client`. See
+[libSQL](/docs/databases/libsql).
+
+</Tab>
+</Tabs>
+
+See [Storage operations](/docs/databases/operations) for durability settings, snapshots, and moving between
+databases, and [Adapters and plugins](/docs/concepts/extensions) to write your own adapter.
+
+</Step>
+<Step>
+
+### Create the tables
+
+Run the migrations once per deployment, before the application serves traffic:
+
+```bash
+npx better-iam migrate
+```
+
+The CLI finds the nearest `better-iam.config.mjs` (or `.js`, `.ts`); pass `--config PATH` or set
+`BETTER_IAM_CONFIG` to use another file. `migrate` creates or upgrades the schema and applies plugin migrations, and
+it is safe to run again.
+
+To migrate from code instead, for example when a single-process app starts, call `iam.initialize()` before the
+first request:
+
+```ts title="server.ts"
+import { iam } from './iam';
+
+await iam.initialize(); // creates or upgrades the schema, then runs plugin migrations
+```
+
+See [Migrations](/docs/databases/migrations) and the [`migrate` command](/docs/reference/cli#migrate).
+
+</Step>
+<Step>
+
+### Mount the handler
+
+The instance exposes a Web-standard `iam.handler` (`Request` to `Response`) and a Node `iam.nodeHandler`. The
+browser client, passkey ceremonies, and the OAuth, SAML, and SCIM protocol mounts all reach the server through it,
+under the `basePath` option (default `/api/iam`). Every API method is a `POST`; `GET` serves the operational
+`/health`, `/metrics` (when a metrics token is configured), and `/.well-known/jwks.json` (when session JWTs are
+enabled) endpoints.
+
+<Tabs items={['Next.js', 'Nuxt', 'SvelteKit', 'React Router', 'Express', 'Hono', 'Fastify', 'NestJS', 'Node']} groupId="framework" persist>
+<Tab value="Next.js">
+
+```ts title="lib/iam-next.ts"
+import { createIamNext } from 'better-iam/next';
+import { iam } from './iam';
+
+export const iamNext = createIamNext(iam, { loginPath: '/login' });
+```
+
+```ts title="app/api/iam/[...path]/route.ts"
+import { iamNext } from '@/lib/iam-next';
+
+export const runtime = 'nodejs';
+export const { GET, POST, OPTIONS } = iamNext.handlers();
+```
+
+List the server packages and native modules in `serverExternalPackages` in `next.config.mjs` so they load as
+plain Node modules. See [Next.js](/docs/integrations/nextjs).
+
+</Tab>
+<Tab value="Nuxt">
+
+```ts title="nuxt.config.ts"
+export default defineNuxtConfig({
+  modules: ['@better-iam/nuxt'],
+  betterIam: {
+    instance: '~~/server/iam', // the file exporting `iam` (this is the default)
+    loginPath: '/login',
+  },
+});
+```
+
+The module mounts the IAM API in Nitro under `/api/iam` and auto-imports the session helpers. See
+[Nuxt](/docs/integrations/nuxt).
+
+</Tab>
+<Tab value="SvelteKit">
+
+```ts title="src/lib/server/iam-kit.ts"
+import { createIamKit } from 'better-iam/svelte/kit';
+import { iam } from './iam';
+
+export const iamKit = createIamKit(iam, { loginPath: '/login' });
+```
+
+```ts title="src/hooks.server.ts"
+import { iam } from '$lib/server/iam';
+import { iamKit } from '$lib/server/iam-kit';
+
+export const init = () => iam.initialize();
+export const handle = iamKit.handle; // or sequence(iamKit.handle, yourHandle)
+```
+
+`handle` serves the IAM API (`serveApi`, default `true`) and sets `locals.iam` for loads and actions. See
+[SvelteKit](/docs/integrations/sveltekit).
+
+</Tab>
+<Tab value="React Router">
+
+Add the router helpers next to the instance in `app/iam.server.ts`:
+
+```ts title="app/iam.server.ts"
+import { betterIam } from 'better-iam';
+import { createIamRouter } from 'better-iam/react-router';
+import config from '../better-iam.config.mjs';
+
+export const iam = betterIam(config);
+export const iamRouter = createIamRouter(iam, { loginPath: '/login' });
+```
+
+```ts title="app/routes.ts"
+import { type RouteConfig, index, route } from '@react-router/dev/routes';
+
+export default [
+  index('routes/home.tsx'),
+  route('api/iam/*', 'routes/api.iam.ts'),
+] satisfies RouteConfig;
+```
+
+```ts title="app/routes/api.iam.ts"
+import { iamRouter } from '../iam.server';
+
+export const loader = iamRouter.api; // GET: /health, /metrics
+export const action = iamRouter.api; // POST: every API method
+```
+
+Add `iamRouter.middleware` to the root route's `middleware` export as well (React Router 7 needs the
+`future.v8_middleware` flag). See [React Router](/docs/integrations/react-router).
+
+</Tab>
+<Tab value="Express">
+
+```ts title="src/server.ts"
+import express from 'express';
+import { createIamExpress } from 'better-iam/express';
+import { iam } from './iam.js';
+
+const iamExpress = createIamExpress(iam, { loginPath: '/login' });
+const app = express();
+app.use(iamExpress.middleware); // before express.json(): the IAM server reads the raw body
+app.use(express.json());
+app.listen(3000);
+```
+
+See [Express, Hono, and Fastify](/docs/integrations/node).
+
+</Tab>
+<Tab value="Hono">
+
+```ts title="src/app.ts"
+import { Hono } from 'hono';
+import { createIamHono } from 'better-iam/hono';
+import { iam } from './iam.js';
+
+const iamHono = createIamHono(iam, { loginPath: '/login' });
+export const app = new Hono();
+app.use(iamHono.middleware);
+```
+
+Hono calls `iam.handler`. Node-only protocol mounts (the OAuth provider) are not reachable through it; serve those
+from a Node adapter. See [Express, Hono, and Fastify](/docs/integrations/node).
+
+</Tab>
+<Tab value="Fastify">
+
+```ts title="src/server.ts"
+import Fastify from 'fastify';
+import { createIamFastify } from 'better-iam/fastify';
+import { iam } from './iam.js';
+
+const iamFastify = createIamFastify(iam, { loginPath: '/login' });
+const app = Fastify();
+await app.register(iamFastify.plugin); // not encapsulated, like fastify-plugin
+await app.listen({ port: 3000 });
+```
+
+See [Express, Hono, and Fastify](/docs/integrations/node).
+
+</Tab>
+<Tab value="NestJS">
+
+```ts title="src/app.module.ts"
+import { Module } from '@nestjs/common';
+import { IamModule } from 'better-iam/nestjs';
+import { iam } from './iam.js';
+
+@Module({
+  imports: [IamModule.forRoot({ iam, guard: true, mount: true })],
+})
+export class AppModule {}
+```
+
+```ts title="src/main.ts"
+import 'reflect-metadata';
+import { NestFactory } from '@nestjs/core';
+import { AppModule } from './app.module.js';
+import { iam } from './iam.js';
+
+await iam.initialize();
+// rawBody lets the IAM mount forward form posts (SAML) byte for byte.
+const app = await NestFactory.create(AppModule, { rawBody: true });
+await app.listen(3000);
+```
+
+`mount: true` serves `/api/iam/*` from Nest, and `guard: true` requires a session on every route not marked
+`@Public()`. See [NestJS](/docs/integrations/nestjs).
+
+</Tab>
+<Tab value="Node">
+
+```ts title="server.ts"
+import { createServer } from 'node:http';
+import { iam } from './iam';
+
+createServer(iam.nodeHandler).listen(3000);
+```
+
+`iam.nodeHandler` runs any Node protocol mounts first, then buffers the request and passes it to `iam.handler`. To
+share a server with your own routes, send requests under `/api/iam` to it and handle the others yourself, or use
+`iam.handler` with any runtime that speaks `Request` and `Response`.
+
+</Tab>
+</Tabs>
+
+</Step>
+<Step>
+
+### Create the client
+
+The typed client calls the mounted handler from the browser. Import the server instance with `import type`, so no
+server code reaches the bundle; every method's input and result is then inferred from your configuration.
+
+```ts title="lib/iam-client.ts"
+import { createIamClient } from 'better-iam/client';
+import type { iam } from './iam';
+
+export const client = createIamClient<typeof iam>();
+```
+
+In a browser the client defaults to the page's origin and the `/api/iam` base path. Pass `baseURL` when the API
+is on another origin or when the client runs outside a browser, and `basePath` when you changed the server's.
+React, Vue, and Svelte bindings build on the same client; see [Typed client](/docs/concepts/client).
+
+</Step>
+<Step>
+
+### Done
+
+The API is live. Check that the configuration loads and the database is ready:
+
+```bash
+npx better-iam doctor
+```
+
+`doctor` reports schema, bootstrap, secret strength, durability, email transport, and scheduled-job problems, and
+`--strict` exits non-zero on any warning so you can run it in CI. See the [`doctor` command](/docs/reference/cli#doctor).
+
+A fresh database has no tenants yet. Continue with the [Quickstart](/docs/quickstart) to bootstrap the root
+administrator, create an organization, and make your first authorization check.
+
+</Step>
+</Steps>
+
+## Subpath imports
+
+Every subpath of the umbrella package maps to one workspace package, so importing from a subpath loads only that
+package:
+
+| Import | Package | What it provides |
+| --- | --- | --- |
+| `better-iam` | `@better-iam/server` and `@better-iam/core` | The common entry points: `betterIam()`, `IamError`, `definePolicy`, `evaluatePolicy`, `verifyAssertion`, `verifyWebhookSignature`, and the main types |
+| `better-iam/server` | `@better-iam/server` | Everything the server package exports, including `defineConfig`, the route tables, and server types |
+| `better-iam/session-tokens` | `@better-iam/server/session-tokens` | Offline verification of signed session JWTs in other services |
+| `better-iam/core` | `@better-iam/core` | Models, `evaluatePolicy`, `definePolicy`, the storage contract, `IamError` |
+| `better-iam/auth`, `better-iam/auth/templates` | `@better-iam/auth` | Authentication service internals and `renderDeliveryMessage` |
+| `better-iam/client`, `/client/session`, `/client/passkeys`, `/client/device` | `@better-iam/client` | Typed browser client, session store, WebAuthn helpers, registered-device proofs |
+| `better-iam/adapter-postgres`, `/adapter-sqlite`, `/adapter-libsql` | `@better-iam/adapter-*` | Storage adapters |
+| `better-iam/oauth`, `better-iam/saml`, `better-iam/scim` | `@better-iam/oauth`, `saml`, `scim` | Federation protocols |
+| `better-iam/ldap` | `@better-iam/ldap` | LDAP directory gateway |
+| `better-iam/mcp`, `better-iam/a2a` | `@better-iam/mcp`, `a2a` | Tool-level authorization for MCP servers; signed A2A agent cards and A2A server authorization |
+| `better-iam/react`, `better-iam/vue` | `@better-iam/react`, `vue` | UI bindings |
+| `better-iam/next`, `/next/edge`, `/next/client` | `@better-iam/next` | Next.js App Router helpers |
+| `better-iam/svelte`, `/svelte/kit` | `@better-iam/svelte` | Svelte stores and SvelteKit hooks |
+| `better-iam/react-router` | `@better-iam/react-router` | React Router middleware and guards |
+| `better-iam/nestjs`, `/nestjs/testing` | `@better-iam/nestjs` | NestJS module, guard, decorators |
+| `better-iam/middleware`, `/express`, `/hono`, `/fastify` | `@better-iam/middleware` | Node framework middleware |
+| `better-iam/cli`, `better-iam/projects` | `@better-iam/cli`, `projects` | CLI entry point, reference plugin |
+
+The Nuxt module is published separately as `@better-iam/nuxt` because it depends on `@nuxt/kit`.
+
+## All packages
+
+<PackageTable />
+
+## Next steps
+
+<Cards>
+  <Card title="Quickstart" href="/docs/quickstart">
+    Bootstrap the root, create an organization, define a role, and make your first authorization check.
+  </Card>
+  <Card title="Integrations" href="/docs/integrations">
+    Sessions, guards, and rendering by permission in your framework.
+  </Card>
+  <Card title="Architecture overview" href="/docs/concepts">
+    How tenants, identities, resources, and the request pipeline fit together.
+  </Card>
+  <Card title="Options reference" href="/docs/reference/options">
+    Every option `betterIam()` accepts.
+  </Card>
+</Cards>

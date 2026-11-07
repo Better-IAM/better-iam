@@ -65,7 +65,7 @@ How it works:
 - The third statement makes sharing self-service but safe: only people holding `owner` on a folder may create
   relationships on it.
 
-See [Relationships](/docs/guides/authorization/relationships) and
+See [Relationships](/docs/authorization/relationships) and
 [`relationships.create`](/docs/reference/api/relationships#create).
 
 ## Answer "who can?" and "what can they do?"
@@ -100,7 +100,7 @@ const { allowed } = await iam.api.policies.effectiveActions(credential, {
   otherwise conditions on `principal.mfa` see `false`. The results are <Term id="advisory">advisory</Term> and
   never grant anything.
 
-See [Authorization queries](/docs/guides/authorization/queries) and
+See [Authorization queries](/docs/authorization/queries) and
 [`policies.whoCan`](/docs/reference/api/policies#whocan).
 
 ## Test a policy before saving it, and roll back a bad one
@@ -133,7 +133,7 @@ await iam.api.policies.restoreVersion(credential, { tenantId, policyId, version:
 - `policies.listVersions` lists the versions you can restore.
 
 Try documents interactively in the [policy playground](/playground). See
-[Policies](/docs/guides/authorization/policies).
+[Policies](/docs/authorization/policies).
 
 ## Role hierarchy and business-hours access
 
@@ -170,7 +170,7 @@ await iam.api.bindings.create(credential, {
 - A binding with a `window` applies only inside those hours in the named time zone; outside them it grants nothing.
   Without `days`, the window applies every day. A window whose `to` is not after `from` wraps past midnight.
 
-See [Roles](/docs/guides/authorization/roles) and [Temporary access](/docs/guides/authorization/temporary-access).
+See [Roles](/docs/authorization/roles) and [Temporary access](/docs/authorization/temporary-access).
 
 ## Project teams and start dates
 
@@ -203,7 +203,7 @@ await iam.api.bindings.create(credential, {
 - An `expiresAt` stops the grant at that instant; the [retention worker](/docs/operations/jobs#retention-worker)
   removes the record later. An expiring group membership ends every grant and activation the membership carried.
 
-See [Temporary access](/docs/guides/authorization/temporary-access).
+See [Temporary access](/docs/authorization/temporary-access).
 
 ## Tell people how to get access instead of just "denied"
 
@@ -240,7 +240,7 @@ if (!check.allowed) {
 - Like `authorize`, a denial's `reason` is always `ACCESS_DENIED`, so the call does not reveal which rule refused.
 - An empty list means only an administrator can help. The `useAccessPaths` hook wraps the call for React and Vue.
 
-See [Access paths](/docs/guides/governance/access-paths).
+See [Access paths](/docs/features/governance/access-paths).
 
 ## Guardrails, terms of use, and change previews
 
@@ -282,7 +282,7 @@ await iam.api.agreements.create(credential, { tenantId, name: 'Acceptable use', 
 - **Agreements** are enforced by an ordinary policy statement, for example a deny on `documents:*` while
   `principal.pendingAgreements` is greater than 0. Members accept with `agreements.accept`.
 
-See [Change safety](/docs/guides/governance/change-safety) and [Terms of use](/docs/guides/governance/agreements).
+See [Change safety](/docs/features/governance/change-safety) and [Terms of use](/docs/features/governance/agreements).
 
 ## Next steps
 
@@ -290,7 +290,7 @@ See [Change safety](/docs/guides/governance/change-safety) and [Terms of use](/d
   <Card title="Sign-in and devices recipes" href="/docs/guides/recipes/sign-in-and-devices">
     Per-organization MFA, remembered devices, and session control.
   </Card>
-  <Card title="Authorization guides" href="/docs/guides/authorization/policies">
+  <Card title="Authorization guides" href="/docs/authorization/policies">
     How policies, roles, and conditions are evaluated.
   </Card>
 </Cards>

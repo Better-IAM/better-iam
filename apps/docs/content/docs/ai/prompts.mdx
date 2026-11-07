@@ -1,0 +1,175 @@
+---
+title: Prompts and AGENTS.md
+metaTitle: Prompts and AGENTS.md rules for building with Better IAM
+description: Copyable prompts that point AI coding agents at the right Better IAM docs for setup, permission checks, roles, debugging, reviews, migration, and upgrades, plus an AGENTS.md block for your repository.
+icon: FilePenLine
+sources:
+  - apps/docs/public/skills/better-iam/SKILL.md
+  - apps/docs/lib/llms-text.ts
+---
+
+The prompts on this page start common Better IAM tasks with an AI coding agent. Each one names the docs pages to
+read as Markdown URLs, so the agent works from the real reference instead of memory, and asks it to verify every API
+it uses. Copy a prompt, replace the parts in square brackets, and paste it into Claude Code, Cursor, Copilot, or any
+other assistant.
+
+The prompts work best when the agent can fetch URLs, or has the [docs MCP server](/docs/ai/mcp-server) or the
+[agent skill](/docs/ai/agent-skills) installed. In a chat without web access, open the linked pages and use
+**Copy Markdown** to paste them in.
+
+## Prompts
+
+### Add Better IAM to an existing app
+
+```text title="Prompt"
+Add Better IAM to this [Next.js | Nuxt | SvelteKit | React Router | Express | Hono | Fastify | NestJS] app using
+[PostgreSQL | SQLite | libSQL].
+
+Read these pages first and follow them exactly:
+- https://better-iam.com/docs/installation.md
+- https://better-iam.com/docs/quickstart.md
+- the integration page for this framework, found in https://better-iam.com/llms.txt under "Integrations"
+
+Requirements:
+- Create better-iam.config.mjs and a server-only iam.ts that exports `iam = betterIam(config)`.
+- Read BETTER_IAM_SECRET and BETTER_IAM_BASE_URL from the environment; do not hard-code them.
+- Mount the HTTP handler under /api/iam with this framework's integration.
+- Create the typed browser client with `createIamClient<typeof iam>()` and `import type`.
+- Use only packages, imports, functions, and options that appear in the docs. If something I ask for does not exist,
+  say so instead of inventing it.
+- Finish by listing the commands I must run (migrate, bootstrap, doctor).
+```
+
+### Protect a route with a permission check
+
+```text title="Prompt"
+Protect [route or server action] so only callers allowed to [action, for example documents:write] on the
+[resource type] being changed can run it.
+
+Read https://better-iam.com/docs/authorization/how-decisions-work.md and
+https://better-iam.com/docs/concepts/api.md first.
+
+- Declare the resource type and its actions in permissions.resourceTypes if they are missing.
+- Add a resolveResource that loads the resource's tenantId and attributes from our database, never from the request.
+- Enforce with iam.require (or this framework's require helper) immediately before the protected work, using the
+  request's credential.
+- Any browser-side check (client.authorize, useAuthorize, Can) only decides what to render; keep the server check.
+- Show how ACCESS_DENIED and UNAUTHENTICATED are turned into responses.
+```
+
+### Create a role and grant it
+
+```text title="Prompt"
+Create a "[role name]" role in a tenant with the permissions [list of actions], and grant it to [a person | a group].
+
+Read https://better-iam.com/docs/authorization/roles.md first. Use iam.api.roles.create and
+iam.api.bindings.create with the caller's credential as the first argument. Look up both methods with the
+better-iam-docs MCP tool lookup_api_method (or https://better-iam.com/docs/reference/api/roles.md and
+https://better-iam.com/docs/reference/api/bindings.md) before writing the calls. Prefer binding the role to a group.
+```
+
+### Explain and fix an error
+
+```text title="Prompt"
+This Better IAM call fails with [error code, for example RECENT_AUTH_REQUIRED]:
+
+[paste the code and the error]
+
+Look the code up with the lookup_error_code MCP tool, or in https://better-iam.com/docs/reference/errors.md and
+https://better-iam.com/docs/concepts/error-handling.md. Explain why it happens in this code, then fix it. Branch on
+error.code (IamError on the server, IamClientError in the browser), never on the message.
+```
+
+### Review authorization code
+
+```text title="Prompt"
+Review the authentication and authorization code in [paths] against the Better IAM docs.
+
+Read https://better-iam.com/docs/concepts/api.md and https://better-iam.com/docs/authorization/how-decisions-work.md,
+then report, with file and line:
+- credentials or tenant IDs built from request bodies, query strings, or custom headers;
+- protected work with no iam.require (or equivalent) before it, or with only a browser-side check;
+- resource types or actions used in checks but missing from permissions.resourceTypes;
+- application-owned resources without resolveResource, or a resolveResource that trusts request data;
+- errors matched by message instead of code;
+- calls to iam.api methods that do not exist in https://better-iam.com/docs/reference/api.md.
+Do not change code; list findings, most severe first.
+```
+
+### Migrate from another provider
+
+```text title="Prompt"
+Plan the migration of this app from [Auth0 | Auth.js | Better Auth | Clerk | Keycloak | WorkOS] to Better IAM.
+
+Read https://better-iam.com/docs/guides/migration.md and the guide for this provider linked from it. Follow the
+guide's mapping of concepts and data. Where the guide says something is not supported, keep that limitation in the
+plan and use the alternative it gives; do not invent import tools or APIs. Produce the plan as ordered steps with the
+files each step changes.
+```
+
+### Upgrade Better IAM
+
+```text title="Prompt"
+Upgrade Better IAM in this repository from [current version] to [target version].
+
+Read https://better-iam.com/docs/guides/upgrade.md and the notes for every version in between. Update the packages,
+apply each breaking change, run `npx better-iam migrate` and `npx better-iam doctor`, and run the type checker. List
+anything you could not migrate automatically.
+```
+
+## AGENTS.md block
+
+Coding agents read standing instructions from a file in the repository: `AGENTS.md` for most agents, `CLAUDE.md`
+for Claude Code, and the rules files of Cursor and Copilot. Paste this block into the file your agents read, and
+adjust the paths in the first list to your project.
+
+```md title="AGENTS.md"
+## Better IAM
+
+This project uses Better IAM (`better-iam` on npm) for authentication and authorization.
+
+- Instance: `iam` from `[lib/iam.ts]`, configured in `better-iam.config.mjs`. Browser client: `client` from
+  `[lib/iam-client.ts]`.
+- Docs index for agents: https://better-iam.com/llms.txt. Every page is available as Markdown at its URL plus `.md`.
+- Docs MCP server (Streamable HTTP, no sign-in): https://better-iam.com/api/mcp. Use `lookup_api_method`,
+  `lookup_export`, and `lookup_error_code` before writing a call you have not verified.
+- Never invent a package, import, `iam.api` method, option, or error code. If the docs do not show it, it does not
+  exist; say so.
+- Server calls are `iam.api.<group>.<method>(credential, input)`. The credential is `{ headers }` from the incoming
+  request or `{ token }`; never build it, or choose a tenant for a decision, from request body or query data.
+- Enforce access with `iam.require` on the server immediately before the protected work. Browser checks
+  (`client.authorize`, `useAuthorize`, `Can`) only decide what to render.
+- Declare new resource types and actions in `permissions.resourceTypes`; application-owned types need
+  `resolveResource`.
+- Handle failures by `error.code` (`IamError` on the server, `IamClientError` in the browser), never by message.
+- After changing configuration, run `npx better-iam migrate` and `npx better-iam doctor`.
+```
+
+The block repeats the most important rules of the [agent skill](/docs/ai/agent-skills) for agents that do not load
+skills. If your agent supports skills, install the skill as well: the block keeps the rules in every session, and
+the skill adds the setup steps and pitfalls when a task needs them.
+
+## Write your own prompts
+
+Prompts that produce correct Better IAM code share four habits:
+
+| Habit | Why |
+| --- | --- |
+| Name the pages to read, as `.md` URLs | The agent reads the reference before it writes code. Find pages in `/llms.txt`. |
+| Ask it to verify each API it uses | `lookup_api_method` and the [API reference](/docs/reference/api) list every method; anything else is invented. |
+| Say what must not happen | For example: no tenant IDs from request data, no browser-only checks. |
+| Ask it to say when something does not exist | Agents otherwise fill gaps with plausible names. |
+
+## Next steps
+
+<Cards>
+  <Card title="Agent skills" href="/docs/ai/agent-skills">
+    Install the Better IAM skill for agents that load skills.
+  </Card>
+  <Card title="Docs MCP server" href="/docs/ai/mcp-server">
+    Give the agent the lookup tools the prompts refer to.
+  </Card>
+  <Card title="Guides" href="/docs/guides">
+    Task-oriented walkthroughs to point an agent at.
+  </Card>
+</Cards>

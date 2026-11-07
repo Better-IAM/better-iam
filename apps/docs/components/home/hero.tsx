@@ -105,7 +105,7 @@ export async function Hero() {
           </div>
           <div className="animate-float-in flex flex-col gap-4 [animation-delay:300ms] lg:col-span-6 lg:col-start-7 lg:items-end">
             <div className="flex flex-wrap items-center gap-2.5 lg:justify-end">
-              <ActionLink href="/docs/guides/quickstart" trailingIcon={RiArrowRightLine}>
+              <ActionLink href="/docs/quickstart" trailingIcon={RiArrowRightLine}>
                 Get started
               </ActionLink>
               <InstallCommand />

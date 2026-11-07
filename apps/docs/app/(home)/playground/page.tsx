@@ -55,11 +55,11 @@ export default function PlaygroundPage() {
             Edit grant and boundary documents, describe a request, and watch the decision and its
             statement-by-statement trace update as you type. Nothing leaves this page; share a
             scenario with a link. Learn the model in{' '}
-            <TextLink href="/docs/guides/authorization/policies" className={inlineLink}>
+            <TextLink href="/docs/authorization/policies" className={inlineLink}>
               Policies
             </TextLink>{' '}
             and{' '}
-            <TextLink href="/docs/guides/authorization/conditions" className={inlineLink}>
+            <TextLink href="/docs/authorization/conditions" className={inlineLink}>
               Conditions
             </TextLink>
             .

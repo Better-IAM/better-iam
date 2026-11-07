@@ -69,7 +69,8 @@ await signals.createStream(credential, {
     encryptionKey: { type: 'string', description: "Base64-encoded 32-byte key that encrypts receivers' authorization headers at rest.", required: true },
     timeoutMs: { type: 'number', description: 'How long one delivery may take before it counts as failed and is retried.', default: '10000' },
     allowInsecureLocalhost: { type: 'boolean', description: 'Allow http:// receivers on loopback addresses, for development and tests.', default: 'false' },
-    fetch: { type: 'typeof fetch', description: 'A custom fetch implementation, for example to add an egress proxy.' },
+    allowPrivateNetworks: { type: 'boolean', description: 'Let receiver endpoints resolve to private and reserved addresses (10.0.0.0/8, 169.254.169.254, and so on). Off by default, because tenant administrators choose endpoints and could otherwise make the server call into its own network.', default: 'false' },
+    fetch: { type: 'typeof fetch', description: 'A custom fetch implementation, for example to add an egress proxy. It replaces the default transport, which enforces the address rules, so it must enforce its own.' },
     'store, authorize, authenticate': { type: 'host callbacks', description: 'Database access and the permission checks for stream management. Supplied by iam.protocolHost.', required: true },
   }}
 />
@@ -139,6 +140,7 @@ Decoded, a session revocation looks like this:
   "jti": "0b6f5e1c-4d0a-4a8b-9f3e-7c2d1e5a9b40",
   "iat": 1790000000,
   "txn": "audit-event-id",
+  "tenant_id": "tenant-id",
   "sub_id": { "format": "iss_sub", "iss": "https://id.example.com/oidc", "sub": "identity-id" },
   "events": {
     "https://schemas.openid.net/secevent/caep/event-type/session-revoked": {
@@ -151,10 +153,13 @@ Decoded, a session revocation looks like this:
 
 - `aud` is the stream's `audience`, which defaults to its endpoint URL.
 - `txn` is the ID of the IAM audit event that caused it, so receivers can correlate with your
-  [audit log](/docs/guides/events/audit-chain).
+  [audit log](/docs/concepts/events/audit-chain).
+- `tenant_id` is the stream's tenant. Every tenant's events share one issuer and key, so a receiver that serves a
+  single organization should check it.
 - `sub_id` says who the event is about. It is `{ format: "iss_sub", iss, sub: identityId }` by default, or
-  `{ format: "email", email }` when the stream asks for `subjectFormat: 'email'` and the address still exists.
-  Tenant-wide revocation uses a `complex` subject naming the tenant.
+  `{ format: "email", email }` when the stream asks for `subjectFormat: 'email'` and the person has a verified
+  email address in the stream's tenant (otherwise it falls back to `iss_sub`). Tenant-wide revocation uses a
+  `complex` subject naming the tenant.
 - `event_timestamp` is when the activity happened. `initiating_entity` is `user` when the person acted on their own
   account, otherwise `admin`.
 
@@ -224,6 +229,35 @@ poll delivery (where a receiver fetches events) are not offered: streams are con
 events are pushed. To receive events from other identity providers, see the
 [Shared Signals receiver](/docs/federation/shared-signals-receiver).
 
+## Endpoints
+
+The transmitter serves one document and calls out to every receiver:
+
+| Direction | Method and path | What it is |
+| --- | --- | --- |
+| Served by `signals.handler` | `GET /.well-known/ssf-configuration{issuer path}` | Transmitter metadata: `issuer`, `jwks_uri`, delivery methods, `spec_version`, `default_subjects`. |
+| Served by the OAuth provider, or by you | `GET {jwksUri}` (default `{issuer}/jwks`) | Public keys receivers verify SETs with. |
+| Called by the transmitter | `POST {endpointUrl}` of each stream | Push delivery (RFC 8935) of one SET, `Content-Type: application/secevent+jwt`. |
+
+## Schema
+
+| Collection | What it holds |
+| --- | --- |
+| `ssfStreams` | One row per receiver: `tenantId`, `name`, `endpointUrl`, `audience`, `sealedAuthorization` (encrypted), `events`, `subjectFormat`, `enabled`, `lastDeliveredAt`, `lastError`, timestamps. |
+| `ssfDeliveries` | One row per SET and stream: `streamId`, `eventType`, `jti`, the signed `set`, `status` (`pending`, `delivered`, `failed`), `attempts`, `nextAttemptAt`, `deliveredAt`, `failedAt`, `lastError`. Delivered rows are pruned after a week. |
+
+## Errors
+
+| Code | Status | When |
+| --- | --- | --- |
+| [`INVALID_INPUT`](/docs/reference/errors#invalid_input) | 400 | A stream with a missing or long name, an endpoint that is not HTTPS or points at a private address (without `allowPrivateNetworks`), an empty audience, an unknown event type, an unsupported `subjectFormat`, a non-boolean `enabled`, an invalid authorization header, or a changed endpoint without the authorization header again. |
+| [`NOT_FOUND`](/docs/reference/errors#not_found) | 404 | No such stream in this tenant. |
+| [`TENANT_INACTIVE`](/docs/reference/errors#tenant_inactive) | 403 | Creating a stream for a suspended tenant. |
+
+`createSharedSignalsTransmitter` throws a `configuration` error at startup when `encryptionKey` does not decode to
+32 bytes or `jwks` holds no private key with an `alg`. Delivery failures do not throw: they are recorded on the delivery and as the stream's
+`lastError`, and retried.
+
 ## Next steps
 
 <Cards>
@@ -233,7 +267,7 @@ events are pushed. To receive events from other identity providers, see the
   <Card title="Enterprise onboarding" href="/docs/federation/enterprise-onboarding#offboarding-end-to-end">
     How Shared Signals fits into offboarding with SCIM and back-channel logout.
   </Card>
-  <Card title="Webhooks" href="/docs/guides/events/webhooks">
+  <Card title="Webhooks" href="/docs/concepts/events/webhooks">
     Deliver every audit event, not only security events, to your own services.
   </Card>
 </Cards>

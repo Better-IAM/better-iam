@@ -12,8 +12,8 @@ import { cx } from '@/utils/cx';
 export const metadata: Metadata = { title: 'Page not found' };
 
 const destinations: [string, string, string][] = [
-  ['Guides', '/docs/guides', 'Concepts, sign-in, decisions, and the access lifecycle'],
-  ['Frameworks', '/docs/frameworks', 'Next.js, Nuxt, SvelteKit, NestJS, and more'],
+  ['Guides', '/docs/introduction', 'Concepts, sign-in, decisions, and the access lifecycle'],
+  ['Frameworks', '/docs/integrations', 'Next.js, Nuxt, SvelteKit, NestJS, and more'],
   ['API reference', '/docs/reference/api', 'Every method with its route and signature'],
   ['Playground', '/playground', 'Write policies and watch the engine decide'],
 ];

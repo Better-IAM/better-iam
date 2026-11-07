@@ -13,7 +13,7 @@ pnpm --filter @better-iam/docs build
 
 | Path                                                                                            | What it is                                                                                             |
 | ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| `content/docs/{guides,frameworks,federation,operations,reference}`                              | The five sidebar sections (folders with `"root": true`)                                                |
+| `content/docs/*`                                                                                 | One sidebar in Better Auth-style sections (Get Started, Concepts, Authentication, Authorization, Databases, Integrations, Features, Federation, Guides, Operations, AI Resources, Reference); the root `meta.json` orders them and old URLs redirect via `redirects.json` |
 | `content/docs/reference/api/*`, `reference/{cli,errors,glossary}.mdx`, `reference/changelog.md` | Generated; do not edit                                                                                 |
 | `descriptions/api/{group}.md`, `api/_instance.md`, `cli.md`, `errors.md`                        | Hand-written explanations merged into the generated reference (see `descriptions/README.md`)           |
 | `descriptions/glossary.json`                                                                    | Glossary terms: the glossary page and every `<Term>` hover card                                        |
@@ -191,6 +191,6 @@ Shiki notation works in comments: `// [!code highlight]`, `// [!code ++]`, `// [
 Add `twoslash` only to snippets that type-check against the real packages (the build fails otherwise); use
 `// @noErrors` for fragments.
 
-**Links** between pages are absolute: `/docs/guides/authorization/policies#conditions`. API methods link to the
+**Links** between pages are absolute: `/docs/authorization/policies#conditions`. API methods link to the
 generated reference: `/docs/reference/api/{group-in-kebab-case}#{method-in-lowercase}`, for example
 `/docs/reference/api/service-accounts#create`.

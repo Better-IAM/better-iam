@@ -444,40 +444,40 @@ of your own (the `GatewayRuntime` interface) behind the same routes.
 The statutory response windows data-subject requests are answered within, per regulation: `responseDays` and the one
 extension allowed (`extensionDays`). GDPR and UK GDPR give 30 days plus 60, CCPA 45 plus 45, LGPD 15 with no
 extension, PIPEDA and `other` 30 plus 30. Use it to show deadlines next to a tenant's own shorter `responseDays`
-([privacy guide](/docs/guides/governance/privacy)).
+([privacy guide](/docs/features/governance/privacy)).
 
 ## @better-iam/server complianceChecks
 
 The compliance center's built-in checks, each with its `id`, `title`, `description` and `params` (name, default and
-range), as `compliance.catalog` returns them ([compliance guide](/docs/guides/governance/compliance)).
+range), as `compliance.catalog` returns them ([compliance guide](/docs/features/governance/compliance)).
 
 ## @better-iam/server complianceFrameworks
 
 The built-in framework mappings (SOC 2, ISO 27001, NIST 800-53 and GDPR): each requirement with the checks that are
-evidence for it, not full coverage of it ([compliance guide](/docs/guides/governance/compliance)).
+evidence for it, not full coverage of it ([compliance guide](/docs/features/governance/compliance)).
 
 ## @better-iam/server licenseCollections
 
 The storage collections of license management: `licenseProducts`, `licensePools`, `licenseAssignments`,
 `licenseSeats`, and `licenseSettings`, all tenant-scoped and purged with their tenant. Use the names for reports or
 exports that read the store directly; change licenses only through the [licenses group](/docs/reference/api/licenses)
-([licenses guide](/docs/guides/licenses)).
+([licenses guide](/docs/features/licenses)).
 
 ## @better-iam/server riskLevelFor
 
 Maps an identity risk score (0 to 100) to its level: `high` from 70, `medium` from 40, `low` from 10, and `none` below
 (`riskThresholds`). Policies read the level as `principal.riskLevel`
-([identity risk](/docs/guides/threat-detection#identity-risk)).
+([identity risk](/docs/features/threat-detection#identity-risk)).
 
 ## @better-iam/server sshLoginResourceType
 
 The resource type of a host and login pair, `ssh-login`, named `ssh-login/{host}/{login}`, on which `ssh:login` is
-decided ([SSH access](/docs/guides/ssh-access#how-access-is-decided)).
+decided ([SSH access](/docs/features/ssh-access#how-access-is-decided)).
 
 ## @better-iam/server sshHostResourceType
 
 The resource type of an enrolled SSH host, `ssh-host`, named `ssh-host/{host}`, on which the forwarding actions are
-decided ([SSH access](/docs/guides/ssh-access#how-access-is-decided)).
+decided ([SSH access](/docs/features/ssh-access#how-access-is-decided)).
 
 ## @better-iam/server sshLoginAction
 

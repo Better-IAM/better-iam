@@ -1,0 +1,271 @@
+---
+title: Databases
+description: Choose the PostgreSQL, SQLite, or libSQL adapter for Better IAM, connect it, run migrations, and learn what every adapter guarantees.
+icon: Database
+packages: ['better-iam', '@better-iam/core', '@better-iam/adapter-postgres', '@better-iam/adapter-sqlite', '@better-iam/adapter-libsql', '@better-iam/cli']
+sources:
+  - packages/core/src/index.ts
+  - packages/core/src/storage.ts
+  - packages/core/src/sql.ts
+  - packages/adapter-postgres/src/index.ts
+  - packages/adapter-sqlite/src/index.ts
+  - packages/adapter-libsql/src/index.ts
+  - packages/cli/src/config.ts
+  - packages/cli/src/commands/setup.ts
+  - packages/server/src/options.ts
+---
+
+Better IAM keeps all of its state in your own database: tenants, identities, sessions, roles, policies, the audit
+chain, and the delivery outbox. It talks to that database only through one small contract, `IamStore`, implemented
+by a <Term id="adapter">storage adapter</Term> that you pass as the `database` option of `betterIam()`. Three
+adapters ship with Better IAM, and you can write your own for any other database.
+
+| Adapter | Package | Factory | Driver | Use it for |
+| --- | --- | --- | --- | --- |
+| [PostgreSQL](/docs/databases/postgresql) | `@better-iam/adapter-postgres` | `postgresAdapter` | `pg` with Kysely | Production, several application instances, sustained concurrent writes, large datasets. |
+| [SQLite](/docs/databases/sqlite) | `@better-iam/adapter-sqlite` | `sqliteAdapter` | `better-sqlite3` (native) with Kysely | Development, tests, and single-host deployments with a persistent local disk. |
+| [libSQL](/docs/databases/libsql) | `@better-iam/adapter-libsql` | `libsqlAdapter` | `@libsql/client` | Remote Turso or sqld databases, embedded replicas, and encrypted local files. |
+
+All three adapters are built on the same `RecordStore` base from `better-iam/core` and pass the same conformance
+suite, so they behave identically: the same strict filters, the same record ordering, the same serialized
+transactions. You can start on SQLite and move to PostgreSQL later with one command
+([`store-copy`](/docs/databases/operations#snapshots-and-moving-between-databases)).
+
+## Setup
+
+<Steps>
+<Step>
+
+### Install the adapter
+
+The umbrella package installs all three adapters and exposes them as subpaths (`better-iam/adapter-postgres`,
+`better-iam/adapter-sqlite`, `better-iam/adapter-libsql`):
+
+```npm
+npm i better-iam
+```
+
+To keep dependencies small, install the server and only the adapter you use instead. Import from
+`@better-iam/adapter-postgres`, `@better-iam/adapter-sqlite`, or `@better-iam/adapter-libsql` in that case.
+
+```npm
+npm i @better-iam/server @better-iam/adapter-postgres
+```
+
+`@better-iam/cli` depends on the SQLite and PostgreSQL adapters, so installing the CLI also installs the native
+`better-sqlite3` driver. Allow its install script in your package manager (for pnpm, `onlyBuiltDependencies`).
+
+</Step>
+<Step>
+
+### Pass the adapter to betterIam()
+
+Create the adapter once per process and pass it as `database`:
+
+<Tabs items={['PostgreSQL', 'SQLite', 'libSQL']} groupId="database" persist>
+<Tab value="PostgreSQL">
+
+```ts title="iam.ts"
+import { betterIam } from 'better-iam';
+import { postgresAdapter } from 'better-iam/adapter-postgres';
+
+export const iam = betterIam({
+  database: postgresAdapter({ connectionString: process.env.DATABASE_URL! }),
+  secret: process.env.BETTER_IAM_SECRET!,
+  baseURL: process.env.BETTER_IAM_BASE_URL!,
+});
+```
+
+</Tab>
+<Tab value="SQLite">
+
+```ts title="iam.ts"
+import { betterIam } from 'better-iam';
+import { sqliteAdapter } from 'better-iam/adapter-sqlite';
+
+export const iam = betterIam({
+  database: sqliteAdapter({ filename: './iam.db' }),
+  secret: process.env.BETTER_IAM_SECRET!,
+  baseURL: process.env.BETTER_IAM_BASE_URL!,
+});
+```
+
+</Tab>
+<Tab value="libSQL">
+
+```ts title="iam.ts"
+import { betterIam } from 'better-iam';
+import { libsqlAdapter } from 'better-iam/adapter-libsql';
+
+export const iam = betterIam({
+  database: libsqlAdapter({
+    url: process.env.LIBSQL_URL!, // libsql://name-org.turso.io, file:./iam.db, or :memory:
+    authToken: process.env.LIBSQL_AUTH_TOKEN,
+  }),
+  secret: process.env.BETTER_IAM_SECRET!,
+  baseURL: process.env.BETTER_IAM_BASE_URL!,
+});
+```
+
+</Tab>
+</Tabs>
+
+`database` is required: `betterIam()` throws `INVALID_CONFIG` without it. Adapter factories validate their own
+options when called and also throw `INVALID_CONFIG`, so a bad connection string fails at startup rather than on the
+first request.
+
+</Step>
+<Step>
+
+### Create the schema
+
+The schema is never created implicitly by request handlers. Run the migration once per deploy, before the new
+release serves traffic:
+
+```bash
+npx better-iam migrate --config better-iam.config.mjs
+```
+
+The same step is available in code as `await iam.initialize()`. See [Migrations](/docs/databases/migrations) for
+what runs, the `iam_migrations` ledger, and CI usage.
+
+</Step>
+<Step>
+
+### Check the connection
+
+```bash
+npx better-iam doctor --config better-iam.config.mjs
+```
+
+`doctor` prints the adapter, schema version, applied migrations, record counts per collection, and adapter
+settings under `storage`, followed by findings such as `schema-behind` or `sqlite-durability`. See
+[Storage operations](/docs/databases/operations#doctor).
+
+</Step>
+</Steps>
+
+## Usage
+
+### Configure from environment variables only
+
+Containers and CI jobs without a configuration file can describe the database with `BETTER_IAM_DATABASE_URL` and
+`BETTER_IAM_SECRET`. The CLI uses them when it finds no `better-iam.config.mjs` (or `.js`, `.ts`) in the working
+directory or its parents and no `--config` or `BETTER_IAM_CONFIG`. In code, `configFromEnv()` from
+`better-iam/cli` builds the same options:
+
+```ts title="iam.ts"
+import { betterIam } from 'better-iam';
+import { configFromEnv } from 'better-iam/cli';
+
+export const iam = betterIam({
+  ...(await configFromEnv()),
+  authentication: {
+    sendEmail: async (message) => {
+      /* deliver through your mail provider */
+    },
+  },
+});
+```
+
+| `BETTER_IAM_DATABASE_URL` value | Adapter |
+| --- | --- |
+| `postgres://…` or `postgresql://…` | `postgresAdapter({ connectionString })` |
+| `sqlite:./iam.db` | `sqliteAdapter({ filename: './iam.db' })`; `sqlite:` alone opens `:memory:` |
+| A path ending in `.db`, `.sqlite`, or `.sqlite3`, or `:memory:` | `sqliteAdapter({ filename })` |
+| `libsql://…`, `https://…`, `wss://…`, or `file:…` | `libsqlAdapter({ url })`, authenticated with `BETTER_IAM_DATABASE_TOKEN`. Needs `@better-iam/adapter-libsql` installed (`MISSING_DEPENDENCY` otherwise). |
+
+Anything else fails with `INVALID_CONFIG`. `configFromEnv()` also reads `BETTER_IAM_PREVIOUS_SECRETS`,
+`BETTER_IAM_BASE_URL` (default `http://localhost:3000`), `BETTER_IAM_BASE_PATH`, and `BETTER_IAM_TRUSTED_ORIGINS`.
+Every other option keeps its default, so plugins are not loaded and their migrations do not run in this mode.
+
+### Write a starter configuration
+
+`better-iam init` writes a `better-iam.config.mjs` (or `.ts` with `--typescript`) for the database you choose. It
+never overwrites an existing file.
+
+```bash
+npx better-iam init --database postgres --typescript
+```
+
+| `--database` | Adapter line the file contains |
+| --- | --- |
+| `sqlite` (default) | `sqliteAdapter({ filename: env.BETTER_IAM_DATABASE ?? './better-iam.db' })` |
+| `postgres` | `postgresAdapter({ connectionString: env.DATABASE_URL })` |
+| `libsql` | `libsqlAdapter({ url: env.BETTER_IAM_DATABASE_URL ?? 'file:./better-iam.db', authToken: env.BETTER_IAM_DATABASE_TOKEN })` |
+
+### Close the adapter on shutdown
+
+The instance exposes its adapter as `iam.store`. Close it when the process stops so connections and file handles
+are released. Closing inside a transaction fails with `TRANSACTION_ACTIVE`, and any call after closing fails with
+`STORE_CLOSED`.
+
+```ts title="server.ts"
+import { iam } from './iam';
+
+process.on('SIGTERM', async () => {
+  await iam.store.close();
+  process.exit(0);
+});
+```
+
+### Share a database with your application
+
+Better IAM creates three tables (`iam_records`, `iam_schema_version`, `iam_migrations`) and indexes prefixed
+`iam_records_`. They can live in the same database as your product's own tables. Your product data stays in your
+tables: Better IAM never writes to them, and a write to your tables is not atomic with an IAM transaction. See
+[Schema](/docs/databases/schema) for every table and collection.
+
+<Callout type="warn" title="Change IAM data only through Better IAM">
+Records reference each other without foreign keys; the services enforce those references inside serialized
+transactions. Writing to `iam_records` with raw SQL can leave a session alive after its identity was disabled or
+break the audit chain. Use the API, the CLI, or the adapter.
+</Callout>
+
+## What every adapter guarantees
+
+The storage rules come from the `IamStore` contract and are tested by the conformance suite in
+`@better-iam/core/conformance`; the last row describes how the server uses the store:
+
+| Guarantee | What it means |
+| --- | --- |
+| Serialized transactions | IAM write transactions run one at a time per database, and take the lock before reading. Token consumption, last-owner protection, and plan limits depend on this. |
+| Writes need a transaction | `insert`, `put`, and `delete` outside `transaction()` fail with `TRANSACTION_REQUIRED`. Nested transactions join the outer one and roll back with it. |
+| Strict filters | Typed equality on top-level fields: the string `"1"` never matches the number `1`, and `undefined` matches only an absent field. |
+| Code-point ordering | Results are ordered by `id` in code-point order, identical to SQLite `BINARY` and PostgreSQL `"C"` collation. |
+| Natural keys | `uniqueKey` is unique within its collection and tenant, enforced by a database constraint. A duplicate fails with `CONFLICT`. |
+| Error hygiene | Driver errors become `IamError` codes (`CONFLICT`, `STORAGE_BUSY`, `STORAGE_ERROR`) without SQL text or record data. |
+| No permission cache | Every decision reads current state, so a revocation applies on the next request in every process. |
+
+## What is not supported
+
+- **Other databases.** There are no MySQL, SQL Server, MongoDB, DynamoDB, or Cloudflare D1 adapters, and no Prisma or
+  Drizzle adapters. Better IAM does not generate ORM models or migrations for your ORM: its schema
+  is three fixed tables that its own migrations manage. To use another database, write an adapter against the
+  `IamStore` contract and run the conformance suite; see [Write a database adapter](/docs/guides/custom-database-adapter).
+- **Edge runtimes.** The adapters need Node.js 22.12 or newer and cannot run in edge functions. At the edge, use
+  the database-free entry points such as `better-iam/session-tokens` and `better-iam/next/edge`.
+- **Raw SQL access.** Reading `iam_records` for reporting is possible, but every write must go through Better IAM.
+
+## Next steps
+
+<Cards>
+  <Card title="PostgreSQL" href="/docs/databases/postgresql">
+    Pool sizing, the serializing advisory lock, poolers, and serverless hosts.
+  </Card>
+  <Card title="SQLite" href="/docs/databases/sqlite">
+    WAL and durability settings, several processes on one file, and in-memory test databases.
+  </Card>
+  <Card title="libSQL and Turso" href="/docs/databases/libsql">
+    Remote databases, embedded replicas, and encrypted local files.
+  </Card>
+  <Card title="Migrations" href="/docs/databases/migrations">
+    The schema steps, the iam_migrations ledger, upgrades, and CI.
+  </Card>
+  <Card title="Schema" href="/docs/databases/schema">
+    Every table, index, indexed field, and collection.
+  </Card>
+  <Card title="Storage operations" href="/docs/databases/operations">
+    Snapshots, moving between databases, and doctor.
+  </Card>
+</Cards>

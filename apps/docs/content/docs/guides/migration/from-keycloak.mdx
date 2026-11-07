@@ -1,0 +1,534 @@
+---
+title: "Migrate from Keycloak"
+description: "Move a Keycloak realm's users, groups, and realm roles to a Better IAM tenant from a realm export with groups.create, roles.create, bindings.create, and identities.createMany, then re-establish passwords, MFA, and brokered sign-in."
+icon: ArrowLeftRight
+packages: ['better-iam', '@better-iam/server', '@better-iam/oauth']
+sources:
+  - packages/server/src/api/identities.ts
+  - packages/server/src/api/roles.ts
+  - packages/server/src/api/groups.ts
+  - packages/server/src/api/bindings.ts
+  - packages/server/src/api/tenants.ts
+  - packages/server/src/federation.ts
+  - packages/auth/src/service/base.ts
+  - packages/oauth/src/client.ts
+  - apps/docs/content/docs/guides/recipes/tenancy-and-limits.mdx
+---
+
+import { ArrowLeftRight, Globe, KeyRound, ShieldCheck, UserCog, Users } from '@/lib/icons';
+
+This guide moves one [Keycloak](https://www.keycloak.org) realm to a Better IAM tenant. Keycloak is a standalone
+identity server that your applications reach over OpenID Connect or SAML; Better IAM runs inside your Node.js
+application and answers authorization questions directly. The move copies the realm's people, groups, and realm roles
+from a realm export, then has people prove who they are again, because Keycloak's password hashes, OTP secrets, and
+WebAuthn credentials cannot be imported. You will:
+
+- map realms, users, groups, roles, clients, and identity providers to Better IAM concepts;
+- export the realm with Keycloak's `kc.sh export`;
+- create a tenant for the realm, and recreate its realm roles (with composites) and groups (with their role mappings);
+- import users 100 at a time with `identities.createMany`, with their roles, groups, and declared attributes;
+- re-establish passwords, MFA, and brokered sign-in, and move applications off Keycloak tokens.
+
+Run the guide once per realm. The `master` realm holds Keycloak's own administrators; it maps to Better IAM's root
+tenant, whose administrator you create with `bootstrap`, so you do not import it.
+
+## How the concepts map
+
+| Keycloak | Better IAM | Notes |
+| --- | --- | --- |
+| Realm | Tenant (`type: 'organization'`) | Created with `tenants.create`. One realm per tenant. |
+| `master` realm administrators | Root tenant administrators | Created with `bootstrap`; not imported. |
+| User | Identity (`kind: 'user'`) | Email is required and is the sign-in name; Better IAM has no separate username. |
+| `firstName`, `lastName` | `name` | One display name. |
+| User attributes | Identity attributes declared in `permissions.identityAttributes` | Single values of type `string`, `number`, or `boolean`. |
+| `enabled: false` | `identities.setStatus` with `status: 'disabled'` | |
+| Password credential | Password on the identity | Not imported; see [Passwords](#passwords). |
+| OTP and WebAuthn credentials | [MFA](/docs/authentication/mfa) and [passkeys](/docs/authentication/passkeys) | Not imported; people enroll again. |
+| Required actions (`CONFIGURE_TOTP`, `UPDATE_PASSWORD`) | Tenant policy (`requireMfa`) and reset links | |
+| Realm role | Role (`roles.create`) | Keycloak roles are names; a Better IAM role also says which actions it allows. |
+| Composite role | Role with `inherits` | Up to 20 direct parents; no cycles. |
+| Client role | A role, or actions in `permissions` | Better IAM roles belong to the tenant, not to a client. |
+| Group (nested) | Group (flat), with role bindings | Subgroups become their own groups that also receive their parents' roles. For a hierarchy people manage, use [teams](/docs/features/teams-and-departments). |
+| Default roles (`default-roles-{realm}`) | An [automatic assignment rule](/docs/features/privileged-access/automatic-assignment) | |
+| OIDC client | A client of the [OAuth/OIDC provider](/docs/federation/oauth-provider#register-clients) | Only if other applications still need tokens from Better IAM. |
+| Identity provider (brokering) | [OAuth connection](/docs/federation/oauth-sign-in) or [SAML connection](/docs/federation/saml) | |
+| User federation (LDAP, Kerberos) | Not supported as a sign-in source | Better IAM does not bind against an external directory. Use [SCIM](/docs/federation/scim) or SAML from the directory's IdP. The [LDAP gateway](/docs/federation/ldap) is the reverse: it serves Better IAM's directory to LDAP clients. |
+| Authentication flows | [Tenant authentication policy](/docs/authentication/tenant-policy) | `allowedMethods`, `requireMfa`, session lifetimes. |
+| Realm password policy | Tenant password rules | `minPasswordLength`, `passwordMinClasses`, `passwordHistory`, `passwordMaxAgeDays`. |
+| Sessions and offline tokens | Sessions | Not imported. Everyone signs in once after the switch. |
+| Service account of a client | [Service account and API keys](/docs/authentication/api-keys) | `serviceAccounts.create`, then `credentials.create`. |
+| Admin events and login events | [Audit events](/docs/concepts/events) | History stays in Keycloak; Better IAM records from the switch on. |
+
+## What carries over
+
+| Data | Carries over | How people continue |
+| --- | --- | --- |
+| Email, name, enabled state, declared attributes | Yes | Nothing to do. |
+| Realm role and group memberships | Yes | Nothing to do. |
+| Keycloak user ID | Yes, as the `legacyId` attribute | Your applications' tables keep a mapping. |
+| Users without an email | No | `createMany` needs an email; add one in Keycloak first, or leave them out. |
+| Password | No | Magic link, or a reset link from an administrator. |
+| OTP and WebAuthn | No | Enroll again; enforce with `requireMfa`. |
+| Links to brokered identity providers (`federatedIdentities`) | No | Sign in once another way, then link; or sign in through the provider if they were never imported. |
+| Email verification | No | Imported identities start unverified; the first magic link verifies the address. |
+
+## Prerequisites
+
+- Shell access to a Keycloak server (the Quarkus distribution, version 17 or later) that can run `kc.sh export`
+  against the realm's database. Older distributions export through `standalone.sh` system properties instead.
+- Better IAM installed, migrated, and bootstrapped, following [Installation](/docs/installation) and
+  [Quickstart](/docs/quickstart). You need the root tenant's ID from `bootstrap`.
+- An email transport in `authentication.sendEmail`, for the tenant invitation and for magic links.
+- A list of what each realm role and client role allows in your applications. Keycloak stores only role names;
+  Better IAM roles carry actions.
+
+## Migrate
+
+<Steps>
+<Step>
+
+### Export the realm
+
+Export the realm with its users into one JSON file. Run it on a stopped server, or on a separate node that uses the
+same database.
+
+```bash
+bin/kc.sh export --file acme-realm.json --realm acme --users realm_file
+```
+
+`--users realm_file` writes the users into the realm file itself. Check `bin/kc.sh export --help` on your version
+for the exact options.
+
+The file contains the realm's `roles.realm`, `groups` (with nested `subGroups`), and `users`. Each user has
+`username`, `email`, `firstName`, `lastName`, `enabled`, `attributes`, `realmRoles`, `groups` (as paths such as
+`/engineering/backend`), `credentials`, and `federatedIdentities`. The file also holds password hashes and client
+secrets: keep it on an encrypted disk and delete it after the move.
+
+You can read the same data from the Keycloak Admin REST API (`GET /admin/realms/{realm}/users`, `/groups`, `/roles`)
+if you cannot run an export. Adjust the loader in the next steps.
+
+</Step>
+<Step>
+
+### Configure Better IAM
+
+Declare an attribute for the Keycloak user ID and for each Keycloak user attribute you keep, turn on magic links, and
+declare the actions your roles grant.
+
+```ts title="iam.ts"
+import { betterIam } from 'better-iam';
+import { postgresAdapter } from 'better-iam/adapter-postgres';
+import { sendMail } from './mail';
+
+export const iam = betterIam({
+  database: postgresAdapter({ connectionString: process.env.DATABASE_URL! }),
+  secret: process.env.BETTER_IAM_SECRET!,
+  baseURL: process.env.BETTER_IAM_BASE_URL!,
+  authentication: {
+    passwordlessEmail: true,
+    sendEmail: async (message) => sendMail(message),
+  },
+  permissions: {
+    identityAttributes: {
+      legacyId: 'string', // the Keycloak user ID
+      department: 'string', // a Keycloak user attribute you keep
+    },
+    resourceTypes: {
+      invoice: { actions: ['invoices:read', 'invoices:approve'] },
+      report: { actions: ['reports:read', 'reports:export'] },
+    },
+  },
+});
+```
+
+</Step>
+<Step>
+
+### Create the tenant
+
+`tenants.create` needs a root sign-in from the last five minutes. The realm's administrator becomes the tenant's
+owner when they accept the invitation; members cannot be created until then.
+
+```bash
+npx better-iam login --config better-iam.config.mjs --tenant <root-tenant-id> --email root@example.com
+export BETTER_IAM_TOKEN=$(npx better-iam token --config better-iam.config.mjs)
+export ROOT_TENANT_ID=<root-tenant-id>
+```
+
+```ts title="scripts/keycloak/01-tenant.ts"
+import { iam } from '../../iam';
+
+const admin = { token: process.env.BETTER_IAM_TOKEN! };
+
+const { tenant } = await iam.api.tenants.create(admin, {
+  parentId: process.env.ROOT_TENANT_ID!,
+  type: 'organization',
+  name: 'Acme',
+  slug: 'acme', // the realm name works well as the sign-in alias
+  ownerEmail: 'it-admin@acme.example',
+});
+await iam.auth.dispatchOutbox();
+console.log('IAM_TENANT_ID =', tenant.id);
+```
+
+**Route:** `POST /tenants/create`
+
+</Step>
+<Step>
+
+### Recreate roles and groups
+
+Keycloak roles carry no permissions of their own, so you map each role name to the actions it should allow. The
+script creates every realm role (Keycloak's built-in defaults excepted), sets `inherits` for composite roles, creates
+one group per group path, and binds each group, and each of its subgroups, to the group's realm roles. It saves the
+name-to-ID maps for the user import.
+
+```ts title="scripts/keycloak/02-roles-groups.ts"
+import { readFile, writeFile } from 'node:fs/promises';
+import { iam } from '../../iam';
+
+type KeycloakRole = { name: string; description?: string; composite?: boolean; composites?: { realm?: string[] } };
+type KeycloakGroup = { name: string; path: string; realmRoles?: string[]; subGroups?: KeycloakGroup[] };
+type Realm = { realm: string; roles?: { realm?: KeycloakRole[] }; groups?: KeycloakGroup[] };
+
+const realm = JSON.parse(await readFile('acme-realm.json', 'utf8')) as Realm;
+const admin = { token: process.env.BETTER_IAM_TOKEN! };
+const tenantId = process.env.IAM_TENANT_ID!;
+
+/** What each Keycloak role allows in Better IAM. Roles not listed are created without permissions. */
+const permissions: Record<string, string[]> = {
+  accountant: ['invoices:read'],
+  approver: ['invoices:read', 'invoices:approve'],
+  analyst: ['reports:read', 'reports:export'],
+};
+const skipped = new Set(['offline_access', 'uma_authorization', `default-roles-${realm.realm}`]);
+
+// Roles first, then inheritance once every role exists.
+const roleIds: Record<string, string> = {};
+const keycloakRoles = (realm.roles?.realm ?? []).filter((role) => !skipped.has(role.name));
+for (const role of keycloakRoles) {
+  const created = await iam.api.roles.create(admin, {
+    tenantId,
+    name: role.name,
+    ...(role.description ? { description: role.description } : {}),
+    ...(permissions[role.name] ? { permissions: permissions[role.name] } : {}),
+  });
+  roleIds[role.name] = created.id;
+}
+for (const role of keycloakRoles) {
+  const parents = (role.composites?.realm ?? []).filter((name) => roleIds[name]).map((name) => roleIds[name]!);
+  if (role.composite && parents.length)
+    await iam.api.roles.update(admin, { tenantId, roleId: roleIds[role.name]!, inherits: parents });
+}
+
+// Groups: one Better IAM group per path; members of a subgroup also get the roles of every group above it.
+const groupIds: Record<string, string> = {};
+async function createGroup(group: KeycloakGroup, inherited: string[]): Promise<void> {
+  const roles = [...new Set([...inherited, ...(group.realmRoles ?? [])])].filter((name) => roleIds[name]);
+  const created = await iam.api.groups.create(admin, {
+    tenantId,
+    name: group.path.replace(/^\//, ''),
+    description: `Keycloak group ${group.path}`,
+  });
+  groupIds[group.path] = created.id;
+  for (const name of roles)
+    await iam.api.bindings.create(admin, {
+      tenantId,
+      roleId: roleIds[name]!,
+      subjectType: 'group',
+      subjectId: created.id,
+    });
+  for (const child of group.subGroups ?? []) await createGroup(child, roles);
+}
+for (const group of realm.groups ?? []) await createGroup(group, []);
+
+await writeFile('acme-ids.json', JSON.stringify({ roleIds, groupIds }, null, 2));
+```
+
+**Route:** `POST /roles/create`, `POST /roles/update`, `POST /groups/create`, `POST /bindings/create`
+
+A role created without `permissions` grants nothing until you add them with `roles.update`; its bindings and
+inheritance are in place already. Client roles are not in `roles.realm`: model each one as a realm-level role
+here (for example `billing-app:approver`), or fold its meaning into the actions of an existing role.
+
+</Step>
+<Step>
+
+### Import users
+
+The script creates users 100 at a time with their realm roles, groups, `legacyId`, and declared attributes, then
+disables the ones Keycloak had disabled. Keycloak attributes are lists; the script keeps the first value.
+
+```ts title="scripts/keycloak/03-users.ts"
+import { readFile, writeFile } from 'node:fs/promises';
+import { iam } from '../../iam';
+
+type KeycloakUser = {
+  id: string;
+  username: string;
+  email?: string;
+  firstName?: string;
+  lastName?: string;
+  enabled: boolean;
+  attributes?: Record<string, string[]>;
+  realmRoles?: string[];
+  groups?: string[];
+};
+
+const realm = JSON.parse(await readFile('acme-realm.json', 'utf8')) as { users?: KeycloakUser[] };
+const { roleIds, groupIds } = JSON.parse(await readFile('acme-ids.json', 'utf8')) as {
+  roleIds: Record<string, string>;
+  groupIds: Record<string, string>;
+};
+const admin = { token: process.env.BETTER_IAM_TOKEN! };
+const tenantId = process.env.IAM_TENANT_ID!;
+const ownerEmail = 'it-admin@acme.example'; // already in the tenant: accepting the invitation created them
+
+// Resume support: people already imported are kept in acme-users.json.
+const mapping: Record<string, string> = JSON.parse(await readFile('acme-users.json', 'utf8').catch(() => '{}'));
+
+const users = (realm.users ?? []).filter(
+  (user) =>
+    user.email &&
+    user.email.toLowerCase() !== ownerEmail &&
+    !user.username.startsWith('service-account-') &&
+    !mapping[user.id],
+);
+const withoutEmail = (realm.users ?? []).filter((user) => !user.email).map((user) => user.username);
+if (withoutEmail.length) console.warn('Skipped, no email:', withoutEmail.join(', '));
+
+for (let start = 0; start < users.length; start += 100) {
+  const batch = users.slice(start, start + 100);
+  const { identities } = await iam.api.identities.createMany(admin, {
+    tenantId,
+    identities: batch.map((user) => ({
+      email: user.email!,
+      name: [user.firstName, user.lastName].filter(Boolean).join(' ') || user.username,
+      attributes: {
+        legacyId: user.id,
+        ...(user.attributes?.department?.[0] ? { department: user.attributes.department[0] } : {}),
+      },
+      roleIds: (user.realmRoles ?? []).filter((name) => roleIds[name]).map((name) => roleIds[name]!),
+      groupIds: (user.groups ?? []).filter((path) => groupIds[path]).map((path) => groupIds[path]!),
+    })),
+  });
+  // identities[i] replaces batch[i].
+  for (const [i, identity] of identities.entries()) mapping[batch[i]!.id] = identity.id;
+  await writeFile('acme-users.json', JSON.stringify(mapping, null, 2));
+  console.log(`${start + batch.length}/${users.length}`);
+}
+
+// Disable everyone Keycloak had disabled, including those imported by an earlier run (repeating it is harmless).
+for (const user of realm.users ?? [])
+  if (!user.enabled && mapping[user.id])
+    await iam.api.identities.setStatus(admin, { tenantId, identityId: mapping[user.id]!, status: 'disabled' });
+```
+
+**Route:** `POST /identities/createMany`, `POST /identities/setStatus`
+
+- Each batch is one transaction. If any entry fails, nobody in it is created; fix the entry and rerun, and the script
+  skips users already in `acme-users.json`.
+- `identities.setStatus` needs a sign-in from the last five minutes. If the run outlasts that and stops with
+  `RECENT_AUTH_REQUIRED`, run `login` again, export the new token, and rerun the script.
+- The owner is skipped because accepting the invitation already created them. If they are in the export, add their
+  Keycloak user ID and Better IAM identity ID to `acme-users.json` by hand.
+- Keycloak can hold two users with the same email when the realm allows duplicate emails; Better IAM cannot
+  (`IDENTITY_EXISTS`). Merge or rename them in Keycloak first.
+- `service-account-*` users belong to Keycloak clients. Recreate them as
+  [service accounts](/docs/authentication/api-keys) instead.
+
+</Step>
+<Step>
+
+### Let people in
+
+Imported identities are active, have no password, and have an unverified email.
+
+#### Passwords
+
+Better IAM does not import password hashes. Keycloak stores hashes in its own credential format, Better IAM stores
+only Argon2id hashes it computed itself, and no API accepts a precomputed hash; see
+[Importing passwords from another provider](/docs/authentication/email-and-password#importing-passwords-from-another-provider).
+People continue with a magic link (`passwordlessEmail` is on), which also verifies their address, or with a reset
+link that an administrator sends with `identities.requestPasswordReset(admin, { tenantId, identityId })`. That call
+needs a sign-in from the last five minutes, so send reset links in short runs.
+
+#### MFA
+
+OTP secrets and WebAuthn credentials stay in Keycloak. If the realm required OTP, require MFA in the tenant policy so
+everyone enrolls an authenticator at their next sign-in. `setAuthPolicy` replaces the whole policy, so include every
+rule you want:
+
+```ts title="scripts/keycloak/04-policy.ts"
+import { iam } from '../../iam';
+
+const admin = { token: process.env.BETTER_IAM_TOKEN! };
+
+await iam.api.tenants.setAuthPolicy(admin, {
+  tenantId: process.env.IAM_TENANT_ID!,
+  authPolicy: {
+    requireMfa: true,
+    minPasswordLength: 14, // carry over the realm's password policy
+    passwordHistory: 5,
+  },
+});
+```
+
+**Route:** `POST /tenants/setAuthPolicy`
+
+#### Brokered sign-in
+
+People who signed in through an identity provider brokered by Keycloak (Google, a customer's Entra ID, a SAML IdP)
+sign in through the same provider directly in Better IAM. Add an [OAuth connection](/docs/federation/oauth-sign-in)
+or [SAML connection](/docs/federation/saml) for it. Imported people's first sign-in through it fails with
+`ACCOUNT_LINK_REQUIRED`, because Better IAM never matches accounts by email: they sign in with a magic link once, then
+[link the provider](/docs/federation/oauth-sign-in#link-an-existing-account). People who only ever signed in through
+the provider can be left out of the import instead: their first sign-in creates the identity, with a verified email.
+
+</Step>
+<Step>
+
+### Move applications off Keycloak tokens
+
+Applications that validated Keycloak access tokens and read `realm_access.roles` change in one of two ways:
+
+- **Applications in the same Node.js process or behind the same API** ask Better IAM directly. Replace role-name
+  checks with decisions on actions:
+
+  ```ts title="routes/invoices.ts"
+  import { iam } from '../iam';
+
+  export async function approveInvoice(request: Request, invoice: { id: string; tenantId: string }) {
+    await iam.require({
+      headers: request.headers,
+      tenantId: invoice.tenantId,
+      action: 'invoices:approve',
+      resource: { type: 'invoice', id: invoice.id },
+    });
+    // ...approve
+  }
+  ```
+
+- **Separate applications that need OpenID Connect tokens** become clients of Better IAM's
+  [OAuth/OIDC provider](/docs/federation/oauth-provider). Register one client per Keycloak client and update the
+  application's issuer, client ID, and secret. Claims differ from Keycloak's, so read roles from authorization
+  decisions rather than token claims.
+
+</Step>
+<Step>
+
+### Cut over
+
+1. Freeze changes in the Keycloak realm (new users, role and group edits).
+2. Export again and run `03-users.ts`: it imports only users missing from `acme-users.json`. Recreate any roles or
+   groups added since the first run by hand, or rerun `02-roles-groups.ts` against a fresh tenant.
+3. Switch applications to Better IAM and announce the change: everyone signs in once, with a magic link or through
+   their provider.
+4. Keep Keycloak running read-only until you no longer need its history, then delete the export files.
+
+</Step>
+</Steps>
+
+## Alternative: federate to Keycloak during the transition
+
+If you cannot ask everyone to sign in again on one day, keep Keycloak as the sign-in provider for a while. Add the
+realm as an OpenID Connect connection; people sign in with their Keycloak password, and Better IAM creates each
+identity at first sign-in from the verified `email` claim.
+
+```ts title="protocols.ts"
+import { createOAuthLogin } from 'better-iam/oauth';
+import { iam } from './iam';
+
+iam.useProtocol(
+  createOAuthLogin({
+    ...iam.protocolHost,
+    connections: [
+      {
+        id: 'acme-keycloak',
+        tenantId: process.env.IAM_TENANT_ID!,
+        kind: 'oidc',
+        issuer: 'https://keycloak.acme.example/realms/acme',
+        clientId: process.env.KEYCLOAK_CLIENT_ID!,
+        clientSecret: process.env.KEYCLOAK_CLIENT_SECRET!,
+        redirectUri: 'https://app.acme.example/oauth/keycloak/callback',
+        // Every value must match its declared type: leave a missing claim out rather than setting it to undefined.
+        mapAttributes: (claims) =>
+          typeof claims.department === 'string' ? { department: claims.department } : {},
+      },
+    ],
+  }),
+);
+```
+
+Trade-offs of this path:
+
+- Do not import users you federate: an imported identity blocks the first federated sign-in for its address with
+  `ACCOUNT_LINK_REQUIRED`.
+- Federated identities arrive without roles or groups. Grant them with
+  [automatic assignment rules](/docs/features/privileged-access/automatic-assignment) on the mapped attributes, or by
+  hand.
+- Keycloak's issuer and every discovered endpoint must use HTTPS.
+- Keycloak keeps owning passwords and MFA until you turn the connection off. To finish the move, people set a Better
+  IAM credential (a reset link or a passkey) while they can still sign in, and you then remove the connection.
+
+## Verify it works
+
+1. `iam.api.tenants.usage(admin, { tenantId })` returns `identities`, `groups`, and `roles` counts. Compare them with
+   the export: users with an email (without `service-account-*` users, plus the owner if they are not in the
+   export), group paths, and realm roles minus the built-in defaults, plus the tenant's built-in Owner role.
+2. For a few people, compare their Keycloak role mappings with
+   [`policies.effectiveActions`](/docs/authorization/reviews#what-can-a-person-do) in Better IAM.
+3. Sign in as a test user with a magic link; with `requireMfa`, confirm the sign-in asks to enroll an authenticator.
+4. Disabled Keycloak users are `disabled` in `identities.list(admin, { tenantId, status: 'disabled' })`.
+
+## Troubleshooting
+
+<Accordions>
+<Accordion title="createMany fails with TENANT_INACTIVE">
+  The realm administrator has not accepted the owner invitation, so the tenant is still `pending`. Accept it, or
+  resend it with `tenants.resendInvitation`.
+</Accordion>
+<Accordion title="createMany fails with IDENTITY_EXISTS">
+  Two Keycloak users share an email address (allowed when the realm permits duplicate emails), or a previous run
+  created the person without recording it. Merge the duplicates, or add the existing identity to `acme-users.json`.
+</Accordion>
+<Accordion title="createMany fails with INVALID_INPUT on attributes">
+  An attribute is not declared in `permissions.identityAttributes`, or its value does not match the declared type.
+  Declare it, or convert the value (Keycloak stores every attribute as a list of strings).
+</Accordion>
+<Accordion title="roles.update fails with INVALID_INPUT for a composite role">
+  Better IAM allows at most 20 direct parents and no cycles. Flatten the composite in the role map, or give the role
+  the combined permissions directly.
+</Accordion>
+<Accordion title="An imported user has fewer permissions than in Keycloak">
+  The role exists but was created without permissions, or the user's access came from a client role or a default
+  role. Add permissions with `roles.update`, model the client role as a role, and grant default access with an
+  automatic assignment rule.
+</Accordion>
+<Accordion title="Sign-in through a former Keycloak identity provider fails with ACCOUNT_LINK_REQUIRED">
+  The person was imported. They sign in with a magic link, then link the provider from their account settings.
+</Accordion>
+</Accordions>
+
+## Next steps
+
+<Cards>
+  <Card icon={<UserCog />} title="Roles and bindings" href="/docs/authorization/roles">
+    Permissions, inheritance, and group bindings.
+  </Card>
+  <Card icon={<ShieldCheck />} title="Tenant authentication policy" href="/docs/authentication/tenant-policy">
+    Required MFA, allowed methods, and password rules per tenant.
+  </Card>
+  <Card icon={<Globe />} title="OAuth and OIDC sign-in" href="/docs/federation/oauth-sign-in">
+    Connections for the identity providers Keycloak brokered.
+  </Card>
+  <Card icon={<KeyRound />} title="OAuth/OIDC provider" href="/docs/federation/oauth-provider">
+    Issue tokens to applications that used Keycloak clients.
+  </Card>
+  <Card icon={<Users />} title="Teams and departments" href="/docs/features/teams-and-departments">
+    Nested teams when flat groups are not enough.
+  </Card>
+  <Card icon={<ArrowLeftRight />} title="Migration guides" href="/docs/guides/migration">
+    Moving from other identity providers.
+  </Card>
+</Cards>

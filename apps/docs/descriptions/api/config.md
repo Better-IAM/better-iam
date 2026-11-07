@@ -4,7 +4,7 @@ Configuration as code: export a tenant's access model as one JSON document, revi
 the same way to staging and production. Hand-edited roles drift between environments and nobody can say who
 changed what; a document in version control gives you pull-request review, a dry run before every change, and a
 pipeline check that fails when someone edits production by hand. See
-[configuration as code](/docs/guides/privileged-access/config-as-code).
+[configuration as code](/docs/features/privileged-access/config-as-code).
 
 ## The configuration document
 
@@ -54,7 +54,7 @@ Applies a configuration document to the tenant in one transaction, and returns t
   `INVALID_ACTION` for a policy document storage would reject; `ACCESS_DENIED` naming the first change you are not
   allowed to make; `GRANT_AUTHORITY_REQUIRED` when something must be created and you hold no grant authority;
   `LIMIT_EXCEEDED` when a create exceeds the tenant's plan limits; `SOD_CONFLICT` when the result gives someone
-  roles a [separation-of-duties rule](/docs/guides/authorization/separation-of-duties) forbids together;
+  roles a [separation-of-duties rule](/docs/authorization/separation-of-duties) forbids together;
   `INVARIANT_VIOLATION` when it would newly break an enforced access invariant.
 
 Every change is authorized exactly like the direct API call, so the document can never do more than you could do

@@ -12,7 +12,7 @@ scope in the access-package rule language, and up to 20 steps that run for each 
 and package changes, emails, sign-outs, disabling, enabling, attribute and expiry changes, deletion, events for
 webhooks, and waits. Steps run with the rights of the administrator who saved the workflow (its owner when the run
 started), checked again at every step, and a daily brake holds back a workflow that would start more runs than
-expected. See the [lifecycle workflows guide](/docs/guides/governance/workflows); the repository guide is
+expected. See the [lifecycle workflows guide](/docs/features/governance/workflows); the repository guide is
 `docs/workflows.md`.
 
 ## Triggers and scope
@@ -28,7 +28,7 @@ day of a date. Only people are
 subjects, never service accounts or agents.
 
 `scope` is `{ include, exclude? }`, each a list of up to 10 policy condition sets over the keys of
-[package rules](/docs/guides/privileged-access/automatic-assignment#keys-a-rule-may-test): `principal.id`,
+[package rules](/docs/features/privileged-access/automatic-assignment#keys-a-rule-may-test): `principal.id`,
 `principal.kind`, `principal.owner`, declared attributes as `principal.NAME`, `identity.email`,
 `identity.emailDomain`, `identity.emailVerified`, `identity.managerId`, `identity.groups`, `identity.teams` and
 `identity.departments`. Without a scope a workflow applies to every person. The scope is checked when the trigger

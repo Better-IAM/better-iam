@@ -1,0 +1,379 @@
+---
+title: API quotas
+description: Usage plans that throttle and cap a meter per API key, agent, person, group, or organization, counted in the database and enforced in your handlers.
+metaTitle: API usage plans and quotas
+icon: Timer
+status: new
+packages: ['@better-iam/server', '@better-iam/client']
+sources:
+  - docs/quotas.md
+  - packages/server/src/quotas.ts
+  - packages/server/src/api/quotas.ts
+  - packages/server/src/lifecycle.ts
+---
+
+A public API needs limits per customer: the free tier gets a thousand calls a day, a partner's integration gets more,
+and one broken script retrying in a loop must not slow everyone else down. API gateways solve this with usage plans
+keyed by an API key, apart from everything the product knows about who is calling.
+
+Better IAM decides it by who the caller is: the API key they present, the agent acting for them, the person, their
+<Term id="group">groups</Term>, or the whole organization. A **usage plan** throttles and caps one **meter**, your
+request handlers count use against it, and the counters live in the IAM database, so every server instance sees the
+same totals.
+
+```ts
+await iam.api.quotas.createPlan(admin, {
+  tenantId,
+  name: 'free',
+  meter: 'requests',
+  throttle: { ratePerSecond: 5, burst: 20 },
+  limits: [
+    { period: 'day', limit: 1_000 },
+    { period: 'month', limit: 20_000 },
+  ],
+  default: true, // everyone in the organization without a plan of their own
+  alertThresholds: [80, 100],
+});
+
+// In a request handler:
+const decision = await iam.quotas.enforce({ headers: request.headers, tenantId, meter: 'requests' });
+// decision.limits: [{ period: 'day', limit: 1000, used: 42, remaining: 958, resetAt }, ...]
+```
+
+`enforce` throws [`QUOTA_EXCEEDED`](/docs/reference/errors#quota_exceeded) (429) when the call would go over, carrying
+`retryAfterMs`. `consume` returns the same decision with `allowed: false` instead of throwing. A refused call counts
+nothing.
+
+Use quotas to limit how much a caller may use right now. They record no billing usage: to charge for the same calls,
+record them with `iam.billing.record` as well, and use [billing budgets](/docs/features/billing#budgets) to cap money
+rather than calls.
+
+## Setup
+
+Quotas are always on: the `quotas` API group and `iam.quotas` exist on every instance, and there is no option to set.
+
+<Steps>
+<Step>
+
+### Migrate
+
+Plans, assignments, and counters are stored in the shared `iam_records` table, which the ordinary migration creates.
+
+```bash
+npx better-iam migrate --config better-iam.config.mjs
+```
+
+</Step>
+<Step>
+
+### Create a plan
+
+Define at least one plan for each meter you want to limit. A meter no plan covers is unlimited.
+
+```ts title="scripts/quota-plans.ts"
+import { iam } from '../iam';
+
+await iam.api.quotas.createPlan({ token: process.env.ADMIN_TOKEN! }, {
+  tenantId: process.env.TENANT_ID!,
+  name: 'free',
+  meter: 'requests',
+  limits: [{ period: 'day', limit: 1_000 }],
+  default: true,
+});
+```
+
+</Step>
+<Step>
+
+### Enforce it in your handlers
+
+Call `iam.quotas.enforce` (or `consume`) at the top of every handler that counts toward the meter. See
+[Count use in your handlers](#count-use-in-your-handlers).
+
+</Step>
+<Step>
+
+### Keep the retention sweep running
+
+Counters are deleted by the <Term id="retention-sweep">retention sweep</Term> (`iam.sweepExpired()`, CLI `sweep`) a
+day after their window ends. See [scheduled jobs](/docs/operations/jobs#retention-sweep).
+
+</Step>
+</Steps>
+
+## Plans
+
+A plan counts one meter: a name you choose for what is being counted, such as `requests`, `exports`, `emails`, or
+`tokens`. It limits the meter in two ways, either or both:
+
+- A **throttle** is a token bucket that refills at `ratePerSecond` and holds at most `burst` tokens, so short bursts
+  pass and sustained rates are capped. A refused call learns how long until enough tokens are back.
+- **Period limits** allow at most one limit each per `minute`, `hour`, `day`, `week`, and `month`. Windows are fixed:
+  minutes and hours are UTC; days, weeks (Monday to Sunday), and months start at local midnight in the plan's
+  `timeZone`, daylight saving time included. A refused call learns when the window ends.
+
+`scope: 'tenant'` suits an organization's pooled allowance: one monthly total for everyone the plan covers, whoever
+spends it. Every setting is listed under [Options](#options).
+
+## Usage
+
+### Create and change plans
+
+`quotas.createPlan` (`iam:quotas:manage`) creates a plan. A plan needs a throttle, limits, or both; anything else is
+`INVALID_INPUT`. A second plan with the same name, or a second default plan for a meter, is a `CONFLICT`.
+
+```ts
+await iam.api.quotas.createPlan(admin, {
+  tenantId,
+  name: 'partner',
+  meter: 'requests',
+  throttle: { ratePerSecond: 50 },
+  limits: [{ period: 'month', limit: 5_000_000 }],
+  timeZone: 'America/New_York',
+});
+await iam.api.quotas.updatePlan(admin, { tenantId, name: 'partner', throttle: null });
+```
+
+**Route:** `POST /api/iam/quotas/createPlan` (also `/quotas/updatePlan`, `/quotas/deletePlan`, `/quotas/getPlan`,
+`/quotas/listPlans`)
+
+- `updatePlan` keeps the fields you leave out; `throttle: null` and `description: null` clear them, and `limits`
+  replaces the whole list. The meter cannot change, and windows in progress keep their counts under the new limits.
+- Deleting a plan removes its assignments and counters.
+
+### Count use in your handlers
+
+Three calls on `iam.quotas` work in process for the request's <Term id="credential">credential</Term>, which must be a
+session of the tenant (`ACCESS_DENIED` otherwise):
+
+- `iam.quotas.enforce({ token | headers, tenantId, meter, cost? })` counts use and throws `QUOTA_EXCEEDED` when the
+  plan does not allow it.
+- `iam.quotas.consume(...)` takes the same input and returns the decision, with `allowed: false` when refused.
+- `iam.quotas.status({ token | headers, tenantId, meter })` reports what is left without counting, for a "usage this
+  month" display.
+
+`cost` (a whole number from 1 to 1,000,000,000; 1 by default) is for calls that count more than one unit: a batch of 50
+messages, a large export. A cost above a plan's `burst` or above a period limit can never succeed, so such refusals
+carry no `retryAfterMs`.
+
+Every call returns a decision:
+
+<TypeTable
+  type={{
+    allowed: { type: 'boolean', description: 'Whether the call was counted.' },
+    meter: { type: 'string', description: 'The meter asked about.' },
+    plan: { type: 'string | null', description: 'The plan that decided; null when no plan covers the meter and use is unlimited.' },
+    via: {
+      type: "'apiKey' | 'agent' | 'identity' | 'group' | 'default'",
+      description: 'How the plan applies to the caller (see Who gets which plan).',
+    },
+    cost: { type: 'number', description: 'The units asked for; 0 in a status answer.' },
+    limits: {
+      type: '{ period, limit, used, remaining, resetAt }[]',
+      description: 'Each period limit with its use in the current window, and when the window starts over (epoch milliseconds).',
+    },
+    throttle: {
+      type: '{ ratePerSecond, burst, tokens }',
+      description: 'The throttle, with the tokens left in the bucket after this call.',
+    },
+    reason: {
+      type: "'throttle' | QuotaPeriod",
+      description: 'Why a call was refused: the throttle, or the period whose limit is spent.',
+    },
+    retryAfterMs: {
+      type: 'number',
+      description: 'How long until a refused call can succeed; absent when its cost never can.',
+    },
+  }}
+/>
+
+`status` never refuses: it answers `allowed: true` and reports `remaining` for each window and the bucket's current
+`tokens`, so read those rather than `allowed`.
+
+#### Answer refusals
+
+`enforce` throws `QuotaExceededError` (exported by `better-iam/server`), an IAM error with code `QUOTA_EXCEEDED`, status
+429, `retryAfterMs`, and the full `decision`. The error handlers of the Express, Hono, and Fastify adapters
+([Node frameworks](/docs/integrations/node#answer-refusals-your-routes-throw)) answer it like any other refusal, with a
+429 and the JSON error envelope, but without a `Retry-After` header. When clients should back off precisely, answer
+the refusal yourself:
+
+```ts title="app/api/search/route.ts"
+import { iam } from '@/iam';
+import { search } from '@/lib/search';
+
+export async function GET(request: Request) {
+  const tenantId = request.headers.get('x-tenant-id') ?? '';
+  const decision = await iam.quotas.consume({ headers: request.headers, tenantId, meter: 'requests' });
+  if (!decision.allowed) {
+    const headers = new Headers();
+    if (decision.retryAfterMs !== undefined)
+      headers.set('retry-after', String(Math.ceil(decision.retryAfterMs / 1000)));
+    return Response.json(
+      { error: { code: 'QUOTA_EXCEEDED', message: `The ${decision.meter} quota is used up (${decision.reason})` } },
+      { status: 429, headers },
+    );
+  }
+  return Response.json(await search(request));
+}
+```
+
+Take the tenant ID from your own trusted routing (a path segment or the signed-in session), not from an arbitrary
+header, in production code.
+
+### Who gets which plan
+
+Plans are assigned to API keys (`subjectType: 'apiKey'`, with the key's `credentialId`), identities
+(`subjectType: 'identity'`: people, <Term id="service-account">service accounts</Term>, and agents), and groups
+(`subjectType: 'group'`). For each meter the most specific plan applies:
+
+1. a plan assigned to the API key the request presents;
+2. a plan assigned to the agent acting in a delegated session (assigned as an identity, with the agent's ID);
+3. a plan assigned to the identity;
+4. a plan assigned to one of the identity's groups (the highest `priority` wins, then the name);
+5. the tenant's `default` plan for the meter.
+
+A meter no plan covers is unlimited: `consume` answers `allowed: true` with `plan: null`.
+
+```ts
+await iam.api.quotas.assign(admin, { tenantId, plan: 'partner', subjectType: 'apiKey', subjectId: key.credentialId });
+await iam.api.quotas.assign(admin, { tenantId, plan: 'internal', subjectType: 'group', subjectId: staffGroupId });
+await iam.api.quotas.unassign(admin, { tenantId, meter: 'requests', subjectType: 'group', subjectId: staffGroupId });
+```
+
+**Route:** `POST /api/iam/quotas/assign` (also `/quotas/unassign`, `/quotas/listAssignments`)
+
+Assigning replaces the subject's plan for the same meter; `unassign({ tenantId, meter, subjectType, subjectId })`
+removes it. An unknown plan, a subject outside the tenant, a deleted identity, or an ID that is not an API key is
+`NOT_FOUND`.
+
+With `scope: 'subject'`, whose counters a call uses follows how the plan was found. A plan assigned to an API key counts
+per key and one assigned to an agent per agent. Plans found through the identity, a group, or the default count per
+identity, so every member of a group gets an allowance of their own, and a person's keys without a plan of their own
+share the person's counters.
+
+### Other callers
+
+- **Over HTTP.** [`quotas.consume`](/docs/reference/api/quotas#consume) counts the caller's own use, for example an API
+  gateway forwarding its client's credential. [`quotas.status`](/docs/reference/api/quotas#status) reads what is left.
+  Both are also on the typed client and need only a session of the tenant.
+- **Work your code attributes itself.** `iam.quotas.consumeFor({ tenantId, identityId, apiKeyId?, meter, cost? })`
+  counts for a subject your code identified, such as a background export. It takes no credential; `apiKeyId`, when
+  given, must be one of that identity's API keys. Its alert events are recorded with the actor `deployment-operator`.
+
+<Tabs items={['Server', 'Client']}>
+<Tab value="Server">
+
+```ts
+// A background export of 50 items, counted for the person who asked for it.
+const decision = await iam.quotas.consumeFor({ tenantId, identityId: userId, meter: 'exports', cost: 50 });
+```
+
+</Tab>
+<Tab value="Client">
+
+```ts
+import { client } from './lib/iam-client';
+
+// "Usage this month" for the signed-in caller, without counting anything.
+const status = await client.quotas.status({ tenantId, meter: 'requests' });
+const month = status.limits.find((limit) => limit.period === 'month');
+```
+
+</Tab>
+</Tabs>
+
+**Route:** `POST /api/iam/quotas/consume` (also `/quotas/status`)
+
+### Watch and reset usage
+
+`quotas.usage` (`iam:quotas:read`) lists every subject's use of a plan in the current windows, the most used first.
+Subjects are named `identity:{id}`, `key:{credentialId}`, or `tenant` for a tenant-scoped plan. `quotas.reset`
+(`iam:quotas:manage`) starts one `subject`'s counters and throttle over (named as `usage` names it), or everyone's when
+you leave `subject` out.
+
+```ts
+const rows = await iam.api.quotas.usage(admin, { tenantId, plan: 'free' });
+await iam.api.quotas.reset(admin, { tenantId, plan: 'free', subject: `identity:${userId}` });
+```
+
+**Route:** `POST /api/iam/quotas/usage` (also `/quotas/reset`)
+
+## Alerts
+
+`alertThresholds` record `quota:threshold` once per window, when use first reaches that share of a period limit. Each
+window's first refusal records `quota:exceeded` with outcome `deny`. Both carry the plan, meter, period, limit, and
+subject (`quota:threshold` also the threshold and the use). Throttle refusals are not recorded.
+
+Subscribe a [webhook](/docs/concepts/events/webhooks) to `quota:*` to email a customer at 80% of their monthly allowance,
+or to page someone when an integration starts getting refused.
+
+## Options
+
+There is no server option for quotas. Each plan carries these settings (`quotas.createPlan`, `quotas.updatePlan`):
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `name` | `string` | required | Unique in the tenant: 1 to 64 lowercase letters, digits, dots, underscores or hyphens, starting with a letter or digit. |
+| `meter` | `string` | required | What the plan counts, with the same rules as the name. It cannot change later. |
+| `description` | `string` | none | Up to 512 characters; `null` clears it on update. |
+| `throttle` | `{ ratePerSecond: number; burst?: number }` | none | A token bucket. `ratePerSecond` is 0.001 to 1,000,000; `burst` is a whole number up to 1,000,000,000 and defaults to `ratePerSecond` rounded up (at least 1). `null` clears it on update. |
+| `limits` | `{ period: QuotaPeriod; limit: number }[]` | `[]` | At most one limit per period (`minute`, `hour`, `day`, `week`, `month`), each 1 to 1,000,000,000,000 units per window. |
+| `scope` | `'subject' \| 'tenant'` | `'subject'` | `subject` gives each API key, agent, or person their own counters; `tenant` makes everyone the plan covers share one set. |
+| `default` | `boolean` | `false` | The plan for everyone in the tenant without a plan of their own for the meter; one default plan per meter. |
+| `priority` | `number` | `0` | Among plans assigned to groups for the same meter, the highest applies (-1000 to 1000). |
+| `timeZone` | `string` | `'UTC'` | The IANA time zone day, week, and month windows start in. |
+| `alertThresholds` | `number[]` | `[]` | Up to five percentages (1 to 100) of a period limit that record `quota:threshold` once per window. |
+
+## Permissions
+
+| Method | Permission | Audited as |
+| --- | --- | --- |
+| `createPlan`, `updatePlan`, `deletePlan` | `iam:quotas:manage` on `iam/quotas/{plan}` | `quota:plan-create`, `quota:plan-update`, `quota:plan-delete` |
+| `assign` | `iam:quotas:manage` on `iam/quotas/{plan}` | `quota:assign` |
+| `unassign` | `iam:quotas:manage` on `iam/quotas` | `quota:unassign` |
+| `listPlans`, `listAssignments` | `iam:quotas:read` on `iam/quotas` | `iam:quotas:read` |
+| `getPlan`, `usage` | `iam:quotas:read` on `iam/quotas/{plan}` | `iam:quotas:read` |
+| `reset` | `iam:quotas:manage` on `iam/quotas/{plan}` | `quota:reset` |
+| `consume`, `status` | A session of the tenant | `quota:threshold`, `quota:exceeded` when they apply |
+
+## Schema
+
+Counters are stored in the database, so every server instance sees the same totals and the same token bucket. Each
+consumption is one short transaction. Records live in the shared `iam_records` table under three tenant-scoped
+collections:
+
+| Collection | Holds | Key fields |
+| --- | --- | --- |
+| `quotaPlans` | One plan | `name`, `description`, `meter`, `throttle`, `limits`, `scope`, `default`, `priority`, `timeZone`, `alertThresholds`, `createdAt`, `createdBy`, `updatedAt`, `updatedBy` |
+| `quotaAssignments` | A plan given to a subject for its meter | `planId`, `meter`, `subjectType` (`apiKey`, `identity`, `group`), `subjectId`, `createdAt`, `createdBy` |
+| `quotaCounters` | A window counter or a throttle bucket | `kind` (`window` or `bucket`), `planId`, `subjectKey`, `period`, `windowStart`, `windowEnd`, `used`, `alerted`, `exceededAt`, `tokens`, `updatedAt`, `expiresAt` |
+
+A window's counter is kept until a day after the window ends, and a throttle bucket until it would have refilled; the
+<Term id="retention-sweep">retention sweep</Term>, `iam.sweepExpired()`, deletes them after that
+([scheduled jobs](/docs/operations/jobs#retention-sweep)).
+
+## Errors
+
+| Code | Status | When |
+| --- | --- | --- |
+| [`QUOTA_EXCEEDED`](/docs/reference/errors#quota_exceeded) | 429 | `iam.quotas.enforce` when the throttle or a period limit does not allow the call (`retryAfterMs` and `decision` on the error) |
+| [`CONFLICT`](/docs/reference/errors#conflict) | 409 | A plan with that name exists, or the tenant already has a default plan for the meter |
+| [`NOT_FOUND`](/docs/reference/errors#not_found) | 404 | An unknown plan, a subject outside the tenant, a deleted identity, or an ID that is not an API key |
+| [`INVALID_INPUT`](/docs/reference/errors#invalid_input) | 400 | A plan with neither throttle nor limits, an unknown `subjectType` or `scope`, or a value out of range |
+| [`ACCESS_DENIED`](/docs/reference/errors#access_denied) | 403 | Counting with a credential that is not a session of the tenant, or missing permission |
+| [`INVALID_TRANSITION`](/docs/reference/errors#invalid_transition) | 409 | Changing plans of a deleted tenant |
+
+## Next steps
+
+<Cards>
+  <Card title="quotas API reference" href="/docs/reference/api/quotas">
+    Every method with its permission, audit events, and errors.
+  </Card>
+  <Card title="Billing and spend" href="/docs/features/billing">
+    Meters, rate cards, and budgets for what usage costs.
+  </Card>
+  <Card title="Webhooks" href="/docs/concepts/events/webhooks">
+    Forward quota:threshold and quota:exceeded to your alerting.
+  </Card>
+</Cards>

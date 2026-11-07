@@ -1,0 +1,296 @@
+---
+title: Dynamic client registration
+metaTitle: Dynamic client registration (RFC 7591)
+description: Let OAuth clients such as MCP hosts and native apps register themselves at the provider's registration endpoint, limited by tenant-scoped registration tokens or an anonymous policy you write.
+icon: UserPlus
+packages: ['@better-iam/oauth']
+sources:
+  - docs/protocols.md
+  - packages/oauth/src/provider.ts
+  - packages/oauth/src/adapter.ts
+  - tests/oauth.test.ts
+---
+
+import { Bot, KeyRound, Server } from '@/lib/icons';
+
+**Dynamic client registration** (RFC 7591) lets an OAuth client register itself with the
+[OAuth/OIDC provider](/docs/federation/oauth-provider) over HTTP and receive a `client_id`, instead of an
+administrator calling `registerClient` and copying the ID into the app. Use it when clients cannot be registered
+ahead of time: AI assistants and IDEs that connect to your MCP server (see
+[Dynamic registration and MCP](/docs/federation/mcp-authorization)), desktop apps that each install their own
+client, or partner integrations you onboard with a one-time token.
+
+Registration is off unless you configure `registration` on `createOAuthProvider`. When it is on, every
+registration lands in exactly one <Term id="tenant">tenant</Term>, chosen by you, never by the request, and the
+registered client can never be more powerful than the limits you set.
+
+## How it works
+
+The registration endpoint, `{issuer}/reg`, admits a request in one of two ways:
+
+| Mode | The request carries | Tenant and limits come from | Use it for |
+| --- | --- | --- | --- |
+| Registration token | `Authorization: Bearer <registration token>` | The token, created by a tenant administrator with `createRegistrationToken` | Controlled rollouts: one partner, one team, one installation. |
+| Anonymous | No `Authorization` header | Your `registration.anonymous` hook, which may decline | Public MCP servers and other open ecosystems, where clients register without any token. |
+
+Anything else answers `401` with `error: invalid_token`. After registration, the client runs the normal
+[authorization code flow](/docs/federation/oauth-provider#authorization-code-flow) with PKCE; the person sees the
+registered `client_name` on your consent screen.
+
+## Setup
+
+<Steps>
+<Step>
+
+### Turn on registration
+
+Add `registration` to the provider. With an empty object, only registration-token holders can register. Add
+`anonymous` to also accept tokenless registrations:
+
+```ts title="oauth.ts"
+import { createOAuthProvider } from 'better-iam/oauth';
+import { iam } from './iam';
+import { tenantForHost } from './tenants';
+
+const keys = JSON.parse(process.env.OIDC_KEYS!); // { jwks, cookieKeys, encryptionKey }
+
+export const issuer = createOAuthProvider({
+  ...iam.protocolHost,
+  issuer: 'https://identity.example/oidc',
+  jwks: keys.jwks,
+  cookieKeys: keys.cookieKeys,
+  encryptionKey: keys.encryptionKey,
+  trustedOrigins: ['https://identity.example'],
+  interactionUrl: (uid) => `https://identity.example/interactions/${uid}`,
+  renderDevicePage: ({ form }) => `<main>${form}</main>`,
+  renderLogoutPage: ({ form }) => `<main>${form}</main>`,
+  resourceServers: { 'https://mcp.example.com/mcp': { scopes: ['mcp:tools'] } },
+  registration: {
+    // Optional. Return a policy to accept a tokenless registration, or undefined to decline it.
+    anonymous: ({ headers }) => {
+      const tenantId = tenantForHost(String(headers.host ?? ''));
+      return tenantId
+        ? {
+            tenantId,
+            scopes: ['openid', 'offline_access', 'mcp:tools'],
+            resources: ['https://mcp.example.com/mcp'],
+            maxClients: 500,
+          }
+        : undefined;
+    },
+  },
+});
+iam.useProtocol(issuer);
+```
+
+`tenantForHost` stands for your own lookup, for example from the host name the request arrived on. The hook
+receives `{ headers, ip }` and nothing else, so base the decision on where the request came to, not on anything
+the client claims. A policy with an unknown scope or resource, or a `maxClients` outside 1 to 100,000, is a
+configuration error and fails the request.
+
+</Step>
+<Step>
+
+### Check discovery
+
+With `registration` configured, the discovery documents (`{issuer}/.well-known/openid-configuration` and
+`/.well-known/oauth-authorization-server{issuer path}`) list `registration_endpoint`. Without it, the field is
+absent and `/reg` does not exist.
+
+</Step>
+<Step>
+
+### Create a registration token (optional)
+
+For invited registration, a tenant administrator creates an initial access token (RFC 7591 section 3) and gives it
+to the client's operator:
+
+```ts title="scripts/invite-partner.ts"
+import { issuer } from '../oauth';
+
+const { token, id, expiresAt } = await issuer.createRegistrationToken(adminCredential, {
+  tenantId: 'acme',
+  name: 'Partner desktop app',
+  scopes: ['openid', 'offline_access', 'mcp:tools'],
+  resources: ['https://mcp.example.com/mcp'],
+  maxClients: 1,
+  expiresIn: 86_400,
+});
+// token is shown once; only its hash is stored. Keep id to revoke it later.
+```
+
+`adminCredential` is the administrator's IAM credential. The call requires `iam:oauth:clients:create` and fails
+with `configuration` when `registration` is not set.
+
+</Step>
+</Steps>
+
+## Usage
+
+### Register a client
+
+The client posts its metadata as JSON. Public clients send `token_endpoint_auth_method: "none"`:
+
+```http
+POST /oidc/reg
+Content-Type: application/json
+Authorization: Bearer <registration token, omitted for anonymous registration>
+
+{
+  "client_name": "Acme Assistant",
+  "redirect_uris": ["http://127.0.0.1:33418/callback"],
+  "grant_types": ["authorization_code", "refresh_token"],
+  "token_endpoint_auth_method": "none",
+  "scope": "openid offline_access mcp:tools"
+}
+```
+
+The same request from TypeScript:
+
+```ts title="client/register.ts"
+export async function register(registrationEndpoint: string, registrationToken?: string) {
+  const response = await fetch(registrationEndpoint, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      ...(registrationToken ? { authorization: `Bearer ${registrationToken}` } : {}),
+    },
+    body: JSON.stringify({
+      client_name: 'Acme Assistant',
+      redirect_uris: ['http://127.0.0.1:33418/callback'],
+      grant_types: ['authorization_code', 'refresh_token'],
+      token_endpoint_auth_method: 'none',
+      scope: 'openid offline_access mcp:tools',
+    }),
+  });
+  const body = await response.json();
+  if (!response.ok) throw new Error(`Registration failed: ${body.error} ${body.error_description ?? ''}`);
+  return body as { client_id: string; client_secret?: string; scope: string; redirect_uris: string[] };
+}
+```
+
+**Endpoint:** `POST {issuer}/reg`
+
+The response is `201` with the registered metadata and the new `client_id`; a confidential client (allowed only
+with `allowConfidential`) also receives `client_secret` once. No `registration_access_token` or
+`registration_client_uri` is returned: clients cannot read, change, or delete their own registration (RFC 7592 is
+not offered).
+
+### What a registration may contain
+
+These limits keep a self-registered client from being more powerful than a hand-registered one:
+
+| Metadata | Rule |
+| --- | --- |
+| Tenant | Always the token's or the hook's. A `tenant_id` in the request is overwritten. |
+| `grant_types` | Only `authorization_code` and `refresh_token` (default `authorization_code`). PKCE is always required. |
+| `token_endpoint_auth_method` | `none` (public). `client_secret_basic` or `client_secret_post` only when the policy sets `allowConfidential`. `private_key_jwt` is refused. |
+| `redirect_uris`, `post_logout_redirect_uris` | Absolute URLs without fragment or credentials, using HTTPS, loopback HTTP on any port (`localhost`, `127.0.0.1`, `[::1]`, per RFC 8252), or a reverse-domain custom scheme such as `com.example.app:/callback`. |
+| `scope` | Omitted: the client gets the whole allowance. Present: every scope must be in the allowance. |
+| Resources | The client may request tokens only for the allowance's `resources`. |
+| Refused fields | `jwks`, `jwks_uri`, `sector_identifier_uri`, `backchannel_logout_uri`, `request_uris`, `initiate_login_uri`, `access_token_ttl`, `refresh_token_ttl`. Nothing a stranger registers can make your server fetch a URL. |
+
+The provider assigns the `client_id`. Each registration is audited as `iam:oauth:RegisterClient`, with the token's
+creator as actor (or `dynamic-registration` for anonymous registrations).
+
+### List and revoke registration tokens
+
+```ts title="scripts/registration-tokens.ts"
+import { issuer } from '../oauth';
+
+const tokens = await issuer.listRegistrationTokens(adminCredential, { tenantId: 'acme' });
+// [{ id, name, scopes, resources, allowConfidential, maxClients, used, createdBy, createdAt, expiresAt, revoked }]
+
+await issuer.revokeRegistrationToken(adminCredential, { tenantId: 'acme', tokenId: tokens[0]!.id });
+```
+
+| Method | Permission | What it does |
+| --- | --- | --- |
+| `createRegistrationToken(credential, { tenantId, name, expiresIn?, maxClients?, scopes?, resources?, allowConfidential? })` | `iam:oauth:clients:create` | Creates a token and returns it once with its summary. |
+| `listRegistrationTokens(credential, { tenantId })` | `iam:oauth:clients:read` | Lists a tenant's tokens, newest first, without their values. |
+| `revokeRegistrationToken(credential, { tenantId, tokenId })` | `iam:oauth:clients:delete` | Stops a token. Clients it already registered stay. |
+
+A token stops working when it is revoked, expires, or has registered `maxClients` clients. Creating and revoking
+tokens is audited as `iam:oauth:CreateRegistrationToken` and `iam:oauth:RevokeRegistrationToken`.
+
+### Manage registered clients
+
+Registered clients are ordinary clients of the tenant. They appear in `issuer.listClients` with `registeredVia` set
+to the registration token's ID or `anonymous`. Change them with `updateClient`, retire them with `revokeClient`, and
+people disconnect them from a connected-apps page with `revokeGrant`, as described in
+[Manage clients](/docs/federation/oauth-provider#manage-clients).
+
+## Endpoints
+
+| Endpoint | Path | Discovery field |
+| --- | --- | --- |
+| Registration | `POST {issuer}/reg` | `registration_endpoint` (present only when `registration` is configured) |
+| OpenID discovery | `GET {issuer}/.well-known/openid-configuration` | |
+| OAuth metadata (RFC 8414) | `GET /.well-known/oauth-authorization-server{issuer path}` | |
+
+The registration path is matched the way the provider's router matches it: case-insensitively, with or without a
+trailing slash, and after percent-decoding.
+
+## Options
+
+`registration` on `createOAuthProvider`:
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `registration` | `{ anonymous?(request) }` | off | Turns on `POST {issuer}/reg`. Without `anonymous`, only registration-token holders can register. |
+| `registration.anonymous` | `(request: { headers, ip? }) => RegistrationPolicy \| undefined \| Promise<...>` | none | Maps a tokenless request to a tenant and limits, or returns `undefined` to decline it. |
+
+`RegistrationPolicy`, returned by the hook and stored by each registration token:
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `tenantId` | `string` | required (hook only) | The tenant the client belongs to. A token carries the tenant it was created in. |
+| `scopes` | `string[]` | `openid profile email offline_access` | The allowance: the most a client may request. Each must be a supported scope. |
+| `resources` | `string[]` | `[]` | Resource indicators from `resourceServers` the client may get tokens for. |
+| `allowConfidential` | `boolean` | `false` | Permit clients that receive a secret. |
+| `maxClients` | `number` | 100 (anonymous), 1 (token) | Anonymous: how many anonymously registered clients the tenant may have. Token: how many registrations the token allows. 1 to 100,000. |
+
+`createRegistrationToken` also takes `name` (required, up to 200 characters) and `expiresIn` in seconds (default
+604,800, which is 7 days; between 60 and one year).
+
+## Schema
+
+| Collection | Key fields |
+| --- | --- |
+| `oauthRegistrationTokens` | `id` (SHA-256 hex of the token), `tenantId`, `name`, `scopes`, `resources`, `allowConfidential`, `maxClients`, `used`, `createdBy`, `createdAt`, `expiresAt`, `revoked` |
+| `oauthClients` | `id` (SHA-256 of the client ID), `tenantId`, `clientId`, `encrypted` (metadata and secret, AES-256-GCM), `revoked`, `resources`, `registeredVia` |
+
+The token value itself is never stored.
+
+## Errors
+
+The registration endpoint answers with OAuth errors:
+
+| Status | `error` | When |
+| --- | --- | --- |
+| 401 | `invalid_token` | A missing, malformed, invalid, revoked, expired, or used-up registration token; an anonymous request the hook declined (or no hook); or an inactive tenant. |
+| 400 | `invalid_client_metadata` | A grant type, authentication method, redirect URI, scope, or field outside the rules above, or a client ID that is taken. |
+| 400 | `access_denied` | The tenant reached its anonymous `maxClients`, or became inactive during registration. |
+
+The administration methods throw Better IAM errors:
+
+| Code | Status | When |
+| --- | --- | --- |
+| [`INVALID_INPUT`](/docs/reference/errors#invalid_input) | 400 | `createRegistrationToken` without a name, with a lifetime outside one minute to one year, or with unsupported scopes, resources, or `maxClients`. |
+| [`TENANT_INACTIVE`](/docs/reference/errors#tenant_inactive) | 403 | `createRegistrationToken` for a suspended tenant. |
+| [`NOT_FOUND`](/docs/reference/errors#not_found) | 404 | `revokeRegistrationToken` with an unknown token ID or one from another tenant. |
+| [`PROTECTED_OPERATION`](/docs/reference/errors#protected_operation) | 403 | A client was about to be stored outside the registration gate. Register by hand with `registerClient`. |
+
+## Related
+
+<Cards>
+  <Card icon={<Bot />} title="Dynamic registration and MCP" href="/docs/federation/mcp-authorization">
+    The full MCP connection flow, with protected resource metadata and createResourceGuard.
+  </Card>
+  <Card icon={<KeyRound />} title="OAuth/OIDC provider" href="/docs/federation/oauth-provider">
+    Provider setup, hand-registered clients, consent, and grants.
+  </Card>
+  <Card icon={<Server />} title="Resource servers and tokens" href="/docs/federation/oauth-resource-servers">
+    Declare the APIs registered clients may call, and verify their tokens.
+  </Card>
+</Cards>

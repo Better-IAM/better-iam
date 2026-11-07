@@ -42,7 +42,7 @@ The profile fields `create` and `update` accept (in `update`, `null` clears an o
 
 Decisions for an agent's own key, and for sessions in which it acts for someone, carry `principal.agentId`,
 `principal.agentSponsorId`, and, when set, `principal.agentModel` and `principal.agentProvider`; `principal.kind` is
-`agent` for the agent's own key. See [principal keys](/docs/guides/authorization/conditions#principal-keys).
+`agent` for the agent's own key. See [principal keys](/docs/authorization/conditions#principal-keys).
 
 ## Who may call what
 

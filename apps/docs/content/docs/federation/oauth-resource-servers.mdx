@@ -33,6 +33,8 @@ Tell the provider which APIs exist, so it can issue tokens restricted to one of 
 per API:
 
 ```ts title="oauth.ts"
+import { createOAuthProvider } from 'better-iam/oauth';
+
 const issuer = createOAuthProvider({
   ...options,
   resourceServers: {
@@ -189,6 +191,7 @@ export async function GET(request: Request) {
     clockTolerance: { type: 'number', description: 'Seconds of clock difference tolerated for exp, nbf, and the DPoP iat.', default: '30' },
     dpopMaxAge: { type: 'number', description: 'Maximum age of a DPoP proof in seconds. Lower it when several API replicas share traffic.', default: '300' },
     algorithms: { type: 'string[]', description: 'Accepted signature algorithms. Symmetric algorithms are never accepted by default.', default: 'RS, PS, ES families and EdDSA' },
+    tenantId: { type: 'string', description: "The one organization this API serves. Resource servers are deployment-wide, so any tenant's client may be given tokens for this audience; set it to refuse every other tenant's tokens when the API does not scope its data by token.tenantId itself." },
   }}
 />
 
@@ -275,51 +278,46 @@ grant_type=urn:ietf:params:oauth:grant-type:token-exchange
 &scope=reports:read
 ```
 
-```mermaid
-sequenceDiagram
-  participant App as Client app
-  participant A as Invoices API
-  participant OP as Better IAM provider
-  participant R as Reports API
-  App->>A: Request with the user's access token
-  A->>OP: Token exchange (subject_token, resource, scope)
-  OP->>OP: Check subject, client resources and scopes, policy
-  OP-->>A: New token, sub = user, act = invoices-api
-  A->>R: Request with the exchanged token
-  R->>R: verifyRequest, token.actor names invoices-api
-```
+The issued token keeps the account as `sub`, names the exchanging client as `client_id` and as the actor in `act`
+(nested for chains), carries only scopes both the client and the target allow, and expires no later than the
+subject token. `createAccessTokenVerifier` reports the chain as `actor`. `authorizeTokenExchange(request)` on the
+provider adds your own rule after the built-in checks. Each exchange is audited as `iam:oauth:TokenExchange`.
 
-The rules:
+[Token exchange](/docs/federation/token-exchange) has the complete walkthrough: every request parameter, the
+claims of the issued token, the rules on subject tokens, the `TokenExchangeRequest` fields, and each error.
 
-- The subject token can be a JWT access token from this issuer or an opaque one it stores. It must belong to an
-  active account in the exchanging client's tenant and must not be DPoP-bound.
-- Name the target with `resource` (or `audience`). It must be one of the client's registered resources.
-- The issued token keeps the account as `sub`, and names the exchanging client as `client_id` and as the actor in
-  `act` (nested for chains).
-- It carries only the requested scopes allowed by both the client and the target resource server (all of them when
-  `scope` is omitted), and expires no later than the subject token.
-- `actor_token` is refused, because the authenticated client is always the actor. Only access tokens can be
-  requested.
+## Endpoints
 
-`authorizeTokenExchange(request)` adds your product policy after the built-in checks, for example which subject
-clients or scopes an API may delegate. Returning `false` answers `access_denied`. Without it, any client registered
-for the grant may exchange for its own resources and scopes.
+The provider endpoints a resource server and its clients use, relative to the issuer URL:
 
-```ts
-const issuer = createOAuthProvider({
-  ...options,
-  authorizeTokenExchange: ({ clientId, subjectClientId, scopes }) =>
-    clientId === 'invoices-api' && subjectClientId === 'reports-web' && !scopes.includes('reports:admin'),
-});
-```
+| Endpoint | Path | Discovery field | Used for |
+| --- | --- | --- | --- |
+| Token | `POST /token` | `token_endpoint` | Getting resource tokens (`resource` parameter) and token exchange. |
+| Public keys | `GET /jwks` | `jwks_uri` | Offline JWT verification; `createAccessTokenVerifier` fetches it by default. |
+| Introspection | `POST /token/introspection` | `introspection_endpoint` | Checking opaque tokens. Answers only for tokens issued to the calling client. |
+| Revocation | `POST /token/revocation` | `revocation_endpoint` | A client cancelling its own token. |
+| Discovery | `GET /.well-known/openid-configuration` | | Finding the above. |
 
-The request carries `tenantId`, `clientId` (the exchanging API), `identityId` (the user), `subjectClientId` (the app
-the user's token was issued to), `subjectScopes`, `resource`, and `scopes`. Each exchange is audited as
-`iam:oauth:TokenExchange`. `createAccessTokenVerifier` reports the chain as `actor`.
+## Errors
+
+The verifier's `verify` and `verifyRequest` throw `IamError` (`createResourceGuard`'s `check` turns the same failures
+into `401` and `403` responses instead):
+
+| Code | Status | When |
+| --- | --- | --- |
+| [`INVALID_TOKEN`](/docs/reference/errors#invalid_token) | 401 | Missing or malformed `Authorization` header, a bad signature, wrong `typ`, issuer, or audience, an expired token, a token of another tenant than the verifier's `tenantId`, or a DPoP proof that is missing, invalid, replayed, or for another key, method, or URL. |
+| [`INSUFFICIENT_SCOPE`](/docs/reference/errors#insufficient_scope) | 403 | The token lacks a scope passed in `{ scopes }`. |
+
+At the provider's token endpoint, a client asking for a resource it is not registered for receives the OAuth error
+`invalid_target`. Answer verifier failures with `verifier.challenge(error)` in `WWW-Authenticate`, so clients learn
+why they were refused.
 
 ## Next steps
 
 <Cards>
+  <Card title="Token exchange" href="/docs/federation/token-exchange">
+    Trade a caller's token for a narrower token to another API, with the calling API recorded as actor.
+  </Card>
   <Card title="Dynamic registration and MCP" href="/docs/federation/mcp-authorization">
     Serve protected resource metadata in front of your API with createResourceGuard.
   </Card>

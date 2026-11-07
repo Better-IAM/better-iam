@@ -23,16 +23,22 @@ import { SearchButton, SearchIconButton } from './search-button';
 export const navLinks: { label: string; href: string; match: (path: string) => boolean }[] = [
   {
     label: 'Docs',
-    href: '/docs/guides',
+    href: '/docs/introduction',
     match: (path) =>
       path.startsWith('/docs') &&
       !path.startsWith('/docs/reference') &&
-      !path.startsWith('/docs/frameworks'),
+      !path.startsWith('/docs/guides') &&
+      !path.startsWith('/docs/integrations'),
+  },
+  {
+    label: 'Guides',
+    href: '/docs/guides',
+    match: (path) => path.startsWith('/docs/guides'),
   },
   {
     label: 'Frameworks',
-    href: '/docs/frameworks',
-    match: (path) => path.startsWith('/docs/frameworks'),
+    href: '/docs/integrations',
+    match: (path) => path.startsWith('/docs/integrations'),
   },
   {
     label: 'API',

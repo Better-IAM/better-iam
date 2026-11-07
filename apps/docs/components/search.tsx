@@ -22,18 +22,19 @@ import { Kbd } from '@/components/base/kbd/kbd';
 const kbd = 'min-w-5 bg-background-secondary-default px-1.5 font-mono text-text-secondary';
 
 const tags = [
-  { name: 'Guides', value: 'guides' },
-  { name: 'Frameworks', value: 'frameworks' },
+  { name: 'Docs', value: 'concepts,authentication,authorization,databases,features,get-started' },
+  { name: 'Integrations', value: 'integrations' },
   { name: 'Federation', value: 'federation' },
+  { name: 'Guides', value: 'guides' },
   { name: 'Operations', value: 'operations' },
-  { name: 'Reference', value: 'reference' },
+  { name: 'Reference', value: 'reference,ai' },
 ];
 
 const quickLinks: [string, string][] = [
-  ['Quickstart', '/docs/guides/quickstart'],
-  ['Policies', '/docs/guides/authorization/policies'],
-  ['Condition operators', '/docs/guides/authorization/conditions'],
-  ['Next.js', '/docs/frameworks/nextjs'],
+  ['Quickstart', '/docs/quickstart'],
+  ['Policies', '/docs/authorization/policies'],
+  ['Condition operators', '/docs/authorization/conditions'],
+  ['Next.js', '/docs/integrations/nextjs'],
   ['Server API reference', '/docs/reference/api'],
   ['Package exports', '/docs/reference/exports'],
   ['Error codes', '/docs/reference/errors'],

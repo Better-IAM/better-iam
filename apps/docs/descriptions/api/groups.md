@@ -7,14 +7,14 @@ contractors, on-call rotations, and project teams.
 
 ## How group access works
 
-A group has no permissions of its own. Access comes from [role bindings](/docs/guides/authorization/roles) whose
+A group has no permissions of its own. Access comes from [role bindings](/docs/authorization/roles) whose
 subject is the group, so changing membership is, in effect, granting or revoking those roles. That is why adding or
 removing a member requires authority over each of the group's bindings, not just permission to edit the group:
 someone who could not grant a role directly cannot grant it by putting a person in a group.
 
 Temporary memberships carry an `expiresAt` (epoch milliseconds). They stop counting the moment they lapse, are left
 out of `listMembers`, and are removed later by the purge job. Memberships created by an
-[access package](/docs/guides/privileged-access/access-packages) are tagged with the package's assignment; editing
+[access package](/docs/features/privileged-access/access-packages) are tagged with the package's assignment; editing
 one by hand takes it over, so revoking the package no longer removes it.
 
 ## addMember
@@ -27,7 +27,7 @@ Adds a person to a group so they receive every role bound to the group, optional
 - **Errors:** `CONFLICT` when the person is already a live member; `NOT_FOUND` when the group or person is not in
   this tenant; `ACCESS_DENIED` without authority over one of the group's bindings; `SOD_CONFLICT` when the
   membership would give the person a combination of roles a
-  [separation-of-duties rule](/docs/guides/authorization/separation-of-duties) forbids.
+  [separation-of-duties rule](/docs/authorization/separation-of-duties) forbids.
 
 Pass `expiresAt` to make the membership temporary. Adding someone whose earlier membership has lapsed renews it
 instead of failing, and the renewed membership no longer belongs to the access package that originally created it.
@@ -112,7 +112,7 @@ Removes a person from a group, ending the access the group's roles gave them.
 - **Permission:** `iam:groups:update` on the group, plus grant authority for each of the group's role bindings.
 - **Audited as:** `iam:groups:update`.
 
-Any [just-in-time activations](/docs/guides/privileged-access/elevation) the person had of the group's eligible
+Any [just-in-time activations](/docs/features/privileged-access/elevation) the person had of the group's eligible
 bindings end at the same time, so removing someone from a group cannot leave them elevated. Removing a person who is
 not a member succeeds and changes nothing.
 

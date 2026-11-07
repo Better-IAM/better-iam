@@ -4,7 +4,7 @@ Credentials manages API keys: opaque bearer tokens that let a [service account](
 call Better IAM and your product without a person signing in. Keys carry a label, record when they were last used,
 can be limited to a list of actions, and always expire, so you can find and remove the ones nobody needs. People
 never get API keys; they use sessions. The
-[API key hygiene guide](/docs/guides/privileged-access/lifecycle#api-key-hygiene) covers the routine.
+[API key hygiene guide](/docs/features/privileged-access/lifecycle#api-key-hygiene) covers the routine.
 
 ## What a key can do
 
@@ -14,10 +14,10 @@ over HTTP, or as `{ token }` in server calls. Two limits apply on top of the acc
 narrow access:
 
 - **Scopes or a session policy.** `scopes: ['documents:read']` compiles into a policy that allows exactly those actions
-  on every resource; `policy` accepts a full [policy document](/docs/guides/authorization/policies) instead. Either one
+  on every resource; `policy` accepts a full [policy document](/docs/authorization/policies) instead. Either one
   acts as a boundary: the key can do only what both the account's roles and the policy allow.
 - **The issuer's grant authority.** A key is tied to the
-  [grant authority](/docs/guides/authorization/roles) of the administrator who issued it and stays within that
+  [grant authority](/docs/authorization/roles) of the administrator who issued it and stays within that
   authority's ceiling. If the authority is revoked (for example when that administrator is offboarded), the key stops
   working.
 

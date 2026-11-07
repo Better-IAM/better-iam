@@ -3,7 +3,7 @@
 Access packages bundle roles and group memberships that are granted, requested, and removed together. An
 onboarding kit, a project profile, or a vendor's access becomes one named package instead of a checklist of
 separate grants, and removing it takes away exactly what it gave. See the
-[access packages guide](/docs/guides/privileged-access/access-packages) for a walkthrough.
+[access packages guide](/docs/features/privileged-access/access-packages) for a walkthrough.
 
 ## How packages are granted
 
@@ -12,14 +12,14 @@ A package can reach a person in three ways, and one package can use all of them:
 - **Assignment.** An administrator calls `assign`. The caller needs `iam:packages:assign` on the package plus
   everything the direct calls need: `iam:bindings:create` on each role and `iam:groups:update` on each group, and
   `iam:licenses:assign` when a [license product](/docs/reference/api/licenses) is assigned to one of the groups. The
-  records are created under the caller's own [grant authority](/docs/guides/authorization/roles#grant-authorities),
+  records are created under the caller's own [grant authority](/docs/authorization/roles#grant-authorities),
   so a package never lets anyone grant more than they could grant by hand.
 - **Self-service request.** When the package is `requestable`, a member holding `iam:packages:request` on it asks
   for it with `request`, and an approver decides with `approveRequest` or `denyRequest`. Who may approve depends on
   the package: with neither `approverGroupId` nor `managerApproval`, anyone holding `iam:packages:approve` on the
   package; otherwise only live members of the approver group, the requester's manager (with `managerApproval`), or
   a root administrator. Nobody decides on their own request, and never from an
-  [impersonation](/docs/guides/authentication/impersonation) session. Approval assigns the package under the
+  [impersonation](/docs/authentication/impersonation) session. Approval assigns the package under the
   approver's authority, so the approver needs the same rights as `assign`. A request waits for the tenant's
   `approvalLifetimeMs` (one day by default, set with
   [`tenants.setAccessPolicy`](/docs/reference/api/tenants#setaccesspolicy)), never beyond the end it asks for.
@@ -30,7 +30,7 @@ A package can reach a person in three ways, and one package can use all of them:
   [`iam.reconcilePackages()`](/docs/reference/api#reconcilepackages), which you must schedule. When a packaged group
   is licensed later and the owner lacks `iam:licenses:assign`, the rule is suspended (`owner-lacks-rights`) instead
   of granting, until the owner holds it. See
-  [automatic assignment](/docs/guides/privileged-access/automatic-assignment) for the rule language, grace
+  [automatic assignment](/docs/features/privileged-access/automatic-assignment) for the rule language, grace
   periods, and the safety brake.
 
 `maxDurationMs` makes an end date mandatory for assignments and requests and caps it; `requireJustification` makes
@@ -72,7 +72,7 @@ Grants a pending package request by assigning the package to the requester under
   does not allow; `ACCESS_DENIED`
   when you are not a designated approver or cannot grant one of the packaged roles or groups;
   `IMPERSONATION_RESTRICTED` from an impersonation session; `GRANT_AUTHORITY_REQUIRED` without a grant authority;
-  `SOD_CONFLICT` when the assignment would create a [separation-of-duties](/docs/guides/authorization/separation-of-duties)
+  `SOD_CONFLICT` when the assignment would create a [separation-of-duties](/docs/authorization/separation-of-duties)
   conflict; `INVARIANT_VIOLATION` when it would break an enforced invariant.
 
 The assignment ends at the `expiresAt` you pass or, without it, at the end the requester asked for, validated
@@ -355,7 +355,7 @@ Asks for a requestable package for yourself; approvers are notified and one of t
 `assign`. The request lapses after the tenant's `approvalLifetimeMs`, or at the end you asked for if that comes
 first. When the deployment sends email, the approver group's members and, with `managerApproval`, your manager
 receive a `package-request` message. Grant `iam:packages:request` through a group everyone belongs to, like
-`iam:bindings:activate` for [just-in-time elevation](/docs/guides/privileged-access/elevation).
+`iam:bindings:activate` for [just-in-time elevation](/docs/features/privileged-access/elevation).
 
 ```ts
 const pending = await iam.api.packages.request(memberCredential, {

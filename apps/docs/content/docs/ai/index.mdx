@@ -1,0 +1,160 @@
+---
+title: Use the docs with AI
+metaTitle: Better IAM docs for AI coding agents
+description: Give AI coding agents the Better IAM docs through llms.txt, per-page Markdown, the docs MCP server, an installable agent skill, and ready-made prompts.
+icon: Bot
+sources:
+  - apps/docs/app/llms.txt/route.ts
+  - apps/docs/app/llms-full.txt/route.ts
+  - apps/docs/app/llms.mdx/docs/[[...slug]]/route.ts
+  - apps/docs/app/api/mcp/route.ts
+  - apps/docs/proxy.ts
+  - apps/docs/lib/llms-text.ts
+  - apps/docs/public/skills/better-iam/SKILL.md
+---
+
+AI coding agents write better Better IAM code when they read the real reference instead of guessing method names.
+This site offers the same content to tools as it does to people, in five forms: a plain-text index of every page,
+a Markdown copy of every page, an MCP server an agent can query while it works, an installable agent skill with the
+rules for writing Better IAM code, and prompts you can paste into any assistant.
+
+Use this section to choose the form that fits your tool, then follow its page.
+
+## At a glance
+
+| Resource | Address | Use it for | Details |
+| --- | --- | --- | --- |
+| Index | `/llms.txt` | Letting an agent find the right page: agent instructions, then every page grouped by sidebar section with its Markdown URL and description | [llms.txt](/docs/ai/llms-txt) |
+| Full text | `/llms-full.txt` | Loading every page into one long context window | [llms.txt](/docs/ai/llms-txt#llms-fulltxt) |
+| Page Markdown | `/docs/<page>.md`, or any docs URL with `Accept: text/markdown` | Reading or quoting one page exactly | [llms.txt](/docs/ai/llms-txt#markdown-for-one-page) |
+| MCP server | `/api/mcp` | Searching pages and looking up API methods, exports, and error codes during a coding session | [Docs MCP server](/docs/ai/mcp-server) |
+| Agent skill | `/skills/better-iam/SKILL.md` | Teaching an agent the setup order, call shapes, and pitfalls before it writes code | [Agent skills](/docs/ai/agent-skills) |
+| Prompts | Copy from the page | Starting common tasks and adding Better IAM rules to `AGENTS.md` | [Prompts and AGENTS.md](/docs/ai/prompts) |
+
+The public site is `https://better-iam.com`. When you run the docs locally with `pnpm --filter @better-iam/docs dev`,
+every address above is served from `http://localhost:4000` instead.
+
+## Connect an assistant with MCP
+
+The [Model Context Protocol](https://modelcontextprotocol.io) lets an assistant call tools while it works. This site
+serves an MCP endpoint at `/api/mcp` (Streamable HTTP, read-only, no sign-in) with six tools:
+
+| Tool | What it does |
+| --- | --- |
+| `search` | Full-text search over every page, the same index as the search dialog. |
+| `list_pages` | Lists every page with its URL and one-line description. |
+| `get_page` | Returns one page as Markdown, by URL (for example `/docs/authorization/policies`). |
+| `lookup_api_method` | Returns the signature, HTTP route, permission, errors, and behaviour of one server API method, for example `groups.addMember`. |
+| `lookup_export` | Explains a function, hook, component, class, or constant a package exports, for example `useSession` or `@better-iam/core evaluatePolicy`, with its parameters and every entry point that exports it. |
+| `lookup_error_code` | Explains an `IamError` code (for example `ACCESS_DENIED`): what it means, why it happens, and how to handle it. |
+
+<Tabs items={['Claude Code', 'Cursor', 'VS Code']} groupId="mcp-client" persist>
+<Tab value="Claude Code">
+
+```bash
+claude mcp add --transport http better-iam-docs https://better-iam.com/api/mcp
+```
+
+</Tab>
+<Tab value="Cursor">
+
+```json title=".cursor/mcp.json"
+{
+  "mcpServers": {
+    "better-iam-docs": { "url": "https://better-iam.com/api/mcp" }
+  }
+}
+```
+
+</Tab>
+<Tab value="VS Code">
+
+```json title=".vscode/mcp.json"
+{
+  "servers": {
+    "better-iam-docs": { "type": "http", "url": "https://better-iam.com/api/mcp" }
+  }
+}
+```
+
+</Tab>
+</Tabs>
+
+[Docs MCP server](/docs/ai/mcp-server) covers Claude Desktop, project-wide configuration, testing the connection,
+and each tool's input and output.
+
+## Give a model the whole site
+
+When a tool cannot call MCP, point it at the plain-text files:
+
+| URL | Content | Use it for |
+| --- | --- | --- |
+| `/llms.txt` | Instructions for agents, then every page's title, Markdown URL, and description, grouped by sidebar section | Letting a model pick which pages to read |
+| `/llms-full.txt` | Every page as Markdown in one file | Loading everything into a long context window |
+| `/docs/<page>.md` | One page as Markdown | Quoting a single page precisely |
+
+Any docs URL also returns Markdown when the request prefers it (`Accept: text/markdown`), so agents that fetch pages
+get Markdown without special URLs:
+
+```bash
+curl -H 'Accept: text/markdown' https://better-iam.com/docs/quickstart
+curl https://better-iam.com/docs/quickstart.md
+```
+
+See [llms.txt](/docs/ai/llms-txt) for what each file contains and how an agent should use them.
+
+## Install the agent skill
+
+An agent skill is a Markdown file that an agent loads when a task matches its description. The Better IAM skill
+holds the setup order, the three method shapes, the authorization rules, the common error codes, and the pitfalls
+that most often produce wrong code, with links to the Markdown pages to read next. In Claude Code, install it for
+one project with:
+
+```bash
+mkdir -p .claude/skills/better-iam
+curl -fsSL https://better-iam.com/skills/better-iam/SKILL.md -o .claude/skills/better-iam/SKILL.md
+```
+
+See [Agent skills](/docs/ai/agent-skills) for other agents and for writing a project skill of your own.
+
+## Page actions
+
+Every docs page has two controls under its title:
+
+- **Copy Markdown** copies the page's Markdown to the clipboard, ready to paste into a chat.
+- **Open** offers *View as Markdown*, *Open in GitHub* (the page's source file), and *Open in Scira AI*,
+  *Open in ChatGPT*, *Open in Claude*, and *Open in Cursor*, which start a chat with the prompt "Read
+  `<page URL>`, I want to ask questions about it."
+
+Both use the same Markdown as `/docs/<page>.md`.
+
+## Keep answers accurate
+
+The reference pages and the MCP lookup tools are generated from the code (method names, signatures, routes, and
+error codes) with hand-written explanations on top, so they match the version of Better IAM these docs were built
+from. When an assistant's answer disagrees with your installed version, trust the TypeScript types in your editor:
+every server method is typed end to end from the `betterIam()` instance.
+
+Three habits keep generated code correct:
+
+- Ask the agent to look up every `iam.api` call it writes (`lookup_api_method`, or the page under
+  [API reference](/docs/reference/api)) instead of recalling it.
+- Ask it to cite the docs page it used, so you can check the claim.
+- Run the TypeScript compiler on the result: an invented method or option fails to type-check.
+
+## Next steps
+
+<Cards>
+  <Card title="llms.txt" href="/docs/ai/llms-txt">
+    What the index and full-text files contain, and how agents should read them.
+  </Card>
+  <Card title="Docs MCP server" href="/docs/ai/mcp-server">
+    Connect Claude Code, Claude Desktop, Cursor, or VS Code, and use each tool.
+  </Card>
+  <Card title="Agent skills" href="/docs/ai/agent-skills">
+    Install the Better IAM skill and write one for your own project.
+  </Card>
+  <Card title="Prompts and AGENTS.md" href="/docs/ai/prompts">
+    Copyable prompts for common tasks and a rules block for your repository.
+  </Card>
+</Cards>

@@ -68,7 +68,7 @@ Rules:
 - Everything must be accurate: read the implementation in `packages/server/src/api/*.ts` (and `packages/auth/src`
   for `auth`) before writing. Never invent options, errors, or behaviour.
 - The content is MDX: escape `{`, `}`, `<`, `>` outside code, and never use HTML comments.
-- Define jargon on first use or link to the guide that does (`/docs/guides/...`).
+- Define jargon on first use or link to the guide that does (`/docs/introduction/...`).
 
 ## How operations are authorized and audited
 

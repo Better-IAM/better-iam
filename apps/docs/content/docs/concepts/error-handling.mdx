@@ -1,0 +1,305 @@
+---
+title: Error handling
+metaTitle: Error handling, codes, and retries
+description: How Better IAM reports failures with IamError and its stable codes, how codes map to HTTP statuses, how to handle them on the server and in the client, and which ones are safe to retry.
+icon: OctagonAlert
+packages: ['better-iam', '@better-iam/core', '@better-iam/server', '@better-iam/client', '@better-iam/middleware']
+sources:
+  - packages/core/src/index.ts
+  - packages/server/src/http.ts
+  - packages/server/src/operations.ts
+  - packages/server/src/hosts.ts
+  - packages/server/src/quotas.ts
+  - packages/server/src/signal-receiver.ts
+  - packages/auth/src/service/base.ts
+  - packages/client/src/index.ts
+  - packages/client/src/session.ts
+  - packages/middleware/src/index.ts
+  - packages/cli/src/errors.ts
+  - packages/nestjs/src/filter.ts
+  - apps/docs/generated/errors.json
+---
+
+Every failure Better IAM reports is an `IamError` with three fields: a stable `code` such as `ACCESS_DENIED`, a
+`message` written for people, and an HTTP `status`. Codes are part of the public contract and do not change between
+releases. Messages can be reworded at any time and can contain names from your data, so show them to people but
+never parse them: **branch on `code`**.
+
+The same code reaches you whichever way you call: thrown as an `IamError` from a direct `iam.api` call, returned in
+the JSON error envelope over HTTP, and rethrown as an `IamClientError` by the typed client. The
+[error reference](/docs/reference/errors) explains each of the 183 codes.
+
+## The error shape
+
+```ts title="IamError (from better-iam)"
+class IamError extends Error {
+  readonly code: string; // stable, for example 'ACCESS_DENIED'
+  readonly status: number; // the HTTP status, 400 unless the code says otherwise
+  message: string; // for people; never parse it
+}
+```
+
+Import it from `better-iam`, `better-iam/server`, or `better-iam/core` (the same class in each). Over HTTP, a
+refusal answers with `status` and this body:
+
+```json
+{ "error": { "code": "ACCESS_DENIED", "message": "Access denied" } }
+```
+
+`RATE_LIMITED` and `QUOTA_EXCEEDED` add `retryAfterMs` to the body and a `Retry-After` header in seconds.
+`WRONG_REGION` adds `region` and, when one can be built, `location`.
+
+## Error classes
+
+Most failures are plain `IamError`s. A few subclasses carry extra fields, and the client and framework adapters
+have their own classes with the same `code` and `status`.
+
+| Class | Import from | Extends | Extra fields |
+| --- | --- | --- | --- |
+| `IamError` | `better-iam`, `better-iam/server`, `better-iam/core` | `Error` | `code`, `status` |
+| `WrongRegionError` | `better-iam/server` | `IamError` | `region`, `location` (code `WRONG_REGION`, status 421) |
+| `QuotaExceededError` | `better-iam/server` | `IamError` | `decision`, `retryAfterMs` (code `QUOTA_EXCEEDED`, status 429) |
+| `SignalRejectedError` | `better-iam/server` | `IamError` | `err` (the RFC 8935 error code), `temporary` (code `SIGNAL_REJECTED`) |
+| `CliError` | `better-iam/cli` | `IamError` | `hint`: one sentence naming the next step |
+| `IamClientError` (alias `ClientError`) | `better-iam/client` | `Error` | `code`, `status`, `retryAfterMs`, `requestId`, `region`, `location` |
+| `IamRequestError` | `better-iam/middleware` | `Error` | `code`, `status`, `reason` (`mfa`, `recent`, or `impersonation` for step-up refusals) |
+
+`RATE_LIMITED` errors thrown on the server are plain `IamError`s with a `retryAfterMs` property attached: read it
+as `(error as IamError & { retryAfterMs?: number }).retryAfterMs`.
+
+`IamClientError` does not extend `IamError`, because the client package carries no server code. When a value may
+be either, use the duck-typed helpers from `better-iam/middleware`: `errorCode(error)`, `errorStatus(error)`, and
+`isIamRefusal(error)`, which is true for anything with a string `code` and a numeric `status`.
+
+## Status codes
+
+The status tells a generic HTTP client what kind of failure it is; the code tells your application what to do.
+
+| Status | Meaning | Common codes |
+| --- | --- | --- |
+| 400 | The input is invalid, or the operation is not allowed in the record's current state. Retrying the same request fails the same way. | `INVALID_INPUT`, `INVALID_POLICY`, `WEAK_PASSWORD`, `INVITATION_INVALID` |
+| 401 | No usable credential, or the credential presented to sign in is wrong. | `UNAUTHENTICATED`, `INVALID_CREDENTIALS`, `INVALID_MFA`, `SESSION_NETWORK_MISMATCH` |
+| 402 | An enforced spend budget is used up. | `SPEND_LIMIT_REACHED` |
+| 403 | The caller is known but may not do this, or must step up first. | `ACCESS_DENIED`, `MFA_REQUIRED`, `RECENT_AUTH_REQUIRED`, `CSRF_REJECTED`, `TENANT_INACTIVE` |
+| 404 | The record or route does not exist. | `NOT_FOUND`, `TENANT_NOT_FOUND` |
+| 409 | The change conflicts with existing data or a concurrent change. | `CONFLICT`, `VERSION_CONFLICT`, `SLUG_TAKEN`, `LAST_OWNER`, `SOD_CONFLICT` |
+| 413 | The HTTP body is over 64 KiB. | `PAYLOAD_TOO_LARGE` |
+| 421 | Another region's deployment serves this organization. | `WRONG_REGION` |
+| 429 | Too many attempts, or a usage plan is exhausted. | `RATE_LIMITED`, `QUOTA_EXCEEDED`, `TOO_MANY_REQUESTS` |
+| 500 | An unexpected failure or a storage problem. | `INTERNAL_ERROR`, `STORAGE_ERROR` |
+| 502 | An upstream service failed. | `WEBHOOK_UNREACHABLE`, `WEBHOOK_REJECTED`, `OAUTH_DISCOVERY` |
+| 503 | A dependency is temporarily unavailable. | `STORAGE_BUSY`, `PASSWORD_CHECK_UNAVAILABLE` |
+
+A few codes are raised with more than one status in different places (for example `ACCESS_DENIED` is 400 in a few
+validation paths), which is one more reason to branch on `code`.
+
+Over HTTP, an exception that is not an `IamError` (a bug, or one of your callbacks such as `resolveResource`
+throwing) becomes `500 INTERNAL_ERROR` with a generic message, so internals never leak. A direct server call throws
+the original exception instead.
+
+## Usage
+
+### Handle errors on the server
+
+Catch around the call and compare `code`. Rethrow anything you do not handle.
+
+```ts title="routes/documents.ts"
+import { IamError } from 'better-iam';
+import { iam } from '../iam';
+
+export async function updateDocument(request: Request, document: { id: string; tenantId: string }) {
+  try {
+    await iam.require({
+      headers: request.headers,
+      tenantId: document.tenantId,
+      action: 'documents:write',
+      resource: { type: 'document', id: document.id },
+    });
+  } catch (error) {
+    if (error instanceof IamError && error.code === 'UNAUTHENTICATED') return Response.redirect('/login', 303);
+    if (error instanceof IamError && error.code === 'ACCESS_DENIED')
+      return Response.json({ error: { code: error.code, message: error.message } }, { status: 403 });
+    throw error;
+  }
+  // ...the caller may write the document
+  return Response.json({ ok: true });
+}
+```
+
+A refused provisioning operation changes nothing: it runs in one transaction, and a failure rolls the whole
+transaction back. The only records a refusal leaves are the ones it is meant to leave: the `deny` audit event of an
+authorization denial, and the attempt counters of rate-limited sign-in, recovery, and MFA flows.
+
+### Turn errors into HTTP responses
+
+When you call `iam.api` from your own routes, answer refusals with the same envelope and status the IAM handler
+uses, so one piece of client code handles both.
+
+```ts title="lib/iam-errors.ts"
+import { IamError } from 'better-iam';
+
+export function errorResponse(error: unknown): Response {
+  if (!(error instanceof IamError)) {
+    console.error(error); // log the details; never send them to the caller
+    return Response.json(
+      { error: { code: 'INTERNAL_ERROR', message: 'Internal server error' } },
+      { status: 500 },
+    );
+  }
+  const headers = new Headers({ 'cache-control': 'no-store' });
+  const retryAfterMs = (error as IamError & { retryAfterMs?: number }).retryAfterMs;
+  if (retryAfterMs) headers.set('retry-after', String(Math.ceil(retryAfterMs / 1000)));
+  return Response.json({ error: { code: error.code, message: error.message } }, { status: error.status, headers });
+}
+```
+
+The framework integrations ship this for you:
+
+| Integration | Handler |
+| --- | --- |
+| Express | `app.use(iamExpress.errorHandler)`, registered last |
+| Hono | `app.onError(iamHono.onError)` |
+| Fastify | `app.setErrorHandler(iamFastify.errorHandler)` |
+| NestJS | `IamExceptionFilter`, installed globally |
+
+The Express, Hono, and Fastify adapters answer page navigations with a redirect to your login or step-up page when
+you configure one, and everything else with the JSON envelope. The NestJS filter always answers with the envelope.
+See [Express](/docs/integrations/express), [Hono](/docs/integrations/hono), [Fastify](/docs/integrations/fastify), and
+[NestJS](/docs/integrations/nestjs#errors). On a custom server, `refusalResponse` from `better-iam/middleware` does the
+same ([Node.js and custom servers](/docs/integrations/node#answer-refusals-your-routes-throw)).
+
+### Handle errors in the client
+
+The typed client throws `IamClientError` for every refusal and for problems it detects itself. Network failures and
+aborted calls reject with Fetch's own error (a `TypeError` or an `AbortError`) unchanged.
+
+```ts title="app/invite.ts"
+import { IamClientError } from 'better-iam/client';
+import { client } from './iam-client';
+
+try {
+  await client.identities.invite({ tenantId, email });
+} catch (error) {
+  if (!(error instanceof IamClientError)) throw error; // network failure or aborted call
+  switch (error.code) {
+    case 'ACCESS_DENIED':
+      showMessage('You do not have permission to invite people.');
+      break;
+    case 'RECENT_AUTH_REQUIRED':
+      openReauthenticateDialog();
+      break;
+    case 'RATE_LIMITED':
+      showMessage(`Try again in ${Math.ceil((error.retryAfterMs ?? 60_000) / 1000)} seconds.`);
+      break;
+    default:
+      showMessage(`Something went wrong (reference ${error.requestId ?? 'none'}).`);
+  }
+}
+```
+
+- **Signed out.** Set `onUnauthenticated` when you create the client to send people to the login page in one place.
+  It fires only for `UNAUTHENTICATED` and `SESSION_NETWORK_MISMATCH`, never for a wrong password or a step-up code.
+- **Session store.** `isUnauthenticated(error)` from `better-iam/client/session` is true for 401 and 403 errors, the
+  rule the session store uses to tell "signed out" from a transport failure.
+- **Wrong region.** For `WRONG_REGION`, send the person to `error.location` when it is set.
+- **Client-side codes.** `INVALID_CONFIG`, `INVALID_TOKEN`, `INVALID_PATH`, `INVALID_INPUT`, `INVALID_RESPONSE`, and
+  `HTTP_ERROR` come from the client itself, with `status` 0 when no request was sent. See
+  [Typed client](/docs/concepts/client#errors).
+
+### Map codes to what the person does next
+
+A UI rarely needs one branch per code. A few groups cover most screens:
+
+| Next step | Codes |
+| --- | --- |
+| Sign in again | `UNAUTHENTICATED`, `SESSION_NETWORK_MISMATCH` |
+| Step up | `MFA_REQUIRED`, `RECENT_AUTH_REQUIRED` |
+| Fix the form | `INVALID_INPUT`, `INVALID_CREDENTIALS`, `WEAK_PASSWORD`, `BREACHED_PASSWORD` |
+| Wait | `RATE_LIMITED`, `QUOTA_EXCEEDED` |
+| Ask for access | `ACCESS_DENIED` |
+| Reload, then decide again | `CONFLICT`, `VERSION_CONFLICT`, `INVALID_TRANSITION` |
+| Show a generic failure with the request ID | Everything else |
+
+The [error reference](/docs/reference/errors#handling-errors-in-a-ui) has a complete `nextStep(error)` function
+built on these groups.
+
+## Retrying
+
+Retry only failures that can succeed later without a change from the caller. Everything else fails the same way on
+every attempt.
+
+| Code | Status | Retry? |
+| --- | --- | --- |
+| [`RATE_LIMITED`](/docs/reference/errors#rate_limited) | 429 | After `retryAfterMs` (the window length, so the longest wait). The client can do this once for short waits with `retryRateLimited`. |
+| [`QUOTA_EXCEEDED`](/docs/reference/errors#quota_exceeded) | 429 | After `retryAfterMs`. Without `retryAfterMs`, the call costs more than the plan ever allows: do not retry. |
+| [`STORAGE_BUSY`](/docs/reference/errors#storage_busy) | 503 | Yes, the complete operation after a short pause. The transaction was rolled back. |
+| [`PASSWORD_CHECK_UNAVAILABLE`](/docs/reference/errors#password_check_unavailable) | 503 | Yes, shortly. The breached-password service could not be reached. |
+| [`INTERNAL_ERROR`](/docs/reference/errors#internal_error) | 500 | Once. Then find the request by its request ID in your logs. |
+| Network failure (`TypeError`) | none | For a read, yes. For a change, the outcome is unknown: read the current state first, then decide. |
+| [`TOO_MANY_REQUESTS`](/docs/reference/errors#too_many_requests) | 429 | No. Too many pending access requests; waiting alone does not help. |
+| [`CONFLICT`](/docs/reference/errors#conflict), [`VERSION_CONFLICT`](/docs/reference/errors#version_conflict) | 409 | Not as is. Reload the record and decide again. |
+| Any other 4xx | 4xx | No. Change the input, the caller's access, or the order of operations. |
+
+Better IAM has no general idempotency keys, so a change retried after a lost response can run twice. Many changes
+then fail harmlessly with a conflict code (`CONFLICT`, `SLUG_TAKEN`, `IDENTITY_EXISTS`), but read back before
+retrying changes that would not.
+
+On the server, a small wrapper covers `STORAGE_BUSY`:
+
+```ts title="lib/retry.ts"
+import { IamError } from 'better-iam';
+
+/** Runs `operation` again when the database was too busy; every other error is rethrown at once. */
+export async function retryWhenBusy<T>(operation: () => Promise<T>, attempts = 3): Promise<T> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await operation();
+    } catch (error) {
+      if (!(error instanceof IamError) || error.code !== 'STORAGE_BUSY' || attempt >= attempts) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 100 * 2 ** attempt));
+    }
+  }
+}
+```
+
+```ts title="jobs/provision.ts"
+import { iam } from '../iam';
+import { retryWhenBusy } from '../lib/retry';
+
+const service = { token: process.env.BETTER_IAM_TOKEN! }; // an API key of a service account
+const tenantId = process.env.TENANT_ID!;
+const group = await retryWhenBusy(() => iam.api.groups.create(service, { tenantId, name: 'Finance' }));
+```
+
+If `STORAGE_BUSY` is frequent, raise the adapter's `lockTimeoutMs` (PostgreSQL) or `busyTimeoutMs` (SQLite, libSQL)
+instead; see [storage operations](/docs/databases/operations).
+
+## Request IDs
+
+A request ID ties an error a person reports to your logs. Create the client with `requestId: true` (or a function
+returning your own trace ID); it sends `X-Request-Id` on every call, the server echoes it and records it on the
+request's `http` observability span, and the client exposes it as `IamClientError.requestId`. Show it in generic
+error messages and ask for it in support tickets. See [observability](/docs/operations/observability#request-ids).
+
+## CLI errors
+
+The `better-iam` command prints `CODE: message` to standard error, often followed by a `Hint:` line, and exits with
+status 2 for a command-line mistake (`INVALID_ARGUMENT`, `INVALID_COMMAND`) and 1 otherwise. From code, `runCli`
+rejects with the `IamError` or `CliError` itself. See [CLI](/docs/concepts/cli#output-and-exit-status).
+
+## Next steps
+
+<Cards>
+  <Card title="Error reference" href="/docs/reference/errors">
+    What each code means, why it happens, and how to fix it.
+  </Card>
+  <Card title="Typed client" href="/docs/concepts/client">
+    `IamClientError`, `onUnauthenticated`, and rate-limit retries.
+  </Card>
+  <Card title="Server API" href="/docs/concepts/api">
+    How direct calls and HTTP calls report failures.
+  </Card>
+  <Card title="Observability" href="/docs/operations/observability">
+    Spans, metrics, and request IDs for finding a failure.
+  </Card>
+</Cards>

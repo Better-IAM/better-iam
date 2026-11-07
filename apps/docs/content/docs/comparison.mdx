@@ -1,0 +1,181 @@
+---
+title: Comparison
+metaTitle: Better IAM compared with Auth0, Clerk, WorkOS, Better Auth, OpenFGA, and Keycloak
+description: How Better IAM differs from hosted identity providers, authentication libraries, authorization services, and Keycloak, and when one of those is the better choice.
+icon: Scale
+packages: ['better-iam']
+sources:
+  - README.md
+  - packages/better-iam/package.json
+  - packages/server/src/options.ts
+  - packages/server/src/http.ts
+  - packages/server/src/operations.ts
+  - packages/auth/src/service/sessions.ts
+  - apps/docs/content/docs/reference/faq.mdx
+---
+
+Better IAM is an identity and access management platform delivered as TypeScript packages. It runs inside your
+Node.js application, stores its records in your own PostgreSQL, SQLite, or libSQL database, and covers sign-in,
+authorization, governance, and enterprise federation behind one typed API. This page compares that design with the
+four kinds of tools teams usually reach for instead:
+
+- **Hosted identity providers** such as Auth0, Clerk, and WorkOS.
+- **Authentication libraries** such as Better Auth, Auth.js, and Lucia-style session code you write yourself.
+- **Authorization services** such as OpenFGA, SpiceDB, Cerbos, Permit.io, and Oso.
+- **Keycloak**, the open-source identity server.
+
+The comparison sticks to architecture and to Better IAM facts you can check in this documentation. Other products
+change quickly; check their current documentation for their feature lists.
+
+## At a glance
+
+| | Better IAM | Hosted identity providers | Authentication libraries | Authorization services | Keycloak |
+| --- | --- | --- | --- | --- | --- |
+| What it is | A library in your server process | A service the vendor operates | A library in your server process | A service you call (self-hosted or managed, depending on the product) | A standalone server you deploy |
+| Where identity data lives | Your database | The vendor's infrastructure | Your database | Mostly authorization data (policies, relationship tuples, or synced attributes); sign-in lives elsewhere | A database Keycloak manages, separate from your application's |
+| Main job | Sign-in, authorization, governance, federation | Sign-in, user management, enterprise SSO | Sign-in and sessions | Authorization decisions | Sign-in, SSO, identity brokering |
+| How your code checks access | A function call: `iam.require(...)` reads current state from your database | Token claims or calls to the vendor's API, plus your own code | Your own code | A call to the decision service with the facts it needs | Token claims, or Keycloak's authorization services over HTTP |
+| Language and runtime | TypeScript on Node.js 22.12 or newer | Any, through SDKs and standard protocols | The library's language | Any, through SDKs and APIs | Any, through OIDC and SAML |
+| Who runs it | You | The vendor | You | You or the vendor | You |
+
+## What Better IAM includes
+
+Every row below is part of the open-source packages and has its own page in these docs.
+
+| Area | In Better IAM | Docs |
+| --- | --- | --- |
+| Multi-tenancy | Tenant trees under a platform root. Each organization has its own identity directory, so the same email address can be separate identities in different organizations, linked explicitly when wanted. | [Tenants and identities](/docs/concepts/tenants-and-identities) |
+| Sign-in methods | Passwords, passkeys, magic links, email and SMS codes, TOTP with recovery codes, remembered devices, and per-tenant sign-in policies | [Authentication](/docs/authentication) |
+| Social and enterprise sign-in | OAuth and OIDC sign-in with presets for Google, GitHub, and Microsoft Entra ID; per-organization SAML SSO | [OAuth sign-in](/docs/federation/oauth-sign-in), [SAML](/docs/federation/saml) |
+| Acting as an identity provider | An OAuth/OIDC provider for your other applications, with device authorization | [OAuth/OIDC provider](/docs/federation/oauth-provider) |
+| Roles and policies | Custom roles, versioned JSON policies with conditions and `${principal.id}` variables, boundaries, and delegated grant authorities | [Roles](/docs/authorization/roles), [Policies](/docs/authorization/policies) |
+| Relationships | Relationship tuples on resources for sharing (ReBAC) | [Relationships](/docs/authorization/relationships) |
+| Reverse queries and filtering | `listAccessible` and `authorizeMany` for UIs; query plans to filter rows in your own database | [Queries](/docs/authorization/queries), [Data filtering](/docs/authorization/data-filtering) |
+| Your data in decisions | `resolveResource` loads owners and attributes of your own records at decision time | [Resources and catalog](/docs/concepts/resources-and-catalog) |
+| Provisioning | SCIM Users and Groups inbound, SCIM outbound to downstream apps | [SCIM](/docs/federation/scim), [SCIM outbound](/docs/federation/scim-outbound) |
+| Privileged access | Eligible bindings activated just in time, access requests with approval, temporary bindings | [Privileged access](/docs/features/privileged-access) |
+| Governance | Access reviews, certification campaigns, separation of duties, role mining, change impact previews | [Governance](/docs/features/governance) |
+| Audit | A per-tenant hash-chained audit log with verification and export, signed webhooks, and in-process subscribers | [Audit chain](/docs/concepts/events/audit-chain) |
+| Security signals | Shared Signals (CAEP/RISC) as receiver and transmitter, identity threat detection, device posture | [Shared Signals](/docs/federation/shared-signals), [Threat detection](/docs/features/threat-detection) |
+| Machine and AI identities | API keys, service accounts, STS-style temporary credentials, AI agents with sponsors and delegation, an MCP authorization gate | [Tokens](/docs/authentication/tokens), [AI agents](/docs/features/ai-agents) |
+| Security services | Tenant keys, a secrets vault, a private X.509 CA, an SSH certificate authority | [Secrets and keys](/docs/features/secrets-and-keys), [SSH access](/docs/features/ssh-access) |
+| Frameworks | A typed client plus Next.js, React, Vue, Nuxt, SvelteKit, React Router, NestJS, Express, Hono, and Fastify integrations | [Integrations](/docs/integrations) |
+| License | Apache License 2.0 | [FAQ](/docs/reference/faq) |
+
+## Compared with hosted identity providers
+
+Auth0, Clerk, WorkOS, and similar services run identity for you. Your application redirects to, or embeds, the
+vendor's sign-in experience, and the vendor stores the people, sessions, and organizations and keeps the service
+running.
+
+Better IAM moves that work into your application:
+
+- **Data location.** People, sessions, roles, and audit records are rows in your database. Nothing leaves your
+  infrastructure unless you configure an integration that sends it (webhooks, SCIM outbound, Shared Signals).
+- **Authorization next to your data.** A check such as "may Alice approve this invoice?" runs in your process and
+  can use the invoice's owner and amount through `resolveResource`, instead of copying that data into tokens or a
+  vendor's user metadata.
+- **No hosted pages.** You build the sign-in screens with the typed client, the React, Vue, or Svelte bindings, or
+  the Next.js form helpers. The repository includes a reference administration console (`apps/console`) built on the
+  public API, but it is an example application, not a managed dashboard.
+- **You operate it.** Upgrades, database backups, the secret, scheduled jobs (email outbox, retention sweep), and
+  availability are your responsibility. See [Operations](/docs/operations).
+
+## Compared with authentication libraries
+
+Better Auth, Auth.js, and hand-written session code also run in your process against your database, so the
+deployment model is the same. The difference is scope: an authentication library answers "who is this?", and
+Better IAM also answers "what may they do, who granted it, and who reviewed it?".
+
+- **Tenancy model.** In Better IAM each organization is a tenant with its own identity directory, its own roles, its
+  own sign-in policy, and its own SSO connections. In Better Auth's organization plugin, one user record joins many
+  organizations as a member. Neither is wrong; Better IAM's model fits B2B products where each customer administers
+  its own people.
+- **Authorization engine.** Decisions come from roles, JSON policies with conditions, relationships, and boundaries,
+  evaluated by one engine on the server and testable in the [policy playground](/playground). An authentication
+  library leaves that to your application code or to an add-on.
+- **Governance and audit.** Just-in-time elevation, access reviews, separation of duties, and a tamper-evident audit
+  chain are built in, and every operation, including an administrator's, runs through the same authorization and
+  audit pipeline.
+- **Cost of the extra scope.** Better IAM has more concepts to learn (tenants, catalogs, bindings, authorities) and
+  more tables in your database. If you only need individual users to sign in, an authentication library is less to
+  run.
+
+Better IAM is independent of Better Auth; it does not use or extend it. For moving users across, see the
+[migration guides](/docs/guides/migration).
+
+## Compared with authorization services
+
+OpenFGA and SpiceDB (relationship graphs in the style of Google's Zanzibar), Cerbos (a policy decision point), and
+Permit.io and Oso (authorization platforms) decide what a caller may do. They do not sign people in: your application
+authenticates the caller elsewhere, then sends the decision service the facts it needs, such as relationship tuples
+you keep in sync or principal and resource attributes on each request.
+
+Better IAM combines both halves in one process:
+
+- **One source of truth.** The identities, groups, roles, and relationships the decision uses are the same records
+  that sign-in, SCIM provisioning, and access reviews change, so nothing has to be synchronized into a second
+  system.
+- **Decisions on current state.** Every check reads your database, not a cache, so a revoked role or session stops
+  working on the very next request. Batch with `authorizeMany` (up to 50 checks per call) and list with
+  `listAccessible` to keep pages fast. See [How decisions work](/docs/authorization/how-decisions-work).
+- **Scope.** A dedicated authorization service is built to be the single decision point for many services written in
+  many languages. Better IAM's engine runs in a Node.js process; other services rely on the decisions, signed
+  assertions, or tokens it issues.
+
+## Compared with Keycloak
+
+Keycloak is a mature open-source identity server. You deploy it next to your applications, configure realms,
+clients, and identity providers in its admin console or REST API, and your applications sign people in through
+OIDC or SAML. Better IAM covers similar ground (tenants comparable to realms, SSO, SCIM, an OAuth/OIDC provider, an
+LDAP gateway) with a different shape:
+
+- **Embedded, not standalone.** Better IAM is a dependency of your Node.js application, configured in TypeScript,
+  migrated with `better-iam migrate`, and called with typed functions. There is no separate server to deploy, secure,
+  or theme.
+- **Application authorization.** Policies, relationships, and resource attributes from your own records are first
+  class, so the same engine that signs people in also enforces `documents:write` on one document in your routes.
+- **Language reach.** Keycloak serves applications in any language through standard protocols. Better IAM's server
+  APIs are TypeScript; applications in other languages integrate through its OAuth/OIDC provider, SAML, SCIM, or the
+  signed session JWTs it publishes at `/api/iam/.well-known/jwks.json` when session JWTs are enabled.
+
+## When to choose something else
+
+Better IAM is a good fit when access control, multi-tenancy, and auditability are part of your product and your
+backend runs on Node.js. Choose something else when:
+
+- **You do not want to operate identity.** A hosted identity provider runs the service, the database, and the
+  sign-in pages for you, and the vendor carries the operational and compliance work for that service.
+- **You need a ready-made sign-in UI and user dashboard today.** Hosted providers ship them. With Better IAM you
+  build your screens on the client and framework helpers.
+- **Your application only signs individuals in.** With no organizations, custom roles, or enterprise customers, an
+  authentication library such as Better Auth or Auth.js is smaller and simpler.
+- **Your backend is not Node.js, or many services in different languages need one decision point.** Keycloak, a hosted
+  provider, or an authorization service such as OpenFGA, SpiceDB, or Cerbos fits a polyglot backend better.
+- **Authorization is your only problem and the relationship graph is very large.** A Zanzibar-style service is built
+  for that single job at that scale.
+- **You need a long-stable API.** Better IAM is at version 0.3, before 1.0, so minor releases can change APIs. The
+  [upgrade guides](/docs/guides/upgrade) list what changed and how to move.
+
+If you are moving from one of these tools, note that password hashes are not imported: Better IAM hashes passwords
+with argon2id and `identities.createMany` accepts only plain-text passwords. People who move over set a password
+through the reset flow, or sign in with a magic link, a passkey, or your enterprise identity provider. The
+[migration recipe](/docs/guides/recipes/tenancy-and-limits#move-people-over-from-another-system) walks through a
+complete move.
+
+## Next steps
+
+<Cards>
+  <Card title="Introduction" href="/docs/introduction">
+    What Better IAM is and how every operation flows through one pipeline.
+  </Card>
+  <Card title="Installation" href="/docs/installation">
+    Add Better IAM to your application and mount it in your framework.
+  </Card>
+  <Card title="Migration guides" href="/docs/guides/migration">
+    Move from Auth0, Clerk, WorkOS, Better Auth, Auth.js, or Keycloak.
+  </Card>
+  <Card title="FAQ" href="/docs/reference/faq">
+    Hosting, runtimes, background jobs, and adopting Better IAM.
+  </Card>
+</Cards>

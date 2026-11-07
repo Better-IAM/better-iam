@@ -1,0 +1,639 @@
+---
+title: Fastify
+metaTitle: Fastify plugin
+description: Serve the Better IAM API from a Fastify 4 or 5 app with createIamFastify, read the session from request.iam, and guard routes with preHandler guards.
+icon: Fastify
+packages:
+  - '@better-iam/middleware'
+sources:
+  - docs/node-frameworks.md
+  - packages/middleware/README.md
+  - packages/middleware/src/index.ts
+  - packages/middleware/src/fastify.ts
+  - tests/middleware.test.ts
+  - packages/server/src/api/tenants.ts
+---
+
+import { Express, Hono, Nodejs, ShieldCheck, Globe, Building } from '@/lib/icons';
+
+`createIamFastify` connects a `betterIam()` instance to a Fastify application. Its plugin answers the IAM HTTP API
+under `/api/iam` in an `onRequest` hook, before Fastify parses the body, and decorates every other request with
+`request.iam`: the caller's <Term id="session">session</Term>, permission checks, and an in-process client.
+`preHandler` guards (`requireSession`, `authorize`) refuse signed-out callers, callers without a permission, and
+cross-site form posts, and an error handler turns refusals into the IAM JSON error envelope or a redirect to your
+login page.
+
+Use it when your server is a Fastify app. The plugin hands IAM requests to `iam.nodeHandler`, so node-only protocol
+mounts such as the OAuth provider work. For Express and Hono, use the [Express](/docs/integrations/express) and
+[Hono](/docs/integrations/hono) adapters; they expose the same helpers.
+
+## Installation
+
+<Steps>
+<Step>
+
+### Install the package
+
+```npm
+npm i better-iam fastify
+```
+
+The umbrella package `better-iam` exposes the adapter as `better-iam/fastify` and the shared core as
+`better-iam/middleware`. If you install scoped packages instead, install `@better-iam/middleware` and import from
+`@better-iam/middleware/fastify` and `@better-iam/middleware`. The adapter's types cover Fastify 4 and 5 (the repository's tests run Fastify 5); the
+examples use Fastify 5 signatures (`reply.redirect(url, code)`, `request.host`).
+
+</Step>
+<Step>
+
+### Create the instance
+
+Create the instance once and import it everywhere. The configuration file is the one the
+[quickstart](/docs/quickstart) builds, which the `better-iam` CLI also reads for migrations.
+
+```ts title="src/iam.ts"
+import { betterIam } from 'better-iam';
+import config from '../better-iam.config.mjs';
+
+export const iam = betterIam(config);
+```
+
+Run the migrations before the first start:
+
+```bash
+npx better-iam migrate --config better-iam.config.mjs
+```
+
+</Step>
+<Step>
+
+### Create the adapter
+
+```ts title="src/iam-fastify.ts"
+import { createIamFastify } from 'better-iam/fastify';
+import { iam } from './iam.js';
+
+export const iamFastify = createIamFastify(iam, {
+  loginPath: '/login', // signed-out page navigations go here with ?next=
+  stepUpPath: '/verify', // page navigations that must step up go here with ?next= and ?reason=
+});
+```
+
+</Step>
+<Step>
+
+### Register the plugin
+
+Register the plugin before your routes and set the error handler once.
+
+```ts title="src/server.ts"
+import Fastify from 'fastify';
+import { iamFastify } from './iam-fastify.js';
+import { projects } from './routes/projects.js';
+
+const app = Fastify();
+await app.register(iamFastify.plugin); // answers /api/iam/*, decorates request.iam
+app.setErrorHandler(iamFastify.errorHandler); // IAM refusals become JSON or a redirect; others are rethrown
+
+await app.register(projects);
+
+await app.listen({ port: 3000 });
+```
+
+- **Not encapsulated.** Like a plugin wrapped in `fastify-plugin`, its `onRequest` hook and the `request.iam`
+  decorator apply to the whole app, including plugins you register afterwards.
+- **Before body parsing.** IAM requests are answered in `onRequest` with `reply.hijack()`, so Fastify never parses
+  their bodies and the IAM server reads the raw stream.
+- **Protocol mounts outside the base path**, such as `/oauth`, need their prefixes in `serve` (see
+  [Protocol mounts](/docs/operations/deployment/protocol-mounts)).
+
+The route examples below each export a Fastify plugin; register each one the same way, with `app.register(plugin)`.
+
+</Step>
+<Step>
+
+### Type `request.iam`
+
+Declare the helpers on Fastify's request so `request.iam` is typed with your instance's session and API.
+
+```ts title="src/types.d.ts"
+import type { IamRequest } from 'better-iam/middleware';
+import type { iam } from './iam.js';
+
+declare module 'fastify' {
+  interface FastifyRequest {
+    iam: IamRequest<typeof iam>;
+  }
+}
+```
+
+</Step>
+<Step>
+
+### Create the browser client
+
+Browser code calls the API you just mounted with the [typed client](/docs/concepts/client). Import the instance
+with `import type` so no server code reaches the bundle.
+
+```ts title="web/iam-client.ts"
+import { createIamClient } from 'better-iam/client';
+import type { iam } from '../src/iam.js';
+
+export const client = createIamClient<typeof iam>({
+  baseURL: window.location.origin, // the Fastify app's origin; calls go to /api/iam/{group}/{method}
+});
+```
+
+A front end served from a different origin than the Fastify app also needs that origin in the instance's
+`trustedOrigins` option (for the IAM API) and in the adapter's `trustedOrigins` option (for your guarded routes).
+
+</Step>
+</Steps>
+
+## Protect routes
+
+Guards are `preHandler` hooks. Each one reads the session, checks <Term id="step-up">step-up</Term> when asked,
+then checks authorization, and answers a refusal itself: a `401` or `403` JSON envelope for API calls, or a `303`
+redirect to `loginPath` or `stepUpPath` for page navigations (a `GET` with `Accept: text/html`).
+
+### Require a session
+
+```ts title="src/routes/me.ts"
+import type { FastifyInstance } from 'fastify';
+import { iamFastify } from '../iam-fastify.js';
+
+export async function me(app: FastifyInstance) {
+  app.get('/me', { preHandler: iamFastify.requireSession() }, async (request) => {
+    const session = await request.iam.getSession();
+    return { email: session!.identity.email };
+  });
+}
+```
+
+A signed-out API call gets `401` with `{ "error": { "code": "UNAUTHENTICATED", "message": "A session is required" } }`
+and `Cache-Control: no-store`. A signed-out page navigation to `/me?tab=1` is redirected to
+`/login?next=%2Fme%3Ftab%3D1`.
+
+### Require a permission
+
+`authorize(action, { resource?, tenantId?, stepUp? })` requires a session allowed to perform `action`. The resource
+defaults to the tenant itself (`iam/{tenantId}`) and the tenant to the session's tenant. `resource` and `tenantId`
+are functions of `(request, session)`. Their `request` is typed with only the fields the plugin reads, so cast it to
+`FastifyRequest` to read route parameters.
+
+```ts title="src/routes/projects.ts"
+import type { FastifyInstance, FastifyRequest } from 'fastify';
+import { iamFastify } from '../iam-fastify.js';
+import { loadProject } from '../data.js'; // your data layer
+
+type ProjectRoute = { Params: { id: string } };
+
+export async function projects(app: FastifyInstance) {
+  app.get<ProjectRoute>(
+    '/projects/:id',
+    {
+      preHandler: iamFastify.authorize('projects:read', {
+        resource: (request) => ({
+          type: 'project',
+          id: (request as FastifyRequest<ProjectRoute>).params.id,
+        }),
+      }),
+    },
+    async (request) => loadProject(request.params.id),
+  );
+
+  app.get('/admin', { preHandler: iamFastify.authorize('iam:identities:read') }, async () => ({
+    admin: true,
+  }));
+}
+```
+
+The check runs through `iam.require`, so it evaluates the same <Term id="role">roles</Term>,
+<Term id="policy">policies</Term>, <Term id="condition">conditions</Term>, and <Term id="boundary">boundaries</Term>
+as every other check. A denial answers `403 ACCESS_DENIED`.
+
+### Require step-up
+
+`stepUp` asks for more assurance than a session: `mfa: true` needs a session that completed MFA, `mfa: 'fresh'`
+also refuses remembered devices, impersonation, assumed roles, and API keys, and `maxAgeMs` needs a recent
+sign-in.
+
+```ts title="src/routes/billing.ts"
+import type { FastifyInstance } from 'fastify';
+import { iamFastify } from '../iam-fastify.js';
+import { cancelSubscription } from '../data.js'; // your data layer
+
+export async function billing(app: FastifyInstance) {
+  app.post(
+    '/billing/cancel',
+    {
+      preHandler: iamFastify.authorize('billing:manage', {
+        stepUp: { mfa: true, maxAgeMs: 10 * 60 * 1000 },
+      }),
+    },
+    async (_request, reply) => {
+      await cancelSubscription();
+      return reply.code(204).send();
+    },
+  );
+}
+```
+
+A session that fails the requirement gets `403` with `MFA_REQUIRED`, `RECENT_AUTH_REQUIRED`, or
+`IMPERSONATION_RESTRICTED`. Page navigations go to `stepUpPath?next=...&reason=mfa|recent|impersonation`. See
+[Step-up](/docs/authentication/mfa#step-up) for completing the challenge.
+
+### Enforce inside a route
+
+When the resource is only known after loading data, enforce inside the handler with `request.iam.require`. It
+throws the server's refusal, which the error handler answers.
+
+```ts title="src/routes/documents.ts"
+import type { FastifyInstance } from 'fastify';
+import { iamFastify } from '../iam-fastify.js';
+import { deleteDocument, findDocument } from '../data.js'; // your data layer
+
+export async function documents(app: FastifyInstance) {
+  app.delete<{ Params: { id: string } }>(
+    '/documents/:id',
+    { preHandler: iamFastify.requireSession() },
+    async (request, reply) => {
+      const document = await findDocument(request.params.id);
+      await request.iam.require('documents:delete', { type: 'document', id: document.id });
+      await deleteDocument(document.id);
+      return reply.code(204).send();
+    },
+  );
+}
+```
+
+### Cross-site requests
+
+Guards also refuse a cookie-authenticated `POST`, `PUT`, `PATCH`, or `DELETE` whose `Origin` is not the app itself,
+the IAM origin, or one of `trustedOrigins` (`403 UNTRUSTED_ORIGIN`, or `403 CSRF_REJECTED` with no `Origin`). A
+`Sec-Fetch-Site: same-origin` request passes, and bearer-token requests skip the check. A state-changing route
+without a guard should run the same rule with `checkRequestOrigin`:
+
+```ts title="src/routes/newsletter.ts"
+import type { FastifyInstance } from 'fastify';
+import { checkRequestOrigin, nodeHeaders } from 'better-iam/middleware';
+import { iam } from '../iam.js';
+import { subscribe } from '../data.js'; // your data layer
+
+export async function newsletter(app: FastifyInstance) {
+  app.post<{ Body: { email: string } }>('/newsletter/subscribe', async (request, reply) => {
+    const refusal = checkRequestOrigin(
+      {
+        method: request.method,
+        url: new URL(request.url, `${request.protocol}://${request.host}`),
+        headers: nodeHeaders(request.headers),
+      },
+      [iam.endpoint.origin],
+    );
+    if (refusal) throw refusal; // the error handler answers it
+    await subscribe(request.body.email);
+    return reply.code(204).send();
+  });
+}
+```
+
+[The CSRF check](/docs/integrations/node#the-csrf-check) explains why it matters with `SameSite=Lax` cookies.
+
+## Read the session
+
+`request.iam` is created once per request. It memoizes the session lookup, and cookies the in-process client
+receives count for later calls in the same request.
+
+### Get the session
+
+```ts title="src/routes/home.ts"
+import type { FastifyInstance } from 'fastify';
+
+export async function home(app: FastifyInstance) {
+  app.get('/', async (request, reply) => {
+    const session = await request.iam.getSession(); // null when signed out
+    if (!session) return reply.redirect('/login', 303);
+    return {
+      name: session.identity.name,
+      email: session.identity.email,
+      tenantId: session.session.tenantId,
+      mfa: session.session.mfa,
+    };
+  });
+}
+```
+
+`getSession()` resolves to `null` instead of throwing when the request has no usable session: no credential, or
+the server answers `UNAUTHENTICATED`, `MFA_REQUIRED`, `EMAIL_UNVERIFIED`, `TENANT_INACTIVE`, or
+`TENANT_UNAVAILABLE`. `requireSession({ stepUp? })` returns the session or throws an `IamRequestError` (`401`, or
+`403` with a `reason`). The helper calls `iam.api.auth.getSession` in process; browsers reach the same method over
+HTTP.
+
+**Route:** `POST /api/iam/auth/getSession`
+
+### Check permissions for rendering
+
+`can` returns an <Term id="advisory">advisory</Term> boolean. Checks made in the same tick share one
+`authorizeMany` call, so a page with many buttons costs one round trip.
+
+```ts title="src/routes/toolbar.ts"
+import type { FastifyInstance } from 'fastify';
+import { iamFastify } from '../iam-fastify.js';
+
+export async function toolbar(app: FastifyInstance) {
+  app.get<{ Params: { id: string } }>(
+    '/projects/:id/toolbar',
+    { preHandler: iamFastify.requireSession() },
+    async (request) => {
+      const project = { type: 'project', id: request.params.id };
+      const [canEdit, canDelete, canInvite] = await Promise.all([
+        request.iam.can('projects:update', project),
+        request.iam.can('projects:delete', project),
+        request.iam.can('iam:identities:create'),
+      ]);
+      return { canEdit, canDelete, canInvite };
+    },
+  );
+}
+```
+
+`request.iam.authorize(checks, { tenantId? })` returns `{ action, resource, allowed, reason }[]` for a list of
+checks. Advisory checks decide what to show; enforce the operation itself with a guard or `request.iam.require`.
+
+### Filter lists
+
+`plan({ action, type, tenantId? })` returns the resources of a type the caller may act on as a filter for your own
+query (`never` when signed out). `listAccessible({ action, type, tenantId?, limit?, offset? })` lists registered
+resources of a managed type. See [Data filtering](/docs/authorization/data-filtering) for compiling a plan to SQL,
+Prisma, or MongoDB.
+
+```ts title="src/routes/document-list.ts"
+import type { FastifyInstance } from 'fastify';
+import { filterToSql } from 'better-iam/core';
+import { iamFastify } from '../iam-fastify.js';
+import { columns, db } from '../data.js'; // your data layer: a field-to-column map and a SQL client
+
+export async function documentList(app: FastifyInstance) {
+  app.get('/documents', { preHandler: iamFastify.requireSession() }, async (request) => {
+    const plan = await request.iam.plan({ action: 'documents:read', type: 'document' });
+    if (plan.kind === 'never') return [];
+    const where = filterToSql(plan.filter, {
+      dialect: 'postgres',
+      column: (field) => columns[field],
+      offset: 1,
+    });
+    const sql = `SELECT * FROM documents d WHERE d.tenant_id = $1 AND ${where.sql}`;
+    return db.query(sql, [plan.tenantId, ...where.params]);
+  });
+}
+```
+
+### Sign in and out
+
+The in-process client (`request.iam.client`) is the full typed client with `iam.handler` as its transport. The
+cookies the server issues are set on this reply, so a plain HTML form can sign someone in without client JavaScript.
+Fastify parses JSON bodies itself; register `@fastify/formbody` to accept `application/x-www-form-urlencoded` form
+posts.
+
+<Tabs items={['Server', 'Client']}>
+<Tab value="Server">
+
+```ts title="src/routes/auth.ts"
+import type { FastifyInstance } from 'fastify';
+import { safeRedirectPath } from 'better-iam/middleware';
+import { iam } from '../iam.js';
+
+type LoginRoute = {
+  Body: { org: string; email: string; password: string };
+  Querystring: { next?: string };
+};
+
+export async function auth(app: FastifyInstance) {
+  app.post<LoginRoute>('/login', async (request, reply) => {
+    const { tenantId } = await iam.api.tenants.lookup({ slug: request.body.org });
+    const result = await request.iam.client.auth.signIn({
+      tenantId,
+      email: request.body.email,
+      password: request.body.password,
+    });
+    if ('mfaRequired' in result) return reply.redirect(`/verify?challenge=${result.challenge}`, 303);
+    return reply.redirect(safeRedirectPath(request.query.next), 303);
+  });
+
+  app.post('/logout', async (request, reply) => {
+    await request.iam.signOut(); // ends the session and clears its cookie; never throws for a dead session
+    return reply.redirect('/', 303);
+  });
+}
+```
+
+</Tab>
+<Tab value="Client">
+
+```ts title="web/login.ts"
+import { client } from './iam-client.js';
+
+export async function signIn(org: string, email: string, password: string) {
+  const { tenantId } = await client.tenants.lookup({ slug: org });
+  const result = await client.auth.signIn({ tenantId, email, password });
+  if ('mfaRequired' in result) return { challenge: result.challenge }; // complete the second factor next
+  return { signedIn: true };
+}
+```
+
+</Tab>
+</Tabs>
+
+**Route:** `POST /api/iam/auth/signIn`, `POST /api/iam/auth/signOut`, `POST /api/iam/tenants/lookup`
+
+`safeRedirectPath` accepts only same-site paths and falls back to `/`, so `?next=` cannot become an open redirect. A
+failed sign-in throws the server's error (for example `INVALID_CREDENTIALS` or `RATE_LIMITED`), which the error
+handler answers with the JSON envelope; catch it to render the form again with the code instead. See
+[MFA](/docs/authentication/mfa#completing-a-challenge) for completing a challenge.
+
+### Call the server API directly
+
+`request.iam.credential()` returns `{ headers }` for direct `iam.api.*` calls, including cookies set earlier in the
+same request.
+
+```ts title="src/routes/sessions.ts"
+import type { FastifyInstance } from 'fastify';
+import { iam } from '../iam.js';
+import { iamFastify } from '../iam-fastify.js';
+
+export async function sessions(app: FastifyInstance) {
+  app.get('/me/sessions', { preHandler: iamFastify.requireSession() }, async (request) =>
+    iam.api.auth.listSessions(request.iam.credential()),
+  );
+}
+```
+
+**Route:** `POST /api/iam/auth/listSessions`
+
+### API keys and session tokens
+
+`requireSession` and the `authorize` guard build on `auth.getSession`, which serves signed-in people only, so API
+keys and temporary credentials are refused there with `401`. Machine routes check them through the helpers, which
+pass the request's `Authorization` header to the server: `request.iam.require(action, resource, { tenantId })` with
+an explicit tenant, or `iam.api.*` with `request.iam.credential()`.
+
+```ts title="src/routes/imports.ts"
+import type { FastifyInstance } from 'fastify';
+import { iam } from '../iam.js';
+import { runImport } from '../data.js'; // your data layer
+
+export async function imports(app: FastifyInstance) {
+  app.post('/hooks/import', async (request) => {
+    const caller = await iam.api.sts.getCallerIdentity(request.iam.credential());
+    await request.iam.require('imports:run', undefined, { tenantId: caller.tenantId });
+    return runImport(request.body);
+  });
+}
+```
+
+**Route:** `POST /api/iam/sts/getCallerIdentity`
+
+Bearer requests skip the CSRF check. Services that only need to verify session JWTs offline use
+`createSessionTokenVerifier` from `better-iam/session-tokens`; see
+[Temporary access](/docs/authorization/temporary-access).
+
+## Organizations
+
+Every session acts in one <Term id="tenant">tenant</Term> (an organization). Guards and helpers default to it: the
+tenant is `session.session.tenantId`, and a check with no resource targets the tenant itself.
+
+### Check in another tenant
+
+Pass `tenantId` to check against a different tenant, for example a child organization the URL names. The server
+decides whether the caller's credential may act there.
+
+```ts title="src/routes/org-members.ts"
+import type { FastifyInstance, FastifyRequest } from 'fastify';
+import { iam } from '../iam.js';
+import { iamFastify } from '../iam-fastify.js';
+
+type OrgRoute = { Params: { tenantId: string } };
+
+export async function orgMembers(app: FastifyInstance) {
+  app.get<OrgRoute>(
+    '/orgs/:tenantId/members',
+    {
+      preHandler: iamFastify.authorize('iam:identities:read', {
+        tenantId: (request) => (request as FastifyRequest<OrgRoute>).params.tenantId,
+      }),
+    },
+    async (request) =>
+      iam.api.identities.list(request.iam.credential(), { tenantId: request.params.tenantId }),
+  );
+}
+```
+
+Inside a route, the same option is `request.iam.require(action, resource, { tenantId })` and
+`request.iam.can(action, resource, { tenantId })`.
+
+### The organization in the URL
+
+When each organization lives under its own path (`/acme/projects`), resolve the alias with `tenants.lookup` and
+send visitors whose session belongs to another organization to sign in there.
+
+```ts title="src/routes/org-projects.ts"
+import type { FastifyInstance } from 'fastify';
+import { safeRedirectPath, tenantOf, withQuery } from 'better-iam/middleware';
+import { iam } from '../iam.js';
+import { listProjects } from '../data.js'; // your data layer
+
+export async function orgProjects(app: FastifyInstance) {
+  app.get<{ Params: { org: string } }>('/:org/projects', async (request, reply) => {
+    const slug = request.params.org;
+    const organization = await iam.api.tenants.lookup({ slug }); // NOT_FOUND for unknown or inactive aliases
+    if (tenantOf(await request.iam.getSession()) !== organization.tenantId) {
+      const back = safeRedirectPath(request.url);
+      return reply.redirect(withQuery('/login', { org: slug, next: back }), 303);
+    }
+    await request.iam.require('projects:read'); // the session's tenant is the organization's tenant here
+    return listProjects(organization.tenantId);
+  });
+}
+```
+
+**Route:** `POST /api/iam/tenants/lookup`
+
+A person with identities in several organizations can list them with `links.list` and switch with `links.switch`;
+see [Tenants and identities](/docs/concepts/tenants-and-identities).
+
+### Organization addresses
+
+With [organization sign-in addresses](/docs/operations/deployment/hosts-and-regions) (`acme.signin.example.com`),
+calls through `request.iam.client` keep the host the visitor is on, so the server pins them to that organization
+exactly as it would a browser call: sign-in on Acme's address needs no `tenantId`, and credentials of other
+organizations are refused with `HOST_MISMATCH`. `iam.hosts.resolve(host)` tells your own hooks which organization
+an address belongs to.
+
+## Options
+
+`createIamFastify(iam, options)` takes the instance, or a function returning it (or a promise of it), and these
+options:
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `loginPath` | `string` | none | Where signed-out page navigations (a `GET` with `Accept: text/html`) are redirected, with `?next=`. Without it they get the JSON `401` |
+| `stepUpPath` | `string` | none | Where page navigations go when the session must step up, with `?next=` and `?reason=`. Without it they get the JSON `403` |
+| `serve` | `string[]` | `[basePath]` | Path prefixes the IAM server answers. Add protocol mounts outside the base path, such as `/oauth` |
+| `basePath` | `string` | the instance's `endpoint.basePath`, else `/api/iam` | Where the IAM API is served; the default `serve` prefix and the in-process client's target |
+| `trustedOrigins` | `string[]` | `[]` | Origins besides the request's own and the IAM origin that may send cookie-authenticated unsafe requests to guarded routes |
+| `csrf` | `boolean` | `true` | Check the `Origin` of cookie-authenticated `POST`, `PUT`, `PATCH`, and `DELETE` requests in guards. Turn off only when something else checks origins |
+| `now` | `() => number` | `Date.now` | The clock for step-up recency checks, for tests |
+
+The returned object:
+
+| Member | What it does |
+| --- | --- |
+| `plugin` | Register with `app.register(iamFastify.plugin)`: answers the IAM API under the `serve` prefixes in `onRequest` and decorates `request.iam` |
+| `requireSession({ stepUp? })` | A `preHandler` requiring a session, and a step-up when given |
+| `authorize(action, { resource?, tenantId?, stepUp? })` | A `preHandler` requiring a session allowed to perform `action` |
+| `errorHandler` | For `app.setErrorHandler`: IAM refusals become the JSON envelope or a redirect; other errors are rethrown |
+| `helpers(request, reply)` | The per-request helpers (the same object as `request.iam`) |
+| `resolve()` | Resolves the instance |
+
+The members of `request.iam` are listed under [Per-request helpers](/docs/integrations/node#per-request-helpers).
+
+## Errors
+
+| Code | Status | When |
+| --- | --- | --- |
+| [`UNAUTHENTICATED`](/docs/reference/errors#unauthenticated) | 401 | A guard or `requireSession` ran with no usable session |
+| [`MFA_REQUIRED`](/docs/reference/errors#mfa_required) | 403 | `stepUp.mfa` was not met; `reason` is `mfa` |
+| [`RECENT_AUTH_REQUIRED`](/docs/reference/errors#recent_auth_required) | 403 | `stepUp.maxAgeMs` was not met; `reason` is `recent` |
+| [`IMPERSONATION_RESTRICTED`](/docs/reference/errors#impersonation_restricted) | 403 | An impersonated session met a `maxAgeMs` or `'fresh'` requirement; `reason` is `impersonation` |
+| [`ACCESS_DENIED`](/docs/reference/errors#access_denied) | 403 | `authorize` or `request.iam.require` was denied |
+| [`UNTRUSTED_ORIGIN`](/docs/reference/errors#untrusted_origin) | 403 | A cookie-authenticated unsafe request came from an untrusted origin |
+| [`CSRF_REJECTED`](/docs/reference/errors#csrf_rejected) | 403 | A cookie-authenticated unsafe request had no `Origin` |
+| [`INVALID_INPUT`](/docs/reference/errors#invalid_input) | 400 | An `authorize` guard had no tenant to check in |
+
+`errorHandler` answers any error that carries an IAM `code` and HTTP `status` (`IamRequestError`, the server's
+`IamError`, `QUOTA_EXCEEDED`, `NOT_FOUND` from `tenants.lookup`) with that status and
+`{ "error": { "code", "message" } }`. When the instance has no `nodeHandler`, the plugin buffers IAM request bodies
+itself and answers `413` with plain text above 2 MiB.
+
+## Related
+
+<Cards>
+  <Card icon={<Express />} title="Express" href="/docs/integrations/express">
+    The same helpers and guards as Express middleware.
+  </Card>
+  <Card icon={<Hono />} title="Hono" href="/docs/integrations/hono">
+    The same helpers and guards for Hono on Node, Bun, Deno, and Workers.
+  </Card>
+  <Card icon={<Nodejs />} title="Node and custom servers" href="/docs/integrations/node">
+    The per-request helpers, the CSRF rule, and the core for other frameworks.
+  </Card>
+  <Card icon={<Globe />} title="Typed client" href="/docs/concepts/client">
+    Call the API you mounted from the browser.
+  </Card>
+  <Card icon={<ShieldCheck />} title="Policies" href="/docs/authorization/policies">
+    What `authorize` guards evaluate.
+  </Card>
+  <Card icon={<Building />} title="Hosts and regions" href="/docs/operations/deployment/hosts-and-regions">
+    Organization sign-in addresses and pinning.
+  </Card>
+</Cards>

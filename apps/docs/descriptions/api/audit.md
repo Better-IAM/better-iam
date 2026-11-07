@@ -4,7 +4,7 @@ The audit log records who did what in a tenant; this group searches it, verifies
 exports it for archiving. Every provisioning operation, denial, sign-in, and access-lifecycle event is recorded.
 Compliance, incident response, and support all start with "who did what, when": the log answers that, and its
 hash chain lets you prove to an auditor that no record was altered or removed afterwards. See
-[the audit chain](/docs/guides/events/audit-chain).
+[the audit chain](/docs/concepts/events/audit-chain).
 
 ## What an audit event holds
 

@@ -15,7 +15,7 @@ answers "who holds what".
 
 ## Why a binding needs grant authority
 
-Every binding is created under a [grant authority](/docs/guides/authorization/roles#grant-authorities): the
+Every binding is created under a [grant authority](/docs/authorization/roles#grant-authorities): the
 delegated right to hand out access, with a ceiling on what it may ever grant. Pass `authorityId` to pick one of
 your own authorities; otherwise the server uses your root-issued authority (root administrators) or your first
 active delegated authority. A caller with no active authority gets `GRANT_AUTHORITY_REQUIRED`. The binding stores
@@ -44,14 +44,14 @@ changing the role:
 | `eligible` | The binding grants nothing until its subject activates it, for a bounded time. |
 
 A group binding reaches every live member of the group, so membership changes grant and remove the role too. See
-[temporary access](/docs/guides/authorization/temporary-access) for dates and windows.
+[temporary access](/docs/authorization/temporary-access) for dates and windows.
 
 ## Just-in-time activation
 
 An eligible binding records that its subject _may_ hold a role. The subject activates it with `activate` when they
 need the role, and it lapses on its own. That keeps administrator and production roles out of everyday sessions
 while every elevation leaves a record with a reason. The full walkthrough is in
-[just-in-time elevation](/docs/guides/privileged-access/elevation).
+[just-in-time elevation](/docs/features/privileged-access/elevation).
 
 Each eligible binding carries its activation rules:
 
@@ -234,7 +234,7 @@ Gives a role to a person, service account, or group under your grant authority, 
   `INVALID_INPUT` for an invalid subject type, date, or window, a `startsAt` that is not before `expiresAt`, or
   activation settings on a binding that is not eligible; `CONFLICT` when the subject already has a binding of this
   role under the same authority; `SOD_CONFLICT` when the binding would give someone a combination of roles a
-  [separation-of-duties rule](/docs/guides/authorization/separation-of-duties) forbids; `INVARIANT_VIOLATION` when it
+  [separation-of-duties rule](/docs/authorization/separation-of-duties) forbids; `INVARIANT_VIOLATION` when it
   would newly break an enforced [access invariant](/docs/reference/api/invariants).
 
 Bind roles to groups where you can: people then gain and lose the role as they join and leave, without anyone
@@ -567,7 +567,7 @@ Changes a binding's start, expiry, access window, or eligibility settings in pla
 Pass `null` to clear `startsAt`, `expiresAt`, `window`, or `approverGroupId`. The binding keeps its id and its
 authority. `eligible: false` turns an eligible binding into a standing one, drops its activation settings, and ends
 every activation and pending request of it; `eligible: true` does the reverse, so the subject stops holding the role
-until they activate it. Editing a binding that an [access package](/docs/guides/privileged-access/access-packages)
+until they activate it. Editing a binding that an [access package](/docs/features/privileged-access/access-packages)
 created takes it over: revoking the package no longer removes it.
 
 ```ts

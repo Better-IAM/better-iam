@@ -3,7 +3,7 @@
 Access paths tell a denied person what they can do on their own to be allowed, such as stepping up to MFA or
 requesting a package. When your application refuses an action, `accessPaths.find` lists those options, so the error
 page can offer a button instead of "contact your administrator". See the
-[access paths guide](/docs/guides/governance/access-paths).
+[access paths guide](/docs/features/governance/access-paths).
 
 ## How paths are verified
 
@@ -15,7 +15,7 @@ access that would still be refused:
 - **`accept-agreements`**: accept the required [agreements](/docs/reference/api/agreements) the person still owes,
   listed with the versions to accept.
 - **`activate`**: activate one of the person's eligible
-  [just-in-time bindings](/docs/guides/privileged-access/elevation), held directly or through a group, with the
+  [just-in-time bindings](/docs/features/privileged-access/elevation), held directly or through a group, with the
   binding's activation settings (`requireApproval`, `requireJustification`, `requireMfa`, `maxActivationMs`). Listed
   only when the person holds `iam:bindings:activate` on the role.
 - **`request-package`**: request a requestable [access package](/docs/reference/api/packages#request). Listed only

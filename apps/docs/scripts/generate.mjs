@@ -1864,7 +1864,7 @@ async function generateExportsPage() {
     '[Types](/docs/reference/types), and hovering a name in a code example shows its full type.',
     '',
     'Each entry point is also available through the umbrella `better-iam` package; see',
-    '[Installation](/docs/guides/installation#all-packages) for the subpath map.',
+    '[Installation](/docs/installation#all-packages) for the subpath map.',
     '',
   ];
   let total = 0;

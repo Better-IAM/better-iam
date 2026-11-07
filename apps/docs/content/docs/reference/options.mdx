@@ -1,0 +1,1164 @@
+---
+title: Options
+metaTitle: betterIam() options reference
+description: Every option betterIam() accepts, grouped by area, with its type, default, allowed range, and a short example, read from the server's option types.
+icon: SlidersHorizontal
+packages: ['@better-iam/server', '@better-iam/auth', '@better-iam/core']
+sources:
+  - packages/server/src/options.ts
+  - packages/server/src/index.ts
+  - packages/server/src/define.ts
+  - packages/auth/src/types.ts
+  - packages/auth/src/service/base.ts
+  - packages/auth/src/rate-limit.ts
+  - packages/auth/src/password-policy.ts
+  - packages/core/src/index.ts
+  - packages/server/src/hosts.ts
+  - packages/server/src/api/domains.ts
+  - packages/server/src/observe.ts
+  - packages/server/src/metrics.ts
+  - packages/server/src/audit-archive.ts
+  - packages/server/src/usage.ts
+  - packages/server/src/inference.ts
+  - packages/server/src/a2a.ts
+  - packages/server/src/billing.ts
+  - packages/server/src/ssh.ts
+  - packages/server/src/vc.ts
+  - packages/server/src/vault.ts
+  - packages/server/src/http.ts
+---
+
+import { Server, SlidersHorizontal, OctagonAlert, Rocket } from '@/lib/icons';
+
+This page lists every option of `BetterIamOptions`, the object you pass to `betterIam()`. Each option has its own
+heading with its type, default, the range enforced at startup, and a short example. Use it as a lookup table; for
+advice on which options a production deployment changes, read the
+[Configuration reference](/docs/operations/deployment/configuration).
+
+Three options are required: `database`, `secret`, and `baseURL`. Every other option is optional and has a safe
+default. Durations are in milliseconds unless the option name ends in `Seconds` or `Days`.
+
+## A complete configuration
+
+The examples below each show only the option they describe. A real instance always carries the three required
+options, as in this minimal configuration:
+
+```ts title="iam.ts"
+import { betterIam } from 'better-iam';
+import { sqliteAdapter } from 'better-iam/adapter-sqlite';
+
+export const iam = betterIam({
+  database: sqliteAdapter({ filename: './iam.db' }),
+  secret: process.env.BETTER_IAM_SECRET!, // at least 32 characters
+  baseURL: process.env.BETTER_IAM_BASE_URL!, // https, or http on localhost
+});
+```
+
+When the CLI must load the same options, put them in `better-iam.config.mjs` (or `.ts`) as the default export.
+`defineConfig` from `better-iam/server` types the object, or a factory that receives `{ command, env, cwd }`, and
+returns it unchanged:
+
+```ts title="better-iam.config.ts"
+import { defineConfig } from 'better-iam/server';
+import { postgresAdapter } from 'better-iam/adapter-postgres';
+
+export default defineConfig(({ env = process.env } = {}) => ({
+  database: postgresAdapter({ connectionString: env.DATABASE_URL! }),
+  secret: env.BETTER_IAM_SECRET!,
+  baseURL: env.BETTER_IAM_BASE_URL ?? 'http://localhost:3000',
+}));
+```
+
+In your server, call `betterIam(await configOptions(config))` (also from `better-iam/server`) to turn a factory
+into options. The CLI also reads a named `cli` export from the same module (flag defaults for its commands); that
+export is CLI configuration, not a `betterIam()` option. See [CLI](/docs/concepts/cli).
+
+## How options are validated
+
+`betterIam()` validates the whole configuration once, when it runs. A missing required option, a value outside its
+range, or an unknown key in a strict group (`clearances`) throws an `IamError` with code `INVALID_CONFIG` before
+the instance exists. The message names the field, for example `sts.maxRoleSessionSeconds must be an integer from
+900 to 43200` or `vault.maxValueBytes must be an integer from 16 to 1048576`. Because a misconfiguration fails at
+startup, it never surfaces on the first request instead.
+
+Options that switch on an optional module (`inference`, `ssh`, `verifiableCredentials`, `clearances`, `a2a`) leave
+it off when absent. Calling one of its API methods on a deployment where it is off fails with `FEATURE_DISABLED`
+(403).
+
+| Area | Options |
+| --- | --- |
+| [Core](#core) | `database`, `secret`, `previousSecrets`, `baseURL`, `basePath`, `trustedOrigins` |
+| [Authentication](#authentication) | `authentication` (with `rateLimits` and `passwordPolicy`), `http` |
+| [Tenancy and catalog](#tenancy-and-catalog) | `hierarchy`, `permissions`, `onboarding`, `tenantDefaults`, `domains`, `hosts`, `regions` |
+| [Application callbacks](#application-callbacks) | `resolveResource`, `resolveContext` |
+| [Access workflows](#access-workflows) | `accessRequests`, `accessUsage` |
+| [Events, audit, and telemetry](#events-audit-and-telemetry) | `events`, `auditArchive`, `observability` |
+| [Extensions and protocols](#extensions-and-protocols) | `plugins`, `protocols` |
+| [Temporary credentials](#temporary-credentials) | `sts` (with `jwt` and `webIdentity`) |
+| [Optional modules](#optional-modules) | `inference`, `a2a`, `billing`, `ssh`, `verifiableCredentials`, `clearances`, `vault`, `signals` |
+
+## Core
+
+The core options say where data is stored, which secret protects it, and where the deployment is reachable.
+
+### database
+
+| Type | Default | Required |
+| --- | --- | --- |
+| `IamStore` | none | yes |
+
+The storage adapter every IAM record is written to. Use `postgresAdapter` from `better-iam/adapter-postgres`,
+`sqliteAdapter` from `better-iam/adapter-sqlite`, `libsqlAdapter` from `better-iam/adapter-libsql`, or your own
+implementation of the `IamStore` contract. A missing value fails with `INVALID_CONFIG` (`database is required`).
+See [Databases](/docs/databases).
+
+```ts title="iam.ts"
+import { betterIam } from 'better-iam';
+import { postgresAdapter } from 'better-iam/adapter-postgres';
+
+export const iam = betterIam({
+  database: postgresAdapter({ connectionString: process.env.DATABASE_URL! }),
+  // ...secret, baseURL
+});
+```
+
+### secret
+
+| Type | Default | Required |
+| --- | --- | --- |
+| `string` | none | yes, at least 32 characters |
+
+The deployment secret. It encrypts the secrets Better IAM stores (authenticator secrets, webhook secrets, pending
+outbox deliveries, and modules' sealed values such as vault secrets, KMS key material, SSH CA keys, and inference
+provider keys), keys the digests of one-time challenges, and derives the service-assertion signing key. Keep it stable across restarts and
+processes: replacing it outright makes enrolled factors and webhook secrets unusable. Rotate it with
+[`previousSecrets`](#previoussecrets). It does not sign session JWTs, which use [`sts.jwt`](#stsjwt).
+
+```ts title="iam.ts"
+import { betterIam } from 'better-iam';
+
+export const iam = betterIam({
+  secret: process.env.BETTER_IAM_SECRET!,
+  // ...database, baseURL
+});
+```
+
+### previousSecrets
+
+| Type | Default | Range |
+| --- | --- | --- |
+| `string[]` | none | at most 5 distinct values, each at least 32 characters, none equal to `secret` |
+
+Deployment secrets being rotated out. Everything they sealed or signed keeps working while new values use `secret`.
+`iam.rotateSecrets()` re-seals stored values with the current secret, after which you remove the old ones. See
+[Secrets and keys](/docs/operations/deployment/secrets).
+
+```ts title="iam.ts"
+import { betterIam } from 'better-iam';
+
+export const iam = betterIam({
+  secret: process.env.BETTER_IAM_SECRET!,
+  previousSecrets: [process.env.BETTER_IAM_PREVIOUS_SECRET!],
+  // ...database, baseURL
+});
+```
+
+### baseURL
+
+| Type | Default | Required |
+| --- | --- | --- |
+| `string` | none | yes |
+
+The public URL people and clients reach the deployment at. It must use `https:`, except on the loopback hosts
+`localhost`, `127.0.0.1`, and `[::1]` (`INVALID_CONFIG`: `HTTPS is required outside localhost`). Its origin is
+always a trusted origin. On HTTPS the session cookie is named `__Host-better-iam.session`; on plain HTTP it is
+`better-iam.session`.
+
+```ts title="iam.ts"
+import { betterIam } from 'better-iam';
+
+export const iam = betterIam({
+  baseURL: 'https://identity.example.com',
+  // ...database, secret
+});
+```
+
+### basePath
+
+| Type | Default |
+| --- | --- |
+| `string` | `'/api/iam'` |
+
+The URL path the HTTP handler answers under. It must start with `/`, contain only letters, digits, underscores,
+hyphens, and slashes, and not end with `/` (`INVALID_CONFIG`: `Invalid basePath`). Browser clients and framework
+integrations must use the same path.
+
+```ts title="iam.ts"
+import { betterIam } from 'better-iam';
+
+export const iam = betterIam({
+  basePath: '/auth',
+  // ...database, secret, baseURL
+});
+```
+
+### trustedOrigins
+
+| Type | Default |
+| --- | --- |
+| `string[]` | the `baseURL` origin only |
+
+Additional exact origins (scheme, host, and port) allowed to call the handler from a browser. Add your application's
+origin when it differs from `baseURL`, for example `https://app.example.com` calling
+`https://identity.example.com`. Each entry must be an exact origin with no path (`INVALID_CONFIG`:
+`Trusted origins must be exact origins`). Browser requests from any other `Origin` are refused with
+`UNTRUSTED_ORIGIN`.
+
+```ts title="iam.ts"
+import { betterIam } from 'better-iam';
+
+export const iam = betterIam({
+  baseURL: 'https://identity.example.com',
+  trustedOrigins: ['https://app.example.com'],
+  // ...database, secret
+});
+```
+
+## Authentication
+
+### authentication
+
+| Type | Default |
+| --- | --- |
+| `Omit<AuthOptions, 'store' \| 'secret' \| 'previousSecrets' \| 'baseURL' \| 'trustedOrigins'>` | `{}` |
+
+How people sign in, how sessions behave, and how email and SMS leave the system. `store`, `secret`,
+`previousSecrets`, `baseURL`, and `trustedOrigins` come from the top level. The server wires `onAudit` and
+`deliverWebhook` itself; use [`events`](#events) to receive events or replace the webhook transport.
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `appName` | `string` | `'Better IAM'` | Your product name as the issuer in authenticator-app labels and the default passkey `rpName`. Built-in email templates take their own `appName` (`TemplateOptions` in `better-iam/auth/templates`). |
+| `signUpEnabled` | `boolean` | `false` | Lets anyone create an account with email and password. |
+| `requireEmailVerification` | `boolean` | `signUpEnabled` | Refuses sign-in until the address is verified. Needs `sendEmail`. |
+| `emailPassword` | `boolean` | `true` | Password sign-in, sign-up, and reset. `false` disables all three. |
+| `passwordlessEmail` | `boolean` | `false` | Magic links and one-time email codes. Needs `sendEmail`. |
+| `passwordlessSms` | `boolean` | `false` | One-time SMS codes. Needs `sendSms`. |
+| `sendEmail` | `(message: DeliveryMessage) => Promise<void>` | none | Your email transport, called by the outbox outside the write transaction. Throw to retry; deduplicate by `message.id`. |
+| `sendSms` | `(message: DeliveryMessage) => Promise<void>` | none | Your SMS transport, with the same contract as `sendEmail`. |
+| `maxDeliveryAttempts` | `number` | `25` | Failed attempts (1 to 1000) before the outbox abandons a message. |
+| `sessionLifetimeMs` | `number` | 7 days | Absolute session lifetime, one minute to thirty days. |
+| `sessionIdleTimeoutMs` | `number` | the smaller of the lifetime and 1 day | Idle timeout, one minute to the absolute lifetime. |
+| `recentAuthenticationMs` | `number` | 5 minutes | How long a sign-in counts as recent for sensitive operations, one second to fifteen minutes. |
+| `trustedDeviceLifetimeMs` | `number` | 30 days | How long "remember this device" skips MFA. `0` disables it; otherwise one minute to 365 days. |
+| `signInNotifications` | `boolean` | `false` | Queues a `new-sign-in` email when a session starts from a client none of the person's live sessions or remembered devices has used. Tenants override it with `notifyNewSignIn`. |
+| `mfaEmailCodes` | `boolean` | `false` | Lets people without an authenticator satisfy MFA with an emailed one-time code. Never applies to root administrators. Tenants override it. |
+| `failedSignInAlerts` | `number` | `0` | Emails a `sign-in-failures` alert after this many failed attempts since the last sign-in. `0` disables it; at most 1000; needs `sendEmail`. |
+| `rateLimits` | `RateLimitOptions` | see [below](#authenticationratelimits) | Attempt limits for authentication flows. |
+| `requireMfa` | `(tenant: Tenant, identity: Identity) => boolean \| Promise<boolean>` | none | A deployment-wide rule deciding who must complete MFA. Tenant policies add to it. |
+| `passkeys` | `{ rpID: string; rpName?: string }` | off | Enables WebAuthn passkeys. `rpID` must equal, or be a parent domain of, the host of every trusted origin. `rpName` defaults to `appName`. |
+| `passwordPolicy` | `PasswordPolicyOptions` | see [below](#authenticationpasswordpolicy) | Deployment-wide password screening. |
+| `now` | `() => number` | `Date.now` | Replaces the clock, for deterministic tests. The whole server uses it. |
+
+`DeliveryMessage` carries `id`, `tenantId`, `to`, `template`, `payload` (string values), and, when
+[`hosts`](#hosts) or [`regions`](#regions) are configured, `signInUrl` with the organization's own sign-in address.
+
+```ts title="iam.ts"
+import { betterIam } from 'better-iam';
+
+export const iam = betterIam({
+  authentication: {
+    appName: 'Acme',
+    passwordlessEmail: true,
+    sessionLifetimeMs: 24 * 60 * 60_000,
+    passkeys: { rpID: 'example.com' },
+    sendEmail: async (message) => {
+      await mailer.send({ id: message.id, to: message.to, template: message.template, data: message.payload });
+    },
+  },
+  // ...database, secret, baseURL
+});
+```
+
+`mailer` stands for your own email provider client. See [Email and SMS delivery](/docs/concepts/email-and-sms) and
+[Sessions](/docs/authentication/sessions).
+
+### authentication.rateLimits
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `attempts` | `number` | `10` | Attempts per window for ordinary flows such as password sign-in (1 to 100000). |
+| `sensitiveAttempts` | `number` | `5` | Attempts per window for MFA, recovery, and delivery requests (1 to 100000). |
+| `windowMs` | `number` | 15 minutes | The rolling window, one second to 24 hours. |
+| `ipAttempts` | `number` | `0` | Attempts per window from one client IP across every authentication flow of a tenant (0 to 1000000; `0` disables it). Needs a recorded IP from [`http.clientInfo`](#http). |
+| `limiter` | `RateLimiter` | counters in the IAM database | Replaces the counter store. Implement `consume()`, and optionally `reset()` so administrators can unlock accounts. |
+
+A refused attempt fails with `RATE_LIMITED` (429). `createMemoryRateLimiter()` and `createStoreRateLimiter(store)`
+from `better-iam/auth` are the built-in limiters; the in-memory one suits single-process deployments and tests.
+
+```ts title="iam.ts"
+import { betterIam } from 'better-iam';
+
+export const iam = betterIam({
+  authentication: {
+    rateLimits: { attempts: 5, windowMs: 10 * 60_000, ipAttempts: 200 },
+  },
+  // ...database, secret, baseURL
+});
+```
+
+### authentication.passwordPolicy
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `blockCommonPasswords` | `boolean` | `true` | Rejects well-known, keyboard-walk, sequential, and low-variety passwords from a short built-in list. |
+| `isBreached` | `(password: string) => Promise<boolean>` | none | Returns `true` when the password appears in a breach corpus. |
+| `check` | `(password, { tenantId, identity? }) => string \| undefined \| Promise<string \| undefined>` | none | Your own rule: return a message to reject the password, or nothing to accept it. |
+
+Passwords are hashed with Argon2id and need at least 12 characters whatever this policy says; tenant policies add
+their own rules (`minPasswordLength`, `passwordHistory`, and others) on top. `pwnedPasswords()` from
+`better-iam/auth` is a Have I Been Pwned client for `isBreached` that sends only a five-character SHA-1 prefix.
+
+```ts title="iam.ts"
+import { betterIam } from 'better-iam';
+import { pwnedPasswords } from 'better-iam/auth';
+
+export const iam = betterIam({
+  authentication: {
+    passwordPolicy: {
+      isBreached: pwnedPasswords(),
+      check: (password) => (/acme/i.test(password) ? 'Do not use the company name' : undefined),
+    },
+  },
+  // ...database, secret, baseURL
+});
+```
+
+### http
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `clientInfo` | `(request: Request) => SessionClientInfo \| undefined` | records the `User-Agent` header only | Derives the client details (`ip`, `userAgent`, `label`) recorded on sessions a request issues. |
+| `cookieSameSite` | `'lax' \| 'strict'` | `'lax'` | `SameSite` of the session and device cookies. |
+| `persistentCookies` | `boolean` | `true` | `true` sets the cookie `Max-Age` to the session's remaining lifetime; `false` issues browser-session cookies. A request overrides it with the `X-Better-IAM-Persistent: 1` or `0` header. |
+
+Read the client IP only from a header that a proxy you control sets; never trust `X-Forwarded-For` otherwise. Tenant
+IP allowlists, IP-bound sessions, `rateLimits.ipAttempts`, and new-sign-in notifications all depend on a recorded
+IP. Invalid values fail with `http.cookieSameSite must be lax or strict` or `http.persistentCookies must be a
+boolean`.
+
+```ts title="iam.ts"
+import { betterIam } from 'better-iam';
+
+export const iam = betterIam({
+  http: {
+    clientInfo: (request) => ({
+      ip: request.headers.get('x-real-ip') ?? undefined, // set by your own reverse proxy
+      userAgent: request.headers.get('user-agent') ?? undefined,
+    }),
+    cookieSameSite: 'strict',
+  },
+  // ...database, secret, baseURL
+});
+```
+
+See [HTTP handler](/docs/authentication/http).
+
+## Tenancy and catalog
+
+These options describe the shape of your product: which kinds of tenants exist, which actions and resource types
+policies can name, how people join, and what every new tenant starts with.
+
+### hierarchy
+
+| Type | Default |
+| --- | --- |
+| `{ types: Record<string, { allowedChildren: string[] }>; maxDepth?: number }` | `root` → `organization` → `project`, `maxDepth` 8 |
+
+The kinds of tenants and which children each may have. It must define `root`; every allowed child must be a
+defined type other than `root`; `maxDepth` is 1 to 100.
+
+```ts title="iam.ts"
+import { betterIam } from 'better-iam';
+
+export const iam = betterIam({
+  hierarchy: {
+    types: {
+      root: { allowedChildren: ['reseller'] },
+      reseller: { allowedChildren: ['customer'] },
+      customer: { allowedChildren: ['workspace'] },
+      workspace: { allowedChildren: [] },
+    },
+    maxDepth: 6,
+  },
+  // ...database, secret, baseURL
+});
+```
+
+See [Tenants and identities](/docs/concepts/tenants-and-identities).
+
+### permissions
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `mode` | `'catalog' \| 'tenant-defined'` | `'catalog'` | `catalog`: only you declare actions and resource types. `tenant-defined`: tenants may also register their own. |
+| `actions` | `string[]` | none | Product actions not tied to a declared resource type, such as `billing:export`. |
+| `resourceTypes` | `Record<string, ResourceTypeDefinition>` | none | Your resource types. Declaring any makes policy validation check resource patterns against them. |
+| `identityAttributes` | `Record<string, 'string' \| 'number' \| 'boolean'>` | none | Typed attributes administrators may set on identities, exposed to policies as `principal.{name}`. Names cannot shadow built-in principal keys. |
+
+A `ResourceTypeDefinition` has:
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `description` | `string` | Shown to administrators. |
+| `actions` | `string[]` | Fully qualified actions for this type; they join the permission catalog. |
+| `attributes` | `Record<string, 'string' \| 'number' \| 'boolean'>` | Attribute schema exposed to conditions as `resource.{name}`. |
+| `parent` | `string` | Parent resource type, for hierarchical resources. |
+| `managed` | `boolean` | Registered with IAM (`resources.register`) and resolved from its registry instead of `resolveResource`. |
+| `relations` | `string[]` | Relation names (such as `viewer`, `editor`) identities and groups may hold on resources of this type. |
+
+```ts title="iam.ts"
+import { betterIam } from 'better-iam';
+
+export const iam = betterIam({
+  permissions: {
+    actions: ['billing:export'],
+    resourceTypes: {
+      document: {
+        actions: ['documents:read', 'documents:write'],
+        attributes: { ownerId: 'string' },
+        relations: ['viewer', 'editor'],
+      },
+      project: { managed: true, actions: ['projects:read', 'projects:manage'] },
+    },
+    identityAttributes: { department: 'string' },
+  },
+  // ...database, secret, baseURL
+});
+```
+
+See [The permission catalog](/docs/authorization/catalog).
+
+### onboarding
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `mode` | `'invitation' \| 'linked'` | `'invitation'` | `invitation` creates a separate identity per tenant. `linked` also lets people connect accounts they hold in several tenants through an explicit, recently authenticated link. |
+| `invitationLifetimeMs` | `number` | 1 day (`86400000`) | How long owner and member invitation links stay valid. |
+
+```ts title="iam.ts"
+import { betterIam } from 'better-iam';
+
+export const iam = betterIam({
+  onboarding: { mode: 'linked', invitationLifetimeMs: 7 * 86_400_000 },
+  // ...database, secret, baseURL
+});
+```
+
+### tenantDefaults
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `limits` | `TenantLimits` | none | Plan limits stamped on every tenant `tenants.create` creates: `identities`, `serviceAccounts`, `agents`, `groups`, `roles`, `policies`, `resources`, `webhooks`. |
+| `authPolicy` | `TenantAuthPolicy` | none | An authentication policy stamped on every new tenant, such as `{ requireMfa: true }`. |
+
+Both are validated at construction; errors are prefixed with `tenantDefaults:`. Creating past a limit fails with
+`LIMIT_EXCEEDED`. See [Tenant authentication policy](/docs/authentication/tenant-policy) for every
+`TenantAuthPolicy` field.
+
+```ts title="iam.ts"
+import { betterIam } from 'better-iam';
+
+export const iam = betterIam({
+  tenantDefaults: {
+    limits: { identities: 50, serviceAccounts: 5, webhooks: 3 },
+    authPolicy: { requireMfa: true, sessionLifetimeMs: 12 * 60 * 60_000 },
+  },
+  // ...database, secret, baseURL
+});
+```
+
+### domains
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `resolveTxt` | `(hostname: string) => Promise<string[][]>` | `resolveTxt` from `node:dns/promises` | The DNS TXT lookup that proves control of an email domain or custom hostname. |
+| `recordName` | `string` | `'_better-iam-challenge'` | The label under the domain that holds the TXT record. Must be a single DNS label. |
+| `blockedDomains` | `string[]` | widely used consumer mailbox providers (`gmail.com`, `outlook.com`, ...) | Domains no tenant may claim, compared exactly. Supplying it replaces the default list. |
+
+These settings serve the `domains` API group (verified email domains and home-realm discovery) and custom
+hostnames.
+
+```ts title="iam.ts"
+import { betterIam } from 'better-iam';
+
+export const iam = betterIam({
+  domains: { recordName: '_acme-verify' },
+  // ...database, secret, baseURL
+});
+```
+
+See [Enterprise onboarding](/docs/federation/enterprise-onboarding).
+
+### hosts
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `patterns` | `string[]` | `[]` | Up to 16 hostname templates. Each contains `{tenant}` (the organization's alias) exactly once and `{region}` at most once. The first is the canonical address used in sign-in URLs and email links. |
+| `customHostnames` | `boolean` | `false` | Lets organizations verify hostnames of their own with a DNS TXT record (`hostnames` API group). |
+| `cnameTarget` | `string` | none | The hostname organizations point their custom hostname at with a CNAME, shown in the setup instructions `hostnames.add` returns. |
+| `signInPath` | `string` | `'/'` | The path of your sign-in page on an organization's address. |
+| `forwardedHost` | `boolean` | `false` | Reads the address from `X-Forwarded-Host` before `Host`. Enable it only behind a proxy you control. |
+
+Requests on an organization's address are pinned to that organization. A `{region}` pattern needs the
+[`regions`](#regions) option, patterns need an HTTPS `baseURL` outside localhost, and with `passkeys` configured every
+pattern must sit under the passkey `rpID`.
+
+```ts title="iam.ts"
+import { betterIam } from 'better-iam';
+
+export const iam = betterIam({
+  hosts: {
+    patterns: ['{tenant}.signin.example.com'],
+    customHostnames: true,
+    cnameTarget: 'custom.signin.example.com',
+    signInPath: '/sign-in',
+  },
+  // ...database, secret, baseURL
+});
+```
+
+See [Sign-in addresses and regions](/docs/operations/deployment/hosts-and-regions).
+
+### regions
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `current` | `string` | required | This deployment's region, such as `'us-east-1'`. Must be one of `regions`. |
+| `regions` | `Record<string, { baseURL?: string; label?: string }>` | required | 1 to 64 regions with the base URL of each region's deployment (HTTPS outside localhost) and a display label (1 to 64 characters). |
+| `locate` | `(alias: string) => Promise<string \| undefined>` | none | For regions with separate databases: returns the region an organization alias lives in when this region's database does not know it. |
+
+Without `regions` the deployment is single-region. Sign-in for an organization homed in another region answers
+`WRONG_REGION` with its sign-in URL there.
+
+```ts title="iam.ts"
+import { betterIam } from 'better-iam';
+
+export const iam = betterIam({
+  regions: {
+    current: 'eu-west-1',
+    regions: {
+      'eu-west-1': { baseURL: 'https://eu.identity.example.com', label: 'Europe' },
+      'us-east-1': { baseURL: 'https://us.identity.example.com', label: 'United States' },
+    },
+  },
+  // ...database, secret, baseURL
+});
+```
+
+See [Multi-region deployments](/docs/guides/multi-region).
+
+## Application callbacks
+
+These callbacks connect authorization to your own data. They run as trusted server code during decisions.
+
+### resolveResource
+
+| Type | Default |
+| --- | --- |
+| `(reference: ResourceRef) => Promise<ResourceRef & { attributes?: Record<string, unknown>; classification?: ClassificationLabel \| null }>` | none |
+
+Looks up an application-owned resource (a type that is not `managed`) in your trusted storage and returns its
+`tenantId` and attributes, so policies can check ownership and attributes. It is required for such types: without
+it, their checks fail with `RESOURCE_RESOLVER_REQUIRED`. With [`clearances`](#clearances) on, it may also return a
+`classification` label, which can only raise the label IAM holds.
+
+```ts title="iam.ts"
+import { betterIam } from 'better-iam';
+
+export const iam = betterIam({
+  resolveResource: async ({ type, id }) => {
+    const document = await db.documents.find(id); // your own data access
+    return { type, id, tenantId: document.tenantId, attributes: { ownerId: document.ownerId } };
+  },
+  // ...database, secret, baseURL
+});
+```
+
+### resolveContext
+
+| Type | Default |
+| --- | --- |
+| `(principal: AuthenticatedPrincipal) => Promise<Record<string, unknown>>` | none |
+
+Adds trusted, server-derived keys to every policy evaluation, such as the plan a tenant pays for. Plugin context and
+server-owned keys take precedence over what it returns. Never pass browser input through it.
+
+```ts title="iam.ts"
+import { betterIam } from 'better-iam';
+
+export const iam = betterIam({
+  resolveContext: async (principal) => ({ plan: await plans.forTenant(principal.tenantId) }),
+  // ...database, secret, baseURL
+});
+```
+
+`plans` stands for your own billing lookup.
+
+## Access workflows
+
+### accessRequests
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `lifetimeMs` | `number` | 7 days | How long a pending access request stays open, one minute to 365 days. |
+| `maxDurationSeconds` | `number` | 90 days (`7776000`) | The longest temporary grant a request may ask for, 60 seconds to ten years. |
+
+```ts title="iam.ts"
+import { betterIam } from 'better-iam';
+
+export const iam = betterIam({
+  accessRequests: { lifetimeMs: 3 * 86_400_000, maxDurationSeconds: 30 * 86_400 },
+  // ...database, secret, baseURL
+});
+```
+
+See [Temporary access](/docs/authorization/temporary-access).
+
+### accessUsage
+
+| Type | Default |
+| --- | --- |
+| `boolean \| AccessUsageOptions` | `false` (off) |
+
+Records which actions each identity actually uses, so `roleMining.usage` and `roleMining.rightSize` can point out
+unused bindings and never-used grants. Usage is buffered in memory and written in batches; call
+`iam.flushAccessUsage()` before the process exits.
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `flushIntervalMs` | `number` | 1 minute | How often buffered usage is written. Values below one second are raised to one second. |
+| `maxBuffered` | `number` | `10000` | Buffered (identity, action) pairs that trigger an early write. |
+
+```ts title="iam.ts"
+import { betterIam } from 'better-iam';
+
+export const iam = betterIam({
+  accessUsage: { flushIntervalMs: 30_000 },
+  // ...database, secret, baseURL
+});
+```
+
+See [Usage and role mining](/docs/features/governance/usage-and-mining).
+
+## Events, audit, and telemetry
+
+### events
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `onEvent` | `(event: AuditEvent) => Promise<void> \| void` | none | Called after commit for every audit event, from the dispatcher worker, at least once. |
+| `deliverWebhook` | `(delivery: WebhookDelivery) => Promise<void>` | built-in HTTPS POST | Replaces the webhook transport. Signature headers are already computed; throw to signal failure. |
+| `webhookTimeoutMs` | `number` | `10000` | Timeout of the built-in transport, 1000 to 120000. |
+| `allowPrivateNetworks` | `boolean` | `false` | Lets webhook endpoints reach private and reserved addresses such as `10.0.0.0/8` or `169.254.169.254`. Loopback over http is allowed only while `baseURL` is http. |
+
+A `WebhookDelivery` carries `id`, `tenantId`, `webhookId`, `url`, `event`, `body`, and `headers`.
+
+```ts title="iam.ts"
+import { betterIam } from 'better-iam';
+
+export const iam = betterIam({
+  events: {
+    onEvent: async (event) => {
+      await siem.send(event); // your own sink
+    },
+    webhookTimeoutMs: 5_000,
+  },
+  // ...database, secret, baseURL
+});
+```
+
+See [Events](/docs/concepts/events) and [Webhooks](/docs/concepts/events/webhooks).
+
+### auditArchive
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `write` | `(batch: AuditArchiveBatch) => Promise<void>` | required | Stores one verified batch durably. Batches arrive in chain order per tenant; key them by `tenantId`, `fromSequence`, and `toSequence`, and reject (throw) a replacement with different content. |
+| `batchSize` | `number` | `1000` | Events per batch, 1 to 10000. |
+| `leaseMs` | `number` | 10 minutes | How long one run may hold a tenant before another may take over, one minute to one hour. |
+
+Archiving runs when you call `iam.archiveAudit()`. While `auditArchive` is set, `iam.pruneAudit` deletes only
+events already archived. `createJsonlAuditArchive` from `better-iam/server` is a file-based sink.
+
+```ts title="iam.ts"
+import { betterIam } from 'better-iam';
+
+export const iam = betterIam({
+  auditArchive: {
+    write: async (batch) => {
+      const key = `${batch.tenantId}/${batch.fromSequence}-${batch.toSequence}.json`;
+      await bucket.putIfAbsent(key, JSON.stringify(batch)); // your object storage
+    },
+    batchSize: 5_000,
+  },
+  // ...database, secret, baseURL
+});
+```
+
+See [Continuous audit archiving](/docs/operations/jobs#continuous-audit-archiving).
+
+### observability
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `onSpan` | `(span: IamSpan) => void` | none | Receives one span per operation, authorization query, authentication call, and HTTP request. Exceptions are ignored. |
+| `metrics` | `boolean \| MetricsOptions` | off | Keeps Prometheus-style counters and latency histograms in `iam.metrics`. |
+
+`MetricsOptions`:
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `buckets` | `number[]` | `[0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10]` | Histogram bucket upper bounds in seconds, sorted ascending. A bound that is not positive throws a plain `Error` (`Metrics buckets must be positive numbers`). |
+| `bearerToken` | `string` | none | Serves `GET {basePath}/metrics` to requests with `Authorization: Bearer <token>`. Without it, metrics are programmatic only. |
+| `maxSeries` | `number` | `2000` | Distinct label sets per metric before new ones collapse into `(other)`. |
+| `gauges` | `boolean` | `false` | Also reports `better_iam_outbox_messages` and `better_iam_sessions_live`, read from storage on each scrape. |
+
+An `IamSpan` has `kind`, `name`, `tenantId`, `outcome` (`ok`, `denied`, or `error`), `code`, `status`,
+`requestId`, and `durationMs`.
+
+```ts title="iam.ts"
+import { betterIam } from 'better-iam';
+
+export const iam = betterIam({
+  observability: {
+    // histogram stands for an instrument from your own metrics library
+    onSpan: (span) => histogram.observe({ kind: span.kind, outcome: span.outcome }, span.durationMs),
+    metrics: { bearerToken: process.env.METRICS_TOKEN! },
+  },
+  // ...database, secret, baseURL
+});
+```
+
+See [Observability](/docs/operations/observability).
+
+## Extensions and protocols
+
+### plugins
+
+| Type | Default |
+| --- | --- |
+| `IamPlugin[]` | `[]` |
+
+Plugins add actions, platform resource types, POST endpoints under `{basePath}/plugins/{pluginId}/...`, operation
+hooks, policy context, migrations, and purge handlers. Construction checks for unique ids, registered endpoint
+actions, and unique, well-formed endpoint paths with a validator and a handler. `createProjectsPlugin()` from
+`better-iam/projects` is the reference plugin.
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `id` | `string` | Unique plugin id. |
+| `actions` | `string[]` | Actions the plugin adds to the catalog. |
+| `resourceTypes` | `Record<string, ResourceTypeDefinition>` | Platform resource types, validated like `permissions.resourceTypes`. |
+| `endpoints` | `PluginEndpoint[]` | Endpoints, each with `method: 'POST'`, `path`, `action`, `validate`, optional `resource`, and `handler`. |
+| `hooks` | `{ beforeOperation?, afterOperation? }` | Run inside an operation's transaction; throwing aborts it. |
+| `validateConfig` | `() => void` | Called at construction. |
+| `migrate` | `(store: IamStore) => Promise<void>` | Run by `iam.initialize()` and `better-iam migrate`. |
+| `resolveContext` | `(principal) => Promise<Record<string, unknown>>` | Adds trusted keys to the policy context. |
+| `afterAudit` | `(event: AuditEvent) => Promise<void>` | Called for audit events. |
+| `purge` | `(store, tenantIds) => Promise<void>` | Removes plugin-owned records before purged tenants are deleted. |
+
+```ts title="iam.ts"
+import { betterIam } from 'better-iam';
+import { createProjectsPlugin } from 'better-iam/projects';
+
+export const iam = betterIam({
+  plugins: [createProjectsPlugin()],
+  // ...database, secret, baseURL
+});
+```
+
+See [Adapters and plugins](/docs/concepts/extensions#plugin-contract).
+
+### protocols
+
+| Type | Default |
+| --- | --- |
+| `ProtocolMount[]` | `[]` |
+
+Raw request handlers consulted before the IAM routes. A `ProtocolMount` has an optional
+`handle(request: Request): Promise<Response | undefined>` and an optional `nodeHandler(req, res)`; returning
+`undefined` (or `false`) passes the request on. Most deployments attach the OAuth, SAML, and SCIM services with
+`iam.useProtocol(service)` after construction instead of listing them here.
+
+```ts title="iam.ts"
+import { betterIam } from 'better-iam';
+
+export const iam = betterIam({
+  protocols: [
+    {
+      handle: async (request) =>
+        new URL(request.url).pathname === '/.well-known/acme-status'
+          ? Response.json({ ok: true })
+          : undefined,
+    },
+  ],
+  // ...database, secret, baseURL
+});
+```
+
+See [Protocol mounts](/docs/operations/deployment/protocol-mounts).
+
+## Temporary credentials
+
+### sts
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `maxRoleSessionSeconds` | `number` | `3600` | Ceiling for role session durations, 900 to 43200. Trusts can only lower it. |
+| `maxSessionTokenSeconds` | `number` | `43200` | Ceiling for session token durations, 900 to 129600. |
+| `maxSessionTokensPerIdentity` | `number` | `50` | Live session tokens per identity, 1 to 1000. |
+| `jwt` | `SessionTokenSigningOptions` | off | Enables `format: 'jwt'` tokens and the JWKS route. See [`sts.jwt`](#stsjwt). |
+| `webIdentity` | `StsWebIdentityOptions` | off | AssumeRoleWithWebIdentity. See [`sts.webIdentity`](#stswebidentity). |
+
+```ts title="iam.ts"
+import { betterIam } from 'better-iam';
+
+export const iam = betterIam({
+  sts: { maxRoleSessionSeconds: 7200, maxSessionTokensPerIdentity: 20 },
+  // ...database, secret, baseURL
+});
+```
+
+See [Tokens and temporary credentials](/docs/authentication/tokens).
+
+### sts.jwt
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `signingKeys` | `JWK[]` | required | 1 to 10 private JWKs: `kty: 'OKP', crv: 'Ed25519', alg: 'EdDSA'` or `kty: 'EC', crv: 'P-256', alg: 'ES256'`, each with a unique `kid` (1 to 64 of `A-Z a-z 0-9 . _ -`), `use` absent or `'sig'`, `key_ops` absent or including `'sign'`. |
+| `activeKeyId` | `string` | the first signing key | The `kid` new tokens are signed with. |
+| `verificationKeys` | `JWK[]` | `[]` | 0 to 10 public-only retired keys that still verify but never sign. |
+| `issuer` | `string` | `` `${baseURL.origin}${basePath}` `` | The `iss` claim. |
+| `audiences` | `string[]` | the issuer | Audiences a token may be issued for; the issuer is always included. |
+| `maxLifetimeSeconds` | `number` | `3600` | Longest JWT lifetime, 300 to 43200. |
+
+These keys are separate from `secret` and are never shared with the OAuth provider. The public keys are served at
+`GET {basePath}/.well-known/jwks.json`.
+
+```ts title="iam.ts"
+import { betterIam } from 'better-iam';
+
+export const iam = betterIam({
+  sts: {
+    jwt: {
+      signingKeys: [JSON.parse(process.env.SESSION_JWT_KEY!)], // { kty: 'OKP', crv: 'Ed25519', alg: 'EdDSA', kid, x, d }
+      audiences: ['https://api.example.com'],
+      maxLifetimeSeconds: 900,
+    },
+  },
+  // ...database, secret, baseURL
+});
+```
+
+### sts.webIdentity
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `enabled` | `boolean` | `false` | Turns web-identity federation on. |
+| `allowedIssuers` | `string[]` | any https issuer | Pins the issuers any tenant may register as an OIDC provider, at most 100. |
+| `jwksCacheSeconds` | `number` | `600` | How long fetched provider keys are cached, 60 to 3600. |
+| `fetchTimeoutMs` | `number` | `5000` | Timeout of each discovery or JWKS fetch, 500 to 10000. |
+| `maxJwksBytes` | `number` | `65536` | Largest accepted discovery or JWKS response, 1024 to 1048576 bytes. |
+| `maxExchangesPerWindow` | `number` | `600` | Exchanges per trust per rate-limit window, 1 to 100000. |
+| `maxSessionsPerTrust` | `number` | `1000` | Live role sessions per web-identity trust, 1 to 100000. |
+| `allowPrivateNetworks` | `boolean` | `false` | Lets discovery and JWKS fetches reach private addresses. Development and tests only. |
+| `allowInsecureLocalhost` | `boolean` | `false` | Accepts `http://` issuers and key URLs on loopback hosts. Development and tests only. |
+| `fetchJson` | `(url: URL) => Promise<unknown>` | built-in guarded fetch | Replaces the fetch, which refuses private addresses, redirects, and oversized or non-JSON responses. |
+
+```ts title="iam.ts"
+import { betterIam } from 'better-iam';
+
+export const iam = betterIam({
+  sts: {
+    webIdentity: {
+      enabled: true,
+      allowedIssuers: ['https://token.actions.githubusercontent.com'],
+    },
+  },
+  // ...database, secret, baseURL
+});
+```
+
+## Optional modules
+
+Each option in this section turns on, or tunes, one feature module. `inference`, `a2a`, `ssh`,
+`verifiableCredentials`, and `clearances` are off until set; while off, their methods answer `FEATURE_DISABLED`.
+`billing`, `vault`, and `signals` are always available; their options tune or extend them.
+
+### inference
+
+| Type | Default |
+| --- | --- |
+| `boolean \| InferenceOptions` | off |
+
+Inference access control for AI models: the `model` resource type and the `inference:invoke` action, the
+`inference` API group (providers with sealed keys, models, budgets, usage), and `iam.inference` (checks, metering,
+and the gateway). `true` enables it with defaults.
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `allowCustomBaseUrls` | `boolean` | `false` | Lets organizations below the root point a provider at a custom base URL. Otherwise only a root administrator may. |
+| `usageRetentionDays` | `number` | `90` | How long per-request usage records are kept, 1 to 3650 days. |
+| `allowInsecureLocalhost` | `boolean` | `false` | Lets base URLs use http on loopback hosts. Development and tests only. |
+| `allowPrivateNetworks` | `boolean` | `false` | Lets organization-chosen base URLs reach private and reserved addresses. Base URLs of the root tenant's providers are never restricted. |
+
+```ts title="iam.ts"
+import { betterIam } from 'better-iam';
+
+export const iam = betterIam({
+  inference: { usageRetentionDays: 30 },
+  // ...database, secret, baseURL
+});
+```
+
+See [Model access and budgets](/docs/features/inference).
+
+### a2a
+
+| Type | Default |
+| --- | --- |
+| `A2aOptions` | off |
+
+Keys for IAM-attested Agent2Agent cards (`agents.signCard`) and delegation tokens; their public half is published by
+`iam.a2a.jwks()`. Delegation tokens need this option.
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `signingKeys` | `JWK[]` | required | 1 to 10 private Ed25519 (`EdDSA`) or P-256 (`ES256`) JWKs, each with a unique `kid`. Use keys of their own, not the `sts.jwt` keys. |
+| `activeKeyId` | `string` | the first signing key | The `kid` cards are signed with. |
+| `verificationKeys` | `JWK[]` | `[]` | 0 to 10 public-only retired keys, still published so cards they signed keep verifying. |
+| `jwksUrl` | `string` | none | Where you publish `iam.a2a.jwks()`; carried as `jku` in every card signature. |
+| `cardLifetimeSeconds` | `number` | `3600` | How long an attestation is valid, 300 to 604800. |
+| `issuer` | `string` | `` `${baseURL.origin}${basePath}` `` | The attestation's issuer. |
+
+```ts title="iam.ts"
+import { betterIam } from 'better-iam';
+
+export const iam = betterIam({
+  a2a: {
+    signingKeys: [JSON.parse(process.env.A2A_CARD_KEY!)],
+    jwksUrl: 'https://identity.example.com/.well-known/a2a-jwks.json',
+  },
+  // ...database, secret, baseURL
+});
+```
+
+See [Agent-to-agent](/docs/features/a2a).
+
+### billing
+
+| Type | Default |
+| --- | --- |
+| `BillingOptions` | defaults below; billing is always available |
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `currency` | `string` | `'USD'` | ISO 4217 code every amount is stated in. |
+| `timeZone` | `string` | `'UTC'` | IANA time zone billing months and days follow. |
+| `usageRetentionDays` | `number` | `400` | Days raw usage events are kept after their period ends, 1 to 3650. Daily roll-ups and statements stay. |
+| `teamAttribution` | `'split' \| 'primary' \| 'full'` | `'split'` | How a person's cost counts toward their teams: split evenly, all to the oldest team, or in full to each. |
+| `paymentTermsDays` | `number` | `30` | Days after issue a statement is due when the billing profile sets no terms, 0 to 365. |
+| `statementPrefix` | `string` | `'INV'` | Statement number prefix (1 to 16 uppercase letters, digits, or hyphens); numbers read `{prefix}-{YYYYMM}-{sequence}`. |
+| `issuer` | `InvoiceIssuer` | the name `Better IAM` only | Who issues invoices: `name` (required), `address`, `taxId`, `email`, `url`, `paymentInstructions`. |
+| `paymentReminderDays` | `number[]` | `[-3, 0, 7, 14]` | When `billing.sendPaymentReminders` emails billing contacts, in days relative to the due date (at most 10 values, -60 to 365). `[]` sends none. |
+| `autoFinalize` | `boolean` | `true` | Whether `closePeriod` finalizes monthly invoices at once. `false` keeps them as drafts for review. |
+
+```ts title="iam.ts"
+import { betterIam } from 'better-iam';
+
+export const iam = betterIam({
+  billing: {
+    currency: 'EUR',
+    timeZone: 'Europe/Berlin',
+    issuer: { name: 'Acme GmbH', email: 'billing@acme.example' },
+    autoFinalize: false,
+  },
+  // ...database, secret, baseURL
+});
+```
+
+See [Billing and spend](/docs/features/billing).
+
+### ssh
+
+| Type | Default |
+| --- | --- |
+| `boolean \| SshOptions` | off |
+
+The SSH certificate authority: short-lived OpenSSH user certificates for the hosts and logins policies allow, host
+certificates, and revocation lists (`ssh` API group, `iam.ssh`). `true` enables it with defaults.
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `maxUserCertificateMs` | `number` | 24 hours | The longest user certificate any tenant may allow, 5 minutes to 7 days. |
+| `hostCertificateMs` | `number` | 90 days | Host certificate lifetime, 1 day to 1 year. |
+| `clockSkewMs` | `number` | 5 minutes | How far `valid after` is backdated, 0 to 1 hour. |
+| `maxHostsPerCertificate` | `number` | `64` | The most hosts one user certificate may name, 1 to 256. |
+| `recordRetentionDays` | `number` | `90` | How long certificate records stay after they expire, 1 to 3650. |
+| `joinTokenMs` | `number` | 24 hours | How long a host join token stays valid, 5 minutes to 30 days. |
+| `issuanceLimit` | `number` | `60` | Certificates one identity may request per rate-limit window, 1 to 100000. |
+
+```ts title="iam.ts"
+import { betterIam } from 'better-iam';
+
+export const iam = betterIam({
+  ssh: { maxUserCertificateMs: 8 * 60 * 60_000 },
+  // ...database, secret, baseURL
+});
+```
+
+See [SSH access](/docs/features/ssh-access).
+
+### verifiableCredentials
+
+| Type | Default |
+| --- | --- |
+| `boolean \| VerifiableCredentialOptions` | off |
+
+Every tenant issues SD-JWT verifiable credentials to wallets over OpenID4VCI and verifies presentations
+(`verifiableCredentials` API group, the `{basePath}/vc/{tenantId}` issuer endpoints, `iam.verifiableCredentials`).
+`true` enables it with defaults.
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `maxLifetimeMs` | `number` | 365 days | The longest credential lifetime any type may set, 5 minutes to 5 years. |
+| `statusListSize` | `number` | `65536` | Entries per status list, 1024 to 1048576 and a multiple of 1024. A list is used up to half full. |
+| `offerLifetimeMs` | `number` | 10 minutes | How long a wallet offer can be redeemed, 1 minute to 24 hours. |
+| `statusListLifetimeMs` | `number` | 24 hours | How long a status list token is valid, 10 minutes to 30 days. |
+| `statusListTtlSeconds` | `number` | `300` | How long verifiers may cache a status list (`ttl`), 10 to 86400. |
+| `recordRetentionDays` | `number` | `30` | How long credential records stay after the credential expired, 1 to 3650. |
+
+```ts title="iam.ts"
+import { betterIam } from 'better-iam';
+
+export const iam = betterIam({
+  verifiableCredentials: { maxLifetimeMs: 90 * 86_400_000 },
+  // ...database, secret, baseURL
+});
+```
+
+See [Verifiable credentials](/docs/federation/verifiable-credentials).
+
+### clearances
+
+| Type | Default |
+| --- | --- |
+| `ClearanceOptions` | off |
+
+Security clearances and mandatory access control: tenants define a classification scheme, officers adjudicate
+clearances and read people into compartments, and resources carry classification labels that every party of a
+decision must dominate (`clearances` API group, `iam.clearances`). Its presence enables the module, and it must be
+an object: `clearances: true` fails with `clearances must be an object`, and unknown keys fail too.
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `appliesToRoot` | `boolean` | `true` | Whether root administrators are bound by classification labels too. Root keeps its override for everything else. |
+
+```ts title="iam.ts"
+import { betterIam } from 'better-iam';
+
+export const iam = betterIam({
+  clearances: {},
+  // ...database, secret, baseURL
+});
+```
+
+See [Security clearances](/docs/features/security-clearances).
+
+### vault
+
+| Type | Default |
+| --- | --- |
+| `VaultOptions` | defaults below; the vault is always available |
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `rotators` | `Record<string, VaultRotator>` | `{}` | Rotators by name (lowercase identifiers), each with `rotate(input)`. A secret's `rotation.rotator` names one. |
+| `engines` | `Record<string, VaultEngine>` | `{}` | Dynamic secret engines by name, each with `issue(input)` and optional `revoke` and `renew`. |
+| `maxValueBytes` | `number` | `65536` | Largest secret value in UTF-8 bytes, 16 to 1048576. |
+| `maxSecretsPerTenant` | `number` | `1000` | Secrets per tenant, pending deletions included, 1 to 100000. |
+| `accessRetentionDays` | `number` | `90` | How long per-secret access records stay, 1 to 3650. |
+| `callTimeoutMs` | `number` | `30000` | How long a rotator or engine call may take, 1000 to 300000. |
+
+A rotator receives `{ tenantId, name, version, value, fields?, previous?, previousFields?, tags }` and must be
+idempotent: a failed rotation is retried with the same value.
+
+```ts title="iam.ts"
+import { betterIam } from 'better-iam';
+
+export const iam = betterIam({
+  vault: {
+    rotators: {
+      postgres: {
+        rotate: async ({ value, tags }) => {
+          await databaseAdmin.setPassword(tags.role, value); // your own code that applies the new value
+        },
+      },
+    },
+  },
+  // ...database, secret, baseURL
+});
+```
+
+See [Secrets vault](/docs/features/secrets-and-keys/secrets-vault).
+
+### signals
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `allowPrivateNetworks` | `boolean` | `false` | Lets key, discovery, and poll requests reach private and reserved addresses. Development and tests only. |
+| `allowInsecureLocalhost` | `boolean` | `false` | Accepts `http://` issuers, key URLs, and poll endpoints on loopback hosts. Development and tests only. |
+| `pushPath` | `string` | `` `${basePath}/signals/push` `` | Where transmitters push: `{pushPath}/{sourceId}`. An absolute path of at most 256 characters, not ending in `/`. |
+
+These settings configure the Shared Signals receiver (`signals` API group, `iam.signals`).
+
+```ts title="iam.ts"
+import { betterIam } from 'better-iam';
+
+export const iam = betterIam({
+  signals: { pushPath: '/ssf/push' },
+  // ...database, secret, baseURL
+});
+```
+
+See [Shared Signals receiver](/docs/federation/shared-signals-receiver).
+
+## Errors
+
+| Code | When |
+| --- | --- |
+| [`INVALID_CONFIG`](/docs/reference/errors#invalid_config) | `betterIam()` was given a missing or out-of-range option. The message names the field. |
+| [`FEATURE_DISABLED`](/docs/reference/errors#feature_disabled) | A method of a module whose option is off was called (403). |
+| [`RESOURCE_RESOLVER_REQUIRED`](/docs/reference/errors#resource_resolver_required) | A check named an application-owned resource type and `resolveResource` is not configured. |
+| [`UNTRUSTED_ORIGIN`](/docs/reference/errors#untrusted_origin) | A browser request came from an origin not in `trustedOrigins`. |
+
+Startup validation cannot judge everything, such as a placeholder-like secret or a missing email transport.
+`better-iam doctor` checks those; see [Doctor](/docs/databases/operations#doctor).
+
+## Related
+
+<Cards>
+  <Card icon={<SlidersHorizontal />} title="Configuration reference" href="/docs/operations/deployment/configuration">
+    Which options production deployments change, and why.
+  </Card>
+  <Card icon={<Server />} title="Server API" href="/docs/reference/api">
+    Every `iam.api` group and method the options turn on.
+  </Card>
+  <Card icon={<OctagonAlert />} title="Error codes" href="/docs/reference/errors">
+    What `INVALID_CONFIG` and every other code means.
+  </Card>
+  <Card icon={<Rocket />} title="Installation" href="/docs/installation">
+    Install the packages and create your first instance.
+  </Card>
+</Cards>

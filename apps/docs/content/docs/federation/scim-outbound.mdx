@@ -220,6 +220,9 @@ Each target keeps its latest run in `lastRun`:
 | `previewTarget(credential, { tenantId, targetId })` | `iam:scim:targets:read` | The plan of the next sync. |
 | `syncTarget(credential, { tenantId, targetId })` | `iam:scim:targets:sync` | Runs one target now. Audited as `iam:scim:SyncTarget`. |
 
+Creating, updating, previewing, and syncing a target also require `iam:identities:read` in the tenant, because
+each of them sends or shows every member in scope.
+
 <Callout type="info" title="Deleting a target does not deprovision">
   Deleting a target stops syncing and forgets the links, but leaves the downstream accounts as they are. To remove
   everyone first, set `enabled: false`, let a sync run, then delete the target.
@@ -228,7 +231,7 @@ Each target keeps its latest run in `lastRun`:
 `provisioner.handler` serves the same operations as a JSON API for browsers: `POST
 {basePath}/targets/{list,get,create,update,delete,sync,preview}` with the caller's IAM cookie or bearer token. It
 applies the IAM API's CSRF rule (`X-Better-IAM: 1` and a JSON body of at most 64 KiB) and answers with the
-`{ data }` / `{ error }` envelope. Mounted under the IAM path, the [typed client](/docs/frameworks/client) reaches
+`{ data }` / `{ error }` envelope. Mounted under the IAM path, the [typed client](/docs/concepts/client) reaches
 it through `$request`:
 
 ```ts title="Browser"
@@ -263,13 +266,34 @@ every instance runs with the new key, remove the old one.
   URL.
 - Target management is authorized per target and audited as `iam:scim:{Create,Update,Delete,Sync}Target`.
 
+## Schema
+
+| Collection | What it holds |
+| --- | --- |
+| `provisioningTargets` | One row per downstream application: `tenantId`, `name`, `baseUrl`, `sealedToken` (the encrypted bearer token), `groupIds`, `deprovision`, `attributeMapping`, `pushGroups`, `enabled`, `tokenUpdatedAt`, `lastRun`, timestamps. |
+| `provisioningLinks` | One row per provisioned person and target: `targetId`, `identityId`, `remoteId` (the user ID the application assigned), `fingerprint` (what was last sent, to skip unchanged users), `active`, `syncedAt`. |
+| `provisioningGroupLinks` | The same for pushed groups: `targetId`, `groupId`, `remoteId`, `fingerprint`, `syncedAt`. |
+
+## Errors
+
+| Code | Status | When |
+| --- | --- | --- |
+| [`INVALID_INPUT`](/docs/reference/errors#invalid_input) | 400, 413 | A base URL that is not absolute HTTPS, a missing token or name, more than 50 `groupIds`, `pushGroups` without `groupIds`, a `deprovision` other than `deactivate` or `delete`, a non-boolean `enabled`, or a JSON route body that is not a JSON object or is too large. |
+| [`NOT_FOUND`](/docs/reference/errors#not_found) | 404 | No such target in this tenant. |
+| [`TENANT_INACTIVE`](/docs/reference/errors#tenant_inactive) | 403 | The target's tenant is suspended. |
+| [`INVALID_SEALED_VALUE`](/docs/reference/errors#invalid_sealed_value) | 400 | The stored downstream token cannot be decrypted with `encryptionKey` or `previousEncryptionKeys`. Add the old key and run `rotateKeys()`. |
+| [`CSRF_REJECTED`](/docs/reference/errors#csrf_rejected) | 403 | A JSON route request without `X-Better-IAM: 1` or a JSON content type. |
+
+Failures of the downstream application during a sync do not throw: they are counted in `lastRun.failed` and listed
+in `lastRun.errors` with the HTTP status and detail, and the next run retries them.
+
 ## Next steps
 
 <Cards>
   <Card title="SCIM inbound" href="/docs/federation/scim">
     Let a customer's directory push people to you.
   </Card>
-  <Card title="Access packages" href="/docs/guides/privileged-access/access-packages">
+  <Card title="Access packages" href="/docs/features/privileged-access/access-packages">
     Time-bound group access that the provisioner deprovisions at its end.
   </Card>
 </Cards>

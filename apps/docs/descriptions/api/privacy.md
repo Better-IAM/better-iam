@@ -4,7 +4,7 @@ Privacy and consent management for GDPR, UK GDPR, CCPA/CPRA, LGPD and PIPEDA: th
 data for, each person's consent with a signed receipt and an append-only history, data-subject requests with statutory
 deadlines, legal holds that stop erasure, and restriction of processing. People make their own choices from their
 session, applications record consent for their own customers, and policies read the result as `principal.consents`.
-See the [privacy guide](/docs/guides/governance/privacy); the repository guide is `docs/privacy.md`.
+See the [privacy guide](/docs/features/governance/privacy); the repository guide is `docs/privacy.md`.
 
 ## Subjects
 

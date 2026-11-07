@@ -1,4 +1,4 @@
-import { docsKeywords, sectionNames } from './metadata';
+import { docsKeywords, sectionNames, sectionOf } from './metadata';
 import { appName } from './shared';
 import { source, type DocsPage } from './source';
 
@@ -8,7 +8,7 @@ import { source, type DocsPage } from './source';
  * its keywords, and its breadcrumb trail. Shared by the page's metadata and its social card.
  */
 export function docsSeo(page: DocsPage) {
-  const [sectionSlug = ''] = page.slugs;
+  const sectionSlug = sectionOf(page.slugs);
   const section = sectionNames[sectionSlug] ?? 'Documentation';
   const isApiGroup =
     page.slugs.length === 3 && page.slugs[0] === 'reference' && page.slugs[1] === 'api';

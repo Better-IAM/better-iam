@@ -2,7 +2,7 @@
 
 Agreements are versioned terms of use that a tenant asks its members to accept: an acceptable-use policy, an NDA,
 data-handling rules. Better IAM records who accepted which version and when, and exposes the result to policies, so
-you can hold back access until people accept. See the [terms of use guide](/docs/guides/governance/agreements).
+you can hold back access until people accept. See the [terms of use guide](/docs/features/governance/agreements).
 
 ## Versions, lapses, and enforcement
 
@@ -13,7 +13,7 @@ while it is for the current version and, when the agreement sets `reacceptAfterD
 accept.
 
 Enforcement is an ordinary policy decision. Every evaluation for a person in their own tenant carries two
-[condition](/docs/guides/authorization/conditions) keys:
+[condition](/docs/authorization/conditions) keys:
 
 - `principal.agreements`: the names of the agreements the person has accepted in their current version.
 - `principal.pendingAgreements`: how many `required` agreements they still owe. Service accounts cannot accept

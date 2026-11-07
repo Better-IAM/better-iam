@@ -189,7 +189,7 @@ The result is `{ deleted, total, truncated }`, with `deleted` counting records p
 Rule-based <Term id="access-package">access packages</Term> ("everyone in Engineering gets the Reader role") must
 follow people as their attributes and groups change. `iam.reconcilePackages()` (CLI `reconcile`) applies those
 rules, the <Term id="birthright">birthright access</Term> described in
-[Access packages](/docs/guides/privileged-access/access-packages). It assigns and removes automatic assignments
+[Access packages](/docs/features/privileged-access/access-packages). It assigns and removes automatic assignments
 under each rule owner's authority, at most `--limit` (1000, up to 10000) changes per organization per run, and
 prints `assigned`, `refreshed`, `restored`, `ending`, `revoked`, `stale`, `failed`, `suspended`, and `braked`. An
 unusually large change is held back by a brake (`braked`) until someone confirms it.
@@ -207,7 +207,7 @@ packages through it. It needs no email transport.
 Expiring access is only useful if someone notices it before it ends. These two jobs tell the right people: owners
 get a summary of their organization, and each person hears about their own access.
 
-`iam.sendAccessDigest()` (CLI `digest`) delivers the [access report](/docs/guides/privileged-access/access-report)
+`iam.sendAccessDigest()` (CLI `digest`) delivers the [access report](/docs/features/privileged-access/access-report)
 by email. For every active organization (or one `--tenant`) whose report has findings, the owners receive an
 `access-digest` message with the counts and the full report as JSON. Each organization gets at most one digest per
 20 hours (`minimumIntervalMs`), so a daily schedule that drifts a little still sends one a day. Each run is recorded
@@ -228,13 +228,13 @@ Governance features have deadlines and standing rules that nobody should have to
 reviews on time and watch the rules continuously.
 
 `iam.closeOverdueCertifications()` (CLI `close-certifications`) applies every
-<Term id="certification">certification campaign</Term> (see [Certifications](/docs/guides/governance/certifications))
+<Term id="certification">certification campaign</Term> (see [Certifications](/docs/features/governance/certifications))
 created with `autoClose` whose due date has passed
 (or one `--tenant`'s), each in its own transaction, under the campaign creator's grant authority. It prints
 `{ closed, skipped }` and records `certification:auto-close`.
 
 `iam.checkInvariants()` (CLI `monitor-invariants`) evaluates every organization's access
-<Term id="invariant">invariants</Term> (see [Change safety](/docs/guides/governance/change-safety)), or one `--tenant`'s, and records `invariant:broken` and
+<Term id="invariant">invariants</Term> (see [Change safety](/docs/features/governance/change-safety)), or one `--tenant`'s, and records `invariant:broken` and
 `invariant:restored` when a status changes, so webhooks can alert.
 
 ## Continuous audit archiving
@@ -244,7 +244,7 @@ attacker with database access cannot reach. Continuous archiving copies every te
 you choose, and lets you prune the database without losing history.
 
 Configure `auditArchive` and schedule `iam.archiveAudit()` (CLI `audit-archive`) every few minutes to keep an
-independent copy of every tenant's [audit chain](/docs/guides/events/audit-chain):
+independent copy of every tenant's [audit chain](/docs/concepts/events/audit-chain):
 
 ```ts title="lib/iam.ts"
 import { betterIam, createJsonlAuditArchive } from 'better-iam/server';
@@ -383,7 +383,7 @@ Treat that token as an administrator credential, and scope it with a role that h
   <Card title="CLI reference" href="/docs/reference/cli">
     Every command with its flags, exit codes, and a complete crontab.
   </Card>
-  <Card title="Doctor" href="/docs/operations/storage#doctor">
+  <Card title="Doctor" href="/docs/databases/operations#doctor">
     The findings that tell you a job has stopped running.
   </Card>
   <Card title="Observability" href="/docs/operations/observability">

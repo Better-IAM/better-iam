@@ -1,0 +1,570 @@
+---
+title: Row-level data filtering
+description: Build a list endpoint that returns only the rows a caller may read, by compiling an iam.planResources query plan into a raw SQL, Prisma, or Drizzle where clause.
+icon: Funnel
+packages: ['better-iam', '@better-iam/core', '@better-iam/server', '@better-iam/middleware']
+sources:
+  - docs/data-filtering.md
+  - packages/core/src/plan.ts
+  - packages/core/src/filter-compilers.ts
+  - packages/server/src/api/filters.ts
+  - packages/middleware/src/index.ts
+  - packages/server/src/options.ts
+---
+
+A list page asks a different question than a single check. `iam.require` answers "may Alice read document 42?",
+but `GET /documents` needs "which documents may Alice read?", and it needs the answer inside the database query so
+paging, sorting, and counts stay correct. In this guide you build that endpoint. Better IAM evaluates the caller's
+roles, groups, session, and tenant once and returns a **query plan**: a filter over the document's `id` and
+attributes. You compile the filter into your own `WHERE` clause.
+
+You will:
+
+- declare an application-owned `document` type with the attributes your policies compare;
+- write a role whose access depends on those attributes;
+- map plan fields to your table's columns in one place;
+- compile the plan for raw SQL (`pg`), Prisma, or Drizzle;
+- keep `iam.require` as the check before acting on one row, and fall back safely when a plan cannot be compiled.
+
+<Callout type="info" title="Managed resources do not need this">
+  If your documents are registered with IAM as a managed type, `iam.listAccessible` returns the accessible
+  resources directly. Query plans are for rows that live in your own database. See
+  [Batches and reverse queries](/docs/authorization/queries).
+</Callout>
+
+## Prerequisites
+
+- A working Better IAM instance exported as `iam` from `src/iam.ts`, an organization tenant, and a signed-in
+  member. The [Quickstart](/docs/quickstart) sets all of this up.
+- A PostgreSQL `documents` table in your application database with at least `id`, `tenant_id`, `owner_id`, and
+  `classification` columns. The examples use the column names below; adjust the mapping in step 3 to yours.
+- For the Express route: `better-iam/express` mounted as in [Express, Hono, and Fastify](/docs/integrations/node).
+  Any other server works with `iam.planResources` and the request's headers.
+
+```sql title="documents table"
+CREATE TABLE documents (
+  id             text PRIMARY KEY,
+  tenant_id      text NOT NULL,
+  owner_id       text,
+  classification text,
+  title          text NOT NULL
+);
+CREATE INDEX documents_tenant_owner ON documents (tenant_id, owner_id);
+```
+
+<Steps>
+<Step>
+
+### Declare the resource type and its attributes
+
+The plan's fields are the attribute names the policy engine sees when it decides one document. For an
+application-owned type those come from your `resolveResource` callback, so the resolver and the table must agree:
+whatever `resolveResource` returns as `attributes.ownerId` is what the plan calls `ownerId`.
+
+```ts title="src/iam.ts"
+import pg from 'pg';
+import { betterIam, IamError } from 'better-iam';
+import { postgresAdapter } from 'better-iam/adapter-postgres';
+
+export const pool = new pg.Pool({ connectionString: process.env.APP_DATABASE_URL });
+
+export const iam = betterIam({
+  database: postgresAdapter({ connectionString: process.env.DATABASE_URL! }),
+  secret: process.env.BETTER_IAM_SECRET,
+  baseURL: process.env.BETTER_IAM_BASE_URL,
+  permissions: {
+    resourceTypes: {
+      document: {
+        actions: ['documents:read', 'documents:write', 'documents:delete'],
+        attributes: { ownerId: 'string', classification: 'string' },
+      },
+    },
+  },
+  // Single-resource checks (iam.require, iam.authorize) load the document from trusted storage.
+  resolveResource: async ({ type, id }) => {
+    const { rows } = await pool.query(
+      'SELECT tenant_id, owner_id, classification FROM documents WHERE id = $1',
+      [id],
+    );
+    const row = rows[0];
+    if (!row) throw new IamError('NOT_FOUND', 'Document not found', 404);
+    return {
+      type,
+      id,
+      tenantId: row.tenant_id,
+      attributes: { ownerId: row.owner_id, classification: row.classification },
+    };
+  },
+});
+```
+
+- `permissions.resourceTypes.document.attributes` declares the attribute schema that policy conditions read as
+  `resource.ownerId` and `resource.classification`. Declaring resource types also makes saved policies name only
+  known resource types; condition keys themselves are not checked against the schema.
+- The resolver must return the `tenantId`, `type`, and `id` it was asked for. A row from another tenant fails the
+  check with `RESOURCE_MISMATCH` (403).
+- `resolveResource` is what single checks use. Plans never call it: they only describe which attribute values
+  pass, and your query applies that to every row at once.
+
+</Step>
+<Step>
+
+### Write a policy that depends on attributes
+
+A plan is only interesting when access depends on the row. This role lets members read their own documents and
+any document whose ID starts with `public-`, and denies every document classified `secret`.
+
+```ts title="scripts/create-reader-role.ts"
+import { iam } from '../src/iam.js';
+
+const owner = { token: process.env.OWNER_TOKEN! };
+const tenantId = process.env.TENANT_ID!;
+
+const reader = await iam.api.roles.create(owner, {
+  tenantId,
+  name: 'Document reader',
+  document: {
+    version: 1,
+    statements: [
+      {
+        sid: 'OwnDocuments',
+        effect: 'allow',
+        actions: ['documents:read'],
+        resources: ['document/*'],
+        conditions: { StringEquals: { 'resource.ownerId': '${principal.id}' } },
+      },
+      { sid: 'PublicDocuments', effect: 'allow', actions: ['documents:*'], resources: ['document/public-*'] },
+      {
+        sid: 'NoSecrets',
+        effect: 'deny',
+        actions: ['documents:*'],
+        resources: ['document/*'],
+        conditions: { StringEquals: { 'resource.classification': 'secret' } },
+      },
+    ],
+  },
+});
+console.log('Role', reader.id);
+```
+
+Bind the role to your members' group with `bindings.create` (see [Roles and bindings](/docs/authorization/roles)).
+For a member `usr_alice`, the plan for `documents:read` on `document` becomes:
+
+```text
+not (classification = "secret") and (ownerId = "usr_alice" or id like "public-*")
+```
+
+The `${principal.id}` variable was substituted, the resource pattern `document/public-*` became a condition on
+`id`, and each `resource.{name}` condition became a condition on the field `{name}`.
+
+</Step>
+<Step>
+
+### Map plan fields to columns
+
+Keep one mapping from plan fields to column expressions. Every compiler takes it, and a plan that names a field
+the mapping does not know refuses to compile (`INVALID_INPUT`) instead of silently ignoring a policy condition.
+
+```ts title="src/documents/fields.ts"
+/** Plan field -> SQL expression. Only trusted, hard-coded expressions belong here. */
+export const documentColumns: Record<string, string> = {
+  id: '"documents"."id"',
+  ownerId: '"documents"."owner_id"',
+  classification: '"documents"."classification"',
+};
+
+/** Plan field -> Prisma model field (only needed where the names differ). */
+export const documentPrismaFields: Record<string, string> = {
+  id: 'id',
+  ownerId: 'ownerId',
+  classification: 'classification',
+};
+```
+
+The SQL expressions are written into the query text, so they must come from your code and never from a request.
+Values are always bound as parameters.
+
+</Step>
+<Step>
+
+### Plan the request
+
+Ask for the caller's plan. It takes the same credential as `iam.authorize`: the request's `headers` (cookie
+session) or a `token`. Planning needs no permission and writes no audit event.
+
+<Tabs items={['Express', 'Any server']}>
+<Tab value="Express">
+
+```ts title="src/routes/documents.ts"
+import { Router } from 'express';
+import { listReadableDocuments } from '../documents/list.js';
+
+export const documentsRouter = Router();
+
+documentsRouter.get('/documents', async (req, res) => {
+  // In the session's tenant; signed-out requests get kind 'never'.
+  const plan = await req.iam.plan({ action: 'documents:read', type: 'document' });
+  res.json(await listReadableDocuments(plan.tenantId, plan));
+});
+```
+
+`req.iam` is added by `createIamExpress(iam).middleware`. Hono uses `c.get('iam').plan(...)`, Fastify
+`request.iam.plan(...)`, and SvelteKit `event.locals.iam.plan(...)`.
+
+</Tab>
+<Tab value="Any server">
+
+```ts title="src/routes/documents.ts"
+import { iam } from '../iam.js';
+import { listReadableDocuments } from '../documents/list.js';
+
+export async function GET(request: Request, tenantId: string): Promise<Response> {
+  const plan = await iam.planResources({
+    headers: request.headers,
+    tenantId,
+    action: 'documents:read',
+    type: 'document',
+  });
+  return Response.json(await listReadableDocuments(tenantId, plan));
+}
+```
+
+</Tab>
+</Tabs>
+
+The plan is `{ kind, filter, tenantId, action, type }`:
+
+| `kind` | Meaning | What to do |
+| --- | --- | --- |
+| `always` | Every document of the tenant (`filter` is `true`) | Query the tenant's rows |
+| `never` | None (`filter` is `false`) | Return an empty list without querying |
+| `conditional` | Rows that pass `filter` | Compile `filter` into the `WHERE` clause |
+
+</Step>
+<Step>
+
+### Compile the filter for your query layer
+
+Better IAM ships compilers for SQL (`filterToSql`), Prisma (`filterToPrisma`), and MongoDB (`filterToMongo`), all
+from `better-iam/core`. There is no Drizzle compiler; the Drizzle tab wraps `filterToSql` output in Drizzle's
+`sql` builder, which keeps every value bound. Always add the tenant condition yourself: a plan filters by `id` and
+attributes, never by tenant.
+
+<Tabs items={['SQL (pg)', 'Prisma', 'Drizzle']}>
+<Tab value="SQL (pg)">
+
+```ts title="src/documents/list.ts"
+import { filterToSql, type ResourcePlan } from 'better-iam/core';
+import { pool } from '../iam.js';
+import { documentColumns } from './fields.js';
+
+export async function listReadableDocuments(tenantId: string, plan: ResourcePlan) {
+  if (plan.kind === 'never') return [];
+  const where = filterToSql(plan.filter, {
+    dialect: 'postgres',
+    column: (field) => documentColumns[field],
+    offset: 1, // $1 is the tenant, so the filter's placeholders start at $2
+  });
+  const { rows } = await pool.query(
+    `SELECT id, title FROM documents WHERE tenant_id = $1 AND ${where.sql} ORDER BY title LIMIT 50`,
+    [tenantId, ...where.params],
+  );
+  return rows;
+}
+```
+
+`filterToSql` returns `{ sql, params }` with `$n` placeholders for `dialect: 'postgres'` and `?` for
+`dialect: 'sqlite'`. Every comparison is wrapped as `(column IS NOT NULL AND ...)`, so a row with a `NULL`
+classification passes `not (classification = "secret")`, exactly as `iam.authorize` would allow it.
+
+</Tab>
+<Tab value="Prisma">
+
+```prisma title="prisma/schema.prisma (excerpt)"
+model Document {
+  id             String  @id
+  tenantId       String  @map("tenant_id")
+  ownerId        String? @map("owner_id")
+  classification String?
+  title          String
+
+  @@map("documents")
+}
+```
+
+```ts title="src/documents/list.ts"
+import { PrismaClient } from '@prisma/client';
+import { filterToPrisma, type ResourcePlan } from 'better-iam/core';
+import { documentPrismaFields } from './fields.js';
+
+const prisma = new PrismaClient();
+
+export async function listReadableDocuments(tenantId: string, plan: ResourcePlan) {
+  if (plan.kind === 'never') return [];
+  return prisma.document.findMany({
+    where: {
+      AND: [
+        { tenantId },
+        filterToPrisma(plan.filter, { field: (name) => documentPrismaFields[name] ?? name }),
+      ],
+    },
+    select: { id: true, title: true },
+    orderBy: { title: 'asc' },
+    take: 50,
+  });
+}
+```
+
+Prisma's string filters can express exact values, prefixes (`public-*`), suffixes, and substrings. Other globs,
+`date` conditions, and IP conditions refuse with `UNSUPPORTED_FILTER`. Case-insensitive comparisons use
+`mode: 'insensitive'`, which Prisma supports on PostgreSQL and MongoDB.
+
+</Tab>
+<Tab value="Drizzle">
+
+```ts title="src/db/schema.ts"
+import { pgTable, text } from 'drizzle-orm/pg-core';
+
+export const documents = pgTable('documents', {
+  id: text('id').primaryKey(),
+  tenantId: text('tenant_id').notNull(),
+  ownerId: text('owner_id'),
+  classification: text('classification'),
+  title: text('title').notNull(),
+});
+```
+
+```ts title="src/documents/list.ts"
+import { and, asc, eq, sql, type SQL } from 'drizzle-orm';
+import { drizzle } from 'drizzle-orm/node-postgres';
+import { filterToSql, type ResourcePlan } from 'better-iam/core';
+import { pool } from '../iam.js';
+import { documents } from '../db/schema.js';
+import { documentColumns } from './fields.js';
+
+const db = drizzle(pool);
+
+/** Rebuilds filterToSql output as a Drizzle SQL fragment: text stays raw, every $n becomes a bound value. */
+function planToDrizzle(plan: ResourcePlan): SQL {
+  const where = filterToSql(plan.filter, {
+    dialect: 'postgres',
+    column: (field) => documentColumns[field],
+  });
+  const parts = where.sql.split(/\$(\d+)/);
+  const chunks: SQL[] = parts.map((part, index) =>
+    index % 2 === 0 ? sql.raw(part) : sql`${where.params[Number(part) - 1]}`,
+  );
+  return sql.join(chunks);
+}
+
+export async function listReadableDocuments(tenantId: string, plan: ResourcePlan) {
+  if (plan.kind === 'never') return [];
+  return db
+    .select({ id: documents.id, title: documents.title })
+    .from(documents)
+    .where(and(eq(documents.tenantId, tenantId), planToDrizzle(plan)))
+    .orderBy(asc(documents.title))
+    .limit(50);
+}
+```
+
+`filterToSql` is called without `offset`, so its placeholders are `$1` to `$n` and map to `params[0]` to
+`params[n - 1]`. The column expressions in `documentColumns` are qualified with the table name Drizzle renders
+(`"documents"`), and contain no `$` followed by digits, so the split only ever cuts at placeholders.
+
+</Tab>
+</Tabs>
+
+</Step>
+<Step>
+
+### Check one row before acting on it
+
+A plan decides which rows a list shows. Before you change, delete, or return the full content of one document,
+call `iam.require`: it is the audited check, and access can change between rendering a list and clicking a button.
+
+```ts title="src/routes/document-delete.ts"
+import { iam, pool } from '../iam.js';
+
+export async function deleteDocument(request: Request, tenantId: string, documentId: string) {
+  await iam.require({
+    headers: request.headers,
+    tenantId,
+    action: 'documents:delete',
+    resource: { type: 'document', id: documentId },
+  });
+  await pool.query('DELETE FROM documents WHERE tenant_id = $1 AND id = $2', [tenantId, documentId]);
+}
+```
+
+`iam.require` throws `IamError` with code `ACCESS_DENIED` (403) unless the request is allowed.
+
+</Step>
+<Step>
+
+### Fall back when a plan cannot be compiled
+
+Some policies have no exact filter. Planning refuses with `UNSUPPORTED_FILTER` when a statement compares with the
+resource's own attributes through a variable (`${resource.ownerId}` in a condition value), has a condition on
+`resource.id`, or is too complex to plan. A compiler refuses with the same code when its target cannot express
+part of the filter (for example `ip` conditions in SQL, or `date` conditions in Prisma). Never answer with an
+unfiltered list in that case. Narrow the candidates with a coarse query and check them exactly:
+
+```ts title="src/documents/list-with-fallback.ts"
+import { IamError } from 'better-iam';
+import { filterMatches, type ResourcePlan } from 'better-iam/core';
+import { iam, pool } from '../iam.js';
+import { listReadableDocuments } from './list.js';
+
+export async function listWithFallback(request: Request, tenantId: string) {
+  let plan: ResourcePlan;
+  try {
+    plan = await iam.planResources({ headers: request.headers, tenantId, action: 'documents:read', type: 'document' });
+  } catch (error) {
+    if (!(error instanceof IamError) || error.code !== 'UNSUPPORTED_FILTER') throw error;
+    // The policy has no exact filter: check one page of candidates with authorizeMany (at most 50 checks).
+    const { rows } = await pool.query('SELECT id, title FROM documents WHERE tenant_id = $1 ORDER BY title LIMIT 50', [
+      tenantId,
+    ]);
+    if (rows.length === 0) return [];
+    const { results } = await iam.authorizeMany({
+      headers: request.headers,
+      tenantId,
+      checks: rows.map((row) => ({ action: 'documents:read', resource: { type: 'document', id: row.id } })),
+    });
+    return rows.filter((_, index) => results[index].allowed);
+  }
+  try {
+    return await listReadableDocuments(tenantId, plan);
+  } catch (error) {
+    if (!(error instanceof IamError) || error.code !== 'UNSUPPORTED_FILTER') throw error;
+    // The plan exists but this query target cannot express it: filter candidate rows in memory, exactly.
+    if (plan.kind === 'never') return [];
+    const { rows } = await pool.query(
+      'SELECT id, title, owner_id, classification FROM documents WHERE tenant_id = $1 ORDER BY title LIMIT 500',
+      [tenantId],
+    );
+    return rows.filter((row) =>
+      filterMatches(plan.filter, { id: row.id, ownerId: row.owner_id ?? undefined, classification: row.classification ?? undefined }),
+    );
+  }
+}
+```
+
+`filterMatches` supports every filter with the engine's exact semantics. It reads fields by name as flat keys, and
+a missing field (`undefined`) satisfies nothing but `not exists`, so pass `undefined` rather than `null` for empty
+columns.
+
+</Step>
+</Steps>
+
+## Verify it works
+
+1. Print the plan for a member as an administrator, without their session. `filters.planFor` needs
+   `iam:policies:simulate` on the identity and is audited:
+
+   ```ts title="scripts/print-plan.ts"
+   import { describeFilter } from 'better-iam/core';
+   import { iam } from '../src/iam.js';
+
+   const admin = { token: process.env.ADMIN_TOKEN! };
+   const plan = await iam.api.filters.planFor(admin, {
+     tenantId: process.env.TENANT_ID!,
+     identityId: process.env.MEMBER_ID!,
+     action: 'documents:read',
+     type: 'document',
+   });
+   console.log(plan.kind, describeFilter(plan.filter));
+   // conditional not (classification = "secret") and (ownerId = "usr_alice" or id like "public-*")
+   ```
+
+   **Route:** `POST /filters/planFor`
+
+2. Insert three rows for the member's tenant: one they own, one named `public-handbook`, and one they own with
+   `classification = 'secret'`. `GET /documents` as the member returns the first two only.
+3. Compare the list with single checks. For each returned row and a few excluded ones, `iam.authorize` with
+   `documents:read` must agree: allowed for every listed row, denied for every excluded row.
+
+The same plan is available to browser and remote callers as `filters.plan`:
+
+<Tabs items={['Server', 'Client']}>
+<Tab value="Server">
+
+```ts
+import { iam } from './iam.js';
+
+const plan = await iam.api.filters.plan({ headers: request.headers }, { tenantId, action: 'documents:read', type: 'document' });
+```
+
+</Tab>
+<Tab value="Client">
+
+```ts
+import { createIamClient } from 'better-iam/client';
+import type { iam } from './iam.js';
+
+const client = createIamClient<typeof iam>();
+const plan = await client.filters.plan({ tenantId, action: 'documents:read', type: 'document' });
+```
+
+</Tab>
+</Tabs>
+
+**Route:** `POST /filters/plan`
+
+Compile filters on the server only. The column mapping is trusted SQL and must not be built from anything the
+browser sends.
+
+## Troubleshooting
+
+<Accordions>
+<Accordion title="INVALID_INPUT: the plan filters on a field that has no column">
+A policy now uses an attribute your column mapping does not know. Add the column (and return the attribute from
+`resolveResource`), or change the policy. The refusal is deliberate: guessing would return the wrong rows.
+</Accordion>
+<Accordion title="UNSUPPORTED_FILTER when planning">
+A statement that applies to the action compares with `${resource.*}` variables, has a condition on `resource.id`,
+or is too complex (more than `planWorkLimit`, 200,000 units of work). Rewrite ID conditions as resource patterns
+(`document/public-*`) and compare attributes with constants or `${principal.*}` variables. Until then, use the
+`authorizeMany` fallback.
+</Accordion>
+<Accordion title="UNSUPPORTED_FILTER when compiling">
+The target cannot express part of the filter: `ip` and `contains` conditions in SQL, `date`, `ip`, and complex
+globs in Prisma, `date` and `ip` in MongoDB. Use `filterMatches` over a coarser candidate query, or move the
+attribute to a column type the target supports.
+</Accordion>
+<Accordion title="The list shows documents that iam.authorize denies (or the other way round)">
+The table and `resolveResource` disagree. Both must read the same values: if `resolveResource` returns
+`ownerId` from `owner_id`, the mapping must point `ownerId` at `owner_id`. Also check column types: string
+conditions need text columns, dates need ISO 8601 text or timestamps, and SQLite booleans are `0` and `1`.
+</Accordion>
+<Accordion title="INVALID_INPUT for an iam: action or an IAM type">
+Plans cover application actions on application and managed resource types. `iam:*` administration actions and
+IAM's internal types refuse with `INVALID_INPUT`.
+</Accordion>
+<Accordion title="Rows labeled above the caller's clearance">
+With security clearances enabled, every plan is AND-ed with a filter that leaves out resources labeled above the
+caller's clearance, and planning refuses with `UNSUPPORTED_FILTER` where no exact filter exists. Labels your
+resolver asserts are not visible to plans; check those rows with `authorize`. With clearances enabled,
+`classification` is reserved for IAM-held labels and cannot be declared as a resource attribute (`INVALID_CONFIG`),
+so name the attribute in this guide differently (for example `sensitivity`). See
+[Security clearances](/docs/features/security-clearances).
+</Accordion>
+</Accordions>
+
+## Next steps
+
+<Cards>
+  <Card title="Data filtering" href="/docs/authorization/data-filtering">
+    Plans, the filter tree, every compiler, and what a plan takes into account.
+  </Card>
+  <Card title="Policy conditions" href="/docs/authorization/conditions">
+    The operators a plan translates, and how missing keys behave.
+  </Card>
+  <Card title="filters API reference" href="/docs/reference/api/filters">
+    `plan` and `planFor` with permissions and errors.
+  </Card>
+  <Card title="Batches and reverse queries" href="/docs/authorization/queries">
+    `authorizeMany` and `listAccessible` for managed resources.
+  </Card>
+</Cards>

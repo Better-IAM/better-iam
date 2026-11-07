@@ -1,0 +1,519 @@
+---
+title: Server API
+metaTitle: Server API, credentials, and HTTP routes
+description: The betterIam() instance and its iam.api groups, how every method takes a credential and an input, how to get the credential from a request, and how the same methods are served over HTTP.
+icon: Braces
+packages: ['better-iam', '@better-iam/server', '@better-iam/middleware']
+sources:
+  - packages/server/src/index.ts
+  - packages/server/src/http.ts
+  - packages/server/src/options.ts
+  - packages/server/src/operations.ts
+  - packages/core/src/index.ts
+  - packages/middleware/src/index.ts
+  - apps/docs/generated/api.json
+---
+
+`betterIam(options)` returns one object, conventionally exported as `iam`, that is your whole identity server. Its
+`api` property holds every operation Better IAM offers (64 groups, from `auth` and `tenants` to `vault` and
+`workflows`), and the same object serves those operations over HTTP. Server code calls `iam.api` directly; browsers,
+mobile apps, and other services call the HTTP routes, usually through the [typed client](/docs/concepts/client).
+Both paths run the same code: resolve the caller, authorize, change the data in one transaction, and record an audit
+event.
+
+Use this page to learn the calling convention once. The [API reference](/docs/reference/api) lists every group and
+method with its route and TypeScript signature.
+
+## Setup
+
+<Steps>
+<Step>
+
+### Create the instance
+
+Create the instance once per process and import it wherever server code needs identity or authorization.
+
+```ts title="iam.ts"
+import { betterIam } from 'better-iam';
+import { sqliteAdapter } from 'better-iam/adapter-sqlite';
+
+export const iam = betterIam({
+  database: sqliteAdapter({ filename: './iam.db' }),
+  secret: process.env.BETTER_IAM_SECRET!, // at least 32 characters
+  baseURL: process.env.BETTER_IAM_BASE_URL!, // https outside localhost
+});
+```
+
+`betterIam()` validates its options when it runs and throws an `IamError` with code `INVALID_CONFIG` for a
+setting that breaks a rule (an `http:` `baseURL` outside localhost, a `basePath` with a trailing slash, a missing
+`database`), so a misconfiguration fails at startup instead of on the first request.
+
+</Step>
+<Step>
+
+### Migrate the database
+
+```npm
+npx better-iam migrate
+```
+
+`migrate` calls `iam.initialize()`, which creates or upgrades the schema. The CLI finds your configuration file on
+its own; see [CLI](/docs/concepts/cli#configuration-discovery).
+
+</Step>
+<Step>
+
+### Serve the HTTP routes
+
+Mount `iam.handler` (Fetch `Request` in, `Response` out) or `iam.nodeHandler` (Node `http`) at the base path,
+`/api/iam` by default. Skip this step when nothing outside your server process calls the API.
+
+```ts title="server.ts"
+import { createServer } from 'node:http';
+import { iam } from './iam';
+
+createServer(iam.nodeHandler).listen(3000);
+```
+
+The [framework integrations](/docs/integrations) mount the handler for you.
+
+</Step>
+</Steps>
+
+## The instance
+
+Most applications use a handful of the instance's members. Everything else is deployment tooling or a scheduled job.
+
+| Member | What it is for |
+| --- | --- |
+| `api` | Every operation, by group: `iam.api.{group}.{method}(...)`. The HTTP routes and the browser client call the same methods. |
+| `authenticate` | Resolves a credential to `{ identity, session }` without checking a permission. |
+| `authorize`, `require` | One authorization decision; `require` throws `ACCESS_DENIED` (403) instead of returning a denial. |
+| `authorizeMany`, `listAccessible` | Up to 50 decisions for one tenant, and the managed resources a caller may act on. Results are advisory, for rendering UI. |
+| `callPlugin` | Calls a plugin endpoint through the same authorized, audited envelope as built-in methods. |
+| `handler`, `nodeHandler` | The Fetch and Node HTTP transports for the whole API. |
+| `events` | `events.subscribe(patterns, handler)` for in-process audit subscribers, and `events.dispatch()` to deliver queued events to them. |
+| `initialize`, `bootstrap`, `recoverRoot`, `selfCheck`, `rotateSecrets` | Deployment operations, normally run through the [CLI](/docs/concepts/cli). |
+| `purgeDeleted`, `sweepExpired`, `reconcilePackages`, and the other jobs | Scheduled maintenance. See [scheduled jobs](/docs/operations/jobs). |
+| `auth`, `store`, `protocolHost`, `assertionKey` | Low-level primitives that act with the deployment's authority. Never expose them to callers. |
+
+The type of the whole object is `BetterIam`, exported from `better-iam` (see [TypeScript](/docs/concepts/typescript)).
+
+## Method shapes
+
+Every method under `iam.api` has one of three shapes. The shape tells you whether the method acts as a caller.
+
+| Shape | Example | Used by |
+| --- | --- | --- |
+| `(credential, input)` | `iam.api.roles.create(credential, { tenantId, name, permissions })` | Most methods. |
+| `(credential)` | `iam.api.auth.getSession(credential)`, `iam.api.links.list(credential)`, `iam.api.sts.getCallerIdentity(credential)` | Methods that read or change the caller's own state and need no other input. |
+| `(input)` | `iam.api.auth.signIn({ tenantId, email, password })`, `iam.api.tenants.lookup({ slug })` | Public methods that run before anyone holds a credential. |
+
+Methods return plain values (`Promise<Result>`) and throw an `IamError` when they refuse; see
+[error handling](/docs/concepts/error-handling). Inputs are plain JSON-compatible objects, so the same input works as
+an HTTP body.
+
+## Credentials
+
+The credential says **who is calling**. It is a `CredentialInput`:
+
+```ts title="CredentialInput (from better-iam)"
+interface CredentialInput {
+  headers?: HeadersInit; // the incoming request's headers: a session cookie or an Authorization: Bearer token
+  token?: string; // a session token, API key, role session token, or IAM-signed session JWT
+}
+```
+
+It never carries identity claims such as a user ID or tenant ID. The server looks the token up in storage and
+resolves it to the current identity and session itself, so a caller cannot claim to be someone else. When both a
+bearer `Authorization` header and a session cookie are present, the bearer token wins.
+
+Several credential kinds exist: user sessions, API keys of service accounts, assumed-role sessions, impersonation
+sessions, session tokens, and session JWTs. Provisioning methods accept any of them and authorize the caller behind
+it; a few self-service methods narrow the kinds, for example `auth.getSession` serves signed-in people only. Each is backed by a stored session row, and the row is
+re-read and re-validated inside the transaction, so a revoked session or a disabled person fails on the next call.
+See [sessions](/docs/authentication/sessions).
+
+### Getting the credential from a request
+
+Pass the incoming request's headers whenever you act on behalf of the person or service that sent the request.
+When the credential carries headers, Better IAM also derives the client details (IP, user agent) from them, the
+same way the HTTP handler does, so network allowlists, network blocks, and session binding judge the presenting
+address.
+
+| Where your code runs | Credential |
+| --- | --- |
+| Any Fetch-style handler (`Request` object) | `{ headers: request.headers }` |
+| Node `http`, with a raw `IncomingMessage` | `{ headers: nodeHeaders(req.headers) }`, with `nodeHeaders` from `better-iam/middleware` |
+| Express, Hono, or Fastify with the Better IAM middleware | `req.iam.credential()`, `c.get('iam').credential()`, or `request.iam.credential()` |
+| Next.js | `await iamNext.credential()` |
+| SvelteKit | `event.locals.iam.credential()` |
+| React Router | `iamRouter.helpers(args).credential()` |
+| A script, job, or service with an API key | `{ token: process.env.BETTER_IAM_TOKEN! }` |
+
+The framework helpers include cookies set earlier in the same request, so a call made right after an in-process
+sign-in acts as the new session. See [Express, Hono, and Fastify](/docs/integrations/node#per-request-helpers),
+[Next.js](/docs/integrations/nextjs#reading-the-session), and [SvelteKit](/docs/integrations/sveltekit).
+
+<Callout type="warn" title="Never build a credential from request data">
+  Do not read a user ID, tenant ID, or role from a request body, query string, or custom header and use it to
+  decide who is calling. Pass the request's headers or a token you hold, and let Better IAM resolve them.
+</Callout>
+
+## Usage
+
+Each example shows the direct server call and the equivalent call from the [typed client](/docs/concepts/client).
+Routes are relative to `basePath`, which is `/api/iam` by default.
+
+### Call a method as the current request
+
+Pass the incoming request's headers. The call is authorized as the person or service that sent the request and
+audited under their identity.
+
+<Tabs items={['Server', 'Client']}>
+<Tab value="Server">
+
+```ts title="routes/invite.ts"
+import { iam } from '../iam';
+
+export async function POST(request: Request) {
+  const { tenantId, email } = (await request.json()) as { tenantId: string; email: string };
+  const invitation = await iam.api.identities.invite(
+    { headers: request.headers }, // the caller's session cookie or bearer token
+    { tenantId, email },
+  );
+  return Response.json(invitation);
+}
+```
+
+</Tab>
+<Tab value="Client">
+
+```ts title="app/invite.ts"
+import { createIamClient } from 'better-iam/client';
+import type { iam } from './iam';
+
+const client = createIamClient<typeof iam>();
+// The browser's session cookie is the credential.
+const invitation = await client.identities.invite({ tenantId, email: 'alice@example.com' });
+```
+
+</Tab>
+</Tabs>
+
+**Route:** `POST /identities/invite`
+
+The method checks `iam:identities:create` on `iam/{tenantId}` before inviting. A caller without that permission
+receives `ACCESS_DENIED`, and the denial is recorded as an audit event.
+
+### Call a method as a service account
+
+Jobs, scripts, and backend services authenticate with an API key or another token they hold.
+
+<Tabs items={['Server', 'Client']}>
+<Tab value="Server">
+
+```ts title="jobs/sync-groups.ts"
+import { iam } from '../iam';
+
+const service = { token: process.env.BETTER_IAM_TOKEN! }; // an API key of a service account
+const groups = await iam.api.groups.list(service, { tenantId: process.env.TENANT_ID! });
+```
+
+</Tab>
+<Tab value="Client">
+
+```ts title="jobs/sync-groups.ts"
+import { createIamClient } from 'better-iam/client';
+import type { iam } from '../iam';
+
+const client = createIamClient<typeof iam>({
+  baseURL: 'https://identity.example.com',
+  token: () => process.env.BETTER_IAM_TOKEN, // sent as Authorization: Bearer
+});
+const groups = await client.groups.list({ tenantId: process.env.TENANT_ID! });
+```
+
+</Tab>
+</Tabs>
+
+**Route:** `POST /groups/list`
+
+Give each service account a role with only the permissions it needs. See [API keys](/docs/authentication/api-keys).
+
+### Call a public method
+
+Public methods take only their input. They exist for the moments before anyone holds a credential: discovering an
+organization, signing in, and redeeming an invitation.
+
+<Tabs items={['Server', 'Client']}>
+<Tab value="Server">
+
+```ts title="routes/login.ts"
+import { iam } from '../iam';
+
+const { tenantId } = await iam.api.tenants.lookup({ slug: 'acme' });
+const result = await iam.api.auth.signIn({ tenantId, email, password });
+if ('mfaRequired' in result) {
+  // Finish with iam.api.auth.verifyMfa({ tenantId, challenge: result.challenge, code }).
+} else {
+  const { token, session } = result; // a direct call returns the token; it sets no cookie
+}
+```
+
+</Tab>
+<Tab value="Client">
+
+```ts title="app/login.ts"
+import { createIamClient } from 'better-iam/client';
+import type { iam } from './iam';
+
+const client = createIamClient<typeof iam>();
+const { tenantId } = await client.tenants.lookup({ slug: 'acme' });
+// Through the HTTP handler, a successful sign-in also sets the HttpOnly session cookie.
+const result = await client.auth.signIn({ tenantId, email, password });
+```
+
+</Tab>
+</Tabs>
+
+**Route:** `POST /tenants/lookup`, then `POST /auth/signIn`
+
+The public methods are:
+
+| Group | Methods |
+| --- | --- |
+| `auth` | `signIn`, `signUp`, `verifyMfa`, `confirmMfa`, `beginMfa` (with a sign-in challenge), `recoverMfa`, `requestMfaCode`, `startPasswordless`, `finishPasswordless`, `beginPasskeyAuthentication`, `finishPasskeyAuthentication`, `beginPasskeyMfa`, `finishPasskeyMfa`, `requestPasswordReset`, `resetPassword`, `requestEmailVerification`, `verifyEmail`, `confirmEmailChange` |
+| `tenants` | `lookup`, `acceptInvitation` |
+| `identities` | `acceptInvitation` |
+| `domains` | `discover` |
+| `guests` | `redeem` |
+| `privacy` | `submitPublic`, `confirmPublic` |
+| `sts` | `assumeRoleWithWebIdentity` (the external OpenID Connect token is its credential) |
+| `ssh` | `enrollHost`, `syncHost`, `trust`, `revocationList` |
+| `verifiableCredentials` | `nonce`, `verify`, `issuerMetadata` |
+
+`@better-iam/server` exports the non-`auth` route names as `publicApiMethods` and the public `auth` method names as
+`publicAuthMethods`. Sign-in, recovery, and redemption flows are rate limited; still put request limits at your
+ingress, especially in front of the public lookups.
+
+### Read the caller
+
+`iam.authenticate` resolves a credential to `{ identity, session }` and checks no permission. Use it to render a
+profile, pick the session's tenant, or pass the principal on. `auth.getSession` returns the same caller in the shape
+the session store and UI bindings use, with the session's `limits`; it serves signed-in people only, while
+`iam.authenticate` accepts every credential kind, API keys included.
+
+<Tabs items={['Server', 'Client']}>
+<Tab value="Server">
+
+```ts title="routes/me.ts"
+import { iam } from '../iam';
+
+export async function GET(request: Request) {
+  const { identity, session } = await iam.authenticate({ headers: request.headers });
+  return Response.json({ name: identity.name, tenantId: session.tenantId, mfa: session.mfa });
+}
+```
+
+</Tab>
+<Tab value="Client">
+
+```ts title="app/me.ts"
+import { createIamClient } from 'better-iam/client';
+import type { iam } from './iam';
+
+const client = createIamClient<typeof iam>();
+const { identity, session, limits } = await client.auth.getSession();
+```
+
+</Tab>
+</Tabs>
+
+**Route:** `POST /auth/getSession` (`iam.authenticate` has no route of its own)
+
+Both fail with `UNAUTHENTICATED` (401) for a missing, expired, idle, or revoked credential.
+
+### Check access before acting
+
+The authorization functions take the credential fields inline, next to the check. Call `iam.require` on the server
+immediately before the protected operation, with the resource loaded from your own storage.
+
+<Tabs items={['Server', 'Client']}>
+<Tab value="Server">
+
+```ts title="routes/documents.ts"
+import { iam } from '../iam';
+
+export async function deleteDocument(request: Request, document: { id: string; tenantId: string }) {
+  await iam.require({
+    headers: request.headers,
+    tenantId: document.tenantId, // from your database, never from the request
+    action: 'documents:delete',
+    resource: { type: 'document', id: document.id },
+  });
+  // ...only reached when the caller may delete this document
+}
+```
+
+</Tab>
+<Tab value="Client">
+
+```ts title="app/menu.ts"
+import { createIamClient } from 'better-iam/client';
+import type { iam } from './iam';
+
+const client = createIamClient<typeof iam>();
+// Advisory: decides which buttons to show. The server still enforces.
+const { results } = await client.authorizeMany({
+  tenantId,
+  checks: [{ action: 'documents:delete', resource: { type: 'document', id } }],
+});
+```
+
+</Tab>
+</Tabs>
+
+**Route:** `POST /authorize`, `POST /authorizeMany`, `POST /listAccessible`
+
+See [authorization queries](/docs/authorization/queries) for batch checks and reverse queries.
+
+### Call a plugin endpoint
+
+Plugins can add endpoints. Call them through `iam.callPlugin` on the server, which authorizes and audits them like
+built-in methods, or through `client.$request` in the browser.
+
+<Tabs items={['Server', 'Client']}>
+<Tab value="Server">
+
+```ts title="routes/projects.ts"
+import { iam } from '../iam';
+
+const result = await iam.callPlugin(
+  { headers: request.headers },
+  { pluginId: 'projects', path: 'archive', tenantId, input: { projectId } },
+);
+```
+
+</Tab>
+<Tab value="Client">
+
+```ts title="app/projects.ts"
+import { createIamClient } from 'better-iam/client';
+import type { iam } from './iam';
+
+const client = createIamClient<typeof iam>();
+const result = await client.$request<{ archived: boolean }>('plugins/projects/archive', {
+  tenantId,
+  projectId,
+});
+```
+
+</Tab>
+</Tabs>
+
+**Route:** `POST /plugins/{pluginId}/{path}`
+
+The plugin and path names above are illustrative; see [adapters and plugins](/docs/concepts/extensions#plugin-contract)
+for how a plugin declares endpoints.
+
+## HTTP routes
+
+The HTTP API mirrors `iam.api` one to one. Every operation is a `POST` with a JSON body:
+
+| Route | Calls |
+| --- | --- |
+| `POST {basePath}/{group}/{method}` | `iam.api.{group}.{method}`, such as `POST /api/iam/identities/invite`. |
+| `POST {basePath}/auth/{method}` | An `iam.api.auth` method, such as `auth/signIn`. |
+| `POST {basePath}/authorize`, `/authorizeMany`, `/listAccessible` | The authorization queries. |
+| `POST {basePath}/plugins/{pluginId}/{path}` | A plugin endpoint. |
+| `GET {basePath}/health` | A database check that answers `200` or `503`. |
+| `GET {basePath}/metrics` | Prometheus metrics, only with `observability.metrics` and its bearer token. |
+| `GET {basePath}/.well-known/jwks.json` | Session JWT verification keys, only with `sts.jwt`. |
+
+The request body is the method's `input`. The credential comes from the request: the session cookie or an
+`Authorization: Bearer` header. Deployment capabilities (`bootstrap`, `recoverRoot`, raw storage, key derivation,
+and session-issuance primitives) have no route.
+
+```bash
+curl -X POST https://identity.example.com/api/iam/identities/invite \
+  -H "Authorization: Bearer $BETTER_IAM_TOKEN" \
+  -H "Content-Type: application/json" \
+  -H "X-Better-IAM: 1" \
+  -d '{ "tenantId": "3f2c9a4e-…", "email": "alice@example.com" }'
+```
+
+Every `POST` must send `Content-Type: application/json` and `X-Better-IAM: 1`, and a request that carries cookies
+must also send an exact trusted `Origin` (`CSRF_REJECTED` or `UNTRUSTED_ORIGIN` otherwise). Bodies are limited to
+64 KiB (`PAYLOAD_TOO_LARGE`). A success answers `{ "data": … }`; a failure answers the error's HTTP status with
+`{ "error": { "code", "message" } }`. [HTTP and configuration](/docs/authentication/http) covers cookies, CORS, and
+request IDs, and the [API reference](/docs/reference/api) links an OpenAPI 3.1 document of every route.
+
+## Server calls and HTTP calls compared
+
+Authorization, validation, transactions, and audit are identical. The transport adds and removes a few things:
+
+| | Direct `iam.api` call | HTTP route or typed client |
+| --- | --- | --- |
+| Credential | The `CredentialInput` you pass | The request's cookie or bearer header |
+| Result | The return value | `{ "data": … }`, which the client unwraps |
+| Refusal | Throws `IamError` | `{ "error": { "code", "message" } }` with the status; the client throws `IamClientError` |
+| Unexpected exception | Thrown as is | `500 INTERNAL_ERROR` with a generic message |
+| Session cookie | Never set; sign-in methods return the token | Set by sign-in routes, cleared by `auth/signOut` |
+| CSRF and origin checks | Not applicable | JSON content type, `X-Better-IAM: 1`, trusted `Origin` |
+| Body size | No transport limit | 64 KiB |
+| Client details | Derived from `headers` in the credential | Derived by `http.clientInfo` |
+
+Two consequences matter in practice:
+
+- **Signing a browser in from server code.** A direct `iam.api.auth.signIn` returns `{ token, session }` but sets no
+  cookie. Use the in-process client of your framework integration (for example `req.iam.client.auth.signIn(...)`),
+  which goes through the handler and sets the cookie on your response.
+- **Client details for public methods.** Public `auth` calls have no credential to derive the client from. Wrap
+  direct calls in `iam.auth.withClient(info, fn)` so the session records the right IP and user agent.
+
+## Options
+
+These options shape where the API is served and how the HTTP handler treats requests. The full list is in
+[HTTP and configuration](/docs/authentication/http#options).
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `baseURL` | `string` | required | Where the service is reached. HTTPS is required outside `localhost`, `127.0.0.1`, and `[::1]`. Its origin is always trusted. |
+| `basePath` | `string` | `'/api/iam'` | Where the handler serves the API: an absolute path without a trailing slash. |
+| `trustedOrigins` | `string[]` | `[]` | Additional exact origins allowed to call the API with cookies. |
+| `http.clientInfo` | `(request: Request) => { ip?, userAgent?, label? } \| undefined` | user agent only | Derives the client details recorded on sessions. Read the IP only from a header your own proxy sets. |
+| `http.cookieSameSite` | `'lax' \| 'strict'` | `'lax'` | The session cookie's `SameSite` attribute. |
+| `http.persistentCookies` | `boolean` | `true` | Whether session cookies outlive the browser by default. |
+
+## Errors
+
+| Code | Status | When |
+| --- | --- | --- |
+| [`UNAUTHENTICATED`](/docs/reference/errors#unauthenticated) | 401 | The credential is missing, malformed, expired, idle, or revoked. |
+| [`ACCESS_DENIED`](/docs/reference/errors#access_denied) | 403 | The caller may not perform the method's action. |
+| [`CSRF_REJECTED`](/docs/reference/errors#csrf_rejected) | 403 | An HTTP request without the JSON content type, `X-Better-IAM: 1`, or a required `Origin`. |
+| [`UNTRUSTED_ORIGIN`](/docs/reference/errors#untrusted_origin) | 403 | An HTTP request from an origin that is not trusted. |
+| [`NOT_FOUND`](/docs/reference/errors#not_found) | 404 | An unknown route or method, or a record that does not exist. |
+| [`PAYLOAD_TOO_LARGE`](/docs/reference/errors#payload_too_large) | 413 | An HTTP body over 64 KiB. |
+| [`INVALID_INPUT`](/docs/reference/errors#invalid_input) | 400 | An input that fails validation, or a body that is not JSON. |
+| [`INTERNAL_ERROR`](/docs/reference/errors#internal_error) | 500 | Over HTTP only: an exception that is not an `IamError`. |
+
+[Error handling](/docs/concepts/error-handling) explains how to branch on codes and when to retry.
+
+## Next steps
+
+<Cards>
+  <Card title="Typed client" href="/docs/concepts/client">
+    Call the same methods from the browser with inferred types.
+  </Card>
+  <Card title="Error handling" href="/docs/concepts/error-handling">
+    `IamError`, status codes, and retries.
+  </Card>
+  <Card title="API reference" href="/docs/reference/api">
+    Every group and method with its route and signature.
+  </Card>
+  <Card title="HTTP and configuration" href="/docs/authentication/http">
+    Cookies, CSRF, CORS, rate limits, and request IDs.
+  </Card>
+</Cards>

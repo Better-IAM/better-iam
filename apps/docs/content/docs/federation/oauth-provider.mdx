@@ -7,7 +7,7 @@ packages: ['@better-iam/oauth', '@better-iam/server']
 sources: ['docs/protocols.md', 'docs/enterprise.md', 'packages/oauth/src/provider.ts', 'packages/oauth/src/adapter.ts', 'packages/server/src/http.ts', 'examples/shared/oidc.mjs', 'examples/shared/server.mjs']
 ---
 
-import { Bot, Server } from '@/lib/icons';
+import { ArrowLeftRight, Bot, MonitorSmartphone, Server, UserPlus } from '@/lib/icons';
 
 An **authorization server** is the service other applications send people to when they need them to sign in, and
 that hands those applications tokens afterwards. When you enable it, Better IAM becomes an identity provider like
@@ -44,7 +44,7 @@ with the authorization code flow and refresh tokens, and add the others when a c
 | Authorization code with PKCE | The standard browser sign-in flow. It is the only enabled response type, and PKCE (a per-request secret that makes a stolen code useless) is required for every client. |
 | Refresh tokens | Let an app stay signed in without asking again. They rotate on every use, and reusing an old one revokes the whole chain. |
 | Client credentials | Machine-to-machine access for a backend job, tied to an active <Term id="service-account">service account</Term>. No person is involved. |
-| Device authorization | Sign-in for devices without a browser or keyboard (TVs, CLIs): the device shows a code, the person approves it on their phone or laptop. |
+| Device authorization (RFC 8628) | Sign-in for devices without a browser or keyboard (TVs, CLIs): the device shows a code, the person approves it on their phone or laptop. See [Device authorization](/docs/federation/device-authorization). |
 | UserInfo | Returns the signed-in person's claims to a client holding an access token. |
 | Introspection and revocation | Let a client check whether a token is still valid, or cancel it. A client may only do this for its own tokens. |
 | RP-initiated logout | Lets an app (the relying party, RP) send the person to Better IAM to sign out, with your own logout page. |
@@ -52,18 +52,39 @@ with the authorization code flow and refresh tokens, and add the others when a c
 | Pushed authorization requests (PAR, RFC 9126) | The client sends its sign-in request to the server first, so its parameters stay out of the browser URL. See [Pushed authorization requests](#pushed-authorization-requests). |
 | Resource indicators (RFC 8707) and JWT access tokens (RFC 9068) | Tokens meant for one API only, which that API verifies offline with the public keys. See [Resource servers and tokens](/docs/federation/oauth-resource-servers). |
 | <Term id="dpop">DPoP</Term> (RFC 9449) | Binds a token to a key the client holds, so a stolen token is useless on its own. See [DPoP](/docs/federation/oauth-resource-servers#dpop). |
-| Token exchange (RFC 8693) | Lets one of your APIs call another for the same user with a new, narrower token. See [Token exchange](/docs/federation/oauth-resource-servers#token-exchange). |
-| Dynamic client registration (RFC 7591) | Lets clients such as MCP hosts register themselves over HTTP. Off unless `registration` is configured. See [Dynamic registration and MCP](/docs/federation/mcp-authorization). |
+| Token exchange (RFC 8693) | Lets one of your APIs call another for the same user with a new, narrower token. See [Token exchange](/docs/federation/token-exchange). |
+| Dynamic client registration (RFC 7591) | Lets clients such as MCP hosts register themselves over HTTP. Off unless `registration` is configured. See [Dynamic client registration](/docs/federation/dynamic-client-registration) and [Dynamic registration and MCP](/docs/federation/mcp-authorization). |
+
+Not offered: the implicit and hybrid flows (only `response_type=code`), the resource owner password grant, client
+self-management (RFC 7592 `registration_client_uri`), and CIBA (backchannel authentication).
 
 The development interaction UI is disabled: login and consent pages belong to your application.
 
 ## Set up the provider
 
-Create the provider with the host callbacks, persistent keys, and the URLs of your own sign-in pages, then mount
-it:
+<Steps>
+<Step>
+
+### Install
+
+The provider ships in `@better-iam/oauth`, also exposed as the `better-iam/oauth` subpath of the umbrella package.
+It runs on Node 22.12 or later.
+
+```npm
+npm i better-iam
+```
+
+</Step>
+<Step>
+
+### Create the provider
+
+Create the provider with the host callbacks, persistent keys, and the URLs of your own sign-in pages:
 
 ```ts title="oauth.ts"
 import { createOAuthProvider } from 'better-iam/oauth';
+import { iam } from './iam';
+import { secrets, renderDeviceScreen, renderLogoutScreen } from './provider-pages';
 
 export const issuer = createOAuthProvider({
   ...iam.protocolHost,
@@ -106,6 +127,14 @@ A **scope** is a named piece of access a client asks for, such as `email` or `do
 128 letters, digits, and `: _ . -`. The provider always supports `openid`, `email`, `profile`, `offline_access`
 (ask for a refresh token), and `iam`, plus your `scopes` and every resource server's scopes.
 
+`createOAuthProvider` checks its configuration when it starts and throws a `configuration` error for an issuer that
+is not HTTPS (or loopback HTTP with `allowInsecureLocalhost`) or carries a query or fragment; missing keys, cookie
+keys shorter than 32 characters, missing page callbacks, or empty `trustedOrigins`; an `encryptionKey` or
+`dpopNonceSecret` that does not decode to 32 bytes; and resource indicators that are not absolute URIs.
+
+</Step>
+<Step>
+
 ### Keys
 
 Supply persistent signing keys, cookie-signing keys, and a separate 32-byte encryption key. Keep the same keys
@@ -119,6 +148,9 @@ across replicas and process restarts, and load them from your [secret store](/do
   migration is not provided.
 </Callout>
 
+</Step>
+<Step>
+
 ### Mount it
 
 `iam.useProtocol(issuer)` registers the provider. `iam.nodeHandler(req, res)` then serves the complete
@@ -129,7 +161,26 @@ You can also call `issuer.nodeHandler(req, res)` yourself. See
 
 The configured issuer stays fixed: metadata and generated endpoint URLs retain its mount path, so an issuer of
 `https://identity.example/oidc` serves its token endpoint at `https://identity.example/oidc/token` and its public
-keys at `https://identity.example/oidc/jwks`.
+keys at `https://identity.example/oidc/jwks`. Every path is listed under [Endpoints](#endpoints).
+
+```ts title="server.ts"
+import { createServer } from 'node:http';
+import { iam } from './iam';
+import './oauth'; // creates the provider and calls iam.useProtocol(issuer)
+
+createServer((req, res) => void iam.nodeHandler(req, res)).listen(3000);
+```
+
+</Step>
+<Step>
+
+### Build the sign-in and consent pages
+
+Serve the page `interactionUrl` points to, as described in
+[Build the interaction pages](#build-the-interaction-pages), then [register a client](#register-clients).
+
+</Step>
+</Steps>
 
 ## Authorization code flow
 
@@ -197,7 +248,7 @@ page first; the consent step then uses the session it creates.
 - The request is a `POST` whose `Origin` is in `trustedOrigins` (`CSRF` otherwise).
 - The credential must resolve to a user session in the client's tenant (`TENANT_MISMATCH` otherwise). Sign the
   person in to that tenant first.
-- Consent cannot be granted while an administrator [impersonates](/docs/guides/authentication/impersonation) the
+- Consent cannot be granted while an administrator [impersonates](/docs/authentication/impersonation) the
   member (`IMPERSONATION_RESTRICTED`).
 - A client's `prompt=login` needs a sign-in made after the authorization request started, and its `max_age` a sign-in
   at most that many seconds old (`LOGIN_REQUIRED`, 401, otherwise). Sign the person in again, then submit.
@@ -318,7 +369,8 @@ The device authorization grant is for devices where typing a password is impract
 discovered device authorization endpoint for a code and shows it. The person opens the verification page on
 another device, where you render the provider's form with `renderDevicePage` (`kind: 'input'`, then `confirm` with
 the `userCode` and `clientName`, then `success`), and signs in and consents through your interaction page. Device
-codes expire after 10 minutes.
+codes expire after 10 minutes. [Device authorization](/docs/federation/device-authorization) walks through the
+device side, polling, and its errors.
 
 </Tab>
 </Tabs>
@@ -531,7 +583,7 @@ scheduled work.
 
 ## Audit events
 
-Every administrative change and every consent is recorded in the tenant's [audit chain](/docs/guides/events/audit-chain),
+Every administrative change and every consent is recorded in the tenant's [audit chain](/docs/concepts/events/audit-chain),
 so you can answer "who connected this app" or "who rotated this secret":
 
 | Action | When |
@@ -544,11 +596,81 @@ so you can answer "who connected this app" or "who rotated this secret":
 | `iam:oauth:TokenExchange` | A token was exchanged (RFC 8693). |
 | `iam:oauth:CreateRegistrationToken`, `iam:oauth:RevokeRegistrationToken` | Registration token administration. |
 
+## Endpoints
+
+Paths are relative to the issuer URL and keep its path: with an issuer of `https://identity.example/oidc`, the token
+endpoint is `https://identity.example/oidc/token`. Clients should read them from discovery.
+
+| Endpoint | Method and path | Discovery field |
+| --- | --- | --- |
+| OpenID discovery | `GET /.well-known/openid-configuration` | |
+| OAuth metadata (RFC 8414) | `GET /.well-known/oauth-authorization-server{issuer path}` on the issuer's origin | |
+| Public keys (JWKS) | `GET /jwks` | `jwks_uri` |
+| Authorization | `GET` or `POST /auth` | `authorization_endpoint` |
+| Token | `POST /token` | `token_endpoint` |
+| UserInfo | `GET` or `POST /me` | `userinfo_endpoint` |
+| Introspection | `POST /token/introspection` | `introspection_endpoint` |
+| Revocation | `POST /token/revocation` | `revocation_endpoint` |
+| Pushed authorization requests | `POST /request` | `pushed_authorization_request_endpoint` |
+| Device authorization | `POST /device/auth` | `device_authorization_endpoint` |
+| Device verification page | `GET` or `POST /device` | `verification_uri` in the device response |
+| RP-initiated logout | `GET` or `POST /session/end` | `end_session_endpoint` |
+| Dynamic registration | `POST /reg`, only when `registration` is set | `registration_endpoint` |
+
+Your interaction page lives wherever `interactionUrl` points; it is not served by the provider.
+
+## Schema
+
+The provider keeps its state in your Better IAM database:
+
+| Collection | What it holds | Key fields |
+| --- | --- | --- |
+| `oauthClients` | Registered clients | `id` (SHA-256 of the client ID), `tenantId`, `clientId`, `encrypted` (metadata and secret), `revoked`, `serviceAccountId`, `resources`, `firstParty`, `registeredVia`, `secretRotatedAt` |
+| `oauthArtifacts` | Codes, tokens, grants, device codes, interactions, provider sessions | `model`, `boundTenantId`, `encrypted`, `expiresAt`, `clientId`, `accountId`, and hashed lookup keys (`uidHash`, `userCodeHash`, `grantIdHash`) |
+| `oauthGrantSessions` | The IAM session each consent is bound to | `id` (hash of the grant ID), `tenantId`, `sessionId`, `identityId` |
+| `oauthRevokedGrants` | Revoked grant families, so tokens of a revoked grant stay dead | `id` (hash of the grant ID) |
+| `oauthRegistrationTokens` | Dynamic registration tokens | `id` (hash of the token), `tenantId`, `name`, limits, `used`, `expiresAt`, `revoked` |
+
+Payloads are sealed with AES-256-GCM under `encryptionKey`, and token identifiers are stored as SHA-256 hashes.
+
+## Errors
+
+The protocol endpoints answer with standard OAuth errors (`invalid_request`, `invalid_client`, `invalid_grant`,
+`invalid_scope`, `invalid_target`, `access_denied`, and so on). When an error cannot be redirected back to the
+client (for example an unknown `client_id` or redirect URI), the provider answers with JSON holding the `error` code
+and the generic description "The identity request could not be completed.", never internal details. The server-side methods throw `IamError`:
+
+| Code | Status | Thrown by | When |
+| --- | --- | --- | --- |
+| [`INVALID_INPUT`](/docs/reference/errors#invalid_input) | 400 | `registerClient`, `updateClient`, `createRegistrationToken` | Invalid names, redirect URIs, grant types, scopes, resource indicators, authentication method, keys, or lifetimes, or a missing or inactive service account. |
+| [`CONFLICT`](/docs/reference/errors#conflict) | 409 | `registerClient` | The client ID already exists, in any tenant. |
+| [`TENANT_INACTIVE`](/docs/reference/errors#tenant_inactive) | 403 | `registerClient`, `createRegistrationToken` | The tenant is suspended or deleted. |
+| [`OAUTH_CLIENT`](/docs/reference/errors#oauth_client) | 404 | `interactionDetails`, `completeInteraction`, client management | The client is revoked, unknown, or its tenant is inactive. |
+| [`NOT_FOUND`](/docs/reference/errors#not_found) | 404 | `getClient`, `updateClient`, `revokeGrant`, `revokeRegistrationToken` | No such client, grant, or token in this tenant. |
+| [`CSRF`](/docs/reference/errors#csrf) | 403 | `completeInteraction` | Not a `POST`, or the `Origin` is not in `trustedOrigins`. |
+| [`INVALID_SESSION`](/docs/reference/errors#invalid_session) | 403 | `completeInteraction` | The credential is not a person's session. |
+| [`TENANT_MISMATCH`](/docs/reference/errors#tenant_mismatch) | 403 | `completeInteraction` | The person is signed in to another tenant than the client's. |
+| [`IMPERSONATION_RESTRICTED`](/docs/reference/errors#impersonation_restricted) | 403 | `completeInteraction` | An administrator is impersonating the person. |
+| [`LOGIN_REQUIRED`](/docs/reference/errors#login_required) | 401 | `completeInteraction` | The client sent `prompt=login` or `max_age` and the sign-in is too old. |
+| [`PROTECTED_OPERATION`](/docs/reference/errors#protected_operation) | 403 | Provider storage | A client was about to be stored outside `registerClient` or the registration gate. |
+
+Permission failures from the host's `authorize` callback surface as that callback's error, usually
+[`ACCESS_DENIED`](/docs/reference/errors#access_denied).
+
 ## Next steps
 
 <Cards>
   <Card icon={<Server />} title="Resource servers and tokens" href="/docs/federation/oauth-resource-servers">
-    Audience-restricted JWT access tokens, offline verification, DPoP, and token exchange.
+    Audience-restricted JWT access tokens, offline verification, and DPoP.
+  </Card>
+  <Card icon={<ArrowLeftRight />} title="Token exchange" href="/docs/federation/token-exchange">
+    Let one API call another for the same person with a narrower token.
+  </Card>
+  <Card icon={<MonitorSmartphone />} title="Device authorization" href="/docs/federation/device-authorization">
+    Sign people in on TVs, CLIs, and other devices without a browser.
+  </Card>
+  <Card icon={<UserPlus />} title="Dynamic client registration" href="/docs/federation/dynamic-client-registration">
+    Let clients register themselves within limits you set.
   </Card>
   <Card icon={<Bot />} title="Dynamic registration and MCP" href="/docs/federation/mcp-authorization">
     Let MCP hosts discover the server, register, and call your APIs.
