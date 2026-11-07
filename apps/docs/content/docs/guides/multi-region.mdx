@@ -1,0 +1,455 @@
+---
+title: "Run in multiple regions"
+description: "Deploy Better IAM in several regions, give each organization a home region and its own sign-in address, and send sign-in to the right region with WRONG_REGION redirects."
+icon: Globe
+packages: ['@better-iam/server', '@better-iam/client', '@better-iam/adapter-postgres', '@better-iam/cli']
+sources:
+  - docs/hosts-and-regions.md
+  - packages/server/src/hosts.ts
+  - packages/server/src/api/hostnames.ts
+  - packages/server/src/api/tenants.ts
+  - packages/server/src/http.ts
+  - packages/server/src/index.ts
+  - packages/client/src/index.ts
+  - packages/adapter-postgres/src/index.ts
+---
+
+import { Building2, Database, Globe, Rocket, Route, Zap } from '@/lib/icons';
+
+Once customers sit on several continents, each organization should sign in at a deployment near its data. This
+guide runs the same Better IAM application in two regions, `us-east-1` and `eu-west-1`, and routes every
+organization's sign-in to its <Term id="home-region">home region</Term>. You will build:
+
+- one application deployed per region, each configured with `regions` and its own `current` region;
+- organization <Term id="sign-in-address">sign-in addresses</Term> that name the region, such as
+  `acme.signin.us-east-1.example.com`;
+- organizations homed in a region at creation, and moved with `tenants.setRegion`;
+- a global sign-in page that follows `WRONG_REGION` (HTTP 421) to the organization's region;
+- server-side redirects for addresses that name the wrong region;
+- optional custom hostnames, served by the organization's home region.
+
+The reference for every option used here is
+[Sign-in addresses and regions](/docs/operations/deployment/hosts-and-regions). This guide puts the pieces in order.
+
+<Callout type="warn" title="Regions route sign-in; they do not move data">
+  The region check decides where sign-in is served and where sessions are issued. Authenticated calls on a
+  deployment's own `baseURL` are not refused by region. For strict data residency, give each region its own database.
+</Callout>
+
+## Prerequisites
+
+- A working single-region deployment. See the [Quickstart](/docs/quickstart) and the
+  [Production checklist](/docs/guides/production-checklist).
+- A domain you control, with DNS that can route a wildcard per region (for example `*.signin.us-east-1.example.com`
+  to the United States load balancer).
+- Wildcard TLS certificates for each region's address space.
+- A root administrator credential (`rootCredential` below) with recent authentication, for creating and moving
+  organizations.
+- Node.js 22.12 or newer in every region.
+
+<Steps>
+<Step>
+
+### Choose a database layout
+
+Regions either share one database (for example a globally replicated PostgreSQL) or each keep their own. Decide
+first, because it changes how organizations are created and moved.
+
+| | Shared database | A database per region |
+| --- | --- | --- |
+| Where organization data lives | Everywhere the database replicates | Only in its home region |
+| How a region knows another region's organization | From the organization's record | `regions.locate(alias)`, your own small directory |
+| Creating an organization in another region | `tenants.create({ region })` from any region | Only on that region's deployment |
+| Moving an organization | `tenants.setRegion` | Copy its data yourself, then `setRegion` there |
+| Migrations and root | One `migrate` per release, one root | `migrate` and `bootstrap` in every region, one root per region |
+
+With a shared database, every IAM transaction from every region takes the same database lock (see
+[Optimize performance](/docs/guides/performance#how-a-request-spends-time)), so a region far from the database adds
+its round-trip time to each transaction it runs.
+
+</Step>
+<Step>
+
+### Configure each region
+
+Deploy the same code everywhere and select the region with an environment variable. The pattern
+`{tenant}.signin.{region}.example.com` builds each organization's address from its alias and its home region.
+
+```ts title="lib/iam.ts"
+import { betterIam } from 'better-iam';
+import { postgresAdapter } from 'better-iam/adapter-postgres';
+import { sendEmail } from './delivery';
+
+const region = process.env.IAM_REGION!; // 'us-east-1' or 'eu-west-1'
+
+export const iam = betterIam({
+  database: postgresAdapter({ connectionString: process.env.DATABASE_URL! }),
+  // With a shared database, every region must use the same secret.
+  secret: process.env.BETTER_IAM_SECRET!,
+  baseURL: `https://signin.${region}.example.com`,
+  authentication: {
+    sendEmail,
+    // Optional: every pattern must sit under the passkey domain.
+    passkeys: { rpID: 'example.com', rpName: 'Acme Cloud' },
+  },
+  regions: {
+    current: region,
+    regions: {
+      'us-east-1': { label: 'United States', baseURL: 'https://signin.us-east-1.example.com' },
+      'eu-west-1': { label: 'Europe', baseURL: 'https://signin.eu-west-1.example.com' },
+    },
+  },
+  hosts: {
+    patterns: ['{tenant}.signin.{region}.example.com'],
+    signInPath: '/login', // where your sign-in page lives on each address
+  },
+});
+```
+
+Configuration is checked when `betterIam()` runs: `regions.current` must be one of `regions.regions` (1 to 64
+regions), every region `baseURL` must be HTTPS outside localhost, a pattern may use `{region}` only with `regions`,
+and with passkeys every pattern must sit under `rpID`. Any violation throws `INVALID_CONFIG`.
+
+For a database per region, add `locate`, so this region can redirect aliases it does not hold instead of answering
+`NOT_FOUND`:
+
+```ts title="lib/iam.ts (a database per region)"
+import { lookupRegion } from './region-directory';
+
+// ...inside betterIam({ ... }):
+regions: {
+  current: region,
+  regions: {
+    'us-east-1': { baseURL: 'https://signin.us-east-1.example.com' },
+    'eu-west-1': { baseURL: 'https://signin.eu-west-1.example.com' },
+  },
+  // Your own global directory: alias -> region, or undefined when unknown.
+  locate: async (alias) => lookupRegion(alias),
+},
+```
+
+`region-directory.ts` is your module over a small global key-value store. Better IAM ships no directory; keep it to
+an alias and a region per organization.
+
+</Step>
+<Step>
+
+### Route DNS and TLS to each region
+
+Each region serves the IAM handler on every host of its address space. Nothing per organization is deployed.
+
+1. A wildcard DNS record per region: `*.signin.us-east-1.example.com` to the United States load balancer,
+   `*.signin.eu-west-1.example.com` to the European one, plus each region's own `signin.<region>.example.com`.
+2. A wildcard certificate per region for the same names.
+3. Your application answering on all of those hosts with the handler mounted as usual. See
+   [Protocol mounts](/docs/operations/deployment/protocol-mounts).
+
+Behind a reverse proxy that rewrites `Host`, set `hosts.forwardedHost: true`, and only when your own proxy sets
+`X-Forwarded-Host`: the address decides which organization a request is pinned to.
+
+</Step>
+<Step>
+
+### Migrate and bootstrap
+
+```sh title="Shared database: once per release, from one place"
+better-iam migrate --config better-iam.config.mjs
+better-iam doctor --config better-iam.config.mjs --strict
+```
+
+```sh title="A database per region: in every region"
+IAM_REGION=eu-west-1 better-iam migrate --config better-iam.config.mjs
+IAM_REGION=eu-west-1 better-iam bootstrap --config better-iam.config.mjs   # once per region
+IAM_REGION=eu-west-1 better-iam doctor --config better-iam.config.mjs --strict
+```
+
+The CLI loads `better-iam.config.mjs`, so that module must read `IAM_REGION` and build the same `regions` and
+`hosts` options as `lib/iam.ts`. `bootstrap` reads `BETTER_IAM_ROOT_EMAIL`, `BETTER_IAM_ROOT_NAME`, and
+`BETTER_IAM_ROOT_PASSWORD`. Root
+administrators sign in at their region's own address (`baseURL`), which is never pinned to an organization. See
+[Deploy sequence](/docs/operations/deployment#deploy-sequence).
+
+</Step>
+<Step>
+
+### Home organizations in a region
+
+An organization's home region is its own `region`, else its nearest ancestor's. Set it when you create the
+organization:
+
+```ts title="scripts/create-organization.ts"
+import { iam } from '../lib/iam';
+
+export async function createOrganization(
+  rootCredential: { token: string },
+  rootTenantId: string,
+  input: { name: string; slug: string; ownerEmail: string; region: 'us-east-1' | 'eu-west-1' },
+) {
+  const { tenant } = await iam.api.tenants.create(rootCredential, {
+    parentId: rootTenantId,
+    type: 'organization',
+    name: input.name,
+    ownerEmail: input.ownerEmail,
+    slug: input.slug, // the alias in {tenant}
+    region: input.region,
+  });
+  return tenant; // pending until the owner accepts the invitation
+}
+```
+
+**Route:** `POST /tenants/create`
+
+- Without `region`, the organization inherits its parent's region. An organization whose parent has no region,
+  such as one directly under the root, is homed in the region that creates it.
+- With a database per region (`locate` set), `region` may only name the current region; anything else fails with
+  `INVALID_INPUT`. Create the organization on its region's deployment, and add its alias to your directory in the
+  same code path.
+- Organizations that existed before you configured regions have no region, and every region serves them until you
+  set one.
+- Projects and child tenants follow their organization unless they have a region of their own.
+
+To move an organization, a root administrator calls `tenants.setRegion` (it needs `iam:tenants:update` and recent
+authentication, and is audited as `tenant:region`). `null` makes the tenant inherit its parent's region again.
+
+```ts title="scripts/move-organization.ts"
+import { iam } from '../lib/iam';
+
+export async function moveOrganization(rootCredential: { token: string }, tenantId: string) {
+  return iam.api.tenants.setRegion(rootCredential, { tenantId, region: 'eu-west-1' });
+}
+```
+
+**Route:** `POST /tenants/setRegion`
+
+<Callout type="warn" title="No per-organization data export">
+  With a database per region, `setRegion` only changes where sign-in is served. Better IAM has no command that
+  exports one organization's records: `store-export`, `store-import`, and `store-copy` copy whole databases into
+  empty ones, and `config-export` carries a tenant's access model (resource types, policies, roles, groups,
+  group bindings, access packages), not its accounts, credentials, or sessions. Copying an organization between regional databases is yours to build.
+</Callout>
+
+</Step>
+<Step>
+
+### Build a global sign-in page
+
+A sign-in page on any region can look an organization up by alias or by email domain. With a shared database, both
+calls fail with `WRONG_REGION` everywhere but the home region, carrying the `region` and, when one can be built, a
+`location`: the organization's sign-in URL in its home region. With a database per region, a region only knows its
+own organizations: `tenants.lookup` answers `WRONG_REGION` for another region's alias when `regions.locate` finds
+it, and `domains.discover` answers `NOT_FOUND` for an email domain this region's database does not hold.
+
+```ts title="app/login/find-organization.ts"
+import { createIamClient, IamClientError } from 'better-iam/client';
+import type { iam } from '@/lib/iam';
+
+const client = createIamClient<typeof iam>();
+
+export async function goToOrganization(organization: string) {
+  try {
+    const org = await client.tenants.lookup({ slug: organization });
+    // Served here: signInUrl is the organization's canonical address.
+    location.assign(org.signInUrl ?? `/login?org=${org.slug}`);
+  } catch (error) {
+    if (error instanceof IamClientError && error.code === 'WRONG_REGION' && error.location)
+      location.assign(error.location); // the organization lives in another region
+    else throw error;
+  }
+}
+
+export async function goToOrganizationByEmail(email: string) {
+  try {
+    const org = await client.domains.discover({ email });
+    if (org.signInUrl) location.assign(org.signInUrl);
+  } catch (error) {
+    if (error instanceof IamClientError && error.code === 'WRONG_REGION' && error.location)
+      location.assign(error.location);
+    else throw error;
+  }
+}
+```
+
+**Route:** `POST /tenants/lookup` and `POST /domains/discover` (both public)
+
+Both routes are public discovery data. Put network rate limits on them at your ingress.
+
+</Step>
+<Step>
+
+### Redirect addresses that name the wrong region
+
+`acme.signin.eu-west-1.example.com` for an organization homed in `us-east-1` is refused with `WRONG_REGION` on
+API calls. For the pages you serve, check the address yourself and redirect:
+
+```ts title="server/region-redirect.ts"
+import type { NextFunction, Request, Response } from 'express';
+import { WrongRegionError } from 'better-iam/server';
+import { iam } from '../lib/iam';
+
+export async function regionRedirect(request: Request, response: Response, next: NextFunction) {
+  const host = request.headers.host ?? '';
+  try {
+    // Undefined for this deployment's own address and for hosts that are no organization's.
+    const org = await iam.hosts.resolve(host);
+    if (org) {
+      // Also checks the home region: WRONG_REGION when another region serves the organization
+      // or the address names the wrong region.
+      await iam.api.tenants.lookup({ host });
+      response.locals.organization = org; // { tenantId, name, slug, hostname, via }
+    }
+    next();
+  } catch (error) {
+    if (error instanceof WrongRegionError && error.location) return response.redirect(307, error.location);
+    next(error); // NOT_FOUND: no active organization uses this address
+  }
+}
+```
+
+`iam.hosts.resolve(host)` returns undefined for the deployment's own and unknown hosts and throws `NOT_FOUND` for an
+address no active organization holds. It does not check the home region: it throws `WRONG_REGION` only when the
+alias is missing from this region's database and `regions.locate` names another region. With a shared database it
+returns the organization even when another region serves it, so the middleware also calls `tenants.lookup({ host })`,
+which refuses with `WRONG_REGION` (and the `location` to redirect to) in both layouts. `iam.hosts.region` is this
+deployment's region.
+
+</Step>
+<Step>
+
+### Send links that open in the right region
+
+Every organization has one canonical sign-in URL: its primary custom hostname, else its address from the first
+pattern, else its region's `baseURL`, followed by `hosts.signInPath`. You get it from `iam.hosts.signInUrl(tenantId)`,
+from `signInUrl` in `tenants.lookup` and `domains.discover` results, and from `signInUrl` on every message your
+`sendEmail` and `sendSms` callbacks receive. Build invitation, reset, and magic links from it, so they open in the
+organization's home region. See
+[Sign-in URLs and email links](/docs/operations/deployment/hosts-and-regions#sign-in-urls-and-email-links).
+
+</Step>
+<Step>
+
+### Add custom hostnames (optional)
+
+With `hosts.customHostnames: true`, an organization can verify a hostname it controls, such as `login.acme.com`,
+and it then works like the organization's subdomain. Give each region its own CNAME target:
+
+```ts title="lib/iam.ts"
+// ...inside betterIam({ ... }):
+hosts: {
+  patterns: ['{tenant}.signin.{region}.example.com'],
+  signInPath: '/login',
+  customHostnames: true,
+  cnameTarget: `custom.signin.${region}.example.com`,
+},
+```
+
+`hostnames.add` returns the CNAME of the deployment that handles the call, so claim the hostname on the
+organization's home region. Then publish the TXT and CNAME records, call `hostnames.verify`, and optionally
+`hostnames.setPrimary`. Gate on-demand certificates with `iam.hosts.allowed(hostname)`. See
+[Custom hostnames](/docs/operations/deployment/hosts-and-regions#custom-hostnames).
+
+**Route:** `POST /hostnames/add`, `POST /hostnames/verify`, `POST /hostnames/setPrimary`
+
+</Step>
+</Steps>
+
+## What pinning and region checks refuse
+
+| Situation | Result |
+| --- | --- |
+| A sign-in call, lookup, or discovery for an organization homed in another region | `WRONG_REGION` (421) with `region` and `location` |
+| An address that names the wrong region | `WRONG_REGION` (421) |
+| A sign-in call on Acme's address naming another organization's `tenantId` | `HOST_MISMATCH` (403) |
+| A session or API key of another organization used on Acme's address | `HOST_MISMATCH` (403) |
+| An address whose alias no active organization holds (including a pending or suspended one) | `NOT_FOUND` (404) |
+| A custom hostname the deployment itself uses | `HOSTNAME_NOT_ALLOWED` (400) |
+| A custom hostname another organization verified first | `HOSTNAME_TAKEN` (409) |
+| An authenticated management call on the deployment's own `baseURL` for an organization homed elsewhere | Allowed: authenticated calls are not refused by region |
+
+Session cookies are host-only (`__Host-` prefix), so a session started on an organization's address in one region
+is never sent to another address.
+
+## Verify it works
+
+Look up an organization from a region that is not its home. The answer is 421 with the redirect target:
+
+```sh
+curl -s -o - -w '\n%{http_code}\n' -X POST https://signin.eu-west-1.example.com/api/iam/tenants/lookup \
+  -H 'content-type: application/json' -H 'x-better-iam: 1' -d '{"slug":"acme"}'
+# {"error":{"code":"WRONG_REGION","message":"…","region":"us-east-1","location":"https://acme.signin.us-east-1.example.com/login"}}
+# 421
+```
+
+From the home region, the same call answers 200 with `tenantId`, `region`, and `signInUrl`. Then:
+
+- open `https://acme.signin.us-east-1.example.com/login` and sign in without passing a `tenantId`;
+- open `https://acme.signin.eu-west-1.example.com/login` and confirm the 307 redirect to the United States address;
+- check the audit log for `tenant:region` after a move.
+
+## Troubleshooting
+
+<Accordions>
+<Accordion title="betterIam() throws INVALID_CONFIG about hosts or regions">
+
+The message names the field. Common causes: a pattern uses `{region}` without the `regions` option, `regions.current`
+is not one of `regions.regions`, a region `baseURL` is not HTTPS, a pattern does not contain `{tenant}` exactly once,
+or a pattern is not under the passkey `rpID`. See [INVALID_CONFIG](/docs/reference/errors#invalid_config).
+
+</Accordion>
+<Accordion title="tenants.create fails with INVALID_INPUT for a region">
+
+Either the region is not in `regions.regions`, or regions keep separate databases (`locate` is set) and the region
+is not the current one. Create the organization on its own region's deployment.
+
+</Accordion>
+<Accordion title="An organization's address answers NOT_FOUND">
+
+No active organization holds that alias. A new organization stays `pending` until its owner accepts the invitation,
+a suspended organization's address stops working at once, and an organization without a `slug` has no subdomain.
+Set an alias with `tenants.setSlug`. With a database per region, check that `locate` finds the alias in your
+directory.
+
+</Accordion>
+<Accordion title="Calls fail with HOST_MISMATCH">
+
+The request arrived on one organization's address but names or authenticates as another. Send people to their own
+organization's `signInUrl`, or leave `tenantId` out and let the address decide. See
+[HOST_MISMATCH](/docs/reference/errors#host_mismatch).
+
+</Accordion>
+<Accordion title="An organization is served by every region">
+
+It has no region of its own and none of its ancestors has one, which is the case for organizations that existed
+before you configured `regions`. Set one with `tenants.setRegion`.
+
+</Accordion>
+<Accordion title="Passkey sign-in fails with FEATURE_DISABLED on a custom hostname">
+
+A passkey only works on its own domain and the domains under it, so passkey sign-in is refused on a custom hostname
+outside `rpID`. People sign in there with a password, a magic link, or single sign-on, and keep using passkeys on the
+subdomain.
+
+</Accordion>
+</Accordions>
+
+## Next steps
+
+<Cards>
+  <Card icon={<Globe />} title="Sign-in addresses and regions" href="/docs/operations/deployment/hosts-and-regions">
+    Every hosts and regions option, pinning rules, and sign-in URLs.
+  </Card>
+  <Card icon={<Route />} title="Custom hostnames API" href="/docs/reference/api/hostnames">
+    Claim, verify, make primary, and release organization hostnames.
+  </Card>
+  <Card icon={<Building2 />} title="Tenants API" href="/docs/reference/api/tenants#setregion">
+    `tenants.create`, `tenants.lookup`, and `tenants.setRegion` in detail.
+  </Card>
+  <Card icon={<Database />} title="Database operations" href="/docs/operations/deployment/database">
+    Migrations, durability, and backups for each regional database.
+  </Card>
+  <Card icon={<Zap />} title="Optimize performance" href="/docs/guides/performance">
+    Why database distance matters when regions share one database.
+  </Card>
+  <Card icon={<Rocket />} title="Production checklist" href="/docs/guides/production-checklist">
+    Everything else to confirm before launch.
+  </Card>
+</Cards>

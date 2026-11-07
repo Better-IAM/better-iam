@@ -5,7 +5,7 @@ one root tenant. Each tenant keeps its own directory of identities and its own r
 like an AWS account. This group creates child tenants and invites their first owners, renames, moves, suspends,
 and deletes them, and sets the per-tenant controls: the public sign-in alias, the authentication policy, the
 elevation floors, plan limits, and the permission boundary. See
-[tenants and identities](/docs/guides/concepts/tenants-and-identities) for the model.
+[tenants and identities](/docs/concepts/tenants-and-identities) for the model.
 
 ## The tenant tree
 
@@ -24,7 +24,7 @@ too deep with `MAX_DEPTH`.
 
 **Who can act on a tenant.** Authorization always happens inside the tenant a call names. You need a session of
 that tenant (your own account in it, or a role assumed into it through a
-[trust](/docs/guides/authorization/temporary-access)), or you must be a root administrator: administering a parent
+[trust](/docs/authorization/temporary-access)), or you must be a root administrator: administering a parent
 grants nothing in its children. While the tenant or any ancestor is not `active`, every decision inside it is
 refused except a root administrator's. In practice:
 
@@ -56,7 +56,7 @@ A tenant carries its own controls on top of the deployment's configuration:
 | Field | Set with | Who may set it | What it does |
 | --- | --- | --- | --- |
 | `authPolicy` | [`setAuthPolicy`](#setauthpolicy) | `iam:tenants:update` | Sign-in rules. It can only tighten the deployment's configuration. |
-| `accessPolicy` | [`setAccessPolicy`](#setaccesspolicy) | `iam:tenants:update` | Minimum rules for activating [eligible bindings](/docs/guides/privileged-access/elevation). |
+| `accessPolicy` | [`setAccessPolicy`](#setaccesspolicy) | `iam:tenants:update` | Minimum rules for activating [eligible bindings](/docs/features/privileged-access/elevation). |
 | `limits` | [`setLimits`](#setlimits) | Root only | The most records of each kind the tenant may hold, for SaaS plans. |
 | `boundary` | [`setBoundary`](#setboundary) | Root only, or the creator at [`create`](#create) | A ceiling on every permission in the tenant and its descendants. |
 
@@ -65,7 +65,7 @@ applies from the first sign-in. Each setter replaces the whole value, so read th
 carry the other fields over; `null` clears a policy or the limits. Nothing is cached: sessions are revalidated
 against the policy on every use, and limits are checked inside every creating transaction.
 
-The authentication policy fields (see [tenant authentication policy](/docs/guides/authentication/tenant-policy)
+The authentication policy fields (see [tenant authentication policy](/docs/authentication/tenant-policy)
 for how each is enforced):
 
 | Field | Allowed values and effect |
@@ -121,13 +121,15 @@ const result = await client.tenants.acceptInvitation({
 
 ## create
 
-Creates a child tenant in the `pending` state under a parent and emails an invitation to its first owner.
+Creates a child tenant in the `pending` state under a parent and emails an invitation to its first owner, or, for
+a root principal with `activate: true`, creates it active with its owner account.
 
 - **Permission:** `iam:tenants:create` on the parent tenant, with recent authentication, and an active grant
   authority in the parent.
 - **Audited as:** `iam:tenants:create`, in the parent tenant's log.
-- **Errors:** `INVALID_HIERARCHY` when `type` is not an allowed child of the parent's type; `MAX_DEPTH` when the
-  parent is already at the deepest level; `DELIVERY_REQUIRED` without an email delivery callback; `SLUG_TAKEN` or
+- **Errors:** `ACCESS_DENIED` for `activate` without a root principal; `INVALID_HIERARCHY` when `type` is not an allowed child of the parent's type; `MAX_DEPTH` when the
+  parent is already at the deepest level; `DELIVERY_REQUIRED` without an email delivery callback (unless
+  `activate`); `INVALID_INPUT` for `ownerName` or `ownerEmailVerified` without `activate`; `SLUG_TAKEN` or
   `INVALID_INPUT` for a slug in use or badly formed; `GRANT_AUTHORITY_REQUIRED` without an active grant authority,
   or `ACCESS_DENIED` when `authorityId` is not one of yours; `INVALID_POLICY` or `INVALID_ACTION` for an invalid
   boundary; `INVALID_INPUT` for a `region` the deployment does not know, or one other than its own when regions
@@ -142,6 +144,14 @@ the `owner-invitation` email; the result has the tenant, the invitation ID, and 
 
 Nobody but a root administrator can act inside the tenant until the owner accepts. If they never do, a root
 administrator can re-send or revoke the invitation, or delete the tenant.
+
+For bulk imports and migrations, a root principal passes `activate: true`: the tenant is `active` at once, the
+owner account is created (named `ownerName`, default the address; with a verified email when `ownerEmailVerified`
+is `true`) and bound to the protected Owner role, no invitation is sent, and members can be imported right away.
+The owner has no password: they sign in with a magic link, a password reset, or an external sign-in linked with
+[`identities.linkProvider`](/docs/reference/api/identities#linkprovider). The result is
+`{ tenant, ownerEmail, owner }` instead of `{ tenant, invitationId, ownerEmail }`, and the activation is audited
+as `tenant:activate`. Skipping the invitation skips the owner's consent, which is why only root may.
 
 ```ts
 const { tenant, invitationId } = await iam.api.tenants.create(credential, {
@@ -225,7 +235,7 @@ Moves a tenant, with its whole subtree, under a different parent.
   is already under that parent; `TENANT_INACTIVE` when the new parent or one of its ancestors is not active;
   `INVALID_HIERARCHY` when the type is not allowed under the new parent, or the new parent is inside the tenant's
   own subtree; `MAX_DEPTH` when the moved subtree would end up too deep; `NOT_FOUND` for an unknown parent;
-  `RESOURCE_IN_USE` (with [security clearances](/docs/guides/security-clearances)) when the move would change the
+  `RESOURCE_IN_USE` (with [security clearances](/docs/features/security-clearances)) when the move would change the
   classification scheme in force for a subtree that holds classification labels or live clearances.
 
 Use it when a customer reorganizes, for example to move a project to another organization. Delegation chains are
@@ -289,7 +299,7 @@ The fields are `maxActivationMs` (one minute to seven days), `requireJustificati
 one day when unset). A binding's effective rules are its own settings tightened by the policy: a flag applies when
 either sets it, and the maximum activation is the smaller of the two, so adopting a floor later tightens existing
 bindings without editing them. The call replaces the whole policy; `null` clears it, and flags set to `false` are
-dropped. See [tenant access policy](/docs/guides/privileged-access/elevation#tenant-access-policy).
+dropped. See [tenant access policy](/docs/features/privileged-access/elevation#tenant-access-policy).
 
 ```ts
 await iam.api.tenants.setAccessPolicy(credential, {
@@ -338,12 +348,12 @@ do.
 - **Audited as:** `iam:boundaries:update`.
 - **Errors:** `ACCESS_DENIED` for anyone but root; `INVALID_POLICY`, `INVALID_ACTION`, or `INVALID_RESOURCE_TYPE`
   for a document the catalog rejects; `INVARIANT_VIOLATION` when the change would break an enforced
-  [access invariant](/docs/guides/governance/change-safety); `RECENT_AUTH_REQUIRED`.
+  [access invariant](/docs/features/governance/change-safety); `RECENT_AUTH_REQUIRED`.
 
 A <Term id="boundary">boundary</Term> never grants. When a request is evaluated, the boundaries of the tenant and
 every ancestor apply, so a boundary on an organization caps all of its projects. Use it for plan tiers or
 regulatory scopes that tenant administrators must not be able to widen. Root administrators are not limited by it.
-The call replaces the boundary; it cannot remove one. See [boundaries](/docs/guides/authorization/policies#boundaries).
+The call replaces the boundary; it cannot remove one. See [boundaries](/docs/authorization/policies#boundaries).
 
 ```ts
 // Tenants on this plan may never use the billing export, whatever their roles say.

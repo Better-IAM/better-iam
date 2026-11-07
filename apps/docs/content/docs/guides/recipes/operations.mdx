@@ -49,7 +49,7 @@ better-iam audit-export --config better-iam.config.mjs --tenant TENANT_ID --outp
 - For a scheduled, verified, write-once copy, configure `auditArchive` and run
   [`audit-archive`](/docs/operations/jobs#continuous-audit-archiving) instead of a hand-written loop.
 
-See [Audit chain](/docs/guides/events/audit-chain).
+See [Audit chain](/docs/concepts/events/audit-chain).
 
 ## Call a downstream service with a stateless assertion
 
@@ -154,12 +154,12 @@ for (const delivery of history.filter((item) => item.status === 'failed'))
   must still deduplicate by event `id`.
 - Deliveries leave through the outbox, so they need the [`outbox` job](/docs/operations/jobs#outbox-and-audit-hooks).
 
-See [Webhooks](/docs/guides/events/webhooks).
+See [Webhooks](/docs/concepts/events/webhooks).
 
 ## Next steps
 
 <Cards>
-  <Card title="Events and audit" href="/docs/guides/events">
+  <Card title="Events and audit" href="/docs/concepts/events">
     Subscribers, webhooks, and the audit log in depth.
   </Card>
   <Card title="Background jobs" href="/docs/operations/jobs">

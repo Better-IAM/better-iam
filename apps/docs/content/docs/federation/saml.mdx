@@ -60,11 +60,12 @@ sequenceDiagram
   SP->>SP: Match RelayState, cookie, and InResponseTo
   SP->>SP: Verify signatures, issuer, audience, destination, recipient, age
   SP->>SP: Map to an account, apply MFA policy
-  SP-->>B: IAM session cookie
+  SP-->>B: IAM session cookie, 303 to afterSignIn
 ```
 
 The request ID and `RelayState` are single use and expire after 10 minutes. When the service is mounted through
-IAM, a successful sign-in sets the standard IAM <Term id="session">session</Term> cookie.
+IAM, a successful sign-in sets the standard IAM <Term id="session">session</Term> cookie and, with `afterSignIn`,
+redirects to your app ([Redirect after sign-in](#redirect-after-sign-in)).
 
 ## Tenant-managed connections
 
@@ -126,6 +127,7 @@ appear in these URLs; without `id`, one like `saml-3f9a1c0b2d4e` is generated.
     attributeMapping: { type: 'Record<string, string>', description: 'Copies SAML attributes into identity attributes on every sign-in: identity attribute name to SAML attribute name, up to 32 entries.', default: '{}' },
     requireEncryptedAssertions: { type: 'boolean', description: 'Reject assertions that are not encrypted. Needs the SP decryption key.', default: 'false' },
     allowIdpInitiated: { type: 'boolean', description: 'Also accept sign-ins started from the IdP portal (app tiles).', default: 'false' },
+    trustScimProvisioned: { type: 'boolean | string[]', description: 'Link a first sign-in to the account a SCIM connection of the tenant provisioned for the same verified email: true for any SCIM connection of the tenant, or a list of SCIM connection IDs. Turning it on is a trust change.', default: 'false' },
     enabled: { type: 'boolean', description: 'false stops new sign-ins through this connection immediately.', default: 'true' },
   }}
 />
@@ -144,13 +146,17 @@ tenant, so only administrators who hold the `iam:saml:connections:*` permissions
 | `listConnections(credential, { tenantId })` | `iam:saml:connections:read` on `saml/*` | Lists the tenant's connections, for an SSO settings page. |
 | `getConnection(credential, { tenantId, connectionId })` | `iam:saml:connections:read` | Reads one connection. |
 | `updateConnection(credential, { tenantId, connectionId, ...changes })` | `iam:saml:connections:update` | Changes settings, uploads refreshed metadata, or rolls certificates. Audited as `iam:saml:UpdateConnection`. |
-| `deleteConnection(credential, { tenantId, connectionId })` | `iam:saml:connections:delete` | Removes the connection and its pending sign-ins. Audited as `iam:saml:DeleteConnection`. |
+| `deleteConnection(credential, { tenantId, connectionId })` | `iam:saml:connections:delete` | Removes the connection, its pending sign-ins, and the account links made through it. Audited as `iam:saml:DeleteConnection`. |
 
-Permissions apply in the connection's tenant. Connection summaries include the values to enter at the IdP
-(`entityId`, `acsUrl`, `metadataUrl`, `loginUrl`) and, for each certificate, its SHA-256 fingerprint, subject,
-validity, and `expired`, so certificate rollover can be monitored.
+Permissions apply in the connection's tenant. Creating a connection, and any update that widens what it trusts
+(another IdP issuer, an added certificate, IdP-initiated sign-in, more trusted email domains), also passes the
+host's `assertTrustChange` check from `iam.protocolHost`: a recent sign-in, and, when owners or root administrators
+sign in through the connection, a caller who could control those accounts anyway. Connection summaries include the
+values to enter at the IdP (`entityId`, `acsUrl`, `metadataUrl`, `loginUrl`) and, for each certificate, its SHA-256
+fingerprint, subject, validity, and `expired`, so certificate rollover can be monitored.
 
-External identities linked through a deleted connection stay with their accounts. Configured `connections` keep
+Deleting a connection deletes the external identity links made through it, so the accounts stay but can no longer
+sign in through that IdP; a connection created later, even with the same ID, never inherits them. Configured `connections` keep
 working alongside managed ones, and their IDs are reserved. To offer the signed SP metadata XML as a download in
 your admin UI, call `getMetadata(id)`, which covers both kinds of connection; the synchronous `metadata(id)` covers
 configured ones only.
@@ -272,6 +278,7 @@ const saml = createSamlService({
     requireEncryptedAssertions: { type: 'boolean', description: 'Reject plaintext assertions. Needs the decryption key and certificate.', default: 'false' },
     trustedEmailDomains: { type: 'string[]', description: 'Exact domains whose email addresses this IdP is trusted to vouch for.' },
     allowIdpInitiated: { type: 'boolean', description: 'Also accept sign-ins started from the IdP portal.', default: 'false' },
+    trustScimProvisioned: { type: 'boolean | string[]', description: 'Link a first sign-in to the account a SCIM connection of the tenant provisioned for the same verified email (true, or a list of SCIM connection IDs).', default: 'false' },
     mapAttributes: { type: '(profile) => Record<string, unknown> | undefined', description: 'Copies values from the validated assertion into identity attributes on every sign-in.' },
   }}
 />
@@ -283,7 +290,10 @@ The service itself (`createSamlService`) takes these options, shared by both kin
     connections: { type: 'SamlConnection[]', description: 'Configured connections.' },
     serviceProvider: { type: '{ baseUrl, privateKey, publicCertificate, decryptionPrivateKey?, decryptionCertificate? }', description: 'Your SP identity for all tenant-managed connections, and the switch that enables them. baseUrl is the public HTTPS origin, with an optional path prefix.' },
     basePath: { type: 'string', description: 'Where the SAML routes are served.', default: "'/saml'" },
-    trustedOrigins: { type: 'string[]', description: 'Origins allowed to start account linking, as a CSRF defense.', default: 'the origin of the callback URL' },
+    trustedOrigins: { type: 'string[]', description: 'Origins allowed to start account linking, as a CSRF defense, and where afterSignIn, mfaUrl, and errorUrl may point.', default: 'the origin of the callback URL' },
+    afterSignIn: { type: 'string', description: 'Where the ACS sends the browser after a sign-in (303, with the session cookie): a path, or a URL on trustedOrigins or the SP origin. Without it the ACS answers JSON.' },
+    mfaUrl: { type: 'string', description: 'With afterSignIn: where to send the browser when the person still has to pass MFA, with the challenge in the URL fragment.', default: 'afterSignIn' },
+    errorUrl: { type: 'string', description: 'With afterSignIn: where to send the browser when a sign-in fails, with ?error=CODE appended. Without it failures answer 401 JSON.' },
     revokeSession: { type: '(credential) => Promise<unknown>', description: 'Revokes the local IAM session when you call logout(credential).' },
     'store, authorize, authenticate, completeAuthentication': { type: 'host callbacks', description: 'Database access, permission checks for connection management, and the trusted callback that turns a verified assertion into a session. Supplied by iam.protocolHost.', required: true },
   }}
@@ -295,14 +305,44 @@ Once mounted with `iam.useProtocol`, the service answers these routes itself:
 
 | Route | What it does |
 | --- | --- |
-| `GET {basePath}/{id}/login` | Starts SP-initiated sign-in and redirects (302) to the IdP. |
+| `GET {basePath}/{id}/login` | Starts SP-initiated sign-in and redirects (302) to the IdP. `?returnTo=/path` replaces `afterSignIn` for this sign-in. |
 | `POST {basePath}/{id}/login` | Starts [account linking](#first-sign-in-and-account-linking) for the signed-in account; answers `{ url }`. |
 | `GET {basePath}/{id}/metadata` | Signed SP metadata (`application/samlmetadata+xml`), for IdPs that import it. |
 | `POST {basePath}/{id}/acs` | The assertion consumer service of a tenant-managed connection. |
 | `POST` on a configured `callbackUrl` | The assertion consumer service of a configured connection. |
 
-The assertion consumer service accepts only the SAML HTTP-POST binding. Every failure answers `401` with
-`{ "error": "SAML_INVALID" }` and no further detail, so an attacker learns nothing from probing it.
+The assertion consumer service accepts only the SAML HTTP-POST binding. Without `afterSignIn` it answers the sign-in
+result as JSON, and every failure answers `401` with `{ "error": "SAML_INVALID" }` and no further detail, so an
+attacker learns nothing from probing it.
+
+### Redirect after sign-in
+
+Browsers land on the ACS, so a JSON answer leaves people looking at JSON. Give the service the pages to continue on:
+
+```ts title="lib/iam.ts"
+export const saml = createSamlService({
+  ...iam.protocolHost,
+  serviceProvider,
+  afterSignIn: '/dashboard',
+  mfaUrl: '/login/mfa',
+  errorUrl: '/login',
+});
+iam.useProtocol(saml);
+```
+
+| Outcome | The ACS answers |
+| --- | --- |
+| Session issued | `303` to the `returnTo` path the sign-in started with (`{basePath}/{id}/login?returnTo=/invoices`), else `afterSignIn`, with the session cookie set. IdP-initiated sign-ins go to `afterSignIn`. |
+| MFA required | `303` to `mfaUrl` (default `afterSignIn`) with the challenge in the fragment: `#tenantId=…&mfaRequired=true&challenge=…&enrollmentRequired=…`, plus `authenticatorEnrolled`, `emailCodeAvailable`, `passkeyAvailable`, and `returnTo` when they apply. The page finishes with `auth.verifyMfa` (or `auth.beginMfa` and `auth.confirmMfa` when `enrollmentRequired` is `true`). |
+| Failure | `303` to `errorUrl?error=CODE`, such as `SAML_INVALID`, `ACCOUNT_LINK_REQUIRED`, or `VERIFIED_EMAIL_REQUIRED`; without `errorUrl`, `401` JSON. |
+
+- `returnTo` must be a path on your site (`/…`, not `//…`); anything else is refused with `400 INVALID_INPUT`.
+  `afterSignIn`, `mfaUrl`, and `errorUrl` are paths or URLs on `trustedOrigins` (or the SP origin); anything else
+  is refused when the service is created.
+- The fragment never reaches a server, a log, or a `Referer` header, so the MFA challenge stays in the browser.
+- The redirect is made by the IAM handler: the ACS adds an `x-better-iam-redirect` hint to its JSON answer, and the
+  protocol mount follows it only to a path or a trusted origin, adding the session cookie and dropping the body.
+  Called directly (`saml.handler`), the ACS keeps answering JSON.
 
 Without the IAM handler, call the steps yourself: `begin(connectionId, credential?)` returns the IdP `url` plus
 `relayState` and a `binding` value to keep in a cookie, and `callback(connectionId, { samlResponse, relayState,
@@ -342,7 +382,15 @@ from `displayName`.
 - Otherwise the person signs in through an already linked external identity, or links an existing, authenticated
   local account.
 - Matching an existing email alone never links it. An unverified email fails with `VERIFIED_EMAIL_REQUIRED`, and
-  a verified one that belongs to an existing account fails with `ACCOUNT_LINK_REQUIRED`.
+  a verified one that belongs to an existing account fails with `ACCOUNT_LINK_REQUIRED`, with one opt-in exception:
+  with `trustScimProvisioned`, a verified email that belongs to an account a trusted SCIM connection of the tenant
+  provisioned links to it (and marks the email verified). Owners, root administrators, disabled accounts, and
+  accounts already linked through this connection under another `NameID` are never linked this way; the link is
+  audited as `identity:link-provider` with `via: 'scim'`.
+- An administrator can link an existing account ahead of its first sign-in with
+  [`identities.linkProvider`](/docs/reference/api/identities#linkprovider): `providerId` is the managed connection's
+  `providerId` (configured connections: their `providerId`, else `id`), `issuer` its `idpIssuer`, and `subject`
+  the person's `NameID`.
 
 To link, `POST` to the login path with the same trusted-origin and recent-authentication requirements as
 [OAuth linking](/docs/federation/oauth-sign-in#link-an-existing-account): a trusted `Origin`, `X-Better-IAM: 1`, a
@@ -364,7 +412,7 @@ attributeMapping: { department: 'department', title: 'title', costCenter: 'costC
 Configured connections use `mapAttributes(profile)` with the validated assertion profile instead. Either way the
 values reach `completeAuthentication`, are validated against `permissions.identityAttributes` inside the sign-in
 transaction, and replace the <Term id="identity">identity</Term>'s stored attributes on every sign-in, so directory
-data drives `principal.department`-style [policy conditions](/docs/guides/authorization/conditions). An invalid
+data drives `principal.department`-style [policy conditions](/docs/authorization/conditions). An invalid
 mapping fails the sign-in closed.
 
 ## IdP-initiated sign-in
@@ -393,6 +441,34 @@ on a connection to accept such responses at its callback URL.
 SAML sessions are not modified: the person stays signed in at their IdP. SAML IdP functionality (Better IAM acting
 as a SAML IdP for other apps) and federated single logout are outside this release; use the
 [OAuth/OIDC provider](/docs/federation/oauth-provider) to be an identity provider for your own apps.
+
+## Schema
+
+| Collection | What it holds |
+| --- | --- |
+| `samlConnections` | Tenant-managed connections: `id`, `tenantId`, `name`, `enabled`, `entryPoint`, `idpIssuer`, `idpCertificates`, `trustedEmailDomains`, `requireEncryptedAssertions`, `attributeMapping`, `allowIdpInitiated`, `trustScimProvisioned`, `providerKey`, timestamps. Configured connections are not stored. |
+| `samlRelays` | One row per sign-in in progress, keyed by a hash of the relay state, bound to the connection and the browser binding cookie, with the linking session when linking. Deleted when the response arrives. |
+| `samlRequests` | Outstanding AuthnRequest IDs, so a response's `InResponseTo` must match a request this service sent. |
+| `samlAssertions` | Assertion IDs already accepted, kept until they expire, so an assertion works once. |
+| `externalIdentities` | The link between an IdP subject and an identity, shared with OAuth sign-in. |
+
+## Errors
+
+| Code | Status | When |
+| --- | --- | --- |
+| [`SAML_INVALID`](/docs/reference/errors#saml_invalid) | 401 | Any assertion consumer service failure (the built-in route answers `401` even where the direct calls use 400, 413, or 415): an unsafe document, wrong binding, bad signature, wrong issuer, audience, or recipient, an expired or replayed assertion, an unknown `InResponseTo`, an unsolicited response without `allowIdpInitiated`, a missing encrypted assertion when required, or an oversized response. The body says only `SAML_INVALID`. |
+| [`NOT_FOUND`](/docs/reference/errors#not_found) | 404 | The connection ID is unknown or the connection is disabled. |
+| [`INVALID_INPUT`](/docs/reference/errors#invalid_input) | 400 | `createConnection` or `updateConnection` with an invalid ID, name, sign-on URL, issuer, certificates (one to five), email domains, attribute mapping, or encryption settings without a decryption key. |
+| [`CONFLICT`](/docs/reference/errors#conflict) | 409 | A connection with that ID exists, or the connection changed during an update. |
+| [`TENANT_INACTIVE`](/docs/reference/errors#tenant_inactive) | 403 | The connection's tenant is suspended. |
+| [`CSRF`](/docs/reference/errors#csrf) | 403 | A linking `POST` without a trusted `Origin` and the `X-Better-IAM` header. |
+| [`RECENT_AUTH_REQUIRED`](/docs/reference/errors#recent_auth_required) | 403 | Linking without a recent sign-in, as a root administrator, or from another tenant's session; or creating a connection, or widening its trust, without a recent sign-in. |
+| [`ACCESS_DENIED`](/docs/reference/errors#access_denied) | 403 | Widening a connection's trust when an owner or root administrator signs in through it and the caller could not control those accounts. |
+| [`VERIFIED_EMAIL_REQUIRED`](/docs/reference/errors#verified_email_required) | 400 | A first sign-in whose email is not in the connection's trusted email domains, or has no email. |
+| [`ACCOUNT_LINK_REQUIRED`](/docs/reference/errors#account_link_required) | 409 | An account with that email exists; link it explicitly. |
+| [`ACCOUNT_LINK_CONFLICT`](/docs/reference/errors#account_link_conflict) | 409 | The IdP subject is already linked to another account. |
+
+`createSamlService` throws a `configuration` error at startup for incomplete or duplicate configured connections.
 
 ## Next steps
 

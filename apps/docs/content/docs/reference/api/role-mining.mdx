@@ -10,7 +10,7 @@ Role mining reads who holds which roles today and suggests simpler, narrower way
 time, direct grants pile up, roles get copied, and people keep access after they change teams. This group finds
 those patterns, compares people with their peers, and uses recorded access usage to show which grants nobody uses,
 so you can clean up with evidence instead of guesswork. It is the "simplify" and "measure" part of
-[access governance](/docs/guides/governance/usage-and-mining).
+[access governance](/docs/features/governance/usage-and-mining).
 
 ## How role mining reads a tenant
 
@@ -46,7 +46,7 @@ Call `iam.flushAccessUsage()` on shutdown so buffered counts are not lost.
 | --- | --- | --- |
 | [`apply`](#apply) | Carries out a `group-binding` or `redundant-binding` suggestion: binds the role to the group once and removes the direct bindings it replaces. | Credential |
 | [`outliers`](#outliers) | Finds people whose roles differ from their peers': roles few peers hold and roles most peers hold that the person lacks. | Credential |
-| [`reviewRecommendations`](#reviewrecommendations) | Suggests a keep or revoke decision, with a reason, for every item of an [access-certification](/docs/guides/governance/certifications) campaign. | Credential |
+| [`reviewRecommendations`](#reviewrecommendations) | Suggests a keep or revoke decision, with a reason, for every item of an [access-certification](/docs/features/governance/certifications) campaign. | Credential |
 | [`rightSize`](#rightsize) | Lists every live binding whose holder used none or only some of the role's actions in a window, plus, per role, the actions nobody used. | Credential |
 | [`suggest`](#suggest) | Lists ways to simplify how the tenant grants access, most actionable first. | Credential |
 | [`usage`](#usage) | Returns the recorded access usage of the tenant: per person and action, when it was first and last allowed and how often. | Credential |
@@ -64,7 +64,7 @@ Carries out a `group-binding` or `redundant-binding` suggestion: binds the role 
 - **Errors:** `NOT_FOUND` when the suggestion no longer holds (list suggestions again); `INVALID_INPUT` for a
   `bundle` or `duplicate-roles` suggestion, or a group binding whose direct bindings come from different grant
   authorities (`applicable: false`); `ACCESS_DENIED` without the binding rights or the authority;
-  `INVARIANT_VIOLATION` when an enforced [access invariant](/docs/guides/governance/change-safety) would newly
+  `INVARIANT_VIOLATION` when an enforced [access invariant](/docs/features/governance/change-safety) would newly
   break.
 
 The suggestion is recomputed inside the transaction, so it applies only while the condition still holds, and
@@ -142,7 +142,7 @@ iam.api.roleMining.outliers(
 
 ## reviewRecommendations
 
-Suggests a keep or revoke decision, with a reason, for every item of an [access-certification](/docs/guides/governance/certifications) campaign.
+Suggests a keep or revoke decision, with a reason, for every item of an [access-certification](/docs/features/governance/certifications) campaign.
 
 <ApiEndpoint group="roleMining" method="reviewRecommendations" http="POST /roleMining/reviewRecommendations" credential="required" />
 
@@ -212,7 +212,7 @@ There are four kinds of suggestion:
   through their own direct binding. Bind it to the group once, so joiners get it and leavers lose it.
 - **`duplicate-roles`**: roles whose statements are identical.
 - **`bundle`**: role combinations many people hold together. Grant them as one
-  [access package](/docs/guides/privileged-access/access-packages) instead of binding each role separately.
+  [access package](/docs/features/privileged-access/access-packages) instead of binding each role separately.
 
 `minIdentities` (default 3) is how many people must share a pattern, and `minRoles` (default 2) is the smallest
 combination reported as a bundle. `limit` (default 50) caps the list, while `summary` counts every suggestion by

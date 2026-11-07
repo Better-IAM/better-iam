@@ -25,7 +25,7 @@ integration or a migration job. From that instant every key of the account is re
 records `identity:expire`. If you extend or clear the deadline before the worker runs, the existing keys work again;
 after it has run, extend or clear the deadline, enable the account with [`setStatus`](#setstatus), and issue new
 keys. See
-[time-bound identities](/docs/guides/privileged-access/lifecycle#time-bound-identities).
+[time-bound identities](/docs/features/privileged-access/lifecycle#time-bound-identities).
 
 ## create
 
@@ -38,7 +38,7 @@ Creates a service account in the tenant, optionally with a date after which it i
   is not in the future or is more than ten years away.
 
 The new account is active but holds no access until you bind roles to it or add it to groups. Automatic
-[access package](/docs/guides/privileged-access/access-packages) rules are evaluated for it right after creation, so
+[access package](/docs/features/privileged-access/access-packages) rules are evaluated for it right after creation, so
 a rule that matches service accounts grants its package at once. Then issue a key with
 [`credentials.create`](/docs/reference/api/credentials#create).
 
@@ -95,7 +95,7 @@ Disables a service account, ending all its access at once, or enables it again.
 - **Errors:** `INVALID_TRANSITION` (409) when enabling an account whose `expiresAt` has passed; `NOT_FOUND` when the
   id is not a service account of this tenant or was deleted; `INVALID_INPUT` for a status other than `active` or
   `disabled`; `INVARIANT_VIOLATION` when an enforced
-  [access invariant](/docs/guides/governance/change-safety) would newly fail; `RECENT_AUTH_REQUIRED`;
+  [access invariant](/docs/features/governance/change-safety) would newly fail; `RECENT_AUTH_REQUIRED`;
   `IMPERSONATION_RESTRICTED`.
 
 Disabling deletes every API key the account holds and every role session it assumed, while its bindings and

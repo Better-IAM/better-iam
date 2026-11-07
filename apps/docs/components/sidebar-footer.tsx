@@ -31,7 +31,7 @@ export function SidebarFooter() {
             v{version}
           </Link>
           ·
-          <Link href="/docs/reference/ai" className="hover:text-text-primary">
+          <Link href="/docs/ai" className="hover:text-text-primary">
             Use with AI
           </Link>
         </span>

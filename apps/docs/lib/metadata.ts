@@ -36,19 +36,38 @@ export const siteKeywords = [
   'open source',
 ];
 
-/** The docs' five root sections, as readers see them in the sidebar, cards, and breadcrumbs. */
+/** The docs' sidebar sections (first URL segment), as readers see them in the sidebar, cards, and breadcrumbs. */
 export const sectionNames: Record<string, string> = {
-  guides: 'Guides',
-  frameworks: 'Frameworks',
+  'get-started': 'Get started',
+  concepts: 'Concepts',
+  authentication: 'Authentication',
+  authorization: 'Authorization',
+  databases: 'Databases',
+  integrations: 'Integrations',
+  features: 'Features',
   federation: 'Federation',
+  guides: 'Guides',
   operations: 'Operations',
+  ai: 'AI resources',
   reference: 'Reference',
 };
 
+/** The section of a page from its slugs: top-level pages (introduction, installation…) belong to Get started. */
+export function sectionOf(slugs: string[]): string {
+  return slugs.length > 1 || sectionNames[slugs[0] ?? ''] ? (slugs[0] ?? 'get-started') : 'get-started';
+}
+
 /** Extra keywords for every page in a section. */
 const sectionKeywords: Record<string, string[]> = {
-  guides: ['authentication', 'authorization', 'access control'],
-  frameworks: ['framework integration', 'middleware', 'route guards'],
+  'get-started': ['installation', 'quickstart', 'authentication', 'authorization'],
+  concepts: ['architecture', 'server API', 'access control'],
+  authentication: ['sign-in', 'sessions', 'passkeys', 'MFA', 'passwordless'],
+  authorization: ['access control', 'RBAC', 'ABAC', 'ReBAC', 'policies'],
+  databases: ['PostgreSQL', 'SQLite', 'libSQL', 'migrations', 'database schema'],
+  integrations: ['framework integration', 'middleware', 'route guards'],
+  features: ['identity governance', 'privileged access', 'multi-tenancy'],
+  guides: ['tutorial', 'walkthrough', 'migration guide'],
+  ai: ['llms.txt', 'MCP', 'AI coding agents'],
   federation: ['identity federation', 'single sign-on', 'OpenID Connect', 'SAML', 'SCIM'],
   operations: ['deployment', 'production', 'PostgreSQL', 'SQLite'],
   reference: ['API reference', 'TypeScript API', 'REST API'],
@@ -112,7 +131,7 @@ export interface PageSeo {
   title: string;
   absolute?: boolean;
   description: string;
-  /** Canonical path, for example `/docs/guides/quickstart`. Left out only by the root layout's defaults. */
+  /** Canonical path, for example `/docs/quickstart`. Left out only by the root layout's defaults. */
   path?: string;
   image: SocialImage;
   type?: 'website' | 'article';

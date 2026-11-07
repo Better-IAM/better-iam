@@ -58,6 +58,7 @@ Mount both paths under the IAM handler's path, and forward `PUT`, `PATCH`, and `
     adminBasePath: { type: 'string', description: 'Where the JSON administration routes for your admin UI are served. Must be absolute and must not overlap basePath.', default: "'/scim/admin'" },
     mapAttributes: { type: '(user: ProvisionedUser) => Record<string, unknown> | undefined', description: 'Turns provisioned SCIM fields (title, department, cost center) into your declared identity attributes, so policies can use them. Return undefined to leave attributes untouched.' },
     mapManager: { type: 'boolean', description: "Sets each person's manager from the enterprise extension's manager field, so approvals route to the directory's reporting line.", default: 'true' },
+    unsupportedAttributes: { type: "'ignore' | 'reject'", description: "What happens to attributes the service does not store (addresses, phoneNumbers, preferredLanguage, password, foreign extension schemas): accepted and dropped, or refused with 400 mutability. Read-only attributes (id, meta, groups) are ignored either way.", default: "'ignore'" },
     'store, authorize, authenticate, validateIdentityAttributes, syncRoleMappings': { type: 'host callbacks', description: 'Database access, permission checks for administration, attribute validation, and the trusted callback that applies group role mappings. Supplied by iam.protocolHost.', required: true },
     'identityStatusChanged, groupDeleted': { type: 'host callbacks', description: "Trusted callbacks, run in the provisioning transaction: when the directory deactivates, reactivates or deletes a person, what follows their status (license seats) moves at once; when it deletes a group, what was given to the group (license assignments) goes with it. Supplied by iam.protocolHost." },
   }}
@@ -144,15 +145,31 @@ PATCH, and delete. These fields are stored and returned as provisioned:
 | `urn:ietf:params:scim:schemas:core:2.0:User` | `userName` (required), `displayName`, `externalId`, `active`, `name` (`formatted`, `familyName`, `givenName`, `middleName`, `honorificPrefix`, `honorificSuffix`), `emails` (up to 20, one primary), `title` |
 | `urn:ietf:params:scim:schemas:extension:enterprise:2.0:User` | `employeeNumber`, `costCenter`, `organization`, `division`, `department`, `manager` |
 
+Other attributes are accepted and dropped, so identity providers' default mappings work unchanged (RFC 7644 lets a
+service provider ignore what it does not store):
+
+- Read-only attributes (`id`, `meta`, and a user's `groups`) in a `POST` or `PUT` body or a pathless `PATCH` value are always ignored (RFC 7644 §3.5.1). A `PATCH` whose path targets one still fails with `400` (§3.5.2).
+- Core User attributes the service does not store (`nickName`, `profileUrl`, `userType`, `preferredLanguage`,
+  `locale`, `timezone`, `password`, `phoneNumbers`, `ims`, `photos`, `addresses`, `entitlements`, `roles`,
+  `x509Certificates`) and extension schemas other than the enterprise extension are ignored with
+  `unsupportedAttributes: 'ignore'` (the default). `PATCH` operations on them are skipped; the rest of the request
+  applies. With `'reject'` they fail with `400 mutability`.
+- An attribute no supported schema defines, such as a misspelled name, always fails with `400 mutability`.
+
 The second row is the **enterprise user extension**, a standard add-on schema for HR-style fields. Supply
 `mapAttributes` to turn any of these into the identity attributes the product declares
 (`permissions.identityAttributes`). `validateIdentityAttributes` from `iam.protocolHost` validates the mapping, so
-a directory can drive `principal.department`-style [policy conditions](/docs/guides/authorization/conditions).
+a directory can drive `principal.department`-style [policy conditions](/docs/authorization/conditions).
 
 - **Uniqueness.** `userName` is unique per connection, ignoring case. The identity's email is the primary email
   (or the first one, or `userName` when it is an email address).
 - **No takeover.** A provisioning request cannot take over an existing local account based on email. An email
   that belongs to another identity in the tenant fails with `409 uniqueness`.
+- **Single sign-on.** Provisioned emails are stored unverified, and SCIM never links an IdP sign-in. When the same
+  IdP signs people in, set `trustScimProvisioned` on the SAML or OIDC connection (`true`, or this connection's ID):
+  a person's first sign-in with an email the IdP vouches for links to the account this connection provisioned,
+  instead of failing with `ACCOUNT_LINK_REQUIRED`. See
+  [First sign-in and account linking](/docs/federation/saml#first-sign-in-and-account-linking).
 - **Deactivation.** `active: false` disables the local identity and revokes its user, API, and assumed-role
   <Term id="session">sessions</Term>, so access ends at once. `active: true` enables it again.
 - **Deletion.** `DELETE` disables the identity, revokes its sessions, and removes it from the connection's groups.
@@ -166,7 +183,7 @@ a directory can drive `principal.department`-style [policy conditions](/docs/gui
 ### Manager mapping
 
 The enterprise extension's `manager.value` becomes the person's `Identity.managerId` (`mapManager`, on by default),
-so [approvals](/docs/guides/privileged-access/elevation) and manager-review
+so [approvals](/docs/features/privileged-access/elevation) and manager-review
 <Term id="certification">certification campaigns</Term> route to the directory's reporting line without anyone
 maintaining it twice.
 
@@ -333,6 +350,69 @@ enterprise user extension.
 | Filters | 2048 characters, 64 comparisons, 16 levels of nesting |
 
 Password changes, nested groups, and extension schemas other than the enterprise user extension are not enabled.
+
+## Endpoints
+
+Every SCIM endpoint sits under the connection's own path, `{basePath}/{connectionId}`, and requires that
+connection's bearer token:
+
+| Method and path | What it does |
+| --- | --- |
+| `GET /ServiceProviderConfig` | Capabilities: PATCH, Bulk, filter, sort, ETags. |
+| `GET /ResourceTypes`, `GET /ResourceTypes/{id}` | The `User` and `Group` resource types. |
+| `GET /Schemas`, `GET /Schemas/{id}` | The core User and Group schemas and the enterprise user extension. |
+| `GET /Users`, `POST /Users/.search` | List and filter users. |
+| `POST /Users` | Create a user (`201`). |
+| `GET /Users/{id}` | Read a user. Honours `If-None-Match`. |
+| `PUT /Users/{id}` | Replace a user. Honours `If-Match`. |
+| `PATCH /Users/{id}` | Modify a user, including `active: false` to deactivate. |
+| `DELETE /Users/{id}` | Delete a user (`204`). The identity stays disabled as a historical principal. |
+| `GET /Groups`, `POST /Groups/.search`, `POST /Groups` | List, filter, and create groups. |
+| `GET`, `PUT`, `PATCH`, `DELETE /Groups/{id}` | Read, replace, modify, and delete a group. |
+| `POST /Bulk` | Up to 100 operations in one request. |
+
+The administration routes for your console are `POST {adminBasePath}/connections/list`, `/create`, `/rotate`,
+`/revoke`, `/groups`, and `/mappings`, described in [Manage connections](#manage-connections).
+
+## Errors
+
+SCIM endpoints answer with the SCIM error schema (`urn:ietf:params:scim:api:messages:2.0:Error`): `status`,
+`scimType`, and a `detail` message.
+
+| `scimType` | Status | When |
+| --- | --- | --- |
+| `unauthorized` | 401 | The bearer token is missing, invalid, expired, revoked, or for another connection, or the tenant is inactive. |
+| `invalidSyntax` | 400, 415 | Malformed JSON, a missing JSON content type, or a request without required fields. |
+| `invalidValue` | 400 | A field has the wrong type or an unacceptable value. |
+| `invalidFilter` | 400 | A filter that does not parse, uses an unsupported operator or attribute, or exceeds the filter limits. |
+| `invalidPath`, `noTarget` | 400 | A PATCH or Bulk path that is invalid or matched nothing. |
+| `mutability` | 400, 403 | An attribute no supported schema defines (or, with `unsupportedAttributes: 'reject'`, one the service does not store), removing a required attribute, or changing a protected or deleted identity. |
+| `uniqueness` | 409 | The `userName` or email belongs to another identity. Provisioning never takes over an existing account. |
+| `LIMIT_EXCEEDED` | 409 | Creating a user or group would exceed the tenant's member or group limit (`Tenant.limits`). |
+| `invalidVers` | 412 | `If-Match` names an older version. |
+| `notFound` | 404 | An unknown resource, resource type, or connection path. |
+| `invalidMethod` | 405 | A method the resource does not support, such as `GET /Users/.search`. |
+| `tooLarge`, `tooMany` | 413 | A body over 1 MiB or more than 100 Bulk operations. |
+
+The administration methods (`createConnection`, `rotateToken`, `setRoleMappings`, and the rest) throw `IamError`
+with the same SCIM-style codes: `invalidValue` for a bad name, a lifetime outside 60 seconds to one year, or more
+than 100 role IDs; `notFound` (404) for an unknown connection or group; `unauthorized` (401) for an inactive
+tenant; and [`CONFLICT`](/docs/reference/errors#conflict) (409) for rotating a revoked connection's token. The
+JSON administration routes add [`CSRF_REJECTED`](/docs/reference/errors#csrf_rejected) (403, missing
+`X-Better-IAM: 1` or a foreign `Origin`), [`METHOD_NOT_ALLOWED`](/docs/reference/errors#method_not_allowed) (405,
+not a `POST`), [`INVALID_INPUT`](/docs/reference/errors#invalid_input) (a body that is not a JSON object), and
+[`PAYLOAD_TOO_LARGE`](/docs/reference/errors#payload_too_large) (413, over 64 KiB). Permission failures come from
+the host's `authorize` callback.
+
+## Schema
+
+| Collection | What it holds |
+| --- | --- |
+| `scimConnections` | One row per connection: `tenantId`, `name`, `tokenHash`, `expiresAt`, `revoked`, `roleMappings`, `createdAt`, `lastUsedAt`, `rotatedAt`. |
+| `scimUsers` | The SCIM view of each provisioned user: `connectionId`, `identityId`, `userName`, `externalId`, `displayName`, `active`, `emails`, `name`, `title`, `enterprise`, `version`. |
+| `scimGroups` | The SCIM view of each pushed group: `connectionId`, `groupId`, `displayName`, `externalId`, `members`, `version`. |
+
+Provisioned people and groups are ordinary `identities`, `groups`, and `groupMembers` records.
 
 ## Audit
 

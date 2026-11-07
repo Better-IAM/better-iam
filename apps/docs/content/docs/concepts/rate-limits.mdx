@@ -1,0 +1,402 @@
+---
+title: Rate limits and lockouts
+metaTitle: Rate limits, lockouts, and quotas
+description: The attempt limits Better IAM enforces on sign-in, recovery, MFA, and other credential-checking flows, how lockouts and unlocking work, and which other limits and quotas exist.
+icon: Hourglass
+packages: ['@better-iam/auth', '@better-iam/server', '@better-iam/client']
+sources:
+  - packages/auth/src/rate-limit.ts
+  - packages/auth/src/types.ts
+  - packages/auth/src/service/base.ts
+  - packages/auth/src/service/account.ts
+  - packages/auth/src/service/sessions.ts
+  - packages/auth/src/service/mfa.ts
+  - packages/auth/src/service/passkeys.ts
+  - packages/auth/src/service/passwordless.ts
+  - packages/server/src/api/identities.ts
+  - packages/server/src/tenant-policy.ts
+  - packages/server/src/http.ts
+  - packages/server/src/api/delegations.ts
+  - packages/server/src/api/guests.ts
+  - packages/server/src/api/privacy.ts
+  - packages/server/src/api/ssh.ts
+  - packages/server/src/api/devices.ts
+  - packages/server/src/web-identity-exchange.ts
+  - packages/server/src/signal-receiver.ts
+  - packages/client/src/index.ts
+---
+
+Better IAM limits how fast anyone can **guess credentials**: passwords, emailed and SMS codes, MFA and recovery
+codes, reset and invitation tokens. Every flow that checks such a secret, or sends one, counts the attempt in a
+durable counter before it looks at the secret, and refuses with `RATE_LIMITED` (HTTP 429) once the counter is
+exhausted. That counter running out is what this documentation calls a **lockout**: it is temporary, ends when
+the window passes, and an administrator can clear it early.
+
+Better IAM has **no general request-rate limiter**. Ordinary authenticated API calls (`roles.list`,
+`authorize`, and so on) are not throttled, and public lookups such as `tenants.lookup` are not counted. Apply
+request and body limits at your ingress or API gateway. To meter and cap use of your own product API per
+customer, use [API quotas](/docs/features/quotas).
+
+| Mechanism | What it protects | Configured by |
+| --- | --- | --- |
+| [Attempt limits](#attempt-limits) | Sign-in, sign-up, recovery, verification, MFA, passwordless, passkeys | `authentication.rateLimits`, tenant `maxAttempts` |
+| [Per-IP limit](#per-ip-limit) | Password spraying and credential stuffing across many accounts | `authentication.rateLimits.ipAttempts` |
+| [Server flow budgets](#server-flow-budgets) | Agent delegation, guest redemption, privacy intake, SSH, device enrollment, web identity, step-up | Fixed, or the feature's own option |
+| [Network blocks](#block-a-network) | An address that keeps attacking | `security.blockNetwork` |
+| [Fixed caps](#fixed-caps) | Floods of requests that waiting does not fix | Built in |
+| [API quotas](/docs/features/quotas) | Your own product API, per key, agent, person, or organization | `quotas` API group |
+
+## Attempt limits
+
+Each counted flow builds a counter key from the tenant and a **subject**: the email or phone number being signed
+in, the identity, or a hash of the token being redeemed. The key is stored as a SHA-256 hash, so counters never
+hold raw addresses. Every attempt counts, successful or not, and a counter resets when its window ends.
+
+There are three tiers:
+
+| Tier | Allowance per window | Flows |
+| --- | --- | --- |
+| Ordinary | `attempts` (default 10) | `auth.signIn`, `auth.reauthenticate`, `auth.changePassword`, `auth.beginPasskeyAuthentication` with an email, and redeeming emailed tokens (`auth.verifyEmail`, `auth.resetPassword`, `auth.confirmEmailChange`) |
+| Sensitive | `sensitiveAttempts` (default 5) | `auth.signUp`, every call that sends an email or SMS (`requestEmailVerification`, `requestPasswordReset`, `requestEmailChange`, `startPasswordless`, `startPhoneVerification`, `requestMfaCode`), checking passwordless and phone codes, `auth.confirmMfa` (enrollment), every step that answers an MFA challenge (`verifyMfa`, `recoverMfa`, `beginPasskeyMfa`, `finishPasskeyMfa`), and finishing a passkey sign-in |
+| Generous | `attempts × 10` | Passkey discovery without an email (`beginPasskeyAuthentication` with no address), counted per client, because login pages start one on every visit |
+
+- **Second factors count twice.** An MFA step counts once against the sign-in challenge and once against the
+  person. Every correct password mints a fresh challenge, so without the per-person counter, whoever holds the
+  password would get `attempts × sensitiveAttempts` code guesses per window.
+- **Counted outside the transaction.** The attempt is committed before the flow's own transaction starts, so a
+  refusal or a rollback never un-counts it.
+- **Tenants only tighten.** A tenant's authentication policy may set `maxAttempts` (1 to 100,000), which lowers
+  the per-subject allowance of every tier for that tenant. It never raises the deployment's limits.
+
+## Per-IP limit
+
+Per-account counters do not stop an attacker who tries one password against thousands of accounts. With
+`rateLimits.ipAttempts` set, every authentication flow of a tenant also counts against one counter per client
+address, checked before the per-subject counter.
+
+- IPv6 clients are counted per /64 network, and IPv4-mapped IPv6 addresses as their IPv4 form, so rotating
+  addresses earns no fresh counter.
+- It needs a recorded client IP, from `http.clientInfo` or `withClient`. Direct server-side API calls carry no IP
+  and are never judged by it.
+- Size it for the largest office or carrier NAT your customers sign in from. `0` (the default) turns it off.
+
+## Server flow budgets
+
+Several server features that accept a secret or a costly request reuse the same limiter with a budget of their own.
+Each budget uses the configured window (`rateLimits.windowMs`) and limiter, and refusals are `RATE_LIMITED`:
+
+| Flow | Counter | Allowance per window |
+| --- | --- | --- |
+| `delegations.request` (an agent asks a person for access) | Per agent | Sensitive tier |
+| `delegations.handoff` | Per delegation | Sensitive tier |
+| `delegations.issueToken` | Per delegation | 120 |
+| `delegations.requestConfirmation` | Per delegation | Ordinary tier |
+| `sts.getSessionToken` with an `mfaCode` (step-up) | Per identity | Sensitive tier |
+| `sts.assumeRoleWithWebIdentity` | Per trust and client IP; per trust overall | `sts.webIdentity.maxExchangesPerWindow` (default 600); ten times that per trust |
+| `devices.enroll` | Per identity | 30 |
+| `guests.redeem` | Per client IP; per tenant; per invitation token | 20; 500; 10 |
+| `privacy.submitPublic` | Per tenant; per email address | 500; 3 |
+| `privacy.confirmPublic` | Per request | 10 |
+| `ssh.enrollHost`, `ssh.syncHost` | Per host | 10; 120 |
+| `ssh.issueCertificate` | Per identity | `ssh.issuanceLimit` (default 60) |
+| Shared Signals push endpoint | Per stream source | 3000 |
+
+Budgets with a fixed number ignore the tenant's `maxAttempts`, so automation never loosens or tightens human
+sign-in limits. The flows that run the network steps also apply network blocks and the per-IP counter first.
+
+## Setup
+
+<Steps>
+<Step>
+
+### Configure the limits
+
+The defaults suit most deployments. Change them under `authentication.rateLimits`:
+
+```ts title="iam.ts"
+import { betterIam } from 'better-iam';
+import { postgresAdapter } from 'better-iam/adapter-postgres';
+
+export const iam = betterIam({
+  database: postgresAdapter({ connectionString: process.env.DATABASE_URL! }),
+  secret: process.env.BETTER_IAM_SECRET!,
+  baseURL: 'https://app.example.com',
+  authentication: {
+    rateLimits: {
+      attempts: 10, // ordinary flows
+      sensitiveAttempts: 5, // codes, deliveries, MFA
+      windowMs: 15 * 60_000,
+      ipAttempts: 100, // per client IP across a tenant's flows; 0 turns it off
+    },
+  },
+  http: {
+    // Record the client IP behind your trusted proxy, so ipAttempts and network blocks can judge it.
+    clientInfo: (request) => ({
+      ip: request.headers.get('x-real-ip') ?? undefined,
+      userAgent: request.headers.get('user-agent') ?? undefined,
+    }),
+  },
+});
+```
+
+</Step>
+<Step>
+
+### Migrate
+
+The default limiter keeps its counters in the IAM database (`authRateLimits`), created by `migrate` like every
+other collection:
+
+```bash
+npx better-iam migrate --config better-iam.config.mjs
+```
+
+</Step>
+<Step>
+
+### Let the client wait and retry
+
+The browser client exposes the server's wait as `IamClientError.retryAfterMs`. With `retryRateLimited`, it retries
+once by itself when the wait is short (5 seconds by default):
+
+```ts title="lib/iam-client.ts"
+import { createIamClient } from 'better-iam/client';
+import type { iam } from './iam';
+
+export const client = createIamClient<typeof iam>({
+  baseURL: 'https://app.example.com',
+  retryRateLimited: { maxWaitMs: 3_000 },
+});
+```
+
+</Step>
+</Steps>
+
+## Usage
+
+### Handle a refusal
+
+A refused attempt throws `RATE_LIMITED` with `retryAfterMs`, the window length: the counter resets at most that far
+away. The HTTP handler adds a `Retry-After` header in seconds and puts `retryAfterMs` in the JSON error body.
+
+<Tabs items={['Server', 'Client']}>
+<Tab value="Server">
+
+```ts title="app/sign-in.ts"
+import { IamError } from 'better-iam';
+import { iam } from './iam';
+
+try {
+  await iam.api.auth.signIn({ tenantId, email, password });
+} catch (error) {
+  if (error instanceof IamError && error.code === 'RATE_LIMITED') {
+    const { retryAfterMs } = error as IamError & { retryAfterMs?: number };
+    return { error: `Too many attempts. Try again in ${Math.ceil((retryAfterMs ?? 0) / 60_000)} minutes.` };
+  }
+  throw error;
+}
+```
+
+</Tab>
+<Tab value="Client">
+
+```ts title="components/sign-in.ts"
+import { IamClientError } from 'better-iam/client';
+import { client } from '../lib/iam-client';
+
+try {
+  await client.auth.signIn({ tenantId, email, password });
+} catch (error) {
+  if (error instanceof IamClientError && error.code === 'RATE_LIMITED') {
+    showMessage(`Too many attempts. Try again in ${Math.ceil((error.retryAfterMs ?? 0) / 60_000)} minutes.`);
+  } else throw error;
+}
+```
+
+</Tab>
+</Tabs>
+
+**Route:** `POST /auth/signIn` (every counted flow answers `429` the same way)
+
+Tell people when they may try again, never which counter ran out: the message is the same for an unknown address
+and a real one.
+
+### Unlock a person
+
+When a real person has locked themselves out, an administrator clears their counters instead of making them wait.
+`identities.unlock` needs `iam:identities:update` on the identity and recent authentication, and is audited as
+`identity:unlock`.
+
+<Tabs items={['Server', 'Client']}>
+<Tab value="Server">
+
+```ts
+const { supported, cleared } = await iam.api.identities.unlock(adminCredential, { tenantId, identityId });
+```
+
+</Tab>
+<Tab value="Client">
+
+```ts
+const { supported, cleared } = await client.identities.unlock({ tenantId, identityId });
+```
+
+</Tab>
+</Tabs>
+
+**Route:** `POST /identities/unlock`
+
+- It clears the counters for the person's email and phone (sign-up, sign-in, verification, reset, passwordless,
+  passkey) and identity (password change, reauthentication, email and phone changes, MFA enrollment, and the
+  per-person second-factor counters).
+- It never clears a network's per-IP counter, and it does not lift [network blocks](#block-a-network).
+- A custom limiter without `reset` makes it a no-op that returns `supported: false`.
+
+### Tighten limits for one tenant
+
+Set `maxAttempts` in the tenant's authentication policy. `tenants.setAuthPolicy` replaces the whole policy, so read
+the current one first and keep its other fields:
+
+```ts
+const tenant = await iam.api.tenants.get(ownerCredential, { tenantId });
+await iam.api.tenants.setAuthPolicy(ownerCredential, {
+  tenantId,
+  authPolicy: { ...tenant.authPolicy, maxAttempts: 5 },
+});
+```
+
+**Route:** `POST /tenants/setAuthPolicy`
+
+See [tenant policy](/docs/authentication/tenant-policy) for the other fields.
+
+### Block a network
+
+When one address keeps attacking, block it. A blocked network is refused with `IP_BLOCKED` before any credential
+is examined or any counter moves.
+
+```ts
+await iam.api.security.blockNetwork(adminCredential, {
+  tenantId,
+  network: '198.51.100.0/24',
+  reason: 'Password spraying against several members',
+  durationMs: 24 * 60 * 60_000,
+});
+```
+
+**Route:** `POST /security/blockNetwork` (also `POST /security/unblockNetwork`, `POST /security/listBlocks`)
+
+See [network blocks](/docs/authentication/tenant-policy#network-blocks) for permissions and platform-wide blocks.
+
+### Share counters across instances
+
+The default limiter stores counters in the IAM database, so every instance sharing the database shares the
+counters, and limits survive restarts. Each attempt costs one short write transaction. To keep counters elsewhere,
+supply `rateLimits.limiter`, an object with `consume()` and optionally `reset()`:
+
+```ts title="redis-limiter.ts"
+import type { RateLimiter } from 'better-iam/auth';
+import { redis } from './redis'; // your Redis client (for example ioredis)
+
+export const redisLimiter: RateLimiter = {
+  async consume({ key, limit, windowMs }) {
+    const counter = `iam:rate:${key}`;
+    const count = await redis.incr(counter);
+    if (count === 1) await redis.pexpire(counter, windowMs); // the window starts with the first attempt
+    return count <= limit; // true permits the attempt
+  },
+  async reset({ key }) {
+    await redis.del(`iam:rate:${key}`);
+  },
+};
+```
+
+```ts title="iam.ts"
+authentication: {
+  rateLimits: { limiter: redisLimiter },
+},
+```
+
+- `consume` must count the attempt even when the caller later fails, and return `false` once `limit` is reached.
+- Without `reset`, `identities.unlock` cannot clear counters.
+- `createMemoryRateLimiter({ maxKeys })` from `better-iam/auth` keeps counters in process memory (at most
+  `maxKeys`, default 100,000). Use it for tests and single-process deployments only; counters are lost on restart
+  and not shared.
+- `createStoreRateLimiter(store)` is the default database limiter, exported for composition.
+
+## Fixed caps
+
+Some limits are not about guessing, and waiting alone does not lift them:
+
+| Limit | Error | Lift it by |
+| --- | --- | --- |
+| 20 pending access requests per requester (`accessRequests.create`) | `TOO_MANY_REQUESTS` (429) | Deciding or cancelling pending requests |
+| A KMS key rotates on demand at most ten times a day (`keys.rotate`) | `RATE_LIMITED` (429) | Waiting for older rotations to leave the 24-hour window |
+| `compliance.evaluate` runs at most once a minute per tenant | `RATE_LIMITED` (429) | Waiting a minute |
+| Plan limits and per-tenant caps on records (members, webhooks, roles, ...) | `LIMIT_EXCEEDED` (409) | Raising the limit with `tenants.setLimits`, or deleting records |
+| Usage plans on your own meters | `QUOTA_EXCEEDED` (429) | Waiting for `Retry-After`, or a larger plan ([API quotas](/docs/features/quotas)) |
+
+The [LDAP gateway](/docs/federation/ldap) maps `RATE_LIMITED` on a bind to LDAP `unwillingToPerform`.
+
+## Options
+
+All attempt-limit options live under `authentication.rateLimits`. Values outside the ranges fail construction with
+`INVALID_CONFIG`.
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `attempts` | `number` | `10` | Ordinary-tier attempts per window, 1 to 100,000. Passkey discovery gets ten times this. |
+| `sensitiveAttempts` | `number` | `5` | Sensitive-tier attempts per window, 1 to 100,000. |
+| `windowMs` | `number` | `900000` (15 minutes) | Window length, 1 second to 24 hours. Also the `retryAfterMs` of every refusal and the window of server flow budgets. |
+| `ipAttempts` | `number` | `0` (off) | Attempts per window from one client network across all of a tenant's flows, 0 to 1,000,000. |
+| `limiter` | `RateLimiter` | database limiter | Where counters live: `{ consume, reset? }`. |
+
+Related options:
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| Tenant `authPolicy.maxAttempts` | `number` | none | Lowers every per-subject allowance for one tenant, 1 to 100,000. Set with `tenants.setAuthPolicy` or `tenantDefaults.authPolicy`. |
+| `authentication.failedSignInAlerts` | `number` | `0` (off) | Emails the person a `sign-in-failures` notice once this many attempts have failed since their last sign-in. |
+| `sts.webIdentity.maxExchangesPerWindow` | `number` | `600` | Web-identity exchanges per trust and client per window, 1 to 100,000. |
+| `ssh.issuanceLimit` | `number` | `60` | SSH certificates one identity may request per window, 1 to 100,000. |
+
+## Schema
+
+The default limiter stores one record per live counter in the `authRateLimits` collection:
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `id` | `string` | SHA-256 hex of `{tenantId}:{subject}`; the raw email, phone, or token never appears. |
+| `tenantId` | `string` | The tenant the counter belongs to. |
+| `count` | `number` | Attempts counted in the current window. |
+| `resetAt` | `number` | When the window ends, epoch milliseconds. |
+
+Expired counters are deleted opportunistically (at most once a minute per process, in batches of 200) and by
+`iam.purgeDeleted()` (CLI `purge`).
+
+## Errors
+
+| Code | HTTP | When |
+| --- | --- | --- |
+| [`RATE_LIMITED`](/docs/reference/errors#rate_limited) | 429 | An attempt counter or a flow budget is exhausted. Carries `retryAfterMs` and a `Retry-After` header. |
+| [`IP_BLOCKED`](/docs/reference/errors#ip_blocked) | 403 | The client network is blocked for the tenant or the platform. No counter moves. |
+| [`TOO_MANY_REQUESTS`](/docs/reference/errors#too_many_requests) | 429 | The requester already has 20 pending access requests. |
+| [`QUOTA_EXCEEDED`](/docs/reference/errors#quota_exceeded) | 429 | A usage plan's throttle or period limit refused the call. |
+| [`LIMIT_EXCEEDED`](/docs/reference/errors#limit_exceeded) | 409 | A plan limit or fixed per-tenant cap on records was reached. |
+| [`INVALID_CONFIG`](/docs/reference/errors#invalid_config) | none | A `rateLimits` value is out of range, or `limiter` has no `consume()`. |
+
+## Next steps
+
+<Cards>
+  <Card title="API quotas" href="/docs/features/quotas">
+    Usage plans that throttle and cap your own API per key, agent, person, or organization.
+  </Card>
+  <Card title="Tenant policy" href="/docs/authentication/tenant-policy#network-restrictions">
+    IP allowlists, session network binding, and network blocks.
+  </Card>
+  <Card title="Recovery" href="/docs/authentication/recovery">
+    Helping locked-out people back in.
+  </Card>
+  <Card title="Threat detection" href="/docs/features/threat-detection">
+    Detection rules that react to repeated failures and suspicious sign-ins.
+  </Card>
+</Cards>

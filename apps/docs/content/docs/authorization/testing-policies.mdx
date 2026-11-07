@@ -1,0 +1,656 @@
+---
+title: Testing policies
+metaTitle: Testing and debugging authorization policies
+description: Check policy documents before and after they ship with the offline evaluator, policies.test, policy lint, policies.simulate, impact previews, invariants in CI, the policy playground, and vitest.
+icon: BadgeCheck
+packages: ['@better-iam/core', '@better-iam/server', 'better-iam']
+sources:
+  - packages/core/src/policy.ts
+  - packages/server/src/policy-lint.ts
+  - packages/server/src/api/policies.ts
+  - packages/server/src/api/analysis.ts
+  - packages/server/src/api/impact.ts
+  - packages/server/src/api/access-paths.ts
+  - packages/server/src/decisions.ts
+  - tests/policy-tools.test.ts
+  - tests/access.test.ts
+---
+
+import { ClipboardCheck, FileBraces, Route, ShieldCheck, SquareTerminal } from '@/lib/icons';
+
+A policy that is wrong in production either locks people out or lets the wrong people in, and both are found late:
+by a support ticket or by an auditor. Better IAM gives you a tool for each stage of a policy's life, all running the
+same evaluator the server uses for real requests:
+
+| Stage | Question | Tool | Needs a server |
+| --- | --- | --- | --- |
+| Writing | Does this document allow what I think? | [Policy playground](#the-policy-playground), [`evaluatePolicy`](#evaluate-a-document-offline) | No |
+| Writing | Is this document probably a mistake? | [`lintPolicy`](#lint-a-document) | No |
+| Before saving | Does it validate against my catalog, and how does it treat this request? | [`policies.test`](#test-a-candidate-document), [`analysis.lintPolicy`](#lint-a-document) | Yes |
+| Before changing a role or policy | Who gains or loses what? | [`impact.preview`](#preview-a-change) | Yes |
+| After a report | Why was this person refused or allowed? | [`policies.simulate`](#explain-a-decision-for-a-real-person) | Yes |
+| After a report | What can the person do themselves to get access? | [`accessPaths.find`](#show-the-way-to-access) | Yes |
+| Continuously | Do our guardrails still hold? | [`check-invariants`](#gate-ci-on-access-invariants) | Yes |
+| In your test suite | Does my application enforce what the policies say? | [vitest](#unit-test-decisions-with-vitest) | Optional |
+
+None of these tools creates a session or grants anything. They are safe to run against production data.
+
+## Setup
+
+<Steps>
+<Step>
+
+### Install
+
+The offline tools ship in the packages you already use. `evaluatePolicy` and `definePolicy` are exported from
+`better-iam` (and `@better-iam/core`); `lintPolicy` from `better-iam/server` (and `@better-iam/server`).
+
+```npm
+npm i better-iam
+```
+
+For tests, add vitest. The integration fixture below also uses `otplib` to answer the root administrator's MFA
+challenge:
+
+```npm
+npm i -D vitest otplib@12
+```
+
+</Step>
+<Step>
+
+### Grant the review permission
+
+The server-side tools are administrative calls. Give the people and CI service accounts that run them a role with
+these actions:
+
+| Action | Tools |
+| --- | --- |
+| `iam:policies:simulate` | `policies.test`, `policies.simulate`, `policies.whoCan`, `policies.effectiveActions`, `impact.preview` |
+| `iam:policies:read` | `analysis.lintPolicy` |
+| `iam:analysis:read` | `analysis.findings` (includes `policy-lint` findings) |
+
+`impact.preview` also needs the permission of the change it previews (`iam:roles:update`, `iam:policies:update`, or
+`iam:roles:delete`).
+
+```ts title="scripts/create-policy-reviewer.ts"
+import { iam } from '../iam';
+
+const reviewer = await iam.api.roles.create(ownerCredential, {
+  tenantId,
+  name: 'Policy reviewer',
+  permissions: ['iam:policies:simulate', 'iam:policies:read', 'iam:analysis:read'],
+});
+```
+
+</Step>
+</Steps>
+
+## Usage
+
+### The policy playground
+
+The [policy playground](/playground) runs `evaluatePolicy` from `@better-iam/core` in your browser. Edit grant and
+boundary documents, describe a request (action, resource, and context keys), and the decision and its
+statement-by-statement trace update as you type. Nothing leaves the page, and a scenario can be shared as a link.
+Use it to explore how statements, conditions, and boundaries combine before you write code.
+
+<TryInPlayground
+  grants={[
+    {
+      version: 1,
+      statements: [
+        { sid: 'EditOwnDocuments', effect: 'allow', actions: ['documents:write'], resources: ['document/*'], conditions: { StringEquals: { 'resource.ownerId': '${principal.id}' } } },
+      ],
+    },
+  ]}
+  action="documents:write"
+  resource="document/q3-plan"
+  context={{ 'principal.id': 'usr_alice', 'resource.ownerId': 'usr_alice' }}
+>
+  Try an owner-only edit policy
+</TryInPlayground>
+
+The playground knows nothing about your tenants, catalog, or identities. It evaluates exactly the documents and
+context you give it, which makes it a model of one grant path, not of a whole server decision.
+
+### Evaluate a document offline
+
+`evaluatePolicy(input)` is the core evaluator: grants form a union, every boundary is an independent intersection,
+and any matching deny wins. It takes the action, the resource as a `type/id` string, grant and boundary documents,
+and a context map, and returns `{ allowed, reason, matched }`.
+
+```ts title="evaluate.ts"
+import { definePolicy, evaluatePolicy } from 'better-iam';
+
+const editor = definePolicy({
+  version: 1,
+  statements: [
+    { sid: 'ReadAll', effect: 'allow', actions: ['documents:read'], resources: ['document/*'] },
+    {
+      sid: 'WriteWithMfa',
+      effect: 'allow',
+      actions: ['documents:write'],
+      resources: ['document/*'],
+      conditions: { Bool: { 'principal.mfa': true } },
+    },
+  ],
+});
+
+const decision = evaluatePolicy({
+  action: 'documents:write',
+  resource: 'document/q3-plan',
+  grants: [editor],
+  context: { 'principal.mfa': false },
+});
+// { allowed: false, reason: 'no-grant', matched: [] }
+```
+
+| Reason | Meaning |
+| --- | --- |
+| `allowed` | No deny matched, a grant allowed it, and every boundary allowed it. |
+| `explicit-deny` | A deny statement matched, in a grant or a boundary. |
+| `no-grant` | No allow statement in the grants matched. |
+| `boundary-deny` | A boundary has no matching allow. |
+| `evaluation-limit` | Matching exceeded the evaluator's work budget; refused like a deny. |
+
+`matched` lists each applicable statement as `grant:{document}:{sid}` or `boundary:{document}:{sid}`, using the
+statement's position when it has no `sid`. Invalid input throws `INVALID_REQUEST`, and an invalid document throws
+`INVALID_POLICY`.
+
+<Callout type="warn" title="The offline evaluator is one grant path">
+  `evaluatePolicy` does not know your catalog, tenants, bindings, authority ceilings, or server-owned context keys.
+  You supply the context, so you can set `principal.mfa: true` even though no session proved it. Use it to test
+  documents, and use [`policies.simulate`](#explain-a-decision-for-a-real-person) to test what a real person gets.
+  [How decisions work](/docs/authorization/how-decisions-work) describes everything the server adds.
+</Callout>
+
+### Lint a document
+
+The linter finds documents that are valid but almost certainly wrong: a deny that can never apply, an allow that a
+deny always cancels, a condition on a key the server never sets, an unconditional `iam:*`.
+
+<Tabs items={['Server', 'Client', 'Offline']}>
+<Tab value="Server">
+
+```ts title="lint.ts"
+import { iam } from './iam';
+
+const result = await iam.api.analysis.lintPolicy(credential, {
+  tenantId,
+  document: candidate, // or policyId: 'pol_...' for a stored policy
+  contextKeys: ['app.plan'], // keys your resolveContext supplies
+});
+if (!result.valid) console.error(result.error); // { code: 'INVALID_ACTION', message: '...' }
+for (const warning of result.warnings) console.log(warning.severity, warning.code, warning.statement, warning.message);
+```
+
+</Tab>
+<Tab value="Client">
+
+```ts title="lint.ts"
+import { createIamClient } from 'better-iam/client';
+import type { iam } from './iam';
+
+const client = createIamClient<typeof iam>();
+const result = await client.analysis.lintPolicy({ tenantId, document: candidate });
+```
+
+</Tab>
+<Tab value="Offline">
+
+```ts title="scripts/lint-policies.ts"
+import { lintPolicy } from 'better-iam/server';
+
+const result = lintPolicy(candidate, {
+  identityAttributes: { department: 'string' },
+  resourceAttributes: ['ownerId'],
+  contextKeys: ['app.plan'],
+});
+if (result.warnings.some((warning) => warning.severity === 'warning')) process.exitCode = 1;
+```
+
+</Tab>
+</Tabs>
+
+**Route:** `POST /api/iam/analysis/lintPolicy`
+
+The server form validates against the tenant's catalog first and returns `valid: false` with the `error` when that
+fails; warnings are empty then. The offline form validates the document's structure but not your catalog. Each
+warning has `code`, `severity` (`warning` or `info`), `statement` (the index), `sid` when set, and `message`,
+sorted by statement and then code. [Lint](/docs/authorization/policies#lint) lists every warning code.
+
+### Test a candidate document
+
+`policies.test` evaluates a document that is not stored against one request and a context you supply, after
+validating it against the tenant's catalog. It returns the full decision with matched statements. Use it in a
+policy editor before saving, and in CI to assert that a document still does what it should.
+
+<Tabs items={['Server', 'Client']}>
+<Tab value="Server">
+
+```ts title="test-candidate.ts"
+import { iam } from './iam';
+
+const decision = await iam.api.policies.test(credential, {
+  tenantId,
+  document: candidate,
+  action: 'documents:write',
+  resource: 'document/alice-notes',
+  context: { 'principal.id': 'alice', 'principal.mfa': true, 'resource.ownerId': 'alice' },
+});
+// { allowed: true, reason: 'allowed', matched: ['grant:0:WriteOwn'] }
+```
+
+</Tab>
+<Tab value="Client">
+
+```ts title="test-candidate.ts"
+import { createIamClient } from 'better-iam/client';
+import type { iam } from './iam';
+
+const client = createIamClient<typeof iam>();
+const decision = await client.policies.test({
+  tenantId,
+  document: candidate,
+  action: 'documents:write',
+  resource: 'document/alice-notes',
+  context: { 'principal.id': 'alice', 'principal.mfa': true },
+});
+```
+
+</Tab>
+</Tabs>
+
+**Route:** `POST /api/iam/policies/test`
+
+- `resource` is a `type/id` string, as in a policy's `resources`.
+- `context` holds at most 200 keys. `principal.tenantId` and `resource.tenantId` default to the tenant and
+  `request.time` to now; your context may override them.
+- A document that names an action outside the catalog fails with `INVALID_ACTION` (or an unknown resource type with
+  `INVALID_RESOURCE_TYPE`) before anything is evaluated. The request's own `action` is not checked against the
+  catalog.
+
+### Explain a decision for a real person
+
+Public authorization responses hide why a request was refused: every denial is `ACCESS_DENIED` and `matched` is
+empty, so callers cannot probe your policies. `policies.simulate` runs the full server decision for one identity in
+a <Term id="synthetic-session">synthetic session</Term> and returns the precise reason and the matched statements.
+
+<Tabs items={['Server', 'Client']}>
+<Tab value="Server">
+
+```ts title="explain.ts"
+import { iam } from './iam';
+
+const decision = await iam.api.policies.simulate(credential, {
+  tenantId,
+  identityId: alice.id,
+  action: 'documents:delete',
+  resource: { type: 'document', id: 'q3-plan' },
+  assumeMfa: true,
+});
+// { allowed: false, reason: 'explicit-deny', matched: ['grant:0:NoDeletes'] }
+```
+
+</Tab>
+<Tab value="Client">
+
+```ts title="explain.ts"
+import { createIamClient } from 'better-iam/client';
+import type { iam } from './iam';
+
+const client = createIamClient<typeof iam>();
+const decision = await client.policies.simulate({
+  tenantId,
+  identityId,
+  action: 'documents:delete',
+  resource: { type: 'document', id: 'q3-plan' },
+});
+```
+
+</Tab>
+</Tabs>
+
+**Route:** `POST /api/iam/policies/simulate`
+
+Every grant source counts: direct and group bindings, inheritance, conditions, relationships, boundaries, authority
+ceilings, live activations, and access windows at the moment of evaluation. The synthetic session differs from a
+real one:
+
+- `principal.mfa` is `false` unless `assumeMfa: true`.
+- `principal.sessionKind` is `user` for people and `api-key` for service accounts and agents; `principal.authMethod`
+  is absent.
+- `principal.mfaTime` and `request.sourceIp` are always absent, so conditions that demand recent MFA or a network
+  never hold in a simulation.
+- No impersonation, session policy, or API-key scope applies.
+
+[Decision reasons](/docs/authorization/how-decisions-work#decision-reasons) maps each `reason` to the evaluation
+step that produced it. Two related reads answer the same question across many people or actions:
+
+| Call | Route | Returns |
+| --- | --- | --- |
+| `policies.whoCan({ tenantId, action, resource, kind?, assumeMfa?, limit?, offset? })` | `POST /api/iam/policies/whoCan` | Every active identity that could perform the action, with its reason, and a `total`. |
+| `policies.effectiveActions({ tenantId, identityId, resource, actions?, assumeMfa? })` | `POST /api/iam/policies/effectiveActions` | `allowed` action names and a `results` entry per action (at most 200 actions). |
+
+See [Access reviews](/docs/authorization/reviews) for both.
+
+### Show the way to access
+
+When a person is refused, `accessPaths.find` lists what they can do alone to get access: step up to MFA, accept
+pending terms, activate an eligible role, or request a package. Each path is verified before it is offered.
+
+```ts title="after-denial.ts"
+import { iam } from './iam';
+
+const { allowed, reason, paths } = await iam.api.accessPaths.find(
+  { token },
+  { tenantId, action: 'documents:delete', resource: { type: 'document', id: 'q3-plan' } },
+);
+```
+
+**Route:** `POST /api/iam/accessPaths/find`
+
+It runs as the caller, for the caller, so it needs no review permission. See
+[Access paths](/docs/features/governance/access-paths).
+
+### Preview a change
+
+`impact.preview` makes a role or policy change inside a transaction that is always rolled back, evaluates every
+holder of the affected roles before and after, and reports who gains and loses which actions on the resources you
+name, plus the [access invariants](/docs/features/governance/change-safety#access-invariants) the change would
+break or fix.
+
+<Tabs items={['Server', 'Client']}>
+<Tab value="Server">
+
+```ts title="preview.ts"
+import { iam } from './iam';
+
+const preview = await iam.api.impact.preview(credential, {
+  tenantId,
+  change: { role: { roleId: approver.id, permissions: ['payments:read', 'payments:approve'] } },
+  resources: [{ type: 'ledger', id: 'main' }],
+  assumeMfa: true,
+});
+for (const holder of preview.identities) console.log(holder);
+// `broken` lists details only for callers allowed iam:invariants:read; `brokenCount` is always set.
+if (preview.invariants.brokenCount) throw new Error('This change breaks an access invariant');
+```
+
+</Tab>
+<Tab value="Client">
+
+```ts title="preview.ts"
+import { createIamClient } from 'better-iam/client';
+import type { iam } from './iam';
+
+const client = createIamClient<typeof iam>();
+const preview = await client.impact.preview({
+  tenantId,
+  change: { policy: { policyId, document: candidate } },
+  resources: [{ type: 'ledger', id: 'main' }],
+});
+```
+
+</Tab>
+</Tabs>
+
+**Route:** `POST /api/iam/impact/preview`
+
+`change` is exactly one of `{ role: { roleId, ...update } }`, `{ policy: { policyId, document } }`, or
+`{ deleteRole: roleId }`. Between 1 and 10 `resources` are evaluated, for every catalog action or the `actions`
+you pass (up to 200), for up to 200 holders (`truncated` is true when there are more). See
+[Impact preview](/docs/features/governance/change-safety#impact-preview).
+
+### Gate CI on access invariants
+
+Access invariants are lines that must hold whatever roles say, such as "contractors can never approve payments".
+The CLI evaluates a tenant's invariants and exits non-zero when one is broken:
+
+```bash title=".github/workflows/access.yml (step)"
+BETTER_IAM_TOKEN=... npx better-iam check-invariants --config better-iam.config.mjs --tenant TENANT_ID --fail-on-broken
+```
+
+`better-iam api` calls any API method as the current token, so the review calls also work from scripts:
+
+```bash
+BETTER_IAM_TOKEN=... npx better-iam api policies.simulate --tenant TENANT_ID \
+  --data '{"identityId":"usr_123","action":"documents:delete","resource":{"type":"document","id":"q3-plan"}}'
+```
+
+See [`check-invariants`](/docs/reference/cli#check-invariants) and [`api`](/docs/reference/cli#api).
+
+### Unit test decisions with vitest
+
+Test policies at two levels. **Document tests** run `evaluatePolicy` and `lintPolicy` in memory and take
+milliseconds; write one per policy file. **Integration tests** run a real instance on an in-memory SQLite database
+and check what a bound person actually gets, including bindings, boundaries, and server-owned context keys.
+
+#### Document tests
+
+```ts title="policies/editor.test.ts"
+import { describe, expect, it } from 'vitest';
+import { definePolicy, evaluatePolicy } from 'better-iam';
+import { lintPolicy } from 'better-iam/server';
+
+const editor = definePolicy({
+  version: 1,
+  statements: [
+    { sid: 'ReadAll', effect: 'allow', actions: ['documents:read'], resources: ['document/*'] },
+    {
+      sid: 'WriteOwn',
+      effect: 'allow',
+      actions: ['documents:write'],
+      resources: ['document/*'],
+      conditions: { StringEquals: { 'resource.ownerId': '${principal.id}' } },
+    },
+  ],
+});
+
+const check = (action: string, context: Record<string, unknown>) =>
+  evaluatePolicy({ action, resource: 'document/q3-plan', grants: [editor], context });
+
+describe('editor policy', () => {
+  it('lets anyone read', () => {
+    expect(check('documents:read', {}).allowed).toBe(true);
+  });
+
+  it('lets only the owner write', () => {
+    expect(check('documents:write', { 'principal.id': 'alice', 'resource.ownerId': 'alice' })).toMatchObject({
+      allowed: true,
+      matched: ['grant:0:WriteOwn'],
+    });
+    expect(check('documents:write', { 'principal.id': 'bob', 'resource.ownerId': 'alice' }).reason).toBe('no-grant');
+  });
+
+  it('has no lint warnings', () => {
+    const result = lintPolicy(editor, { resourceAttributes: ['ownerId'] });
+    expect(result.valid).toBe(true);
+    expect(result.warnings.filter((warning) => warning.severity === 'warning')).toEqual([]);
+  });
+});
+```
+
+#### Integration tests
+
+The fixture creates a real instance on `sqliteAdapter({ filename: ':memory:' })`, bootstraps the root
+administrator, completes root MFA with `otplib`, creates an organization, and accepts the owner invitation from the
+captured outbox. Each test then creates the roles and bindings it needs and asks `policies.simulate`.
+
+```ts title="tests/iam-fixture.ts"
+import { authenticator } from 'otplib';
+import { betterIam } from 'better-iam';
+import { sqliteAdapter } from 'better-iam/adapter-sqlite';
+import type { DeliveryMessage } from 'better-iam/auth';
+
+export async function createFixture() {
+  const database = sqliteAdapter({ filename: ':memory:' });
+  const inbox: DeliveryMessage[] = [];
+  const iam = betterIam({
+    database,
+    secret: 'test-secret-with-at-least-thirty-two-characters',
+    baseURL: 'http://localhost:3000',
+    authentication: {
+      sendEmail: async (message) => {
+        inbox.push(message);
+      },
+    },
+    permissions: { actions: ['documents:read', 'documents:write', 'documents:delete'] },
+    // Test resources live in the tenant that asks for them.
+    resolveResource: async (reference) => reference,
+  });
+  await iam.initialize();
+
+  // Root administrator, signed in with MFA.
+  const root = await iam.bootstrap({ email: 'root@example.test', name: 'Root', password: 'a strong root test password' });
+  const challenge = await iam.api.auth.signIn({
+    tenantId: root.tenant.id,
+    email: 'root@example.test',
+    password: 'a strong root test password',
+  });
+  if (!('mfaRequired' in challenge)) throw new Error('Root must require MFA');
+  const { secret } = await iam.api.auth.beginMfa({ tenantId: root.tenant.id, challenge: challenge.challenge });
+  const rootSession = await iam.api.auth.confirmMfa({
+    credential: { tenantId: root.tenant.id, challenge: challenge.challenge },
+    code: authenticator.generate(secret),
+  });
+
+  // An organization with an owner.
+  const created = await iam.api.tenants.create(
+    { token: rootSession.token },
+    { parentId: root.tenant.id, name: 'Acme', type: 'organization', ownerEmail: 'owner@acme.test' },
+  );
+  await iam.auth.dispatchOutbox();
+  const invitation = inbox.find(
+    (message) => message.tenantId === created.tenant.id && message.template === 'owner-invitation',
+  );
+  if (!invitation) throw new Error('No owner invitation was sent');
+  const owner = await iam.api.tenants.acceptInvitation({
+    tenantId: created.tenant.id,
+    token: invitation.payload.token!,
+    name: 'Owner',
+    password: 'a strong tenant owner password',
+  });
+  if (!('token' in owner)) throw new Error('Unexpected owner MFA challenge');
+
+  return {
+    iam,
+    tenantId: created.tenant.id,
+    owner: { token: owner.token },
+    close: () => database.close(),
+  };
+}
+```
+
+```ts title="tests/editor-role.test.ts"
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { createFixture } from './iam-fixture';
+
+let f: Awaited<ReturnType<typeof createFixture>>;
+let aliceId: string;
+
+beforeAll(async () => {
+  f = await createFixture();
+  const alice = await f.iam.api.identities.create(f.owner, {
+    tenantId: f.tenantId,
+    email: 'alice@acme.test',
+    name: 'Alice',
+  });
+  aliceId = alice.id;
+  const editor = await f.iam.api.roles.create(f.owner, {
+    tenantId: f.tenantId,
+    name: 'Editor',
+    permissions: ['documents:read', 'documents:write'],
+  });
+  await f.iam.api.bindings.create(f.owner, {
+    tenantId: f.tenantId,
+    roleId: editor.id,
+    subjectType: 'identity',
+    subjectId: alice.id,
+  });
+});
+
+afterAll(() => f.close());
+
+const simulate = (action: string) =>
+  f.iam.api.policies.simulate(f.owner, {
+    tenantId: f.tenantId,
+    identityId: aliceId,
+    action,
+    resource: { type: 'document', id: 'q3-plan' },
+  });
+
+describe('Editor role', () => {
+  it('reads and writes documents', async () => {
+    expect((await simulate('documents:read')).allowed).toBe(true);
+    expect((await simulate('documents:write')).allowed).toBe(true);
+  });
+
+  it('cannot delete them', async () => {
+    expect(await simulate('documents:delete')).toMatchObject({ allowed: false, reason: 'NO_APPLICABLE_GRANT' });
+  });
+});
+```
+
+- `iam.auth.dispatchOutbox()` delivers queued messages to your `sendEmail` immediately, so the test can read the
+  invitation token from `inbox`.
+- `authentication.now` replaces the clock. Pass a function over a variable you advance to test expiring bindings,
+  access windows, and activations deterministically.
+- The SQLite adapter needs the native `better-sqlite3` driver, and password hashing uses `argon2`; both must be
+  allowed to run their install scripts.
+- For NestJS applications, `createTestingIam` from `better-iam/nestjs/testing` is an in-memory stand-in whose
+  decisions come from a callback, for testing guards and controllers without a database. See
+  [NestJS](/docs/integrations/nestjs).
+
+## Options
+
+`policies.simulate`, `policies.whoCan`, `policies.effectiveActions`, and `impact.preview` share these inputs:
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `tenantId` | `string` | required | The tenant whose configuration is evaluated. |
+| `identityId` | `string` | required for `simulate`, `effectiveActions` | The identity evaluated in a synthetic session. |
+| `action` | `string` | required for `simulate`, `whoCan` | A catalog action. `whoCan` fails with `INVALID_ACTION` for an unknown one; `simulate` returns the reason `UNKNOWN_ACTION`. |
+| `actions` | `string[]` | every catalog action | `effectiveActions` and `impact.preview` only; at most 200. |
+| `resource` | `{ type: string; id: string }` | required | The resource; `iam/...` platform resources are accepted. |
+| `resources` | `{ type: string; id: string }[]` | required for `impact.preview` | 1 to 10 resources. |
+| `assumeMfa` | `boolean` | `false` | Evaluate as an MFA-verified session. |
+| `kind` | `'user' \| 'service'` | both | `whoCan` only: people or service accounts. |
+| `limit`, `offset` | `number` | `100`, `0` | `whoCan` paging; `limit` 1 to 1000. |
+
+`policies.test` takes `tenantId`, `document`, `action`, `resource` (a `type/id` string), and an optional `context`
+of at most 200 keys. `analysis.lintPolicy` takes `tenantId`, then `document` or `policyId`, and optional
+`contextKeys`.
+
+## Errors
+
+| Code | When |
+| --- | --- |
+| [`ACCESS_DENIED`](/docs/reference/errors#access_denied) | The caller lacks `iam:policies:simulate` (or `iam:policies:read` for lint), or the permission of the previewed change. |
+| [`INVALID_ACTION`](/docs/reference/errors#invalid_action) | An action is not in the catalog. |
+| [`INVALID_POLICY`](/docs/reference/errors#invalid_policy) | A candidate document is malformed. |
+| [`INVALID_INPUT`](/docs/reference/errors#invalid_input) | Too many actions, resources, or context keys, or a field out of range. |
+| [`INVALID_REQUEST`](/docs/reference/errors#invalid_request) | `evaluatePolicy` received a malformed evaluation request. |
+| [`NOT_FOUND`](/docs/reference/errors#not_found) | The identity, policy, or role does not exist in the tenant. |
+| [`RESOURCE_RESOLVER_REQUIRED`](/docs/reference/errors#resource_resolver_required) | An application resource is checked without `resolveResource`. |
+
+## Next steps
+
+<Cards>
+  <Card icon={<Route />} title="How decisions work" href="/docs/authorization/how-decisions-work">
+    The exact evaluation order behind every reason.
+  </Card>
+  <Card icon={<ClipboardCheck />} title="Access reviews" href="/docs/authorization/reviews">
+    Who can act on a resource, effective actions, and risk scans.
+  </Card>
+  <Card icon={<ShieldCheck />} title="Change safety" href="/docs/features/governance/change-safety">
+    Impact previews and enforced access invariants.
+  </Card>
+  <Card icon={<FileBraces />} title="Policy documents" href="/docs/authorization/policies">
+    Statements, boundaries, variables, and every lint code.
+  </Card>
+  <Card icon={<SquareTerminal />} title="Test your integration" href="/docs/guides/testing">
+    End-to-end tests for code that uses Better IAM.
+  </Card>
+</Cards>

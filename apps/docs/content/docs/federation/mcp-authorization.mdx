@@ -70,6 +70,8 @@ Declare the MCP server as a [resource server](/docs/federation/oauth-resource-se
 `registration`:
 
 ```ts title="oauth.ts"
+import { createOAuthProvider } from 'better-iam/oauth';
+
 const issuer = createOAuthProvider({
   ...options,
   resourceServers: { 'https://mcp.example.com/mcp': { scopes: ['mcp:tools'] } },
@@ -160,34 +162,23 @@ and stores only its hash.
 
 ### What a registration may contain
 
-These limits keep a self-registered client from being more powerful than a hand-registered one:
+A self-registered client is never more powerful than a hand-registered one. In short:
 
 - The tenant comes from the token or the hook. A `tenant_id` in the request is ignored.
-- Only the `authorization_code` and `refresh_token` grants are allowed, always with PKCE. A self-registered client
-  always acts for a person who consented.
-- Clients are public (`token_endpoint_auth_method: "none"`) unless the token or policy sets `allowConfidential`,
-  which permits a client secret (`client_secret_basic` or `client_secret_post`).
-- Redirect URIs must use HTTPS, loopback HTTP on any port (how desktop apps receive the code, per the native-apps
-  standard RFC 8252), or a reverse-domain custom scheme for native apps (`com.example.app:/callback`).
-- Nothing the provider would have to fetch can be registered: `jwks_uri`, `sector_identifier_uri`,
-  `backchannel_logout_uri`, `initiate_login_uri`, request URIs, or custom lifetimes. Inline `jwks` is refused too.
-  A stranger cannot make your server call URLs of their choosing.
-- A client that omits `scope` gets the allowance. One that asks for more is refused. It may request tokens only for
-  the allowance's `resources`.
+- Only the `authorization_code` and `refresh_token` grants are allowed, always with PKCE, so a self-registered
+  client always acts for a person who consented.
+- Clients are public (`token_endpoint_auth_method: "none"`) unless the policy sets `allowConfidential`.
+- Redirect URIs use HTTPS, loopback HTTP on any port (how desktop MCP hosts receive the code, per RFC 8252), or a
+  reverse-domain custom scheme.
+- Nothing the provider would have to fetch can be registered (`jwks_uri`, `backchannel_logout_uri`, and similar),
+  and scopes stay within the allowance.
 
-### Manage registered clients and tokens
-
-New clients are audited as `iam:oauth:RegisterClient`, appear in `listClients` with `registeredVia` (the token ID
-or `anonymous`), and are managed like any other client.
-
-| Method | Permission | What it does |
-| --- | --- | --- |
-| `listRegistrationTokens(credential, { tenantId })` | `iam:oauth:clients:read` | Lists a tenant's tokens (name, limits, `used`, expiry, `revoked`) so administrators see what is outstanding. Never returns the token itself. |
-| `revokeRegistrationToken(credential, { tenantId, tokenId })` | `iam:oauth:clients:delete` | Stops a token from registering more clients, for example when a rollout ends. Clients it already registered stay. |
-| `updateClient`, `revokeClient` | `iam:oauth:clients:update`, `iam:oauth:clients:delete` | Change or remove a registered client, like any other. |
-
-Registration management (`registration_client_uri`, which would let a client edit itself) is not offered, so
-administrators change and revoke registered clients through `updateClient` and `revokeClient`.
+The complete rules, the registration-token administration methods (`listRegistrationTokens`,
+`revokeRegistrationToken`), the stored schema, and every registration error are on
+[Dynamic client registration](/docs/federation/dynamic-client-registration). Registered clients appear in
+`listClients` with `registeredVia` (the token ID or `anonymous`) and are changed or removed with `updateClient` and
+`revokeClient`, like any other client. Clients cannot edit their own registration: `registration_client_uri` is not
+offered.
 
 ## Protect the MCP server
 
@@ -238,6 +229,7 @@ Bearer and DPoP-bound tokens are both accepted.
     audience: { type: 'string | string[]', description: 'Accepted aud values.', default: 'the resource' },
     'jwks, jwksUri, clockTolerance': { type: 'verifier options', description: 'Passed to createAccessTokenVerifier, for pinned keys or clock tolerance.' },
     realm: { type: 'string', description: 'A realm name added to the WWW-Authenticate challenge.' },
+    tenantId: { type: 'string', description: "Refuse tokens of every other organization (the verifier's tenantId option)." },
   }}
 />
 
@@ -262,13 +254,39 @@ an assistant stays connected without asking again every 15 minutes. An authoriza
 registered for the `refresh_token` grant, with no `offline_access` or `prompt=consent` needed. OpenID requests keep
 the OIDC rule: they need `offline_access`. Refresh tokens rotate on every use and end with the consenting session.
 
+## Endpoints
+
+| Endpoint | Served by | Path |
+| --- | --- | --- |
+| Protected resource metadata (RFC 9728) | `createResourceGuard` in front of the MCP server | `GET /.well-known/oauth-protected-resource{resource path}` on the MCP server's origin |
+| Authorization server metadata (RFC 8414) | The provider | `GET /.well-known/oauth-authorization-server{issuer path}` |
+| Registration (RFC 7591) | The provider, when `registration` is set | `POST {issuer}/reg` |
+| Authorization | The provider | `GET {issuer}/auth` |
+| Token | The provider | `POST {issuer}/token` |
+
+## Errors
+
+| Where | Answer | When |
+| --- | --- | --- |
+| Registration endpoint | `401 invalid_token` | Missing, invalid, expired, or used-up registration token; declined anonymous request; inactive tenant. |
+| Registration endpoint | `400 invalid_client_metadata` | Metadata outside the policy. See [Dynamic client registration](/docs/federation/dynamic-client-registration#errors). |
+| `guard.check` | `401 invalid_token` | Invalid, expired, or wrong-audience token ([`INVALID_TOKEN`](/docs/reference/errors#invalid_token)). |
+| `guard.check` | `403 insufficient_scope` | A required scope is missing ([`INSUFFICIENT_SCOPE`](/docs/reference/errors#insufficient_scope)). |
+| `createRegistrationToken` | [`INVALID_INPUT`](/docs/reference/errors#invalid_input) | Missing name, a lifetime outside one minute to one year, or unsupported scopes, resources, or limit. |
+
 ## Next steps
 
 <Cards>
+  <Card title="Dynamic client registration" href="/docs/federation/dynamic-client-registration">
+    Every registration rule, registration token administration, schema, and errors.
+  </Card>
   <Card title="Resource servers and tokens" href="/docs/federation/oauth-resource-servers">
     Resource server options, the verifier, DPoP, and token exchange.
   </Card>
   <Card title="OAuth/OIDC provider" href="/docs/federation/oauth-provider">
     Interaction pages, consent, and grant revocation.
+  </Card>
+  <Card title="Secure an MCP server" href="/docs/guides/secure-an-mcp-server">
+    A step-by-step guide from an empty project to a protected MCP server.
   </Card>
 </Cards>

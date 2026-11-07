@@ -6,7 +6,7 @@ filed under a department. Teams, the working units, are the [`teams`](/docs/refe
 
 ## Departments in policies
 
-Every evaluation for a person in their own tenant can read two [condition](/docs/guides/authorization/conditions)
+Every evaluation for a person in their own tenant can read two [condition](/docs/authorization/conditions)
 keys, loaded only when a policy names them:
 
 - `principal.departments`: the person's department ID and the IDs of every department above it.
@@ -32,7 +32,7 @@ campaigns with `reviewerMode: 'manager'`) then follow the org chart.
 
 ## Birthright packages
 
-[Access package rules](/docs/guides/privileged-access/automatic-assignment) may test `identity.departments`: a
+[Access package rules](/docs/features/privileged-access/automatic-assignment) may test `identity.departments`: a
 person's department ID and the IDs of the departments above it. `assign`, `unassign`, `importFromAttribute`, moving or
 deleting a department, and `syncManagers` (rules may test `identity.managerId`) re-evaluate the rules for the people
 they touch once they commit: joiners get their department's packages at once, and movers and leavers lose them.

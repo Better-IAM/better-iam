@@ -10,9 +10,9 @@ The `auth` group signs people in and lets them manage their own account security
 
 Unlike the other groups, these methods are not checked against `iam:*` permissions. Each one is either public, because the caller is still proving who they are (sign-up, sign-in, MFA challenges, email links), or it acts only on the caller's own session and account. No method takes another person's ID: administrators manage other people's accounts through [`identities`](/docs/reference/api/identities) (`revokeSessions`, `requestPasswordReset`, `unlock`) and set the rules with [`tenants.setAuthPolicy`](/docs/reference/api/tenants#setauthpolicy).
 
-Changes are recorded as `auth:*` audit events with the person as actor and resource, and with `impersonatorId` when an administrator acted through [impersonation](/docs/guides/authentication/impersonation). They are written only when something happens, never as denials. The one kind of failure that is recorded is `auth:signin:fail`: an attempt that named a real, active account with a wrong password, code, or recovery code. The events land in the tenant's audit log, fan out to webhooks like every other event, and people read their own with `listSecurityEvents`.
+Changes are recorded as `auth:*` audit events with the person as actor and resource, and with `impersonatorId` when an administrator acted through [impersonation](/docs/authentication/impersonation). They are written only when something happens, never as denials. The one kind of failure that is recorded is `auth:signin:fail`: an attempt that named a real, active account with a wrong password, code, or recovery code. The events land in the tenant's audit log, fan out to webhooks like every other event, and people read their own with `listSecurityEvents`.
 
-Over HTTP every method is `POST {basePath}/auth/{method}`. Methods that issue a session set the session cookie, and a remembered-device token travels in a cookie of its own (see [HTTP behaviour](/docs/guides/authentication/http)). The HTTP handler records the client's IP address and user agent for you. When you call these methods in-process, pass `{ headers: request.headers }` as the credential of an authenticated method, or wrap a public call in `iam.auth.withClient({ ip, userAgent }, fn)`, so network rules, per-address rate limits, and the sign-in record see the real client.
+Over HTTP every method is `POST {basePath}/auth/{method}`. Methods that issue a session set the session cookie, and a remembered-device token travels in a cookie of its own (see [HTTP behaviour](/docs/authentication/http)). The HTTP handler records the client's IP address and user agent for you. When you call these methods in-process, pass `{ headers: request.headers }` as the credential of an authenticated method, or wrap a public call in `iam.auth.withClient({ ip, userAgent }, fn)`, so network rules, per-address rate limits, and the sign-in record see the real client.
 
 ## Sign-in flow and MFA challenges
 
@@ -40,7 +40,7 @@ A passkey sign-in (`finishPasskeyAuthentication`) skips this step: a user-verifi
 - queues a `new-sign-in` email when the client is unfamiliar and sign-in notifications are on (never for a remembered device);
 - is audited as `auth:session:create` with the method and client, plus `auth:device:trust` when a device was remembered.
 
-**Failed attempts.** A wrong password, authenticator or emailed code, or recovery code for a real, active account is recorded after the refusal as `auth:signin:fail`, with a `reason` of `password`, `mfa`, or `recovery-code`. It counts toward the next session's `previousSignIn`, and with the deployment's `failedSignInAlerts` set, the person receives one `sign-in-failures` email when the streak reaches that number. Unknown addresses, disabled accounts, and rate-limited attempts are never recorded, so the trail cannot be used to discover accounts. The [sign-in methods](/docs/guides/authentication/sign-in-methods) and [MFA](/docs/guides/authentication/mfa) guides walk through each flow.
+**Failed attempts.** A wrong password, authenticator or emailed code, or recovery code for a real, active account is recorded after the refusal as `auth:signin:fail`, with a `reason` of `password`, `mfa`, or `recovery-code`. It counts toward the next session's `previousSignIn`, and with the deployment's `failedSignInAlerts` set, the person receives one `sign-in-failures` email when the streak reaches that number. Unknown addresses, disabled accounts, and rate-limited attempts are never recorded, so the trail cannot be used to discover accounts. The [sign-in methods](/docs/authentication/sign-in-methods) and [MFA](/docs/authentication/mfa) guides walk through each flow.
 
 ## Rate limits and tenant policy
 
@@ -58,7 +58,7 @@ Every public flow except `beginMfa`, and every authenticated flow that checks a 
 
 Every attempt counts, successful or not. Second-factor steps count twice, per challenge and per person, because each correct password mints a new challenge with a fresh budget. A tenant policy's `maxAttempts` lowers the per-subject limits for that tenant (it can never raise them). An exhausted counter fails the call with `RATE_LIMITED` (429). The error carries `retryAfterMs`, the HTTP response adds a `Retry-After` header, and the browser client exposes it as `IamClientError.retryAfterMs`. Counters are stored in the IAM database unless you supply `rateLimits.limiter`, and [`identities.unlock`](/docs/reference/api/identities#unlock) clears a person's counters after a burst of failures.
 
-A tenant's [authentication policy](/docs/guides/authentication/tenant-policy) can only tighten what the deployment allows. Its effects on these methods:
+A tenant's [authentication policy](/docs/authentication/tenant-policy) can only tighten what the deployment allows. Its effects on these methods:
 
 | Policy field | Effect |
 | --- | --- |
@@ -79,7 +79,7 @@ A tenant that does not exist, is suspended, or sits under a suspended parent fai
 
 Methods whose permission is "the caller's own session" act only on the person behind the credential you pass: `{ token }` with a session token, or `{ headers }` with the incoming request's headers, which carry the session cookie or an `Authorization: Bearer` token. Only a person's session works here. API keys and assumed-role sessions fail with `UNAUTHENTICATED`, as does a session that has expired, idled out, or been revoked. Each call re-checks the session too: it fails with `MFA_REQUIRED` when the person now needs MFA and the session did not pass it, and with `IP_NOT_ALLOWED` or `IP_BLOCKED` when its network is no longer accepted.
 
-Methods that change how someone signs in, or that end sessions, also need **recent authentication**: the session must have been established within the deployment's `recentAuthenticationMs` (five minutes by default). An older session fails with `RECENT_AUTH_REQUIRED`; call [`reauthenticate`](#reauthenticate), or sign in again, and retry with the new session. An impersonation session never qualifies, whatever its age, and fails with `IMPERSONATION_RESTRICTED`, so an administrator viewing as a member cannot change the member's password, factors, devices, or sessions. See [sessions](/docs/guides/authentication/sessions).
+Methods that change how someone signs in, or that end sessions, also need **recent authentication**: the session must have been established within the deployment's `recentAuthenticationMs` (five minutes by default). An older session fails with `RECENT_AUTH_REQUIRED`; call [`reauthenticate`](#reauthenticate), or sign in again, and retry with the new session. An impersonation session never qualifies, whatever its age, and fails with `IMPERSONATION_RESTRICTED`, so an administrator viewing as a member cannot change the member's password, factors, devices, or sessions. See [sessions](/docs/authentication/sessions).
 
 Some changes end every session of the person, including the one that made the call, and also forget their remembered devices and pending challenges (sign-in challenges and emailed links): `changePassword`, `resetPassword`, `confirmEmailChange`, `confirmMfa`, `disableMfa`, and `deletePasskey`. That way, a password, address, or factor change always cuts off anyone who was using the old one. `confirmMfa` returns a fresh session; after the others, the person signs in again.
 
@@ -164,7 +164,7 @@ Starts a passkey sign-in and returns WebAuthn request options plus the `challeng
 - **Audited as:** not audited; `finishPasskeyAuthentication` records the session.
 - **Errors:** `FEATURE_DISABLED` when passkeys are not configured; `METHOD_NOT_ALLOWED` when the tenant does not allow `passkey`; `INVALID_CREDENTIALS` when `email` names no active person in the tenant; `RATE_LIMITED`.
 
-Without `email`, the options name no credential: the browser's passkey picker or autofill offers any discoverable passkey it holds for your site, and `finishPasskeyAuthentication` finds the account from the credential itself. That mode is rate limited per client address with ten times the ordinary allowance, because a login page starts one on every visit. With `email`, the options list that person's passkeys. The challenge is valid for five minutes, so refresh an autofill request that waits longer. See [passkeys](/docs/guides/authentication/passkeys).
+Without `email`, the options name no credential: the browser's passkey picker or autofill offers any discoverable passkey it holds for your site, and `finishPasskeyAuthentication` finds the account from the credential itself. That mode is rate limited per client address with ten times the ordinary allowance, because a login page starts one on every visit. With `email`, the options list that person's passkeys. The challenge is valid for five minutes, so refresh an autofill request that waits longer. See [passkeys](/docs/authentication/passkeys).
 
 <ApiShape id="auth.beginPasskeyAuthentication" http="public" />
 
@@ -522,7 +522,7 @@ Returns the caller's own authentication trail, newest first: sign-ins, failed at
 - **Audited as:** not audited.
 - **Errors:** `INVALID_INPUT` when `limit` is not an integer from 1 to 200.
 
-It returns up to `limit` (50 by default) of the `auth:*` audit events the person was the actor of in this tenant. Each event carries `impersonatorId` when an administrator acted through impersonation, `sequence` (its position in the [audit chain](/docs/guides/events/audit-chain)), and `metadata` such as the client's `ip` and `userAgent`, the sign-in `method`, or a failure's `reason`. Use it for an account page's recent activity; the tenant's full log is [`audit.list`](/docs/reference/api/audit#list), which needs `iam:audit:read`.
+It returns up to `limit` (50 by default) of the `auth:*` audit events the person was the actor of in this tenant. Each event carries `impersonatorId` when an administrator acted through impersonation, `sequence` (its position in the [audit chain](/docs/concepts/events/audit-chain)), and `metadata` such as the client's `ip` and `userAgent`, the sign-in `method`, or a failure's `reason`. Use it for an account page's recent activity; the tenant's full log is [`audit.list`](/docs/reference/api/audit#list), which needs `iam:audit:read`.
 
 <ApiShape id="auth.listSecurityEvents" http />
 
@@ -760,7 +760,7 @@ Emails a password-reset link to a person who has forgotten their password.
 - **Audited as:** not audited; `resetPassword` records `auth:password:reset`.
 - **Errors:** `FEATURE_DISABLED` when email delivery is not configured or password sign-in is turned off; `RATE_LIMITED`.
 
-It always succeeds, so it never reveals whether an account exists. The `password-reset` message goes out only to an active person whose address is verified, and its token is valid for ten minutes. Administrators can send the same email for a member with [`identities.requestPasswordReset`](/docs/reference/api/identities#requestpasswordreset). See [recovery](/docs/guides/authentication/recovery).
+It always succeeds, so it never reveals whether an account exists. The `password-reset` message goes out only to an active person whose address is verified, and its token is valid for ten minutes. Administrators can send the same email for a member with [`identities.requestPasswordReset`](/docs/reference/api/identities#requestpasswordreset). See [recovery](/docs/authentication/recovery).
 
 <ApiShape id="auth.requestPasswordReset" http="public" />
 

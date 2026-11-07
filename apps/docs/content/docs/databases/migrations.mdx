@@ -1,0 +1,285 @@
+---
+title: Migrations
+description: Create and upgrade the Better IAM schema with better-iam migrate or iam.initialize(), read the iam_migrations ledger, plan upgrades, and run migrations in CI and deploys.
+icon: History
+packages: ['@better-iam/core', '@better-iam/server', '@better-iam/cli']
+sources:
+  - packages/core/src/sql.ts
+  - packages/core/src/storage.ts
+  - packages/server/src/lifecycle.ts
+  - packages/server/src/self-check.ts
+  - packages/adapter-postgres/src/index.ts
+  - packages/adapter-sqlite/src/index.ts
+  - packages/adapter-libsql/src/index.ts
+  - packages/cli/src/commands/setup.ts
+  - packages/cli/src/commands/storage.ts
+  - packages/cli/src/config.ts
+  - packages/nuxt/src/module.ts
+  - packages/core/src/index.ts
+---
+
+Better IAM owns its schema: three tables and their indexes, created and upgraded by its own migrations. You never
+write migration files for it and never generate ORM models. Each release ships an ordered list of named schema
+steps; running the migration applies the ones your database has not seen yet and records each in the
+`iam_migrations` table. Run it once per deploy, before the new release serves traffic.
+
+## Usage
+
+### Run migrations with the CLI
+
+```bash
+npx better-iam migrate --config better-iam.config.mjs
+```
+
+`migrate` loads the configuration (from `--config`, `BETTER_IAM_CONFIG`, or the nearest `better-iam.config.mjs`,
+`.js`, or `.ts`), calls `iam.initialize()`, and prints `Database and plugin migrations applied.` It is idempotent:
+running it again on an up-to-date database changes nothing.
+
+Without a configuration file, the CLI builds the adapter from `BETTER_IAM_DATABASE_URL` and `BETTER_IAM_SECRET`
+(see [Databases](/docs/databases#configure-from-environment-variables-only)). Plugins are not configured in that
+mode, so their migrations do not run.
+
+### Run migrations from code
+
+`iam.initialize()` does the same work as the CLI command. Call it from a deploy script or a release hook:
+
+```ts title="scripts/migrate.ts"
+import { iam } from '../iam';
+
+try {
+  await iam.initialize();
+} finally {
+  await iam.store.close();
+}
+```
+
+`initialize()` runs four steps, in order:
+
+1. `store.migrate()`: applies the built-in schema steps the database lacks, inside the adapter's serialized write
+   transaction.
+2. Each plugin's `migrate(store)`, each in its own transaction.
+3. Starts the retention window of tenants deleted before deletion timestamps existed (sets `deletedAt`).
+4. Chains audit events recorded before the <Term id="audit-chain">audit chain</Term> existed, for tenants that
+   have no chain yet. The first `initialize()` after upgrading from an unchained release backfills the whole log in
+   one transaction.
+
+The Nuxt module calls `iam.initialize()` before first use by default; set `betterIam: { initialize: false }` in
+`nuxt.config.ts` to run it as a deploy step instead. The other integrations never migrate on their own.
+
+### Load the CLI configuration in a script
+
+`loadConfig()` from `better-iam/cli` resolves and instantiates the configuration file exactly like the CLI does,
+which keeps one source of truth for scripts, workers, and tests:
+
+```ts title="scripts/migrate.ts"
+import { loadConfig } from 'better-iam/cli';
+
+const iam = await loadConfig({ config: 'better-iam.config.mjs' });
+try {
+  await iam.initialize();
+} finally {
+  await iam.store.close();
+}
+```
+
+### Apply only the schema
+
+`store.migrate()` creates and upgrades the tables and indexes without running plugin migrations or data backfills.
+`store-import` and `store-copy` use it on their target, because `initialize()` may write records and the target
+must stay empty until the import.
+
+```ts title="scripts/schema-only.ts"
+import { postgresAdapter } from 'better-iam/adapter-postgres';
+
+const database = postgresAdapter({ connectionString: process.env.DATABASE_URL! });
+try {
+  await database.migrate();
+} finally {
+  await database.close();
+}
+```
+
+### Check which migrations ran
+
+`doctor` prints the applied steps with their times under `storage.migrations`, and reports `schema-behind` (an
+error) when the database lacks a step of the running release or has no schema at all:
+
+```bash
+npx better-iam doctor --config better-iam.config.mjs --query 'storage.migrations[].name'
+```
+
+In code, `iam.selfCheck()` returns the same `storage` description and findings, and `iam.store.describe()` returns
+just the description:
+
+```ts title="scripts/schema-status.ts"
+import { schemaMigrations } from 'better-iam/core';
+import { iam } from '../iam';
+
+const description = await iam.store.describe?.();
+const applied = new Set(description?.migrations.map((migration) => migration.name));
+const missing = schemaMigrations('sqlite')
+  .map((migration) => migration.name)
+  .filter((name) => !applied.has(name));
+console.log({ schemaVersion: description?.schemaVersion, missing });
+await iam.store.close();
+```
+
+`schemaMigrations('sqlite')` and `schemaMigrations('postgres')` list the same step names; only their SQL differs.
+
+## Schema steps
+
+| Step | What it creates |
+| --- | --- |
+| `0001_records` | The `iam_records` table (primary key `(collection, id)`, unique `(collection, tenant_id, unique_key)`) and the `iam_records_tenant` index on `(collection, tenant_id)`. |
+| `0002_query_indexes` | `iam_records_tenant_id` on `(collection, tenant_id, id)` and `iam_records_unique_key` on `(collection, unique_key, id)`. On SQLite and libSQL, one partial expression index per lookup field (19 fields). On PostgreSQL, one GIN index over `(data::jsonb) jsonb_path_ops`. |
+| `0003_ordered_indexes` | Tenant-scoped indexes on `timestamp` and `sequence` for ordered audit reads. |
+| `0004_expiry_indexes` | Collection-wide indexes on `expiresAt`, `deliveredAt`, and `failedAt` for the retention sweep. |
+| `0005_lookup_indexes` | `sourceSessionId` and `trustId` lookup indexes on SQLite and libSQL, for session cascades. No statements on PostgreSQL. |
+| `0006_protection_indexes` | A `fingerprint` lookup index on SQLite and libSQL, for data protection token lookups. No statements on PostgreSQL. |
+
+A released step never changes; new indexes and fields get a new step. Steps only add tables and indexes, and use
+`IF NOT EXISTS`. The exact index names and fields are listed in [Schema](/docs/databases/schema#indexes).
+
+## The iam_migrations table
+
+`applyMigrations` creates two bookkeeping tables before any step:
+
+```sql
+CREATE TABLE IF NOT EXISTS iam_schema_version (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  version INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS iam_migrations (
+  name TEXT PRIMARY KEY,
+  applied_at BIGINT NOT NULL
+);
+```
+
+- `iam_migrations` holds one row per applied step: its `name` and `applied_at` in epoch milliseconds. A step whose
+  name is present is skipped.
+- `iam_schema_version` holds a single row with `version = 1`. A database with any other version is refused with
+  `SCHEMA_VERSION`, so a release never runs against a schema generation it does not understand.
+
+All missing steps run inside one serialized write transaction of the adapter: their statements and ledger rows
+commit together, or not at all. On PostgreSQL, the `0002_query_indexes` step first rewrites existing rows that `jsonb`
+cannot hold (see [value encoding](/docs/databases/postgresql#value-encoding)).
+
+## Plugin migrations
+
+A plugin's `migrate(store)` callback runs on every `initialize()`, in its own transaction, after the built-in
+steps. Plugin migrations are not recorded in `iam_migrations`, so they must be idempotent: check whether their
+work is done before doing it. Plugins store their records through the same `IamStore`, in collections of their
+own; they do not create tables. See [Adapters and plugins](/docs/concepts/extensions#plugin-contract).
+
+## Upgrades
+
+When you upgrade Better IAM, run the new release's migration before the new release serves traffic. See
+[Upgrade Better IAM](/docs/guides/upgrade) for release-specific notes.
+
+- **Rolling upgrades.** Instances of the previous release keep working while the new one migrates and starts: steps
+  only add indexes and tables, and a release ignores ledger rows it does not know. On PostgreSQL, old instances read
+  rows rewritten by the value encoding raw, which only matters for records holding U+0000 or unpaired surrogates.
+- **Concurrent migrations are safe.** Two instances that migrate at once serialize on the adapter's lock; the second
+  sees the first's ledger rows and applies nothing. On PostgreSQL, a migration waits up to ten minutes for the lock
+  instead of the usual `lockTimeoutMs`.
+- **Index builds block writes.** Every step builds its indexes inside the migration transaction, which holds the
+  adapter's write lock. On large tables, IAM writes wait until it commits (on PostgreSQL, reads continue; on SQLite
+  and libSQL, reads in the migrating process also wait), so plan a maintenance window for upgrades that add steps.
+- **No down migrations.** There is no command to undo a step. Rolling the application back to an earlier release is
+  supported by the rule above; restoring an older schema means restoring a backup.
+- **After a bulk load on PostgreSQL**, run `VACUUM ANALYZE iam_records` so the GIN index's pending list is merged
+  and planner statistics are current.
+
+## CI and deploys
+
+Run migrations as an explicit pipeline step, never from a request handler. A typical setup:
+
+<Steps>
+<Step>
+
+### Test against a fresh database
+
+In CI, migrate an empty database before your tests run. This also proves the configuration loads.
+
+```yaml title=".github/workflows/test.yml"
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: ci-password
+          POSTGRES_DB: iam_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgres://postgres:ci-password@localhost:5432/iam_test
+      BETTER_IAM_SECRET: ci-only-secret-with-at-least-32-characters
+      BETTER_IAM_BASE_URL: http://localhost:3000
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: npx better-iam migrate --config better-iam.config.mjs
+      - run: npm test
+```
+
+</Step>
+<Step>
+
+### Migrate as a release step
+
+Run `migrate` once per deploy, with production credentials, before the new release starts: a release command, a
+pre-deploy job, or an init container. Use a direct database connection rather than a transaction pooler.
+
+```bash
+npx better-iam migrate --config better-iam.config.mjs
+```
+
+</Step>
+<Step>
+
+### Gate the deploy with doctor
+
+After the release starts, `doctor --strict` exits non-zero (`DOCTOR_FINDINGS`) on any error or warning, including
+`schema-behind`:
+
+```bash
+npx better-iam doctor --config better-iam.config.mjs --strict --retention-days 30
+```
+
+`doctor` exits 0 whenever it can connect and `--strict` is not set, so use `--strict` wherever a failure should stop
+the pipeline. Pass the `--retention-days` your sweep uses. See [Doctor](/docs/databases/operations#doctor) for every
+finding.
+
+</Step>
+</Steps>
+
+## Errors
+
+| Code | When |
+| --- | --- |
+| [`SCHEMA_VERSION`](/docs/reference/errors#schema_version) | `iam_schema_version` holds a version other than `1`. |
+| [`STORAGE_BUSY`](/docs/reference/errors#storage_busy) | Another migration or transaction held the lock for longer than the wait (ten minutes on PostgreSQL, `busyTimeoutMs` on SQLite and libSQL). |
+| [`STORAGE_ERROR`](/docs/reference/errors#storage_error) | A schema statement failed, for example because the database user may not create tables or indexes. |
+| [`DOCTOR_FINDINGS`](/docs/reference/errors#doctor_findings) | `doctor --strict` found an error or warning, such as `schema-behind`. |
+| [`MISSING_ENV`](/docs/reference/errors#missing_env) | Environment-only configuration without `BETTER_IAM_DATABASE_URL` or `BETTER_IAM_SECRET`. |
+| [`INVALID_CONFIG`](/docs/reference/errors#invalid_config) | The configuration or adapter options are invalid. |
+
+## Next steps
+
+<Cards>
+  <Card title="Schema" href="/docs/databases/schema">
+    Every table, index, indexed field, and collection.
+  </Card>
+  <Card title="Upgrade Better IAM" href="/docs/guides/upgrade">
+    Release-by-release upgrade notes.
+  </Card>
+  <Card title="Production checklist" href="/docs/guides/production-checklist">
+    Everything to verify before going live.
+  </Card>
+</Cards>

@@ -4,7 +4,7 @@ Relationships record that a person or group stands in a named relation, such as 
 _Alice is an `owner` of `folder/plans`_; _the design group are `viewer`s of `folder/plans`_. They express per-resource
 sharing and ownership (relationship-based access control) without writing resource ids into policies: one role says
 "viewers may read", and sharing a folder is a single tuple instead of a policy edit. The
-[relationships guide](/docs/guides/authorization/relationships) shows the full pattern.
+[relationships guide](/docs/authorization/relationships) shows the full pattern.
 
 ## How policies read relations
 
@@ -38,7 +38,7 @@ Gives an identity or group a declared relation on one resource, optionally until
   for the type, the subject type is not `identity` or `group`, or `expiresAt` is not in the future (at most ten years
   out); `NOT_FOUND` when a managed resource is not registered, the identity is not in this tenant or was deleted, or
   the group is not in this tenant; `INVARIANT_VIOLATION` when an enforced
-  [access invariant](/docs/guides/governance/change-safety) would newly fail.
+  [access invariant](/docs/features/governance/change-safety) would newly fail.
 
 Resources of managed types must be registered first; resources of application-owned types are accepted as named.
 Creating a tuple that already exists replaces it instead of failing: its `expiresAt` becomes the one you pass (none

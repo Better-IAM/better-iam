@@ -19,6 +19,7 @@ import {
   type ScimConfig,
   type UserLink,
 } from './types.js';
+import { ignoredAttribute, withoutIgnored } from './attributes.js';
 import { applyPatchOperation } from './patch.js';
 import { activeTenant, bool, fields, hash, object, text } from './validation.js';
 
@@ -63,6 +64,13 @@ function managerIndex(users: UserLink[]): ManagerLookup {
  * user and group persistence, membership and role-mapping synchronization, and PATCH application.
  */
 export function createProvisioning(config: ScimConfig) {
+  if (
+    config.unsupportedAttributes !== undefined &&
+    config.unsupportedAttributes !== 'ignore' &&
+    config.unsupportedAttributes !== 'reject'
+  )
+    throw new IamError('configuration', "SCIM unsupportedAttributes must be 'ignore' or 'reject'.");
+  const lenient = config.unsupportedAttributes !== 'reject';
   async function audit(
     tx: IamStore,
     connection: Connection,
@@ -303,9 +311,10 @@ export function createProvisioning(config: ScimConfig) {
   async function saveUser(
     tx: IamStore,
     connection: Connection,
-    data: ObjectValue,
+    body: ObjectValue,
     existing?: UserLink,
   ): Promise<UserLink> {
+    const data = withoutIgnored(body, 'Users', lenient);
     fields(data, [
       'schemas',
       'userName',
@@ -501,6 +510,7 @@ export function createProvisioning(config: ScimConfig) {
     data: ObjectValue,
     existing?: GroupLink,
   ): Promise<GroupLink> {
+    data = withoutIgnored(data, 'Groups', lenient);
     fields(data, ['schemas', 'displayName', 'externalId', 'members']);
     if (
       data.schemas !== undefined &&
@@ -598,7 +608,9 @@ export function createProvisioning(config: ScimConfig) {
       if (!['add', 'replace', 'remove'].includes(operation))
         throw new IamError('invalidSyntax', 'Unsupported PATCH operation.');
       const path = op.path === undefined ? undefined : text(op.path, 'path')!;
-      applyPatchOperation(data, type, operation, path, op.value);
+      applyPatchOperation(data, type, operation, path, op.value, (name, explicitPath) =>
+        ignoredAttribute(name, type, lenient, !explicitPath),
+      );
     }
     for (const key of Object.keys(data)) if (data[key] === undefined) delete data[key];
     if (type === 'Users' && data[ENTERPRISE_SCHEMA] !== undefined) {

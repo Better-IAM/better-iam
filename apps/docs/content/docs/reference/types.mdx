@@ -21,7 +21,7 @@ A <Term id="policy">policy</Term> is a JSON document you store with `policies.cr
 up to 128 <Term id="statement">statements</Term>; each statement allows or denies some actions on some resource
 patterns, optionally only when its <Term id="condition">conditions</Term> hold. Better IAM validates every document
 with `validatePolicy` before storing it and again before evaluating it, so a malformed or hand-edited document can
-never change a decision. See [Policies](/docs/guides/authorization/policies) and try documents in the
+never change a decision. See [Policies](/docs/authorization/policies) and try documents in the
 [playground](/playground).
 
 <auto-type-table cwd path="../../packages/core/dist/policy.d.ts" name="PolicyDocument" />
@@ -39,7 +39,7 @@ A `Decision` is the answer to "may this principal perform this action on this re
 reason decided before any policy is read, such as `TENANT_INACTIVE` (the tenant is suspended), `TENANT_MISMATCH`
 (the credential belongs to another tenant), `ROOT_OVERRIDE` (a platform root administrator), `IMPERSONATOR_DENIED`
 (a "view as" session asked for more than the administrator may do), `CLEARANCE_REQUIRED` (with
-[security clearances](/docs/guides/security-clearances): the resource's classification label is above the session's
+[security clearances](/docs/features/security-clearances): the resource's classification label is above the session's
 clearance), or `CREDENTIAL_AUTHORITY_REVOKED`. `matched`
 lists the statements that matched. Server calls strip `matched` before
 returning decisions to callers so they do not leak policy contents.
@@ -66,7 +66,7 @@ A <Term id="tenant">tenant</Term> is an account in the tenant tree: the platform
 inside one. `type` must be allowed as a child of the parent's type by the `hierarchy` option, `slug` is the sign-in
 alias people type to find their organization, and `status` controls whether anyone can sign in (suspension is
 inherited by every descendant). The policy objects configure how people sign in and how elevated access works in
-that tenant. See [Tenants and identities](/docs/guides/concepts/tenants-and-identities).
+that tenant. See [Tenants and identities](/docs/concepts/tenants-and-identities).
 
 <auto-type-table cwd path="../../packages/core/dist/index.d.ts" name="Tenant" />
 
@@ -77,7 +77,7 @@ everyone or only owners), restrict sign-in methods, shorten session lifetimes an
 sessions, enforce password rules and history, limit sign-in to IP ranges, bind sessions to the network they started
 on, and control whether support staff may impersonate members. Set it with
 [`tenants.setAuthPolicy`](/docs/reference/api/tenants#setauthpolicy); the
-[tenant policy guide](/docs/guides/authentication/tenant-policy) explains every field.
+[tenant policy guide](/docs/authentication/tenant-policy) explains every field.
 
 <auto-type-table cwd path="../../packages/core/dist/index.d.ts" name="TenantAuthPolicy" />
 
@@ -87,7 +87,7 @@ on, and control whether support staff may impersonate members. Set it with
 which individual bindings cannot weaken: a maximum activation length and whether activations always need a
 justification, MFA, or an approval (and how long an approval stays usable). Set it with
 [`tenants.setAccessPolicy`](/docs/reference/api/tenants#setaccesspolicy). See
-[Just-in-time elevation](/docs/guides/privileged-access/elevation).
+[Just-in-time elevation](/docs/features/privileged-access/elevation).
 
 <auto-type-table cwd path="../../packages/core/dist/index.d.ts" name="TenantAccessPolicy" />
 
@@ -118,7 +118,7 @@ you are signed in" lists and to decide whether to ask for step-up authentication
 `auth.signIn` and the other sign-in methods return a `SessionResult` when the person is fully signed in, or an
 `MfaRequired` challenge when a second factor is still needed. The challenge tells you which factors are available
 (an enrolled authenticator, an emailed code, a passkey) so your UI can offer the right one. See
-[Multi-factor authentication](/docs/guides/authentication/mfa).
+[Multi-factor authentication](/docs/authentication/mfa).
 
 <auto-type-table cwd path="../../packages/auth/dist/types.d.ts" name="SessionResult" />
 
@@ -133,7 +133,7 @@ access-lifecycle change such as a role activation. It is what `audit.list` retur
 done to, and `outcome` whether it was allowed. In an <Term id="impersonation">impersonation</Term> session,
 `impersonatorId` names the administrator while `actorId` stays the member. `sequence`, `previousHash`, and `hash`
 place the event in the tenant's tamper-evident <Term id="audit-chain">audit chain</Term>. See
-[Events and audit](/docs/guides/events) for every event name.
+[Events and audit](/docs/concepts/events) for every event name.
 
 <auto-type-table cwd path="../../packages/core/dist/index.d.ts" name="AuditEvent" />
 

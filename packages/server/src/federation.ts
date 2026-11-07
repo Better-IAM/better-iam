@@ -28,6 +28,43 @@ export interface FederatedLogin {
   linkingIdentityId?: string;
   /** Identity attributes mapped by the protocol package; validated against `permissions.identityAttributes` and stored on every sign-in. */
   attributes?: Record<string, unknown>;
+  /**
+   * The connection's `trustScimProvisioned` setting: a first sign-in whose verified email belongs to an account a SCIM
+   * connection of the tenant provisioned links to that account instead of failing with `ACCOUNT_LINK_REQUIRED`. `true`
+   * trusts every SCIM connection of the tenant; a list names the SCIM connection IDs to trust.
+   */
+  trustScimProvisioned?: boolean | string[];
+}
+
+/**
+ * Whether a first federated sign-in may link to `identity` because a trusted SCIM connection provisioned it: the
+ * connection trusts SCIM (`trust`), the identity is an ordinary active person (never an owner or root administrator,
+ * which SCIM never provisions anyway), and a SCIM user of a listed, unrevoked connection of the tenant is backed by it.
+ */
+async function scimProvisioned(
+  tx: IamStore,
+  identity: Identity,
+  trust: boolean | string[] | undefined,
+): Promise<boolean> {
+  if (trust !== true && !(Array.isArray(trust) && trust.length)) return false;
+  if (
+    identity.kind !== 'user' ||
+    identity.status !== 'active' ||
+    identity.owner ||
+    identity.rootAdmin
+  )
+    return false;
+  for (const link of await tx.find('scimUsers', {
+    tenantId: identity.tenantId,
+    identityId: identity.id,
+  })) {
+    const connectionId = String(link.connectionId);
+    if (Array.isArray(trust) && !trust.includes(connectionId)) continue;
+    const connection = await tx.get('scimConnections', connectionId);
+    if (connection && connection.tenantId === identity.tenantId && connection.revoked !== true)
+      return true;
+  }
+  return false;
 }
 export interface RoleMappingSync {
   tenantId: string;
@@ -135,14 +172,52 @@ export function createFederation(ctx: ServerContext, bindings: BindingApi) {
             'Root identity provisioning requires an administrator',
             403,
           );
+        const existing = (
+          await tx.find<Identity>('identities', {
+            tenantId: input.tenantId,
+            email: email(input.email),
+          })
+        )[0];
+        // A directory that provisions people through SCIM and signs them in through SSO is one administrator's
+        // decision: with `trustScimProvisioned`, the IdP's verified email claims the account SCIM created for it.
+        // One link per provider: an account already linked through this connection under another subject is not
+        // re-linked (that would be a second IdP account taking it over).
         if (
-          (
-            await tx.find<Identity>('identities', {
+          existing &&
+          (await scimProvisioned(tx, existing, input.trustScimProvisioned)) &&
+          !(
+            await tx.find('externalIdentities', {
               tenantId: input.tenantId,
-              email: email(input.email),
+              identityId: existing.id,
             })
-          ).length
-        )
+          ).some((link) => link.providerId === input.providerId)
+        ) {
+          await tx.insert('externalIdentities', {
+            id: id(),
+            tenantId: input.tenantId,
+            uniqueKey: key,
+            identityId: existing.id,
+            providerId: input.providerId,
+            issuer: input.issuer,
+            subject: input.subject,
+          });
+          // The IdP vouched for the address (a trusted domain), which SCIM alone never does.
+          const linked = existing.emailVerified
+            ? existing
+            : await tx.put<Identity>('identities', { ...existing, emailVerified: true });
+          await ctx.events.recordAudit(tx, {
+            id: id(),
+            tenantId: input.tenantId,
+            actorId: linked.id,
+            action: 'identity:link-provider',
+            resourceId: linked.id,
+            timestamp: ctx.now(),
+            outcome: 'allow',
+            metadata: { providerId: input.providerId, via: 'scim' },
+          });
+          return auth.completeAuthentication(tx, await withAttributes(linked), 'federated');
+        }
+        if (existing)
           throw new IamError(
             'ACCOUNT_LINK_REQUIRED',
             'Authenticate the existing account before linking this provider',

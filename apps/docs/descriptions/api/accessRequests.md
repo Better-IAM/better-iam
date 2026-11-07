@@ -37,7 +37,7 @@ Approves a pending request, binding each requested role to the requester under y
   `ACCESS_DENIED` when you are the requester or cannot bind one of the roles; `INVALID_IDENTITY` when the requester
   is not active; `NOT_FOUND` when the request, the requester, or a role is gone; `INVALID_INPUT` for a
   `durationSeconds` out of range; `GRANT_AUTHORITY_REQUIRED` without a grant authority; `SOD_CONFLICT` when the roles
-  would create a [separation-of-duties](/docs/guides/authorization/separation-of-duties) conflict;
+  would create a [separation-of-duties](/docs/authorization/separation-of-duties) conflict;
   `INVARIANT_VIOLATION` when they would break an enforced invariant.
 
 `durationSeconds` overrides the duration the requester asked for; the bindings end that long after approval. If the

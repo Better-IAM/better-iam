@@ -19,6 +19,13 @@ export interface HonoContext {
   set(key: string, value: unknown): void;
   get(key: string): unknown;
 }
+/**
+ * What `authorize` callbacks receive by default: a Hono context with `c.req.param()`. Pass your own type for typed
+ * parameters, e.g. `authorize<Context>(…)`.
+ */
+export type HonoRouteContext = HonoContext & {
+  req: { param(name: string): string | undefined };
+};
 export type HonoNext = () => Promise<void>;
 export type HonoMiddleware = (context: never, next: HonoNext) => Promise<Response | void>;
 
@@ -86,13 +93,14 @@ export function createIamHono<T extends IamLike>(
     });
   };
   const guard =
-    (spec: GuardSpec<HonoContext, Session>) =>
+    <C extends HonoContext>(spec: GuardSpec<C, Session>) =>
     async (c: HonoContext, next: HonoNext): Promise<Response | void> => {
       try {
         const iam = await resolveIam();
         await enforceGuard(
           helpersFor(c),
-          c,
+          // The guard runs as Hono route middleware, so the context is the framework's own (`C`).
+          c as C,
           spec,
           options.csrf === false
             ? undefined
@@ -124,14 +132,17 @@ export function createIamHono<T extends IamLike>(
     },
     /** Requires a session (and `stepUp`, when given). */
     requireSession: (spec: Pick<GuardSpec<HonoContext, Session>, 'stepUp'> = {}) => guard(spec),
-    /** Requires a session allowed to perform `action` (default resource: the tenant). */
-    authorize: (
+    /**
+     * Requires a session allowed to perform `action` (default resource: the tenant). `resource` and `tenantId`
+     * receive the context as `C` (default {@link HonoRouteContext}, with `c.req.param()`).
+     */
+    authorize: <C extends HonoContext = HonoRouteContext>(
       action: string,
-      spec: Omit<NonNullable<GuardSpec<HonoContext, Session>['authorize']>, 'action'> &
-        Pick<GuardSpec<HonoContext, Session>, 'stepUp'> = {},
+      spec: Omit<NonNullable<GuardSpec<C, Session>['authorize']>, 'action'> &
+        Pick<GuardSpec<C, Session>, 'stepUp'> = {},
     ) => {
       const { stepUp, ...rule } = spec;
-      return guard({ ...(stepUp ? { stepUp } : {}), authorize: { action, ...rule } });
+      return guard<C>({ ...(stepUp ? { stepUp } : {}), authorize: { action, ...rule } });
     },
     /**
      * `app.onError(iamHono.onError)`: IAM refusals become the JSON envelope; `HTTPException`s answer with their own

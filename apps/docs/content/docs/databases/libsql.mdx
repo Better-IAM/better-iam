@@ -1,0 +1,251 @@
+---
+title: libSQL and Turso
+metaTitle: libSQL and Turso database adapter
+description: Run Better IAM on libSQL with libsqlAdapter, covering remote Turso and sqld databases, embedded replicas, encrypted local files, options, and testing.
+icon: Globe
+packages: ['@better-iam/adapter-libsql', '@better-iam/core']
+sources:
+  - packages/adapter-libsql/src/index.ts
+  - packages/core/src/sql.ts
+  - packages/cli/src/config.ts
+  - packages/cli/src/commands/setup.ts
+  - docs/deployment.md
+---
+
+The libSQL adapter runs Better IAM on libSQL, the SQLite fork behind Turso, through `@libsql/client`. One set of
+options covers four kinds of database: a remote Turso or `sqld` server, an embedded replica (a local file kept in
+sync with a remote database), an encrypted local file, and a plain local file or in-memory database. It uses the same
+SQL and indexes as the [SQLite adapter](/docs/databases/sqlite) and does not need `better-sqlite3`: local files run
+on the prebuilt platform binaries that `@libsql/client` installs, so there is no native build step.
+
+Use it when you want SQLite's data model but the database must be reachable from several hosts or regions, or when
+you want encryption at rest for a local file. For a plain local file, the SQLite adapter writes faster.
+
+## Installation
+
+<Steps>
+<Step>
+
+### Install the package
+
+```npm
+npm i better-iam
+```
+
+The umbrella package includes the adapter as `better-iam/adapter-libsql`. To install only what you use, add
+`@better-iam/server` and `@better-iam/adapter-libsql`. When the CLI must build a libSQL adapter from
+`BETTER_IAM_DATABASE_URL` alone, `@better-iam/adapter-libsql` itself must be installed.
+
+</Step>
+<Step>
+
+### Configure the adapter
+
+```ts title="iam.ts"
+import { betterIam } from 'better-iam';
+import { libsqlAdapter } from 'better-iam/adapter-libsql';
+
+export const iam = betterIam({
+  database: libsqlAdapter({
+    url: process.env.TURSO_DATABASE_URL!, // libsql://name-org.turso.io
+    authToken: process.env.TURSO_AUTH_TOKEN,
+  }),
+  secret: process.env.BETTER_IAM_SECRET!,
+  baseURL: process.env.BETTER_IAM_BASE_URL!,
+});
+```
+
+</Step>
+<Step>
+
+### Create the schema
+
+```bash
+npx better-iam migrate --config better-iam.config.mjs
+```
+
+</Step>
+<Step>
+
+### Check the database
+
+```bash
+npx better-iam doctor --config better-iam.config.mjs
+```
+
+Under `storage.settings`, the libSQL adapter reports `location` (`memory`, `file`, or `remote`), `inMemory`, and
+`journalMode`. Remote servers may refuse `PRAGMA` statements, in which case `journalMode` is `null`.
+
+</Step>
+</Steps>
+
+## Usage
+
+### Connect to Turso or sqld
+
+Pass the database URL and its token. Remote URLs use the `libsql:`, `https:`, `http:`, `wss:`, or `ws:` scheme.
+
+```ts title="iam.ts"
+import { libsqlAdapter } from 'better-iam/adapter-libsql';
+
+export const database = libsqlAdapter({
+  url: 'libsql://iam-acme.turso.io',
+  authToken: process.env.TURSO_AUTH_TOKEN,
+});
+```
+
+Write transactions are sent to the server, which queues them. Within one process, the adapter also serializes
+transactions per database URL.
+
+### Use an embedded replica
+
+An embedded replica keeps a local copy of a remote database. Point `url` at a local file and `syncUrl` at the remote
+database; `syncInterval` sets how often, in seconds, the replica syncs.
+
+```ts title="iam.ts"
+import { libsqlAdapter } from 'better-iam/adapter-libsql';
+
+export const database = libsqlAdapter({
+  url: 'file:./iam-replica.db',
+  syncUrl: 'libsql://iam-acme.turso.io',
+  authToken: process.env.TURSO_AUTH_TOKEN,
+  syncInterval: 60,
+});
+```
+
+The remote database stays the source of truth. How reads, writes, and syncs behave on a replica is defined by
+`@libsql/client`; the adapter passes these options through unchanged.
+
+<Callout type="warn" title="Replica lag and revocations">
+Better IAM reads current state on every request so that a revocation applies immediately. If a replica serves
+reads that trail the remote database until its next sync, another instance's revocation can reach this process
+only after that sync. Check that delay against your requirements before running several instances on replicas.
+</Callout>
+
+### Encrypt a local file
+
+`encryptionKey` encrypts a local database file at rest. Store the key with your other secrets: the file cannot be
+opened without it.
+
+```ts title="iam.ts"
+import { libsqlAdapter } from 'better-iam/adapter-libsql';
+
+export const database = libsqlAdapter({
+  url: 'file:./iam.db',
+  encryptionKey: process.env.IAM_DB_ENCRYPTION_KEY,
+});
+```
+
+### Use a plain local file
+
+`url` accepts `file:./iam.db`, `file:///absolute/path/iam.db`, or a plain path, which the adapter turns into a
+`file:` URL. Within a process, operations on one file share one lock, keyed by the file's canonical path. Writers in
+other processes wait up to `busyTimeoutMs` for the writer lock.
+
+The adapter does not change the journal mode or the `synchronous` setting, so local files use libSQL's defaults.
+`doctor` does not run the `sqlite-durability` check for libSQL. If you need SQLite's WAL and `synchronous = FULL`
+defaults for a local file, use the [SQLite adapter](/docs/databases/sqlite).
+
+### Configure from environment variables only
+
+The CLI and `configFromEnv()` from `better-iam/cli` create a libSQL adapter when `BETTER_IAM_DATABASE_URL` starts
+with `libsql://`, `https://`, `http://`, `wss://`, `ws://`, or `file:`, authenticated with
+`BETTER_IAM_DATABASE_TOKEN` when set:
+
+```bash
+export BETTER_IAM_DATABASE_URL=libsql://iam-acme.turso.io
+export BETTER_IAM_DATABASE_TOKEN=paste-the-database-token
+export BETTER_IAM_SECRET=paste-a-generated-secret
+npx better-iam migrate
+```
+
+Without `@better-iam/adapter-libsql` installed, this fails with `MISSING_DEPENDENCY`.
+`better-iam init --database libsql` writes a configuration that reads the same two variables and falls back to
+`file:./better-iam.db`.
+
+## Options
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `url` | `string` | required | `:memory:`, `file::memory:`, `file:./iam.db`, a plain path, or a remote `libsql:`, `https:`, `http:`, `wss:`, or `ws:` URL. Other schemes throw `INVALID_CONFIG`. |
+| `authToken` | `string` | none | Bearer token for a remote database, such as a Turso database token. |
+| `encryptionKey` | `string` | none | Encrypts a local database file at rest. |
+| `syncUrl` | `string` | none | Makes the local file an embedded replica of this remote URL. |
+| `syncInterval` | `number` | none | Seconds between syncs of an embedded replica. |
+| `busyTimeoutMs` | `number` | `5000` | 0 to 60000. How long local file operations wait for another connection's lock before failing with `STORAGE_BUSY`. |
+
+## How transactions work
+
+Each transaction opens a libSQL `write` transaction, which starts with `BEGIN IMMEDIATE`, so the writer lock is held
+before any read. Within one process, the adapter also serializes all operations on a database through a lock keyed
+by its URL (or the file's canonical path), and reads outside a transaction wait for the current transaction. Nested
+`transaction()` calls join the outer one.
+
+`@libsql/client` compiles each statement on every call, and this adapter keeps no prepared-statement cache, so local
+libSQL writes cost more than the SQLite adapter's, which caches them.
+
+## Testing
+
+`libsqlAdapter({ url: ':memory:' })` creates a private in-memory database per adapter, like the SQLite adapter's
+`:memory:`, without `better-sqlite3`. Create one per test and close it afterwards:
+
+```ts title="tests/iam.test.ts"
+import { afterEach, beforeEach, expect, it } from 'vitest';
+import { betterIam, type BetterIam } from 'better-iam';
+import { libsqlAdapter } from 'better-iam/adapter-libsql';
+
+let iam: BetterIam;
+
+beforeEach(async () => {
+  iam = betterIam({
+    database: libsqlAdapter({ url: ':memory:' }),
+    secret: 'test-only-secret-with-at-least-32-characters',
+    baseURL: 'http://localhost:3000',
+  });
+  await iam.initialize();
+});
+
+afterEach(async () => {
+  await iam.store.close();
+});
+
+it('starts with an empty deployment', async () => {
+  const description = await iam.store.describe?.();
+  expect(description?.adapter).toBe('libsql');
+  expect(description?.settings.location).toBe('memory');
+});
+```
+
+To test against a remote database, point a separate test database's URL and token at your test job, and never at
+production.
+
+## Errors
+
+| Code | When |
+| --- | --- |
+| [`INVALID_CONFIG`](/docs/reference/errors#invalid_config) | `url` is missing or uses an unsupported scheme, or `busyTimeoutMs` is out of range. |
+| [`MISSING_ENV`](/docs/reference/errors#missing_env) | Environment-only configuration without `BETTER_IAM_DATABASE_URL` or `BETTER_IAM_SECRET`. |
+| [`STORAGE_BUSY`](/docs/reference/errors#storage_busy) | A local file's writer lock was held for longer than `busyTimeoutMs`. Retry the operation. |
+| [`DATABASE_IN_USE`](/docs/reference/errors#database_in_use) | A call chain that already holds this database through one adapter instance used another instance on the same database. |
+| [`CONFLICT`](/docs/reference/errors#conflict) | A record with the same id, or the same natural key in its tenant, already exists. |
+| [`STORAGE_ERROR`](/docs/reference/errors#storage_error) | Any other database failure, for example an unreachable server or a rejected token. |
+| [`TRANSACTION_REQUIRED`](/docs/reference/errors#transaction_required) | A write was attempted outside `transaction()`. |
+| [`TRANSACTION_ABORTED`](/docs/reference/errors#transaction_aborted) | A nested operation failed inside a transaction whose callback then returned normally; everything rolled back. |
+| [`STORE_CLOSED`](/docs/reference/errors#store_closed) | The adapter was used after `close()`. |
+
+`MISSING_DEPENDENCY` (environment-only libSQL URL without the adapter package) is a CLI error and has no entry in
+the error reference.
+
+## Next steps
+
+<Cards>
+  <Card title="Migrations" href="/docs/databases/migrations">
+    Schema steps, upgrades, and running migrate in CI.
+  </Card>
+  <Card title="Hosts and regions" href="/docs/operations/deployment/hosts-and-regions">
+    Serve tenants from several regions.
+  </Card>
+  <Card title="Storage operations" href="/docs/databases/operations">
+    Snapshots, moving between databases, and doctor.
+  </Card>
+</Cards>

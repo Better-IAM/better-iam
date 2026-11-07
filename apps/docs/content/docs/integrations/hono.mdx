@@ -1,0 +1,567 @@
+---
+title: Hono
+metaTitle: Hono middleware
+description: Serve the Better IAM API from a Hono 4 app with createIamHono, read the session from c.get('iam'), and guard routes with requireSession and authorize.
+icon: Hono
+packages:
+  - '@better-iam/middleware'
+sources:
+  - docs/node-frameworks.md
+  - packages/middleware/README.md
+  - packages/middleware/src/index.ts
+  - packages/middleware/src/hono.ts
+  - tests/middleware.test.ts
+  - packages/server/src/api/tenants.ts
+---
+
+import { Express, Fastify, Nodejs, ShieldCheck, Globe, Building } from '@/lib/icons';
+
+`createIamHono` connects a `betterIam()` instance to a Hono 4 application. One middleware answers the IAM HTTP API
+under `/api/iam` with the instance's fetch handler (`iam.handler`) and sets `c.get('iam')` on every other request:
+the caller's <Term id="session">session</Term>, permission checks, and an in-process client. Route guards
+(`requireSession`, `authorize`) refuse signed-out callers, callers without a permission, and cross-site form posts,
+and `onError` turns refusals into the IAM JSON error envelope or a redirect to your login page.
+
+Use it when your server is a Hono app. Because it only uses Web-standard `Request` and `Response`, the adapter runs
+wherever Hono runs; the instance itself must be able to run there too (its database adapter and password hashing).
+Node-only protocol mounts, such as the OAuth provider, are not reachable through `iam.handler`: serve those from the
+[Express](/docs/integrations/express) or [Fastify](/docs/integrations/fastify) adapter, or from
+[`iam.nodeHandler`](/docs/integrations/node).
+
+## Installation
+
+<Steps>
+<Step>
+
+### Install the package
+
+```npm
+npm i better-iam hono @hono/node-server
+```
+
+The umbrella package `better-iam` exposes the adapter as `better-iam/hono` and the shared core as
+`better-iam/middleware`. If you install scoped packages instead, install `@better-iam/middleware` and import from
+`@better-iam/middleware/hono` and `@better-iam/middleware`. `@hono/node-server` is only needed to listen on Node.
+
+</Step>
+<Step>
+
+### Create the instance
+
+Create the instance once and import it everywhere. The configuration file is the one the
+[quickstart](/docs/quickstart) builds, which the `better-iam` CLI also reads for migrations.
+
+```ts title="src/iam.ts"
+import { betterIam } from 'better-iam';
+import config from '../better-iam.config.mjs';
+
+export const iam = betterIam(config);
+```
+
+Run the migrations before the first start:
+
+```bash
+npx better-iam migrate --config better-iam.config.mjs
+```
+
+</Step>
+<Step>
+
+### Create the adapter
+
+```ts title="src/iam-hono.ts"
+import { createIamHono } from 'better-iam/hono';
+import { iam } from './iam.js';
+
+export const iamHono = createIamHono(iam, {
+  loginPath: '/login', // signed-out page navigations go here with ?next=
+  stepUpPath: '/verify', // page navigations that must step up go here with ?next= and ?reason=
+});
+```
+
+</Step>
+<Step>
+
+### Mount the handler and type `c.get('iam')`
+
+Declare `IamVariables` on the app so `c.get('iam')` is typed with your instance's session and API. Register the
+middleware before your routes and `onError` once.
+
+```ts title="src/app.ts"
+import { Hono } from 'hono';
+import type { IamVariables } from 'better-iam/hono';
+import type { iam } from './iam.js';
+import { iamHono } from './iam-hono.js';
+
+export const app = new Hono<{ Variables: IamVariables<typeof iam> }>();
+app.use(iamHono.middleware); // answers /api/iam/*, sets c.get('iam') for everything else
+app.onError(iamHono.onError); // IAM refusals thrown by handlers become JSON or a redirect
+```
+
+```ts title="src/server.ts"
+import { serve } from '@hono/node-server';
+import { app } from './app.js';
+import './routes/me.js'; // each route module below registers its routes on app; import every one
+
+serve({ fetch: app.fetch, port: 3000 });
+```
+
+On other runtimes, export `app` (or `app.fetch`) the way that runtime expects instead of calling `serve`.
+
+</Step>
+<Step>
+
+### Create the browser client
+
+Browser code calls the API you just mounted with the [typed client](/docs/concepts/client). Import the instance
+with `import type` so no server code reaches the bundle.
+
+```ts title="web/iam-client.ts"
+import { createIamClient } from 'better-iam/client';
+import type { iam } from '../src/iam.js';
+
+export const client = createIamClient<typeof iam>({
+  baseURL: window.location.origin, // the Hono app's origin; calls go to /api/iam/{group}/{method}
+});
+```
+
+A front end served from a different origin than the Hono app also needs that origin in the instance's
+`trustedOrigins` option (for the IAM API) and in the adapter's `trustedOrigins` option (for your guarded routes).
+
+</Step>
+</Steps>
+
+## Protect routes
+
+Guards are Hono middleware. Each one reads the session, checks <Term id="step-up">step-up</Term> when asked, then
+checks authorization, and answers a refusal itself: a `401` or `403` JSON envelope for API calls, or a `303`
+redirect to `loginPath` or `stepUpPath` for page navigations (a `GET` with `Accept: text/html`).
+
+### Require a session
+
+```ts title="src/routes/me.ts"
+import { app } from '../app.js';
+import { iamHono } from '../iam-hono.js';
+
+app.get('/me', iamHono.requireSession(), async (c) => {
+  const session = await c.get('iam').getSession();
+  return c.json({ email: session!.identity.email });
+});
+```
+
+A signed-out API call gets `401` with `{ "error": { "code": "UNAUTHENTICATED", "message": "A session is required" } }`
+and `Cache-Control: no-store`. A signed-out page navigation to `/me?tab=1` is redirected to
+`/login?next=%2Fme%3Ftab%3D1`.
+
+### Require a permission
+
+`authorize(action, { resource?, tenantId?, stepUp? })` requires a session allowed to perform `action`. The resource
+defaults to the tenant itself (`iam/{tenantId}`) and the tenant to the session's tenant. `resource` and `tenantId`
+are functions of `(c, session)`. Their `c` reads route parameters with `c.req.param()`. To use Hono's own type, pass
+it, as in `authorize<Context>('projects:read', …)`.
+
+```ts title="src/routes/projects.ts"
+import { app } from '../app.js';
+import { iamHono } from '../iam-hono.js';
+import { loadProject } from '../data.js'; // your data layer
+
+app.get(
+  '/projects/:id',
+  iamHono.authorize('projects:read', {
+    resource: (c) => ({ type: 'project', id: c.req.param('id') ?? '' }),
+  }),
+  async (c) => c.json(await loadProject(c.req.param('id'))),
+);
+
+app.get('/admin', iamHono.authorize('iam:identities:read'), (c) => c.text('admin'));
+```
+
+The check runs through `iam.require`, so it evaluates the same <Term id="role">roles</Term>,
+<Term id="policy">policies</Term>, <Term id="condition">conditions</Term>, and <Term id="boundary">boundaries</Term>
+as every other check. A denial answers `403 ACCESS_DENIED`.
+
+### Require step-up
+
+`stepUp` asks for more assurance than a session: `mfa: true` needs a session that completed MFA, `mfa: 'fresh'`
+also refuses remembered devices, impersonation, assumed roles, and API keys, and `maxAgeMs` needs a recent
+sign-in.
+
+```ts title="src/routes/billing.ts"
+import { app } from '../app.js';
+import { iamHono } from '../iam-hono.js';
+import { cancelSubscription } from '../data.js'; // your data layer
+
+app.post(
+  '/billing/cancel',
+  iamHono.authorize('billing:manage', { stepUp: { mfa: true, maxAgeMs: 10 * 60 * 1000 } }),
+  async (c) => {
+    await cancelSubscription();
+    return c.body(null, 204);
+  },
+);
+```
+
+A session that fails the requirement gets `403` with `MFA_REQUIRED`, `RECENT_AUTH_REQUIRED`, or
+`IMPERSONATION_RESTRICTED`. Page navigations go to `stepUpPath?next=...&reason=mfa|recent|impersonation`. See
+[Step-up](/docs/authentication/mfa#step-up) for completing the challenge.
+
+### Enforce inside a route
+
+When the resource is only known after loading data, enforce inside the handler with `c.get('iam').require`. It
+throws the server's refusal, which `onError` answers.
+
+```ts title="src/routes/documents.ts"
+import { app } from '../app.js';
+import { iamHono } from '../iam-hono.js';
+import { deleteDocument, findDocument } from '../data.js'; // your data layer
+
+app.delete('/documents/:id', iamHono.requireSession(), async (c) => {
+  const document = await findDocument(c.req.param('id'));
+  await c.get('iam').require('documents:delete', { type: 'document', id: document.id });
+  await deleteDocument(document.id);
+  return c.body(null, 204);
+});
+```
+
+`onError` answers IAM refusals with the JSON envelope or a redirect, answers Hono `HTTPException`s with their own
+response, and logs any other error and answers a plain `500`, as Hono's default handler does.
+
+### Cross-site requests
+
+Guards also refuse a cookie-authenticated `POST`, `PUT`, `PATCH`, or `DELETE` whose `Origin` is not the app itself,
+the IAM origin, or one of `trustedOrigins` (`403 UNTRUSTED_ORIGIN`, or `403 CSRF_REJECTED` with no `Origin`). A
+`Sec-Fetch-Site: same-origin` request passes, and bearer-token requests skip the check. A state-changing route
+without a guard should run the same rule with `checkRequestOrigin`:
+
+```ts title="src/routes/newsletter.ts"
+import { checkRequestOrigin } from 'better-iam/middleware';
+import { app } from '../app.js';
+import { iam } from '../iam.js';
+import { subscribe } from '../data.js'; // your data layer
+
+app.post('/newsletter/subscribe', async (c) => {
+  const refusal = checkRequestOrigin(
+    { method: c.req.method, url: new URL(c.req.url), headers: c.req.raw.headers },
+    [iam.endpoint.origin],
+  );
+  if (refusal) throw refusal; // onError answers it
+  const form = await c.req.parseBody();
+  await subscribe(String(form.email));
+  return c.body(null, 204);
+});
+```
+
+[The CSRF check](/docs/integrations/node#the-csrf-check) explains why it matters with `SameSite=Lax` cookies.
+
+## Read the session
+
+`c.get('iam')` is created once per request. It memoizes the session lookup, and cookies the in-process client
+receives count for later calls in the same request.
+
+### Get the session
+
+```ts title="src/routes/home.ts"
+import { app } from '../app.js';
+
+app.get('/', async (c) => {
+  const session = await c.get('iam').getSession(); // null when signed out
+  if (!session) return c.redirect('/login', 303);
+  return c.json({
+    name: session.identity.name,
+    email: session.identity.email,
+    tenantId: session.session.tenantId,
+    mfa: session.session.mfa,
+  });
+});
+```
+
+`getSession()` resolves to `null` instead of throwing when the request has no usable session: no credential, or
+the server answers `UNAUTHENTICATED`, `MFA_REQUIRED`, `EMAIL_UNVERIFIED`, `TENANT_INACTIVE`, or
+`TENANT_UNAVAILABLE`. `requireSession({ stepUp? })` returns the session or throws an `IamRequestError` (`401`, or
+`403` with a `reason`). The helper calls `iam.api.auth.getSession` in process; browsers reach the same method over
+HTTP.
+
+**Route:** `POST /api/iam/auth/getSession`
+
+### Check permissions for rendering
+
+`can` returns an <Term id="advisory">advisory</Term> boolean. Checks made in the same tick share one
+`authorizeMany` call, so a page with many buttons costs one round trip.
+
+```ts title="src/routes/toolbar.ts"
+import { app } from '../app.js';
+import { iamHono } from '../iam-hono.js';
+
+app.get('/projects/:id/toolbar', iamHono.requireSession(), async (c) => {
+  const iam = c.get('iam');
+  const project = { type: 'project', id: c.req.param('id') };
+  const [canEdit, canDelete, canInvite] = await Promise.all([
+    iam.can('projects:update', project),
+    iam.can('projects:delete', project),
+    iam.can('iam:identities:create'),
+  ]);
+  return c.json({ canEdit, canDelete, canInvite });
+});
+```
+
+`authorize(checks, { tenantId? })` on the helpers returns `{ action, resource, allowed, reason }[]` for a list of
+checks. Advisory checks decide what to show; enforce the operation itself with a guard or `require`.
+
+### Filter lists
+
+`plan({ action, type, tenantId? })` returns the resources of a type the caller may act on as a filter for your own
+query (`never` when signed out). `listAccessible({ action, type, tenantId?, limit?, offset? })` lists registered
+resources of a managed type. See [Data filtering](/docs/authorization/data-filtering) for compiling a plan to SQL,
+Prisma, or MongoDB.
+
+```ts title="src/routes/document-list.ts"
+import { filterToSql } from 'better-iam/core';
+import { app } from '../app.js';
+import { iamHono } from '../iam-hono.js';
+import { columns, db } from '../data.js'; // your data layer: a field-to-column map and a SQL client
+
+app.get('/documents', iamHono.requireSession(), async (c) => {
+  const plan = await c.get('iam').plan({ action: 'documents:read', type: 'document' });
+  if (plan.kind === 'never') return c.json([]);
+  const where = filterToSql(plan.filter, {
+    dialect: 'postgres',
+    column: (field) => columns[field],
+    offset: 1,
+  });
+  const sql = `SELECT * FROM documents d WHERE d.tenant_id = $1 AND ${where.sql}`;
+  return c.json(await db.query(sql, [plan.tenantId, ...where.params]));
+});
+```
+
+### Sign in and out
+
+The in-process client (`c.get('iam').client`) is the full typed client with `iam.handler` as its transport. The
+cookies the server issues are appended to this response, so a plain HTML form can sign someone in without client
+JavaScript.
+
+<Tabs items={['Server', 'Client']}>
+<Tab value="Server">
+
+```ts title="src/routes/auth.ts"
+import { safeRedirectPath } from 'better-iam/middleware';
+import { app } from '../app.js';
+import { iam } from '../iam.js';
+
+app.post('/login', async (c) => {
+  const form = await c.req.parseBody();
+  const { tenantId } = await iam.api.tenants.lookup({ slug: String(form.org) });
+  const result = await c.get('iam').client.auth.signIn({
+    tenantId,
+    email: String(form.email),
+    password: String(form.password),
+  });
+  if ('mfaRequired' in result) return c.redirect(`/verify?challenge=${result.challenge}`, 303);
+  return c.redirect(safeRedirectPath(c.req.query('next')), 303);
+});
+
+app.post('/logout', async (c) => {
+  await c.get('iam').signOut(); // ends the session and clears its cookie; never throws for a dead session
+  return c.redirect('/', 303);
+});
+```
+
+</Tab>
+<Tab value="Client">
+
+```ts title="web/login.ts"
+import { client } from './iam-client.js';
+
+export async function signIn(org: string, email: string, password: string) {
+  const { tenantId } = await client.tenants.lookup({ slug: org });
+  const result = await client.auth.signIn({ tenantId, email, password });
+  if ('mfaRequired' in result) return { challenge: result.challenge }; // complete the second factor next
+  return { signedIn: true };
+}
+```
+
+</Tab>
+</Tabs>
+
+**Route:** `POST /api/iam/auth/signIn`, `POST /api/iam/auth/signOut`, `POST /api/iam/tenants/lookup`
+
+`safeRedirectPath` accepts only same-site paths and falls back to `/`, so `?next=` cannot become an open redirect. A
+failed sign-in throws the server's error (for example `INVALID_CREDENTIALS` or `RATE_LIMITED`), which `onError`
+answers with the JSON envelope; catch it to render the form again with the code instead. See
+[MFA](/docs/authentication/mfa#completing-a-challenge) for completing a challenge.
+
+### Call the server API directly
+
+`c.get('iam').credential()` returns `{ headers }` for direct `iam.api.*` calls, including cookies set earlier in the
+same request.
+
+```ts title="src/routes/sessions.ts"
+import { app } from '../app.js';
+import { iam } from '../iam.js';
+import { iamHono } from '../iam-hono.js';
+
+app.get('/me/sessions', iamHono.requireSession(), async (c) =>
+  c.json(await iam.api.auth.listSessions(c.get('iam').credential())),
+);
+```
+
+**Route:** `POST /api/iam/auth/listSessions`
+
+### API keys and session tokens
+
+`requireSession` and the `authorize` guard build on `auth.getSession`, which serves signed-in people only, so API
+keys and temporary credentials are refused there with `401`. Machine routes check them through the helpers, which
+pass the request's `Authorization` header to the server: `require(action, resource, { tenantId })` with an explicit
+tenant, or `iam.api.*` with `credential()`.
+
+```ts title="src/routes/imports.ts"
+import { app } from '../app.js';
+import { iam } from '../iam.js';
+import { runImport } from '../data.js'; // your data layer
+
+app.post('/hooks/import', async (c) => {
+  const caller = await iam.api.sts.getCallerIdentity(c.get('iam').credential());
+  await c.get('iam').require('imports:run', undefined, { tenantId: caller.tenantId });
+  return c.json(await runImport(await c.req.json()));
+});
+```
+
+**Route:** `POST /api/iam/sts/getCallerIdentity`
+
+Services on another runtime that only need to verify session JWTs offline use `createSessionTokenVerifier` from
+`better-iam/session-tokens`, which is runtime-neutral; see [Temporary access](/docs/authorization/temporary-access).
+
+## Organizations
+
+Every session acts in one <Term id="tenant">tenant</Term> (an organization). Guards and helpers default to it: the
+tenant is `session.session.tenantId`, and a check with no resource targets the tenant itself.
+
+### Check in another tenant
+
+Pass `tenantId` to check against a different tenant, for example a child organization the URL names. The server
+decides whether the caller's credential may act there.
+
+```ts title="src/routes/org-members.ts"
+import { app } from '../app.js';
+import { iam } from '../iam.js';
+import { iamHono } from '../iam-hono.js';
+
+app.get(
+  '/orgs/:tenantId/members',
+  iamHono.authorize('iam:identities:read', {
+    tenantId: (c) => c.req.param('tenantId') ?? '',
+  }),
+  async (c) =>
+    c.json(
+      await iam.api.identities.list(c.get('iam').credential(), {
+        tenantId: c.req.param('tenantId'),
+      }),
+    ),
+);
+```
+
+Inside a route, the same option is `require(action, resource, { tenantId })` and `can(action, resource, { tenantId })`.
+
+### The organization in the URL
+
+When each organization lives under its own path (`/acme/projects`), resolve the alias with `tenants.lookup` and
+send visitors whose session belongs to another organization to sign in there.
+
+```ts title="src/routes/org-projects.ts"
+import { safeRedirectPath, tenantOf, withQuery } from 'better-iam/middleware';
+import { app } from '../app.js';
+import { iam } from '../iam.js';
+import { listProjects } from '../data.js'; // your data layer
+
+app.get('/:org/projects', async (c) => {
+  const slug = c.req.param('org');
+  const organization = await iam.api.tenants.lookup({ slug }); // NOT_FOUND for unknown or inactive aliases
+  if (tenantOf(await c.get('iam').getSession()) !== organization.tenantId) {
+    const url = new URL(c.req.url);
+    const back = safeRedirectPath(`${url.pathname}${url.search}`);
+    return c.redirect(withQuery('/login', { org: slug, next: back }), 303);
+  }
+  await c.get('iam').require('projects:read'); // the session's tenant is the organization's tenant here
+  return c.json(await listProjects(organization.tenantId));
+});
+```
+
+**Route:** `POST /api/iam/tenants/lookup`
+
+A person with identities in several organizations can list them with `links.list` and switch with `links.switch`;
+see [Tenants and identities](/docs/concepts/tenants-and-identities).
+
+### Organization addresses
+
+With [organization sign-in addresses](/docs/operations/deployment/hosts-and-regions) (`acme.signin.example.com`),
+calls through the in-process client keep the host the visitor is on, so the server pins them to that organization
+exactly as it would a browser call: sign-in on Acme's address needs no `tenantId`, and credentials of other
+organizations are refused with `HOST_MISMATCH`. `iam.hosts.resolve(host)` tells your own middleware which
+organization an address belongs to.
+
+## Options
+
+`createIamHono(iam, options)` takes the instance, or a function returning it (or a promise of it), and these
+options:
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `loginPath` | `string` | none | Where signed-out page navigations (a `GET` with `Accept: text/html`) are redirected, with `?next=`. Without it they get the JSON `401` |
+| `stepUpPath` | `string` | none | Where page navigations go when the session must step up, with `?next=` and `?reason=`. Without it they get the JSON `403` |
+| `serve` | `string[]` | `[basePath]` | Path prefixes `iam.handler` answers |
+| `basePath` | `string` | the instance's `endpoint.basePath`, else `/api/iam` | Where the IAM API is served; the default `serve` prefix and the in-process client's target |
+| `trustedOrigins` | `string[]` | `[]` | Origins besides the request's own and the IAM origin that may send cookie-authenticated unsafe requests to guarded routes |
+| `csrf` | `boolean` | `true` | Check the `Origin` of cookie-authenticated `POST`, `PUT`, `PATCH`, and `DELETE` requests in guards. Turn off only when something else checks origins |
+| `now` | `() => number` | `Date.now` | The clock for step-up recency checks, for tests |
+
+The returned object:
+
+| Member | What it does |
+| --- | --- |
+| `middleware` | Answers the IAM API under the `serve` prefixes and sets `c.get('iam')` for every other request |
+| `requireSession({ stepUp? })` | Middleware requiring a session, and a step-up when given |
+| `authorize(action, { resource?, tenantId?, stepUp? })` | Middleware requiring a session allowed to perform `action` |
+| `onError` | For `app.onError`: IAM refusals become the JSON envelope or a redirect, `HTTPException`s answer with their own response, anything else is logged and answered with `500` |
+| `helpers(c)` | The per-request helpers, created on first use (the same object as `c.get('iam')`) |
+| `resolve()` | Resolves the instance |
+
+`IamVariables<typeof iam>` is the type to declare as the app's `Variables`. The members of `c.get('iam')` are listed
+under [Per-request helpers](/docs/integrations/node#per-request-helpers).
+
+## Errors
+
+| Code | Status | When |
+| --- | --- | --- |
+| [`UNAUTHENTICATED`](/docs/reference/errors#unauthenticated) | 401 | A guard or `requireSession` ran with no usable session |
+| [`MFA_REQUIRED`](/docs/reference/errors#mfa_required) | 403 | `stepUp.mfa` was not met; `reason` is `mfa` |
+| [`RECENT_AUTH_REQUIRED`](/docs/reference/errors#recent_auth_required) | 403 | `stepUp.maxAgeMs` was not met; `reason` is `recent` |
+| [`IMPERSONATION_RESTRICTED`](/docs/reference/errors#impersonation_restricted) | 403 | An impersonated session met a `maxAgeMs` or `'fresh'` requirement; `reason` is `impersonation` |
+| [`ACCESS_DENIED`](/docs/reference/errors#access_denied) | 403 | `authorize` or `require` was denied |
+| [`UNTRUSTED_ORIGIN`](/docs/reference/errors#untrusted_origin) | 403 | A cookie-authenticated unsafe request came from an untrusted origin |
+| [`CSRF_REJECTED`](/docs/reference/errors#csrf_rejected) | 403 | A cookie-authenticated unsafe request had no `Origin` |
+| [`INVALID_INPUT`](/docs/reference/errors#invalid_input) | 400 | An `authorize` guard had no tenant to check in |
+
+`onError` answers any error that carries an IAM `code` and HTTP `status` (`IamRequestError`, the server's `IamError`,
+`QUOTA_EXCEEDED`, `NOT_FOUND` from `tenants.lookup`) with that status and `{ "error": { "code", "message" } }`.
+
+## Related
+
+<Cards>
+  <Card icon={<Express />} title="Express" href="/docs/integrations/express">
+    The same helpers and guards for Express, with node-only protocol mounts.
+  </Card>
+  <Card icon={<Fastify />} title="Fastify" href="/docs/integrations/fastify">
+    A plugin with `preHandler` guards and `request.iam`.
+  </Card>
+  <Card icon={<Nodejs />} title="Node and custom servers" href="/docs/integrations/node">
+    The per-request helpers, the CSRF rule, and the core for other frameworks.
+  </Card>
+  <Card icon={<Globe />} title="Typed client" href="/docs/concepts/client">
+    Call the API you mounted from the browser.
+  </Card>
+  <Card icon={<ShieldCheck />} title="Policies" href="/docs/authorization/policies">
+    What `authorize` guards evaluate.
+  </Card>
+  <Card icon={<Building />} title="Hosts and regions" href="/docs/operations/deployment/hosts-and-regions">
+    Organization sign-in addresses and pinning.
+  </Card>
+</Cards>

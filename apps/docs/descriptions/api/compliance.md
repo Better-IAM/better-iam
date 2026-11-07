@@ -6,7 +6,7 @@ administrators, owners, separation of duties, audit chain integrity, data-subjec
 requirements of SOC 2, ISO/IEC 27001:2022, NIST SP 800-53 Rev. 5 and GDPR. A tenant turns checks into controls,
 evaluates them daily and on demand, accepts findings with time-boxed exceptions that a second person approves, sees
 each requirement's status, and exports evidence packs signed with an Ed25519 key that auditors verify offline. See the
-[compliance guide](/docs/guides/governance/compliance); the repository guide is `docs/compliance.md`.
+[compliance guide](/docs/features/governance/compliance); the repository guide is `docs/compliance.md`.
 
 ## Evidence, not coverage
 

@@ -10,17 +10,20 @@ const columns: { title: string; links: [string, string][] }[] = [
   {
     title: 'Learn',
     links: [
-      ['Quickstart', '/docs/guides/quickstart'],
-      ['Concepts', '/docs/guides/concepts'],
-      ['Authentication', '/docs/guides/authentication'],
-      ['Authorization', '/docs/guides/authorization'],
+      ['Quickstart', '/docs/quickstart'],
+      ['Concepts', '/docs/concepts'],
+      ['Authentication', '/docs/authentication'],
+      ['Authorization', '/docs/authorization'],
+      ['Guides', '/docs/guides'],
       ['Recipes', '/docs/guides/recipes'],
     ],
   },
   {
     title: 'Build',
     links: [
-      ['Frameworks', '/docs/frameworks'],
+      ['Integrations', '/docs/integrations'],
+      ['Databases', '/docs/databases'],
+      ['Features', '/docs/features'],
       ['Federation', '/docs/federation'],
       ['Operations', '/docs/operations'],
       ['Playground', '/playground'],
@@ -29,6 +32,7 @@ const columns: { title: string; links: [string, string][] }[] = [
   {
     title: 'Reference',
     links: [
+      ['Options', '/docs/reference/options'],
       ['API', '/docs/reference/api'],
       ['Error codes', '/docs/reference/errors'],
       ['CLI', '/docs/reference/cli'],
@@ -42,6 +46,8 @@ const columns: { title: string; links: [string, string][] }[] = [
       ['OpenAPI 3.1', '/openapi.json'],
       ['llms.txt', '/llms.txt'],
       ['llms-full.txt', '/llms-full.txt'],
+      ['Agent skill', '/skills/better-iam/SKILL.md'],
+      ['AI resources', '/docs/ai'],
       ['Source code', repositoryUrl],
     ],
   },

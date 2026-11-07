@@ -26,6 +26,11 @@ export interface FastifyRequestLike {
   headers: Record<string, string | string[] | undefined>;
   iam?: unknown;
 }
+/**
+ * What `authorize` callbacks receive by default: a Fastify request with its route parameters. Pass your own type for
+ * typed parameters, e.g. `authorize<FastifyRequest<{ Params: { id: string } }>>(…)`.
+ */
+export type FastifyRouteRequest = FastifyRequestLike & { params: Record<string, string> };
 /** The Fastify reply methods the plugin uses. */
 export interface FastifyReplyLike {
   raw: ServerResponse;
@@ -126,13 +131,14 @@ export function createIamFastify<T extends IamLike>(
       .send(result.body);
   };
   const guard =
-    (spec: GuardSpec<FastifyRequestLike, Session>) =>
+    <Req extends FastifyRequestLike>(spec: GuardSpec<Req, Session>) =>
     async (request: FastifyRequestLike, reply: FastifyReplyLike): Promise<unknown> => {
       try {
         const iam = await resolveIam();
         await enforceGuard(
           helpersFor(request, reply),
-          request,
+          // The guard runs as a Fastify preHandler, so the request is the framework's own (`Req`).
+          request as Req,
           spec,
           options.csrf === false
             ? undefined
@@ -215,14 +221,17 @@ export function createIamFastify<T extends IamLike>(
     /** A `preHandler` requiring a session (and `stepUp`, when given). */
     requireSession: (spec: Pick<GuardSpec<FastifyRequestLike, Session>, 'stepUp'> = {}) =>
       guard(spec) as FastifyHook,
-    /** A `preHandler` requiring a session allowed to perform `action` (default resource: the tenant). */
-    authorize: (
+    /**
+     * A `preHandler` requiring a session allowed to perform `action` (default resource: the tenant). `resource` and
+     * `tenantId` receive the request as `Req` (default {@link FastifyRouteRequest}, with `request.params`).
+     */
+    authorize: <Req extends FastifyRequestLike = FastifyRouteRequest>(
       action: string,
-      spec: Omit<NonNullable<GuardSpec<FastifyRequestLike, Session>['authorize']>, 'action'> &
-        Pick<GuardSpec<FastifyRequestLike, Session>, 'stepUp'> = {},
+      spec: Omit<NonNullable<GuardSpec<Req, Session>['authorize']>, 'action'> &
+        Pick<GuardSpec<Req, Session>, 'stepUp'> = {},
     ) => {
       const { stepUp, ...rule } = spec;
-      return guard({
+      return guard<Req>({
         ...(stepUp ? { stepUp } : {}),
         authorize: { action, ...rule },
       }) as FastifyHook;

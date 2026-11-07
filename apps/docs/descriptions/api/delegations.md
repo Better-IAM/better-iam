@@ -32,7 +32,7 @@ delegated sessions, cannot mint session tokens (`CREDENTIAL_CHAINING_DISABLED`),
 chain: the delegation (active, unexpired, not revoked since the session began), the person, the agent and its sponsor,
 the agent's `delegable` setting, and the agent key the session came from. When any link breaks, the session is refused
 with `UNAUTHENTICATED`. Policies see `principal.delegated`, `principal.delegationId`, and the agent's keys
-([principal keys](/docs/guides/authorization/conditions#principal-keys)), and audit events recorded in the session name
+([principal keys](/docs/authorization/conditions#principal-keys)), and audit events recorded in the session name
 the person as actor with `agentId` and `delegationId` in their session context.
 
 ## Lifecycle and who may act

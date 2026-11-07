@@ -4,7 +4,7 @@ Role mining reads who holds which roles today and suggests simpler, narrower way
 time, direct grants pile up, roles get copied, and people keep access after they change teams. This group finds
 those patterns, compares people with their peers, and uses recorded access usage to show which grants nobody uses,
 so you can clean up with evidence instead of guesswork. It is the "simplify" and "measure" part of
-[access governance](/docs/guides/governance/usage-and-mining).
+[access governance](/docs/features/governance/usage-and-mining).
 
 ## How role mining reads a tenant
 
@@ -46,7 +46,7 @@ direct bindings it replaces.
 - **Errors:** `NOT_FOUND` when the suggestion no longer holds (list suggestions again); `INVALID_INPUT` for a
   `bundle` or `duplicate-roles` suggestion, or a group binding whose direct bindings come from different grant
   authorities (`applicable: false`); `ACCESS_DENIED` without the binding rights or the authority;
-  `INVARIANT_VIOLATION` when an enforced [access invariant](/docs/guides/governance/change-safety) would newly
+  `INVARIANT_VIOLATION` when an enforced [access invariant](/docs/features/governance/change-safety) would newly
   break.
 
 The suggestion is recomputed inside the transaction, so it applies only while the condition still holds, and
@@ -91,7 +91,7 @@ const { outliers } = await iam.api.roleMining.outliers(credential, {
 ## reviewRecommendations
 
 Suggests a keep or revoke decision, with a reason, for every item of an
-[access-certification](/docs/guides/governance/certifications) campaign.
+[access-certification](/docs/features/governance/certifications) campaign.
 
 - **Permission:** `iam:analysis:read` on `iam/analysis/*`.
 - **Audited as:** `iam:analysis:read`.
@@ -138,7 +138,7 @@ There are four kinds of suggestion:
   through their own direct binding. Bind it to the group once, so joiners get it and leavers lose it.
 - **`duplicate-roles`**: roles whose statements are identical.
 - **`bundle`**: role combinations many people hold together. Grant them as one
-  [access package](/docs/guides/privileged-access/access-packages) instead of binding each role separately.
+  [access package](/docs/features/privileged-access/access-packages) instead of binding each role separately.
 
 `minIdentities` (default 3) is how many people must share a pattern, and `minRoles` (default 2) is the smallest
 combination reported as a bundle. `limit` (default 50) caps the list, while `summary` counts every suggestion by

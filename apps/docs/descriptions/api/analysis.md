@@ -16,7 +16,7 @@ Protected system policies and the Owner role are not reported against.
 | --- | --- | --- |
 | `unrestricted-admin-policy` | high | A policy or a role's inline document allows every action on every resource without conditions. |
 | `admin-without-mfa` | high | A human administrator has neither an authenticator app nor a passkey, and the tenant does not require MFA. |
-| `separation-of-duties` | high | An active person holds roles that a [separation-of-duties rule](/docs/guides/authorization/separation-of-duties) forbids together. |
+| `separation-of-duties` | high | An active person holds roles that a [separation-of-duties rule](/docs/authorization/separation-of-duties) forbids together. |
 | `team-maintainers-grant-admin` | high | A [team](/docs/reference/api/teams) (or a team above it) holds an administrator role as standing access, and maintainers manage its membership, so they can make anyone an administrator. |
 | `broad-action-wildcard` | medium | A policy allows a service-wide wildcard such as `documents:*` without conditions, which also grants actions added later. |
 | `service-account-admin` | medium | A service account is an administrator, so a leaked API key would control the organization. |
@@ -85,7 +85,7 @@ when an optional key is missing, an allow that an unconditional deny shadows, an
 
 Use it in a policy editor before saving, or in CI over documents kept in version control. Pass `contextKeys` to
 name keys your application supplies through `resolveContext`, so they are not reported as unknown. See
-[policies](/docs/guides/authorization/policies) and [conditions](/docs/guides/authorization/conditions).
+[policies](/docs/authorization/policies) and [conditions](/docs/authorization/conditions).
 
 ```ts
 const result = await iam.api.analysis.lintPolicy(credential, {

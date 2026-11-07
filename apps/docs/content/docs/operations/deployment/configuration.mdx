@@ -39,7 +39,7 @@ Every deployment sets the first four.
     database: {
       type: 'IamStore',
       required: true,
-      description: <>Where every IAM record is stored: <code>postgresAdapter</code>, <code>sqliteAdapter</code>, <code>libsqlAdapter</code>, or your own implementation of the adapter contract. Choose the adapter for your operational needs; see <a href="/docs/operations/storage">Storage adapters</a>.</>,
+      description: <>Where every IAM record is stored: <code>postgresAdapter</code>, <code>sqliteAdapter</code>, <code>libsqlAdapter</code>, or your own implementation of the adapter contract. Choose the adapter for your operational needs; see <a href="/docs/databases/operations">Storage adapters</a>.</>,
     },
     secret: {
       type: 'string',
@@ -485,7 +485,7 @@ handlers.
     plugins: {
       type: 'IamPlugin[]',
       default: '[]',
-      description: <>Plugins that add actions, resource types, endpoints, hooks, and policy context, such as <code>createProjectsPlugin()</code>. Validated at construction: unique ids, registered endpoint actions, and unique POST endpoint paths with a validator and a handler. See <a href="/docs/operations/extensions">Adapters and plugins</a>.</>,
+      description: <>Plugins that add actions, resource types, endpoints, hooks, and policy context, such as <code>createProjectsPlugin()</code>. Validated at construction: unique ids, registered endpoint actions, and unique POST endpoint paths with a validator and a handler. See <a href="/docs/concepts/extensions">Adapters and plugins</a>.</>,
     },
     protocols: {
       type: 'ProtocolMount[]',
@@ -505,16 +505,16 @@ settings.
     inference: {
       type: 'boolean | InferenceOptions',
       default: 'off',
-      description: <>Model access control: the <code>inference</code> API group (providers with sealed keys, models, budgets, usage) and <code>iam.inference</code> with the gateway. Settings include <code>usageRetentionDays</code> and <code>allowCustomBaseUrls</code>. See <a href="/docs/guides/inference">Model access and budgets</a>.</>,
+      description: <>Model access control: the <code>inference</code> API group (providers with sealed keys, models, budgets, usage) and <code>iam.inference</code> with the gateway. Settings include <code>usageRetentionDays</code> and <code>allowCustomBaseUrls</code>. See <a href="/docs/features/inference">Model access and budgets</a>.</>,
     },
     a2a: {
       type: 'A2aOptions',
       default: 'off',
-      description: <>Signing keys (Ed25519 or ES256 JWKs with a <code>kid</code>), <code>jwksUrl</code>, <code>cardLifetimeSeconds</code>, and <code>issuer</code> (default: the base URL plus <code>basePath</code>) for IAM-attested agent cards (<code>agents.signCard</code>). Bad keys fail with <code>INVALID_CONFIG</code>. See <a href="/docs/guides/ai-agents#agent-to-agent-a2a">Agent-to-agent</a>.</>,
+      description: <>Signing keys (Ed25519 or ES256 JWKs with a <code>kid</code>), <code>jwksUrl</code>, <code>cardLifetimeSeconds</code>, and <code>issuer</code> (default: the base URL plus <code>basePath</code>) for IAM-attested agent cards (<code>agents.signCard</code>). Bad keys fail with <code>INVALID_CONFIG</code>. See <a href="/docs/features/a2a#setup">Agent-to-agent</a>.</>,
     },
     billing: {
       type: 'BillingOptions',
-      description: <>Tunes billing, which is always available: the currency, the time zone billing months follow, usage retention, how team spend is attributed (<code>teamAttribution</code>), and payment terms. See <a href="/docs/guides/billing">Billing and spend</a>.</>,
+      description: <>Tunes billing, which is always available: the currency, the time zone billing months follow, usage retention, how team spend is attributed (<code>teamAttribution</code>), and payment terms. See <a href="/docs/features/billing">Billing and spend</a>.</>,
     },
   }}
 />
@@ -668,7 +668,7 @@ Construction fails with `INVALID_CONFIG` when:
   malformed path, or lacks a validator or handler.
 
 Startup validation cannot judge everything. `doctor` catches the rest: a placeholder-like secret, a short metrics
-token, or no email transport. See [Doctor](/docs/operations/storage#doctor).
+token, or no email transport. See [Doctor](/docs/databases/operations#doctor).
 
 ## Next steps
 

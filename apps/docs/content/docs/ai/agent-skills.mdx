@@ -1,0 +1,150 @@
+---
+title: Agent skills
+metaTitle: Better IAM agent skill for Claude Code and other coding agents
+description: Install the Better IAM agent skill (SKILL.md) so coding agents follow the setup order, call shapes, authorization rules, and pitfalls of Better IAM, and write a project skill of your own.
+icon: Puzzle
+sources:
+  - apps/docs/public/skills/better-iam/SKILL.md
+---
+
+An agent skill is a folder with a `SKILL.md` file: YAML frontmatter with a `name` and a `description`, followed by
+instructions in Markdown. An agent that supports the [Agent Skills](https://agentskills.io) format reads only the
+descriptions of its installed skills at the start of a session and loads a skill's instructions when a task
+matches. A skill therefore costs almost no context until it is needed.
+
+The Better IAM skill teaches an agent the things it most often gets wrong when it writes Better IAM code from
+memory: the setup order, the three method shapes of `iam.api`, where credentials come from, which checks are
+enforced and which are advisory, and the error codes to branch on. It links to the Markdown version of each docs
+page, so the agent can read more instead of guessing.
+
+The skill is published with the docs at `https://better-iam.com/skills/better-iam/SKILL.md`. Its source is
+`apps/docs/public/skills/better-iam/SKILL.md` in the repository.
+
+## What the skill contains
+
+```md title="SKILL.md (frontmatter)"
+---
+name: better-iam
+description: Write correct Better IAM code (embeddable TypeScript authentication, authorization, multi-tenant organizations, and identity governance). Use when a project imports better-iam or @better-iam/* packages, or when asked to add sign-in, sessions, roles, permission checks, policies, organizations, SSO, or SCIM with Better IAM.
+---
+```
+
+| Section | What it tells the agent |
+| --- | --- |
+| Ground rules | Never guess an API; verify against `llms.txt`, the page Markdown, the docs MCP server, or the installed types. Node.js 22.12, ESM only, native modules. |
+| Setup, in order | Install `better-iam`, set `BETTER_IAM_SECRET` and `BETTER_IAM_BASE_URL`, write `better-iam.config.mjs`, create the instance, migrate, mount the handler per framework, create the typed client with `import type`, bootstrap the root. |
+| Calling the server API | The `(credential, input)`, `(credential)`, and `(input)` shapes, `{ headers }` and `{ token }` credentials, the framework credential helpers, and the `POST /api/iam/<group>/<method>` routes. |
+| Authorization | `iam.require` and `iam.authorize` on the server, advisory checks in the browser, `listAccessible`, `roles.create` and `bindings.create`, `permissions.resourceTypes`. |
+| Errors | `IamError` and `IamClientError`, branching on `code`, and the common codes. |
+| Pitfalls | The outbox, sign-up being off by default, root MFA, never taking a tenant from request data, Next.js and Hono specifics. |
+| Docs to read | The Markdown URLs of the pages to read for each task. |
+
+## Installation
+
+<Tabs items={['Claude Code', 'Claude apps', 'Other agents']} groupId="skill-client" persist>
+<Tab value="Claude Code">
+
+Claude Code loads skills from `.claude/skills/<name>/SKILL.md` in a project and from `~/.claude/skills/<name>/SKILL.md`
+for every project. Install the skill into the project so everyone who works on the repository gets it:
+
+```bash
+mkdir -p .claude/skills/better-iam
+curl -fsSL https://better-iam.com/skills/better-iam/SKILL.md -o .claude/skills/better-iam/SKILL.md
+```
+
+On Windows PowerShell:
+
+```powershell
+New-Item -ItemType Directory -Force .claude/skills/better-iam | Out-Null
+Invoke-WebRequest https://better-iam.com/skills/better-iam/SKILL.md -OutFile .claude/skills/better-iam/SKILL.md
+```
+
+To install it for yourself in every project, use `~/.claude/skills/better-iam` as the directory instead. Commit the
+project copy so the skill is versioned with your code.
+
+</Tab>
+<Tab value="Claude apps">
+
+Claude on the web and in the desktop app accept custom skills uploaded as a ZIP file that contains the skill folder.
+Download the file, put it in a folder named `better-iam`, and compress that folder:
+
+```bash
+mkdir -p better-iam
+curl -fsSL https://better-iam.com/skills/better-iam/SKILL.md -o better-iam/SKILL.md
+zip -r better-iam.zip better-iam
+```
+
+Then upload `better-iam.zip` from the skills section of Claude's settings. Custom skills there depend on your plan
+and on code execution being enabled.
+
+</Tab>
+<Tab value="Other agents">
+
+Agents that support the Agent Skills format read the same `SKILL.md`. Put it in the directory your agent loads
+skills from, inside a folder named `better-iam`, as its documentation describes.
+
+Agents without skill support can still use the content: add the [AGENTS.md block](/docs/ai/prompts#agentsmd-block)
+to your repository, or paste the skill into the agent's rules file. The skill is plain Markdown.
+
+</Tab>
+</Tabs>
+
+## Usage
+
+You do not call a skill. Ask for the task in your own words, and the agent loads the skill when the task matches its
+description, for example:
+
+```text
+Add Better IAM to this Next.js app with PostgreSQL, and protect the /admin pages with an admin:access permission.
+```
+
+To check that the skill is installed, ask the agent which skills it has, or ask it directly: "What does the
+better-iam skill say about where credentials come from?" An installed skill answers with the `{ headers }` and
+`{ token }` credential shapes.
+
+## Keep it current
+
+The skill describes the version of Better IAM these docs were built from. After you upgrade Better IAM, download it
+again with the same command, and read the [upgrade notes](/docs/guides/upgrade) for renamed APIs.
+
+## Write a project skill
+
+The Better IAM skill is generic. A project skill next to it can record your own decisions: where the instance
+lives, your resource types and actions, which credential helper your framework uses, and your conventions. Keep it
+short and factual; link to the docs for everything else.
+
+```md title=".claude/skills/acme-iam/SKILL.md"
+---
+name: acme-iam
+description: Conventions for authentication and authorization in the Acme app. Use when adding or changing sign-in, permission checks, roles, or anything that imports lib/iam.
+---
+
+# Acme IAM conventions
+
+- The instance is `iam` from `lib/iam.ts`; the Next.js helpers are `iamNext` from `lib/iam-next.ts`.
+- Use `await iamNext.credential()` as the credential for `iam.api` calls in server components and actions.
+- Resource types: `project` (actions `projects:read`, `projects:write`, `projects:delete`) and `invoice`
+  (actions `invoices:read`, `invoices:approve`). Add new ones to `permissions.resourceTypes` in
+  `better-iam.config.mjs` first.
+- Enforce with `iamNext.require({ tenantId, action, resource })` in every server action before writing.
+- Never show a button the user cannot use: wrap it in `<Can>` from `@better-iam/next/client`, and still enforce on
+  the server.
+- Generic Better IAM rules: the `better-iam` skill. API details: https://better-iam.com/llms.txt
+```
+
+The names in the example (`lib/iam.ts`, `projects:read`, and so on) are the example project's own; replace them with
+yours.
+
+## Next steps
+
+<Cards>
+  <Card title="Docs MCP server" href="/docs/ai/mcp-server">
+    Let the agent look up exact API methods, exports, and error codes while it works.
+  </Card>
+  <Card title="Prompts and AGENTS.md" href="/docs/ai/prompts">
+    Prompts for common tasks and a rules block for agents without skills.
+  </Card>
+  <Card title="Quickstart" href="/docs/quickstart">
+    The setup the skill describes, step by step.
+  </Card>
+</Cards>

@@ -4,7 +4,7 @@ Grant authorities delegate the right to hand out access, with a ceiling on what 
 ever allow. In a growing organization not every administrator should be able to grant everything: a support lead
 should give support roles to their team but never make someone a tenant administrator. Every role, policy, and
 binding records the authority it was created under, and that authority's ceiling bounds it for as long as it
-exists. The guide is [grant authorities](/docs/guides/authorization/roles#grant-authorities).
+exists. The guide is [grant authorities](/docs/authorization/roles#grant-authorities).
 
 ## How delegation works
 

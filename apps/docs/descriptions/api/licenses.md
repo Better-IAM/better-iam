@@ -40,12 +40,12 @@ methods that move seats return them as `seats` (`tenantId`, `productId`, `produc
 ## What a license unlocks
 
 - **Policies.** `principal.licenses` lists the keys of the products the principal holds an active seat for in the
-  decision's tenant (see [principal keys](/docs/guides/authorization/conditions#principal-keys)). Waiting seats,
+  decision's tenant (see [principal keys](/docs/authorization/conditions#principal-keys)). Waiting seats,
   retired products, and seats held only through a lapsed group membership never count; assumed roles hold none.
   Simulations, who-can reviews, and access invariants see the real seats, and `policies.test` defaults the key to an
   empty list.
 - **Birthright packages.** Package rules test `identity.licenses` with product keys (see
-  [automatic assignment](/docs/guides/privileged-access/automatic-assignment)), so a seat brings the roles and groups
+  [automatic assignment](/docs/features/privileged-access/automatic-assignment)), so a seat brings the roles and groups
   a product needs and takes them away when it goes. Seats held only through package-granted memberships do not count.
 - **Feature keys.** `iam.licenses.features` returns the feature keys a person's active seats unlock for server code,
   counting only platform products (defined by the root tenant) unless you pass `trustedTenantId`, so no tenant can
@@ -53,7 +53,7 @@ methods that move seats return them as `seats` (`tenantId`, `productId`, `produc
   with the platform's keys in `featureKeys` and every product's in `allFeatureKeys`.
 
 Assigning, unassigning, and pool changes run the receiving tenant's enforced
-[access invariants](/docs/guides/governance/change-safety#access-invariants), so a seat change that newly breaks one
+[access invariants](/docs/features/governance/change-safety#access-invariants), so a seat change that newly breaks one
 fails with `INVARIANT_VIOLATION`.
 
 ## Who may call what

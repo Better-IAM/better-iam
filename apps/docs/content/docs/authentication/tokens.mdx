@@ -1,0 +1,685 @@
+---
+title: Tokens and JWTs
+metaTitle: Session tokens, session JWTs, JWKS, and web identity
+description: The bearer tokens Better IAM issues, their prefixes and lifetimes, short-lived session tokens from sts.getSessionToken, signed session JWTs with a JWKS endpoint, and web-identity federation for workloads.
+icon: Ticket
+packages: ['@better-iam/server', '@better-iam/auth', '@better-iam/client']
+sources:
+  - docs/temporary-credentials.md
+  - docs/authentication.md
+  - packages/server/src/session-tokens.ts
+  - packages/server/src/temporary-credentials.ts
+  - packages/server/src/token-signing.ts
+  - packages/server/src/api/sts.ts
+  - packages/server/src/web-identity-exchange.ts
+  - packages/server/src/options.ts
+  - packages/server/src/index.ts
+  - packages/auth/src/crypto.ts
+  - packages/core/src/index.ts
+---
+
+import { Hourglass, KeySquare, MonitorSmartphone, ScrollText } from '@/lib/icons';
+
+Every credential Better IAM issues is a bearer token backed by a stored session row. A person's sign-in returns
+one, an API key is one, and the security token service (`sts`) issues short-lived ones derived from a source
+credential. The stored row is always authoritative: a token's prefix only routes and triages, and every use
+re-validates the row, its identity, and its source.
+
+| Credential | Session `kind` | Token prefix | Issued by | Lifetime | Cookie |
+| --- | --- | --- | --- | --- | --- |
+| User session | `user` | `biam_ses_` | `auth.signIn` and every other sign-in flow | 7 days, 1 day idle (configurable) | Yes, `better-iam.session` |
+| Impersonation session | `user` | `biam_ses_` | `identities.impersonate` | At most 8 hours, never beyond the administrator's session | No |
+| API key | `api-key` | `biam_key_` | `credentials.create`, `credentials.rotate` | 90 days by default, at most a year | No |
+| Session token | `session-token` | `biam_sts_` | `sts.getSessionToken` | 3600 seconds by default, never beyond its source | No |
+| Role session | `role` | `biam_rol_` | `roles.assume`, `sts.assumeRoleWithWebIdentity` | 900 seconds by default, never beyond its source | No |
+| Delegated agent session | `delegated` | `biam_dlg_` | `delegations.assume` ([AI agents](/docs/features/ai-agents#letting-an-agent-act-for-a-person)) | 900 seconds by default (less when the agent or delegation sets a lower cap), never beyond the delegation or the agent's key | No |
+
+Session tokens and role sessions are the **temporary** kinds. They can also be issued as **session JWTs**:
+signed tokens that other services verify offline against a JWKS endpoint, while Better IAM still checks the stored
+row on every use. Use this page when a script, a CLI, a CI job, or another service needs a credential that is
+shorter-lived or narrower than a person's session or an API key.
+
+## Setup
+
+Opaque tokens need no setup: sign-in issues session tokens, `credentials.create` issues API keys, and
+`sts.getSessionToken` works on every deployment. Session JWTs and web-identity federation are opt-in.
+
+<Steps>
+<Step>
+
+### Generate a signing key
+
+Session JWTs are signed with their own keys, separate from `secret`, so rotating the deployment secret never
+affects them. Generate an Ed25519 private JWK and store it in your secret manager like `secret`.
+
+```ts title="scripts/generate-session-key.ts"
+import { generateKeyPairSync } from 'node:crypto';
+
+const { privateKey } = generateKeyPairSync('ed25519');
+const jwk = { ...privateKey.export({ format: 'jwk' }), kid: '2026-11', alg: 'EdDSA', use: 'sig' };
+console.log(JSON.stringify(jwk)); // store as SESSION_JWT_KEY
+```
+
+Keys are Ed25519 (`kty: 'OKP'`, `crv: 'Ed25519'`, `alg: 'EdDSA'`) or P-256 (`kty: 'EC'`, `crv: 'P-256'`,
+`alg: 'ES256'`), each with a unique `kid` of up to 64 letters, digits, dots, underscores, or hyphens.
+
+</Step>
+<Step>
+
+### Configure the server
+
+`sts.jwt` turns on `format: 'jwt'` and the JWKS route. `sts.webIdentity.enabled` turns on the OIDC token exchange
+for workloads. Invalid values throw `INVALID_CONFIG` naming the field.
+
+```ts title="iam.ts"
+import { betterIam } from 'better-iam';
+import { sqliteAdapter } from 'better-iam/adapter-sqlite';
+
+export const iam = betterIam({
+  database: sqliteAdapter({ filename: './iam.db' }),
+  secret: process.env.BETTER_IAM_SECRET!,
+  baseURL: 'https://iam.example.com',
+  sts: {
+    maxSessionTokenSeconds: 43_200, // the default ceiling for session tokens
+    jwt: {
+      signingKeys: [JSON.parse(process.env.SESSION_JWT_KEY!)],
+      audiences: ['https://billing.example.com'], // services that verify these tokens
+      maxLifetimeSeconds: 900, // short tokens limit how long a revoked one still verifies offline
+    },
+    webIdentity: {
+      enabled: true,
+      allowedIssuers: ['https://token.actions.githubusercontent.com'],
+    },
+  },
+});
+```
+
+</Step>
+<Step>
+
+### Migrate the database
+
+Sessions, OIDC providers, trusts, and web-identity replay records live in collections that `migrate` creates with
+the rest of the schema.
+
+```bash
+npx better-iam migrate --config better-iam.config.mjs
+```
+
+</Step>
+<Step>
+
+### Install the verifier in other services
+
+Services that verify session JWTs offline need only the verifier subpath, which imports nothing but `jose` and runs
+in Node, Bun, Deno, workers, and edge runtimes.
+
+```npm
+npm i better-iam
+```
+
+Import it as `better-iam/session-tokens`, or `@better-iam/server/session-tokens` when you install the scoped
+package.
+
+</Step>
+</Steps>
+
+## Usage
+
+Server code passes a credential as `{ token }` or `{ headers: request.headers }`. Over HTTP every token travels as
+`Authorization: Bearer <token>` (the scheme is case-insensitive). Issuers return temporary tokens once, in the
+response body, and never set a cookie. Routes are relative to the handler's `basePath` (`/api/iam` by default).
+
+### Use a sign-in token as a bearer
+
+`auth.signIn` and the other sign-in flows return `{ token, session }`. Through the HTTP handler the token is also
+set as the `better-iam.session` cookie (HttpOnly, `__Host-` prefixed over HTTPS). Mobile apps, CLIs, and servers
+send it explicitly instead:
+
+```ts title="cli/session.ts"
+import { createIamClient } from 'better-iam/client';
+import type { iam } from './iam';
+
+const client = createIamClient<typeof iam>({
+  baseURL: 'https://iam.example.com',
+  token: () => process.env.BETTER_IAM_TOKEN, // a biam_ses_ token from signIn
+});
+const { identity, session, limits } = await client.auth.getSession();
+```
+
+A bearer credential takes precedence over the cookie and never touches cookies. The client's `token` option accepts
+the two bearer shapes the server can take: an opaque token (16 to 512 characters of letters, digits, `_`, and `-`)
+or a session JWT (three base64url segments, at most 4096 characters). Any other value is never sent.
+
+### Session tokens
+
+`sts.getSessionToken` trades a signed-in session or an API key for a short-lived token for your own identity,
+optionally narrowed by a policy. Hand it to a script or a CI step instead of the long-lived credential: if it leaks,
+it expires by itself.
+
+<Tabs items={['Server', 'Client']}>
+<Tab value="Server">
+
+```ts title="scripts/deploy-token.ts"
+import { iam } from './iam';
+
+const { token, expiresAt, session } = await iam.api.sts.getSessionToken(
+  { token: process.env.IAM_API_KEY },
+  {
+    durationSeconds: 900,
+    sessionName: 'deploy-118',
+    policy: {
+      version: 1,
+      statements: [{ effect: 'allow', actions: ['deployments:create'], resources: ['*'] }],
+    },
+  },
+);
+```
+
+</Tab>
+<Tab value="Client">
+
+```ts title="cli/token.ts"
+import { client } from './lib/iam-client';
+
+const { token, expiresIn } = await client.sts.getSessionToken({ durationSeconds: 3600, sessionName: 'ops-cli' });
+```
+
+</Tab>
+</Tabs>
+
+**Route:** `POST /sts/getSessionToken`
+
+- Requires `iam:session-tokens:create` on your own identity (`iam/{identityId}`). Owners hold it through the Owner
+  role; anyone else needs an explicit grant, and a deny stops, for example, CI keys from minting tokens.
+- The token acts with the identity's grants, bounded by `policy`, by the source's own policy (an API key's scopes),
+  and by the source's grant authority.
+- `durationSeconds` defaults to 3600 and may not exceed `sts.maxSessionTokenSeconds` (43200 by default) or, for a
+  JWT, `sts.jwt.maxLifetimeSeconds`. A value outside the range is `INVALID_INPUT`, never silently shortened. The
+  token never outlives its source and ends when the source ends.
+- `sessionName` is 2 to 64 letters, digits, or `+=,.@_-`, and reaches policies as `principal.sessionName`.
+- Tokens cannot chain: a role session or another session token cannot mint one (`CREDENTIAL_CHAINING_DISABLED`), and
+  a "view as" session cannot either (`IMPERSONATION_RESTRICTED`).
+- Each identity holds at most `sts.maxSessionTokensPerIdentity` live tokens (50 by default, `LIMIT_EXCEEDED`).
+- Using a token never refreshes its source's idle timer, so long-running automation should mint tokens from an API
+  key rather than from a person's session.
+- Audited as `iam:session-tokens:create` and `session-token:issued`.
+
+`auth.listSessions` shows a person's own session tokens, and `auth.revokeSession` ends one.
+
+### Step up with MFA, then assume a role
+
+`mfaCode` makes the token carry `mfa: true` and a fresh `principal.mfaTime`. Roles never take a code themselves, so
+this is how a command-line tool assumes a role whose trust requires MFA: verify once, then assume with the token.
+
+```ts title="cli/assume.ts"
+import { iam } from './iam';
+
+const step = await iam.api.sts.getSessionToken(
+  { token: userSessionToken },
+  { mfaCode: '123456', sessionName: 'ops-cli' },
+);
+const role = await iam.api.roles.assume(
+  { token: step.token },
+  { tenantId: customerTenantId, trustId, sessionName: 'ticket-4711' },
+);
+// role.token is a biam_rol_ token for the customer tenant until role.expiresAt.
+```
+
+**Route:** `POST /sts/getSessionToken`, then `POST /roles/assume`
+
+- `mfaCode` is accepted only from a person's session whose identity has an authenticator. It is counted against the
+  sensitive rate limit first, then checked with the same single-use rules as sign-in (`INVALID_MFA`). Emailed and
+  recovery codes never count. From an API key, or without an authenticator, it fails with `MFA_NOT_ENROLLED`.
+- The step-up is audited as `auth:mfa:step-up`.
+- Role sessions, trusts, and their options are covered in
+  [role sessions](/docs/authorization/temporary-access#role-sessions).
+
+### Session JWTs
+
+With `sts.jwt` configured, pass `format: 'jwt'` to `sts.getSessionToken`, `roles.assume`, or
+`sts.assumeRoleWithWebIdentity` to receive a signed JWT instead of an opaque token. User sessions and API keys are
+never JWTs.
+
+<Tabs items={['Server', 'Client']}>
+<Tab value="Server">
+
+```ts title="scripts/billing-token.ts"
+import { iam } from './iam';
+
+const credential = await iam.api.sts.getSessionToken(
+  { token: process.env.IAM_API_KEY },
+  { format: 'jwt', audience: ['https://billing.example.com'], durationSeconds: 600 },
+);
+// credential.format === 'jwt'; credential.audience lists the audiences the token names.
+await fetch('https://billing.example.com/api/invoices', {
+  headers: { authorization: `Bearer ${credential.token}` },
+});
+```
+
+</Tab>
+<Tab value="Client">
+
+```ts title="lib/billing-token.ts"
+import { client } from './lib/iam-client';
+
+const { token } = await client.sts.getSessionToken({
+  format: 'jwt',
+  audience: ['https://billing.example.com'],
+  durationSeconds: 600,
+});
+```
+
+</Tab>
+</Tabs>
+
+**Route:** `POST /sts/getSessionToken`
+
+- Without `sts.jwt`, `format: 'jwt'` fails with `FEATURE_DISABLED`.
+- `audience` takes 1 to 5 entries from `sts.jwt.audiences`; the issuer is always allowed and is the default. Every
+  audience other than the issuer must also be allowed as `iam:assertions:create` on `iam/{audience}` for the
+  credential being issued (`ACCESS_DENIED` otherwise), so a scoped-down credential cannot name a service its scope
+  forbids.
+- Inside Better IAM a JWT is accepted only when its signature, type, algorithm, issuer, audience (which must
+  include the IAM issuer), and times verify and the stored row matches it. A token issued only for a downstream
+  audience is refused by Better IAM itself.
+
+### Publish the JWKS
+
+With `sts.jwt` configured, the HTTP handler serves the public signing and verification keys as
+`application/jwk-set+json` with `Cache-Control: public, max-age=300`. Without it the route answers 404.
+
+```ts title="app/jwks.ts"
+import { iam } from './iam';
+
+// The same key set in process; iam.sessionTokens is undefined without sts.jwt.
+const jwks = iam.sessionTokens?.jwks(); // { keys: [{ kty, crv, x, y?, kid, alg, use: 'sig' }] }
+const issuer = iam.sessionTokens?.issuer; // `${baseURL.origin}${basePath}` unless sts.jwt.issuer overrides it
+```
+
+**Route:** `GET /.well-known/jwks.json`
+
+### Verify session JWTs in other services
+
+`createSessionTokenVerifier` from `better-iam/session-tokens` enforces the same type, algorithm allowlist, issuer,
+audience, lifetime, kind, and claim checks as Better IAM. `verify(token)` and `verifyRequest({ headers })` return
+the claims or throw `SessionTokenError` (`code: 'INVALID_SESSION_TOKEN'`, `status: 401`, and a `reason` for logs).
+
+```ts title="billing/session-tokens.ts"
+import { createSessionTokenVerifier, SessionTokenError } from 'better-iam/session-tokens';
+
+export const verifier = createSessionTokenVerifier({
+  issuer: 'https://iam.example.com/api/iam',
+  audience: 'https://billing.example.com', // must be in sts.jwt.audiences and requested at issuance
+  jwks: 'https://iam.example.com/api/iam/.well-known/jwks.json',
+});
+export { SessionTokenError };
+```
+
+<Tabs items={['Node', 'Next.js middleware']}>
+<Tab value="Node">
+
+```ts title="billing/server.ts"
+import { createServer } from 'node:http';
+import { SessionTokenError, verifier } from './session-tokens';
+
+createServer(async (request, response) => {
+  try {
+    const claims = await verifier.verifyRequest({
+      headers: { authorization: request.headers.authorization ?? '' },
+    });
+    response.end(`hello ${claims.sub} in ${claims.tid}`);
+  } catch (error) {
+    response.writeHead(error instanceof SessionTokenError ? 401 : 500).end();
+  }
+}).listen(8080);
+```
+
+</Tab>
+<Tab value="Next.js middleware">
+
+```ts title="middleware.ts"
+import { NextResponse, type NextRequest } from 'next/server';
+import { verifier } from './session-tokens';
+
+export async function middleware(request: NextRequest) {
+  try {
+    const claims = await verifier.verifyRequest(request);
+    const headers = new Headers(request.headers);
+    headers.set('x-caller', claims.sub);
+    return NextResponse.next({ request: { headers } });
+  } catch {
+    return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
+  }
+}
+export const config = { matcher: '/api/billing/:path*' };
+```
+
+</Tab>
+</Tabs>
+
+- `jwks` is a key set (`iam.sessionTokens.jwks()`) or the JWKS URL, which must be https except on localhost. A
+  remote set is cached (`cacheMaxAgeSeconds`, default 600) and refetched on an unknown `kid` at most once per
+  `cooldownSeconds` (default 30).
+- `reason` is one of `malformed`, `too-large`, `type`, `algorithm`, `unknown-key`, `signature`, `expired`,
+  `not-yet-valid`, `issuer`, `audience`, `claims`, `lifetime`, `kind`, `jwks`, or `revoked`. Show clients only
+  the 401.
+- Services that run inside the IAM application need no verifier: `iam.authenticate`, `iam.authorize`, and every
+  `iam.api` call accept session JWTs and opaque temporary tokens as bearers.
+
+### Check a token online
+
+An offline verifier learns of revocation only at `exp`. When a service must honour revocation immediately, check
+the token with Better IAM, instead of or after the offline check.
+
+<Tabs items={['HTTP', 'In process']}>
+<Tab value="HTTP">
+
+```ts title="billing/online-check.ts"
+const response = await fetch('https://iam.example.com/api/iam/sts/getCallerIdentity', {
+  method: 'POST',
+  headers: {
+    authorization: `Bearer ${token}`,
+    'content-type': 'application/json',
+    'x-better-iam': '1',
+  },
+  body: '{}',
+});
+if (!response.ok) throw new Error('revoked or invalid');
+const { data: caller } = await response.json(); // identityId, tenantId, sessionKind, expiresAt, ...
+```
+
+</Tab>
+<Tab value="In process">
+
+```ts title="app/verify.ts"
+import { iam } from './iam';
+
+// Verifies the signature, then requires the stored session to be live (SessionTokenError reason 'revoked').
+const claims = await iam.sessionTokens!.verify(token, { audience: 'https://billing.example.com' });
+```
+
+</Tab>
+</Tabs>
+
+**Route:** `POST /sts/getCallerIdentity`
+
+`sts.getCallerIdentity` works for every credential kind, needs no permission, writes no audit event, and returns
+`identityId`, `identityTenantId`, `identityKind`, `tenantId`, `sessionId`, `sessionKind`, `format`, `mfa`,
+`authenticatedAt`, `issuedAt`, `expiresAt`, and, when set, `method`, `roleId`, `trustId`, `sourceTenantId`,
+`sessionName`, `sourceIdentity`, `sessionTags`, `audience`, `webIdentity`, `impersonatorId`, `agentId`, and
+`delegationId`. The CLI's
+[`whoami`](/docs/reference/cli#whoami) prints it for `BETTER_IAM_TOKEN`.
+
+| Event | Inside Better IAM | Offline verifier |
+| --- | --- | --- |
+| Source sign-out, rotation, `revokeSessions`, `trust.revoke`, identity revoked | Refused on the next request | Accepted until `exp` |
+| Watermark moved, provider or service account disabled, authority revoked | Refused on the next request | Accepted until `exp` |
+| `kid` removed from both `signingKeys` and `verificationKeys` | Refused on the next request | Refused once its JWKS cache refreshes |
+| `exp` passed | Refused | Refused (5 seconds of clock tolerance) |
+
+### Web-identity federation
+
+CI pipelines and cloud workloads already receive short-lived OpenID Connect tokens from their platform: GitHub
+Actions, GitLab CI, Kubernetes service accounts, and cloud workload identity all issue them.
+`sts.assumeRoleWithWebIdentity` exchanges such a token for a role session acting as a service account, so no IAM
+secret is stored in CI. It needs `sts.webIdentity.enabled: true`.
+
+<Steps>
+<Step>
+
+### Register the provider
+
+```ts title="scripts/web-identity.ts"
+import { iam } from './iam';
+
+const provider = await iam.api.oidcProviders.create(adminCredential, {
+  tenantId,
+  name: 'GitHub Actions',
+  issuer: 'https://token.actions.githubusercontent.com',
+  audiences: ['https://iam.example.com'],
+});
+```
+
+**Route:** `POST /oidcProviders/create`
+
+The issuer must be https, must not be Better IAM itself, and must be in `sts.webIdentity.allowedIssuers` when that
+is set. Without `jwks` or `jwksUri`, keys come from OIDC discovery.
+
+</Step>
+<Step>
+
+### Create a web-identity trust
+
+The trust names the role, the service account sessions act as, and conditions on the token's claims, written as
+`token.<claim>` keys in the policy condition grammar. The conditions must pin `token.sub`
+(`WEAK_TRUST_CONDITIONS` otherwise), so a trust can never admit every job on the platform.
+
+```ts title="scripts/web-identity.ts"
+import { iam } from './iam';
+
+const trust = await iam.api.trust.create(adminCredential, {
+  tenantId,
+  kind: 'web-identity',
+  providerId: provider.id,
+  serviceAccountId: deployBot.id,
+  roleId: deployerRole.id,
+  conditions: {
+    StringEquals: {
+      'token.sub': 'repo:acme/app:ref:refs/heads/main',
+      'token.repository_owner': 'acme',
+    },
+  },
+  tagClaims: { repository: 'token.repository' },
+  maxSessionSeconds: 1800,
+});
+```
+
+**Route:** `POST /trust/create`
+
+</Step>
+<Step>
+
+### Exchange the token in the job
+
+The exchange is public: the external token is the only credential. Send JSON with `X-Better-IAM: 1` and use the
+returned token as `Authorization: Bearer`.
+
+```yaml title=".github/workflows/deploy.yml"
+permissions:
+  id-token: write # lets the job request an OIDC token
+  contents: read
+steps:
+  - name: Get an IAM role session
+    run: |
+      ID_TOKEN=$(curl -sH "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+        "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=https://iam.example.com" | jq -r .value)
+      IAM_TOKEN=$(curl -sf https://iam.example.com/api/iam/sts/assumeRoleWithWebIdentity \
+        -H 'Content-Type: application/json' -H 'X-Better-IAM: 1' \
+        -d "{\"tenantId\":\"$TENANT_ID\",\"trustId\":\"$TRUST_ID\",\"webIdentityToken\":\"$ID_TOKEN\",\"sessionName\":\"gha-$GITHUB_RUN_ID\"}" \
+        | jq -r .data.token)
+      echo "::add-mask::$IAM_TOKEN"
+      echo "BETTER_IAM_TOKEN=$IAM_TOKEN" >> "$GITHUB_ENV"
+```
+
+**Route:** `POST /sts/assumeRoleWithWebIdentity`
+
+</Step>
+</Steps>
+
+- The input is `{ tenantId, trustId, webIdentityToken, sessionName, durationSeconds?, policy?, format?, audience? }`.
+  `sessionName` is required; the token is at most 8192 characters.
+- The session is kind `role` acting as the service account, with `session.webIdentity = { providerId, issuer, subject }`
+  and `mfa: false`. It lasts 900 seconds by default, up to the trust's maximum, and is not bounded by the external
+  token's `exp`.
+- Until a verified token has matched a live trust, every refusal that depends on the token or on stored state
+  answers the same `WEB_IDENTITY_REJECTED` (403), so a caller cannot probe which trusts exist. After a match,
+  specific errors surface (rate limits, network blocks, the per-trust session cap, duration, policy, format, and
+  audience). Administrators see the real reason with `trust.evaluateWebIdentity`, which
+  checks a token against a trust without issuing anything.
+- By default each token is redeemed once per provider (`replayProtection: 'single-use'`). Set `'off'` for
+  Kubernetes projected tokens, which are reused until the kubelet rotates them.
+- Disabling the provider, revoking the trust, disabling the service account, or revoking either grant authority
+  ends live sessions at their next use. Audited as `role:assumed-with-web-identity`.
+
+[Temporary access](/docs/authorization/temporary-access#workloads-without-stored-secrets) shows the same flow from
+the authorization side, and the [trust](/docs/reference/api/trust) and
+[oidcProviders](/docs/reference/api/oidc-providers) references list every field.
+
+### Revoke temporary credentials
+
+| Call | Ends |
+| --- | --- |
+| `roles.revokeSessions({ tenantId, roleId, before? })` | Every role session of the role, classic and web identity. |
+| `trust.revokeSessions({ tenantId, trustId, before? })` | The trust's sessions. |
+| `oidcProviders.revokeSessions({ tenantId, providerId, before? })` | Web-identity sessions of every trust that uses the provider. |
+| `identities.revokeSessions({ tenantId, identityId, keepApiKeys? })` | Every session of the identity, including its session tokens. |
+| `auth.revokeSession({ sessionId })` | One of the caller's own sessions, including a session token. |
+
+Every `revokeSessions` call needs recent authentication. The role, trust, and provider calls also move a watermark
+that only ever moves forward, delete the matching rows, and return `{ sessionsRevokedBefore, revoked }` along with
+the role, trust, or provider id. Session tokens end with their source.
+
+### Rotate signing keys
+
+Signing keys are independent of `secret`, so secret rotation never touches them.
+
+1. Add the new private key to `sts.jwt.signingKeys` and deploy. It is published in the JWKS but not used yet.
+2. Wait at least the JWKS `max-age` plus your verifiers' cache time: 15 minutes with the defaults (300 seconds plus
+   a verifier's 600-second cache).
+3. Set `activeKeyId` to the new `kid` and deploy.
+4. Move the old key's public part to `verificationKeys` (private members there are `INVALID_CONFIG`).
+5. Remove it once `maxLifetimeSeconds` has passed.
+
+Removing a key early is the emergency revoke for every token it signed, legitimate ones included.
+
+## Token formats
+
+Opaque credentials are `biam_<type>_<random><check>`: `type` is `ses`, `key`, `rol`, `sts`, or `dlg`; `random` is
+43 base64url characters (32 random bytes); `check` is 6 base64url characters of the CRC-32 of everything before it.
+The whole token is 58 characters of `[A-Za-z0-9_-]`, and only its SHA-256 is stored.
+
+- A prefixed value whose shape or checksum is wrong is refused with 401 before any storage read. The checksum
+  filters typos and garbage; it authenticates nothing.
+- The stored kind must equal the prefix's kind (`ses` to `user`, `key` to `api-key`, `rol` to `role`, `sts` to
+  `session-token`, `dlg` to `delegated`), or the token is refused.
+- Legacy unprefixed 43-character tokens keep working until they expire.
+- `credentialTokenScanPattern`, `parseCredentialToken`, `newCredentialToken`, and `credentialTokenKinds` from
+  `better-iam/auth` let secret scanners and tools recognize the format.
+
+```ts title="scripts/scan.ts"
+import { credentialTokenScanPattern, parseCredentialToken } from 'better-iam/auth';
+
+const found = text.match(new RegExp(credentialTokenScanPattern, 'g')) ?? [];
+const typed = found.map((token) => parseCredentialToken(token)?.type); // 'ses' | 'key' | 'rol' | 'sts' | 'dlg'
+```
+
+Session JWTs are never prefixed. Their header is `{ alg: 'EdDSA' | 'ES256', kid, typ: 'biam-session+jwt' }`, they
+are at most 4096 characters, and they carry these claims:
+
+| Claim | Meaning |
+| --- | --- |
+| `iss` | The IAM issuer. |
+| `aud` | One audience as a string, several as an array. |
+| `sub` | The identity the session acts as. |
+| `tid` | The tenant the session belongs to. |
+| `sid`, `jti` | The session id (equal). |
+| `iat`, `nbf`, `exp` | Issue, not-before (equal to `iat`), and expiry times, in epoch seconds. |
+| `auth_time` | When the credential behind the session was authenticated. |
+| `kind` | `role` or `session-token`. |
+| `mfa` | Whether the session passed MFA. |
+| `role`, `trust`, `src_tid` | Role sessions: the role, the trust, and the source tenant. |
+| `session_name`, `source_identity` | When set at issuance. |
+| `idp`, `idp_sub` | Web-identity sessions: the OIDC provider id and the verified external subject. |
+
+Tags, policies, grant authority ids, the source session id, and hashes are never included. Read tags online
+through `sts.getCallerIdentity`.
+
+## Options
+
+`sts` in the server options controls temporary credentials. See
+[temporary credentials](/docs/operations/deployment/configuration#temporary-credentials) for the full reference.
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `sts.maxRoleSessionSeconds` | `number` | `3600` | Ceiling for role sessions, 900 to 43200. Trusts can only lower it. |
+| `sts.maxSessionTokenSeconds` | `number` | `43200` | Ceiling for session tokens, 900 to 129600. |
+| `sts.maxSessionTokensPerIdentity` | `number` | `50` | Live session tokens per identity, 1 to 1000. |
+| `sts.jwt.signingKeys` | `JWK[]` | none (JWTs off) | 1 to 10 private Ed25519/EdDSA or P-256/ES256 JWKs with unique `kid`s. |
+| `sts.jwt.activeKeyId` | `string` | the first signing key | The `kid` new tokens are signed with. |
+| `sts.jwt.verificationKeys` | `JWK[]` | none | 0 to 10 public-only retired keys that still verify. |
+| `sts.jwt.issuer` | `string` | `${baseURL.origin}${basePath}` | The `iss` claim. |
+| `sts.jwt.audiences` | `string[]` | the issuer | Audiences tokens may name; the issuer is always included. |
+| `sts.jwt.maxLifetimeSeconds` | `number` | `3600` | Longest JWT, 300 to 43200. |
+| `sts.webIdentity.enabled` | `boolean` | `false` | Turns web-identity federation on. |
+| `sts.webIdentity.allowedIssuers` | `string[]` | any https issuer | Issuers tenants may register, at most 100. |
+| `sts.webIdentity.maxExchangesPerWindow` | `number` | `600` | Exchanges per trust per rate-limit window. |
+| `sts.webIdentity.maxSessionsPerTrust` | `number` | `1000` | Live sessions per web-identity trust. |
+| `sts.webIdentity.jwksCacheSeconds` | `number` | `600` | Provider key cache, 60 to 3600. |
+| `sts.webIdentity.fetchTimeoutMs` | `number` | `5000` | Discovery and JWKS fetch timeout, 500 to 10000. |
+| `sts.webIdentity.maxJwksBytes` | `number` | `65536` | Largest discovery or JWKS response. |
+| `sts.webIdentity.fetchJson` | `(url: URL) => Promise<unknown>` | built-in guarded fetch | Replaces the fetch; bypasses the SSRF guard. |
+
+`createSessionTokenVerifier` accepts:
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `issuer` | `string` | required | The IAM issuer, exactly. |
+| `audience` | `string \| string[]` | required | Audiences this service accepts; a token must name one. |
+| `jwks` | `{ keys } \| URL \| string` | required | A key set or the JWKS URL (https except on localhost). |
+| `algorithms` | `('EdDSA' \| 'ES256')[]` | both | Accepted signature algorithms. |
+| `kinds` | `('role' \| 'session-token')[]` | both | Accepted session kinds. |
+| `clockToleranceSeconds` | `number` | `5` | Skew tolerated for `exp` and `nbf`, 0 to 60. |
+| `maxLifetimeSeconds` | `number` | `43200` | Longest accepted `exp - iat`. |
+| `cacheMaxAgeSeconds` | `number` | `600` | Remote JWKS cache lifetime. |
+| `cooldownSeconds` | `number` | `30` | Minimum time between refetches on an unknown `kid`. |
+| `timeoutMs` | `number` | `5000` | Remote JWKS fetch timeout. |
+| `now` | `() => number` | `Date.now` | The clock, in epoch milliseconds. |
+
+## Schema
+
+| Collection | Key fields | Purpose |
+| --- | --- | --- |
+| `sessions` | `kind`, `tokenHash`, `identityId`, `tenantId`, `expiresAt`, `mfa`, `sourceSessionId`, `policy`, `sourcePolicy`, `sessionName`, `format`, `audience`, `roleId`, `trustId`, `webIdentity` | Every credential, opaque or JWT. A JWT row stores the hash of the JWT like any token. |
+| `trusts` | `kind`, `roleId`, `sourceIdentityId` (for a web-identity trust, the `serviceAccountId` it was created with), `providerId`, `conditions`, `tagClaims`, `maxSessionSeconds`, `revoked`, `authorityId`, `sessionsRevokedBefore` | Identity and web-identity trusts. |
+| `oidcProviders` | `issuer`, `audiences`, `jwks` or `jwksUri`, `replayProtection`, `enabled`, `sessionsRevokedBefore` | External token issuers a tenant accepts. |
+| `webIdentityReplays` | keyed by the token's `jti` or content hash, per provider | Single-use redemption records, swept after the token's expiry. |
+
+## Errors
+
+| Code | When |
+| --- | --- |
+| [`CREDENTIAL_CHAINING_DISABLED`](/docs/reference/errors#credential_chaining_disabled) | A role session or session token tried to mint a session token. |
+| [`ROLE_CHAINING_DISABLED`](/docs/reference/errors#role_chaining_disabled) | A role session tried to assume a role. |
+| [`IMPERSONATION_RESTRICTED`](/docs/reference/errors#impersonation_restricted) | A "view as" session tried to mint a token or assume a role. |
+| [`MFA_NOT_ENROLLED`](/docs/reference/errors#mfa_not_enrolled) | `mfaCode` from an API key, or from a person without an authenticator. |
+| [`INVALID_MFA`](/docs/reference/errors#invalid_mfa) | A wrong or replayed `mfaCode`. |
+| [`FEATURE_DISABLED`](/docs/reference/errors#feature_disabled) | `format: 'jwt'` without `sts.jwt`, or a web-identity exchange with the feature off. |
+| [`LIMIT_EXCEEDED`](/docs/reference/errors#limit_exceeded) | Too many live session tokens for the identity, or live sessions for a web trust. |
+| [`INVALID_INPUT`](/docs/reference/errors#invalid_input) | A duration, session name, format, or audience out of bounds. |
+| [`ACCESS_DENIED`](/docs/reference/errors#access_denied) | Missing `iam:session-tokens:create`, or an audience the credential may not obtain. |
+| [`WEB_IDENTITY_REJECTED`](/docs/reference/errors#web_identity_rejected) | Any web-identity refusal, before the token matched a live trust, that depends on the token or on stored state. |
+| [`WEAK_TRUST_CONDITIONS`](/docs/reference/errors#weak_trust_conditions) | A web-identity trust whose conditions do not pin `token.sub`. |
+| [`RECENT_AUTH_REQUIRED`](/docs/reference/errors#recent_auth_required) | A temporary credential used for an operation that needs recent authentication. |
+| [`UNAUTHENTICATED`](/docs/reference/errors#unauthenticated) | An invalid, expired, revoked, or wrongly prefixed token. |
+| [`INVALID_CONFIG`](/docs/reference/errors#invalid_config) | At startup: an invalid `sts` setting or signing key. |
+
+`SessionTokenError` from `better-iam/session-tokens` is not an API error: it is thrown by the offline verifier with
+`code: 'INVALID_SESSION_TOKEN'` and status 401.
+
+## Next steps
+
+<Cards>
+  <Card icon={<KeySquare />} title="API keys and service accounts" href="/docs/authentication/api-keys">
+    The long-lived credential session tokens are often minted from.
+  </Card>
+  <Card icon={<Hourglass />} title="Temporary access" href="/docs/authorization/temporary-access">
+    Role sessions, trusts, and time-boxed grants.
+  </Card>
+  <Card icon={<MonitorSmartphone />} title="Sessions" href="/docs/authentication/sessions">
+    Lifetimes, idle timeouts, and revocation for sign-in sessions.
+  </Card>
+  <Card icon={<ScrollText />} title="sts API" href="/docs/reference/api/sts">
+    Every sts method with its signature.
+  </Card>
+</Cards>

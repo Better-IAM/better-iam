@@ -1,0 +1,249 @@
+---
+title: Docs MCP server
+metaTitle: Better IAM docs MCP server for Claude, Cursor, and VS Code
+description: Connect Claude Code, Claude Desktop, Cursor, VS Code, or any MCP client to the Better IAM docs MCP server at /api/mcp to search pages and look up API methods, exports, and error codes.
+icon: Plug
+sources:
+  - apps/docs/app/api/mcp/route.ts
+  - apps/docs/lib/search.ts
+  - apps/docs/lib/source.ts
+---
+
+The docs MCP server lets an AI coding assistant search and read these docs while it writes code. Instead of
+recalling an `iam.api` method from training data, the assistant calls `lookup_api_method` and gets the signature,
+HTTP route, and behaviour of the version the docs were built from.
+
+The server speaks the [Model Context Protocol](https://modelcontextprotocol.io) over Streamable HTTP at
+`https://better-iam.com/api/mcp`. It is read-only, needs no sign-in, and keeps no session between requests.
+
+<Callout type="info" title="Not the same as protecting your own MCP server">
+  This page is about reading the docs. To add Better IAM authorization to an MCP server you build, see
+  [MCP servers](/docs/features/mcp-server) and [Secure an MCP server](/docs/guides/secure-an-mcp-server).
+</Callout>
+
+## Setup
+
+<Steps>
+<Step>
+
+### Choose the address
+
+| Docs served from | MCP URL |
+| --- | --- |
+| The public site | `https://better-iam.com/api/mcp` |
+| Your machine (`pnpm --filter @better-iam/docs dev`) | `http://localhost:4000/api/mcp` |
+| Your own deployment of `apps/docs` | `<your docs origin>/api/mcp` |
+
+</Step>
+<Step>
+
+### Add the server to your client
+
+<Tabs items={['Claude Code', 'Claude Desktop', 'Cursor', 'VS Code', 'Other clients']} groupId="mcp-client" persist>
+<Tab value="Claude Code">
+
+Add the server for yourself:
+
+```bash
+claude mcp add --transport http better-iam-docs https://better-iam.com/api/mcp
+```
+
+To share it with everyone who works in the repository, add it at project scope, which writes `.mcp.json` at the
+repository root:
+
+```bash
+claude mcp add --transport http --scope project better-iam-docs https://better-iam.com/api/mcp
+```
+
+```json title=".mcp.json"
+{
+  "mcpServers": {
+    "better-iam-docs": { "type": "http", "url": "https://better-iam.com/api/mcp" }
+  }
+}
+```
+
+</Tab>
+<Tab value="Claude Desktop">
+
+Add it as a custom connector: open **Settings**, then **Connectors**, choose **Add custom connector**, and enter
+the name `better-iam-docs` and the URL `https://better-iam.com/api/mcp`. No authentication settings are needed.
+
+If your version of Claude Desktop only reads local servers from `claude_desktop_config.json`, bridge the remote
+server through the `mcp-remote` package instead:
+
+```json title="claude_desktop_config.json"
+{
+  "mcpServers": {
+    "better-iam-docs": {
+      "command": "npx",
+      "args": ["-y", "mcp-remote", "https://better-iam.com/api/mcp"]
+    }
+  }
+}
+```
+
+Restart Claude Desktop after editing the file.
+
+</Tab>
+<Tab value="Cursor">
+
+Add the server to the project (`.cursor/mcp.json`) or to every project (`~/.cursor/mcp.json`):
+
+```json title=".cursor/mcp.json"
+{
+  "mcpServers": {
+    "better-iam-docs": { "url": "https://better-iam.com/api/mcp" }
+  }
+}
+```
+
+</Tab>
+<Tab value="VS Code">
+
+Add the server to the workspace, then start it from the MCP view or the editor's prompt. Agent mode in Copilot Chat
+can then call its tools.
+
+```json title=".vscode/mcp.json"
+{
+  "servers": {
+    "better-iam-docs": { "type": "http", "url": "https://better-iam.com/api/mcp" }
+  }
+}
+```
+
+</Tab>
+<Tab value="Other clients">
+
+Any client that supports remote MCP servers over Streamable HTTP can connect: give it the URL
+`https://better-iam.com/api/mcp` and no credentials. Clients that only start local (stdio) servers can use the
+`mcp-remote` bridge shown in the Claude Desktop tab.
+
+</Tab>
+</Tabs>
+
+</Step>
+<Step>
+
+### Check the connection
+
+Ask the assistant a question only the docs answer, for example:
+
+```text
+Use the better-iam-docs MCP server: what does iam.api.bindings.create take, and which HTTP route serves it?
+```
+
+The answer should quote `POST /api/iam/bindings/create`. To inspect the server without an assistant, run the MCP
+Inspector, choose the Streamable HTTP transport, and connect to the URL:
+
+```bash
+npx @modelcontextprotocol/inspector
+```
+
+</Step>
+</Steps>
+
+## Tools
+
+The server registers six tools. Its `instructions` tell the assistant when to use `search`, `get_page`, and the
+three lookup tools.
+
+| Tool | Input | Returns |
+| --- | --- | --- |
+| `search` | `query` (string), optional `locale` | Matching pages, headings, and text as JSON, each with its `url`, `type` (`page`, `heading`, or `text`), and `content` |
+| `list_pages` | none | Every page with its title, URL, and description, grouped by sidebar section |
+| `get_page` | `url` (string) | One page as Markdown |
+| `lookup_api_method` | `method` (string) | The signature, HTTP route, and curated description of one server API method |
+| `lookup_export` | `name` (string) | What a package export does, with its parameters and every entry point that exports it |
+| `lookup_error_code` | `code` (string) | What an `IamError` code means, its HTTP statuses, example messages, and how to handle it |
+
+### search
+
+Full-text search over every page, the same index as the search dialog on the site. Use it when you know what you
+want to do but not which page covers it, for example `"temporary access expiring binding"`. Each result's `url` can
+be passed to `get_page` (drop any `#heading` fragment).
+
+### list_pages
+
+Lists every page in sidebar order, with its URL and description. The URLs are site paths such as
+`/docs/authorization/roles`, which is the form `get_page` accepts.
+
+### get_page
+
+Returns one page as Markdown, the same text as `/docs/<page>.md` (see
+[Markdown for one page](/docs/ai/llms-txt#markdown-for-one-page)). Pass the path, for example
+`/docs/authorization/policies`, without `.md`. An unknown path returns an error result `page not found: <url>`.
+
+### lookup_api_method
+
+Returns one `iam.api` method:
+
+- the curated description of what it does, the permission it checks, and the errors it throws;
+- its HTTP route under `/api/iam` and whether it needs a credential, or that it is not routed and runs only in
+  server code;
+- its TypeScript signature;
+- a link to its section in the [API reference](/docs/reference/api).
+
+The input is `group.method`, for example `groups.addMember`. A leading `iam.api.` or `client.` is ignored, and
+matching is case-insensitive. An unknown group returns the list of groups, and an unknown method returns the
+methods of its group, so an assistant can correct itself.
+
+### lookup_export
+
+Explains a function, hook, component, class, or constant that a package exports. The input is the export name,
+optionally after its package: `useSession`, `@better-iam/react useSession`, or `better-iam/react#useSession`. A
+package name also covers its other entry points, so `@better-iam/next useSession` finds the export of
+`@better-iam/next/client`. When several entry points export the name, each one is listed.
+
+### lookup_error_code
+
+Explains an `IamError` code such as `ACCESS_DENIED` or `RATE_LIMITED`: its HTTP status, what it means, how to handle
+it, and example messages, with a link to the [error reference](/docs/reference/errors). Matching is
+case-insensitive.
+
+## Use it well
+
+- Ask for lookups explicitly at first ("look up every `iam.api` call you use with `lookup_api_method`"); most
+  assistants then keep using the tools for the rest of the session.
+- Pair the server with the [agent skill](/docs/ai/agent-skills): the skill gives the setup order and rules up front,
+  and the server answers the exact questions that come up while coding.
+- Add a line to your repository's agent instructions so every session uses it; see
+  [Prompts and AGENTS.md](/docs/ai/prompts#agentsmd-block).
+
+## Troubleshooting
+
+<Accordions>
+<Accordion title="The client cannot connect">
+
+Open `https://better-iam.com/llms.txt` in a browser to confirm the site is reachable from your network. Check that
+the client is configured for HTTP (Streamable HTTP), not stdio or SSE. For a local docs server, start it first with
+`pnpm --filter @better-iam/docs dev` and use `http://localhost:4000/api/mcp`.
+
+</Accordion>
+<Accordion title="get_page returns page not found">
+
+Pass the site path exactly as `list_pages` or `search` returns it, starting with `/docs/` and without `.md`, a
+trailing slash, or a `#fragment`.
+
+</Accordion>
+<Accordion title="An answer does not match my installed version">
+
+The server answers for the version the docs were built from. Compare with the TypeScript types of your installed
+package, and see [Upgrade](/docs/guides/upgrade) for changes between versions.
+
+</Accordion>
+</Accordions>
+
+## Next steps
+
+<Cards>
+  <Card title="Agent skills" href="/docs/ai/agent-skills">
+    Install the Better IAM skill alongside the MCP server.
+  </Card>
+  <Card title="Prompts and AGENTS.md" href="/docs/ai/prompts">
+    Prompts that tell an assistant to use these tools.
+  </Card>
+  <Card title="llms.txt" href="/docs/ai/llms-txt">
+    The same content as plain-text files, for tools without MCP.
+  </Card>
+</Cards>

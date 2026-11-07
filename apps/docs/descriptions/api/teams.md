@@ -43,7 +43,7 @@ read it with `get` and `listMembers`.
 
 ## Birthright packages
 
-[Access package rules](/docs/guides/privileged-access/automatic-assignment) may test `identity.teams`: the team IDs a
+[Access package rules](/docs/features/privileged-access/automatic-assignment) may test `identity.teams`: the team IDs a
 person belongs to and those above them (a membership team sync copied from a group counts only through a group
 membership no package created). The membership calls here re-evaluate the rules for the people they touch once they
 commit, so someone added to a team gets its birthright packages at once and loses them when they leave.

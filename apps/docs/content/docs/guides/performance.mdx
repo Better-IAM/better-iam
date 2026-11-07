@@ -1,0 +1,413 @@
+---
+title: "Optimize performance"
+description: "Measure where Better IAM spends time, then keep authorization checks, storage lookups, and background work fast with batching, query plans, indexes, retention, and offline token verification."
+icon: Zap
+packages: ['@better-iam/server', '@better-iam/core', '@better-iam/adapter-postgres', '@better-iam/adapter-sqlite', '@better-iam/adapter-libsql']
+sources:
+  - docs/architecture.md
+  - docs/deployment.md
+  - packages/core/src/storage.ts
+  - packages/core/src/sql.ts
+  - packages/core/src/index.ts
+  - packages/core/src/instrument.ts
+  - packages/adapter-postgres/src/index.ts
+  - packages/adapter-sqlite/src/index.ts
+  - packages/adapter-libsql/src/index.ts
+  - packages/server/src/operations.ts
+  - packages/server/src/usage.ts
+  - packages/server/src/metrics.ts
+  - packages/server/src/http.ts
+  - packages/auth/src/service/base.ts
+---
+
+import { Activity, CalendarClock, Database, Funnel, ListFilter, ShieldCheck } from '@/lib/icons';
+
+Better IAM answers every authorization check from the current state in your database, with no permission cache, so
+its speed depends on how many transactions you ask it to run and how quickly your database answers them. This guide
+shows how to measure that, then how to cut the work down. You will:
+
+- measure IAM latency with spans, Prometheus metrics, and an instrumented store;
+- keep storage lookups on their indexes and keep tables small with the retention jobs;
+- replace loops of `authorize` calls with one `authorizeMany`, `listAccessible`, or `planResources` call;
+- let downstream services verify callers without calling IAM;
+- keep email, webhooks, and cleanup off the request path;
+- tune the adapter's lock and pool settings.
+
+Better IAM has no decision cache to turn on. The only way to skip IAM on a request is a signed token that a
+downstream service verifies offline (step 5), and that trades away revocation until the token expires.
+
+## Prerequisites
+
+- A running Better IAM instance on PostgreSQL, SQLite, or libSQL. See [Databases](/docs/databases).
+- The [scheduled jobs](/docs/operations/jobs) in place, or a plan to add them.
+- Familiarity with [`iam.authorize` and `iam.require`](/docs/authorization/queries).
+
+## How a request spends time
+
+Read this section first: it explains why the steps below help.
+
+| Mechanism | What it means for performance |
+| --- | --- |
+| Serialized transactions | Every IAM transaction, reads included, takes one lock on the database: a transaction-scoped advisory lock on PostgreSQL (shared by every instance), `BEGIN IMMEDIATE` on SQLite and local libSQL. Authorization checks, session validation, and writes all run inside such a transaction, so IAM transactions on one database run one at a time. Short transactions and few round trips matter more than CPU. |
+| No permission cache | Token validity, roles, and policies are read on every use, so a revocation applies on the next request everywhere. There is nothing to warm or invalidate. |
+| Query pushdown | `find()` filters become typed SQL conditions (up to 24 per query), and results are paged in SQL when the whole filter can be expressed there. Array and IP conditions, and values a database cannot compare, are filtered in memory. |
+| Indexed lookup fields | Hot fields (`INDEXED_FIELDS` in `better-iam/core`: session token hashes, identity, group, and role IDs, email addresses, OAuth artifact hashes, and more) have indexes: one partial expression index per field on SQLite and libSQL, one `jsonb_path_ops` GIN index over the document on PostgreSQL. |
+| Ordered reads | Audit listings, exports, and pruning page by `timestamp` or `sequence` in SQL (`findOrdered`), so their cost follows the page size, not the length of the log. |
+| Keyset paging | Bulk walks (snapshots, the retention sweep) page with an `after` cursor on the record ID, so each page costs the same however deep it is. |
+| Throttled session touches | Validating a session writes its `lastSeenAt` at most once a minute, or once per tenth of the idle timeout when that is shorter. |
+| Short bounded caches | Each process reuses a tenant's network blocks for five seconds, and spend-budget standings for up to 30 seconds. No authorization decision, token, role, or policy is cached across requests. |
+| Buffered usage counting | With `accessUsage`, used actions are counted in memory and written in batches (every minute by default, or at 10000 buffered pairs). |
+| Outbox | Email, SMS, webhooks, and event subscribers never run inside a request. They wait in the database until a job delivers them. |
+
+See [Data and consistency](/docs/concepts/data-and-consistency) for why the design favors consistent revocation over
+write throughput.
+
+<Steps>
+<Step>
+
+### Measure before you change anything
+
+Three tools report where time goes. Spans time each unit of work, the metrics collector aggregates them, and an
+instrumented store times each storage call.
+
+```ts title="lib/iam.ts"
+import { betterIam } from 'better-iam';
+import { instrumentStore } from 'better-iam/core';
+import { postgresAdapter } from 'better-iam/adapter-postgres';
+
+const database = instrumentStore(
+  postgresAdapter({ connectionString: process.env.DATABASE_URL! }),
+  (call) => {
+    // call: { method, collection, filterKeys, page, records, durationMs, inTransaction, failed }
+    if (call.durationMs > 50) console.warn('slow IAM storage call', call);
+  },
+);
+
+export const iam = betterIam({
+  database,
+  secret: process.env.BETTER_IAM_SECRET!,
+  baseURL: 'https://identity.example.com',
+  observability: {
+    // Prometheus counters and histograms, scraped at GET /api/iam/metrics.
+    metrics: { bearerToken: process.env.METRICS_TOKEN },
+    onSpan(span) {
+      // kind: 'operation' | 'authorize' | 'authorizeMany' | 'listAccessible' | 'auth' | 'http'
+      if (span.durationMs > 250) console.warn('slow IAM span', span.kind, span.name, span.durationMs);
+    },
+  },
+});
+```
+
+- `better_iam_span_duration_seconds` is a histogram by `kind`, and `better_iam_spans_total` counts spans by `kind`,
+  `name`, `outcome`, and `code`. See [Prometheus metrics](/docs/operations/observability#prometheus-metrics).
+- `instrumentStore` reports filter keys, never values, so its output is safe to log. It reports a keyset cursor as
+  `page.keyset: true`. See [Measuring](/docs/operations/deployment/database#measuring).
+- In the repository, `pnpm bench:scale` seeds `BENCH_IDENTITIES` identities (default 5000) and prints per-operation
+  latency and storage calls over `BENCH_ITERATIONS` runs (default 40).
+
+Many storage calls per span usually means a loop that one batch call can replace (step 3). A few slow calls usually
+means a missing migration, a stale PostgreSQL index, or a table the retention jobs should have trimmed (step 2).
+
+</Step>
+<Step>
+
+### Keep storage on its indexes and its tables small
+
+The indexes come from migrations, and the retention jobs keep the indexed tables from growing with traffic.
+
+- **Apply every migration.** Lookup indexes ship as schema steps (`0002_query_indexes` through
+  `0006_protection_indexes`). `better-iam doctor` reports `schema-behind` when one is missing. See
+  [Migrations](/docs/operations/deployment/database#migrations).
+- **Vacuum after bulk imports on PostgreSQL.** Rows written after the GIN index exists wait in its pending list until
+  a vacuum merges them. After an import or a `store-import`, run `VACUUM ANALYZE iam_records`.
+- **Run `purge` and `sweep`.** Expired sessions, OAuth and SAML artifacts, and delivered outbox rows stay in their
+  collections until the sweep deletes them, and `dispatchOutbox` reads the whole outbox. See
+  [Retention sweep](/docs/operations/jobs#retention-sweep).
+- **Keep transactions short in your own code.** Never make network calls inside `iam.store.transaction()` or a
+  plugin transaction: other IAM transactions wait for the lock meanwhile.
+- **Know the libSQL write cost.** `@libsql/client` compiles each statement on every call, so local libSQL writes
+  cost more than the SQLite adapter's, which caches prepared statements.
+
+```sh
+better-iam migrate --config better-iam.config.mjs
+psql "$DATABASE_URL" -c 'VACUUM ANALYZE iam_records'
+better-iam sweep --config better-iam.config.mjs
+```
+
+</Step>
+<Step>
+
+### Batch authorization checks
+
+Each `iam.authorize` call is its own transaction, so ten checks wait for the lock ten times. Batch calls prepare the
+caller's state once and answer everything in one transaction.
+
+```ts title="app/documents/toolbar.ts"
+import { iam } from '@/lib/iam';
+
+export async function toolbarActions(headers: Headers, tenantId: string, documentId: string) {
+  const resource = { type: 'document', id: documentId };
+  // One transaction, one consistent view of the configuration, up to 50 checks.
+  const { results } = await iam.authorizeMany({
+    headers,
+    tenantId,
+    checks: [
+      { action: 'documents:write', resource },
+      { action: 'documents:share', resource },
+      { action: 'documents:delete', resource },
+    ],
+  });
+  return Object.fromEntries(results.map((result) => [result.action, result.allowed]));
+}
+```
+
+| Instead of | Use | Limits |
+| --- | --- | --- |
+| `authorize` in a loop over buttons or rows you already loaded | `iam.authorizeMany` | 1 to 50 checks for one tenant; more is `INVALID_INPUT` |
+| `authorize` per registered resource to build a list | `iam.listAccessible` | Managed resource types only; `limit` up to 1000 per page |
+| Fetching rows, then `authorize` per row | `iam.planResources` and a compiled filter (step 4) | Any resource type |
+| `resources.register` in a loop | `iam.api.resources.registerMany` | Up to 100 resources per call |
+
+`listAccessible` loads the caller's grants and boundaries once and evaluates every registration of the type against
+them, so its cost does not multiply by the number of grants. Batch results are advisory: still call `iam.require`
+immediately before the protected operation. See [Batches and reverse queries](/docs/authorization/queries).
+
+**Route:** `POST /resources/registerMany`
+
+</Step>
+<Step>
+
+### Filter lists in your own database
+
+For a list page over your own table, ask for a query plan once and let your database do the filtering, sorting, and
+paging.
+
+```ts title="app/documents/list.ts"
+import { filterToSql } from 'better-iam/core';
+import { iam } from '@/lib/iam';
+import { db } from '@/lib/db';
+
+const columns: Record<string, string> = { id: 'd.id', ownerId: 'd.owner_id' };
+
+export async function readableDocuments(headers: Headers, tenantId: string) {
+  const plan = await iam.planResources({ headers, tenantId, action: 'documents:read', type: 'document' });
+  if (plan.kind === 'never') return [];
+  const where = filterToSql(plan.filter, {
+    dialect: 'postgres',
+    column: (field) => columns[field],
+    offset: 1, // $1 is the tenant
+  });
+  return db.query(`SELECT * FROM documents d WHERE d.tenant_id = $1 AND ${where.sql} LIMIT 50`, [
+    tenantId,
+    ...where.params,
+  ]);
+}
+```
+
+`planResources` needs no permission, is not audited, and runs once per page instead of once per row. A filter a target
+cannot express refuses with `UNSUPPORTED_FILTER`; then fall back to `authorizeMany` over candidate rows. See
+[Data filtering](/docs/authorization/data-filtering).
+
+**Route:** `POST /filters/plan`
+
+</Step>
+<Step>
+
+### Verify callers downstream without calling IAM
+
+Services behind your application do not need to ask IAM who is calling on every request. Two token types are signed
+by IAM and verified offline:
+
+| Token | Issued by | Verified with | Revocable before expiry |
+| --- | --- | --- | --- |
+| Stateless assertion (HS256) | `iam.api.assertions.issue` | `verifyAssertion` from `better-iam` with `iam.assertionKey()` | No; lifetime 10 seconds to one hour, five minutes by default |
+| Session JWT (EdDSA or ES256) | `iam.api.sts.getSessionToken` with `format: 'jwt'` (needs `sts.jwt`) | `createSessionTokenVerifier` from `better-iam/session-tokens`, keys from `GET /api/iam/.well-known/jwks.json` | No; at most `sts.jwt.maxLifetimeSeconds` (one hour by default) |
+
+```ts title="services/reports/auth.ts"
+import { verifyAssertion } from 'better-iam';
+
+// Holds only the derived key, never the deployment secret.
+export function caller(token: string) {
+  return verifyAssertion(token, { key: process.env.IAM_ASSERTION_KEY!, audience: 'reports' });
+}
+```
+
+The trade-off is revocation: a verified token stays valid until it expires, so keep lifetimes short. Use this for
+reads that tolerate that window, and keep `iam.require` for mutations. See
+[stateless assertions](/docs/guides/recipes/operations#call-a-downstream-service-with-a-stateless-assertion) and
+[Session tokens](/docs/authorization/temporary-access#session-tokens).
+
+**Route:** `POST /assertions/issue`
+
+</Step>
+<Step>
+
+### Keep slow work off the request path
+
+Nothing in a request waits on a mail provider, a webhook endpoint, or a cleanup pass. Make sure the jobs that do
+that work run often enough and in the right process.
+
+- Deliveries and event subscribers run only when `iam.auth.dispatchOutbox()` and `iam.events.dispatch()` run.
+  `dispatchOutbox(limit?)` sends up to `limit` messages per call (default 100, at most 1000), each claimed in its own
+  short transaction, so several workers never send the same message.
+- The retention sweep and audit archiving run in short batches (`sweepExpired` uses `batchSize`, 500 by default),
+  so each holds the lock briefly.
+- With `accessUsage`, counts are written in the background; call `iam.flushAccessUsage()` before shutdown.
+
+```ts title="worker.ts"
+import { iam } from './lib/iam';
+
+setInterval(async () => {
+  await iam.auth.dispatchOutbox(500);
+  await iam.events.dispatch();
+}, 60_000);
+
+process.on('SIGTERM', async () => {
+  await iam.flushAccessUsage();
+  process.exit(0);
+});
+```
+
+See [Scheduled jobs](/docs/operations/jobs) for every job and its cadence.
+
+</Step>
+<Step>
+
+### Page large reads
+
+Read big result sets in pages whose cost does not grow with depth.
+
+- `audit.export` follows the chain by `sequence`: start at `fromSequence`, follow `nextSequence`, up to 10000 events
+  per page.
+- `audit.list` takes `from` and `to` (epoch milliseconds). Narrow by time instead of using a deep `offset`.
+- List methods such as `identities.list` and `listAccessible` take `limit` and `offset`.
+- In plugin or adapter code, `store.find(collection, filter, { after, limit })` pages by record ID (keyset), and
+  `findOrdered(store, collection, filter, order)` from `better-iam/core` pages by a numeric field in SQL.
+
+```ts title="scripts/export-audit.ts"
+import { appendFile } from 'node:fs/promises';
+import { iam } from '../lib/iam';
+
+export async function exportAudit(credential: { token: string }, tenantId: string, file: string) {
+  let fromSequence: number | undefined = 1;
+  while (fromSequence !== undefined) {
+    const page = await iam.api.audit.export(credential, { tenantId, fromSequence, limit: 5000 });
+    if (page.count) await appendFile(file, `${page.body}\n`);
+    fromSequence = page.nextSequence;
+  }
+}
+```
+
+**Route:** `POST /audit/export`
+
+</Step>
+<Step>
+
+### Tune the adapter
+
+The adapter options decide how long a transaction waits for the lock before it fails with `STORAGE_BUSY` (503).
+
+```ts title="lib/database.ts"
+import { postgresAdapter } from 'better-iam/adapter-postgres';
+
+export const database = postgresAdapter({
+  connectionString: process.env.DATABASE_URL!,
+  poolSize: 10, // default 10
+  lockTimeoutMs: 5000, // default 5000: the wait for the IAM lock
+});
+```
+
+Put the database close to the application: every transaction holds the lock for at least its round trips. On SQLite,
+`durability: 'normal'` in WAL mode makes commits cheaper but can lose the last commits on power loss (never the
+database); keep `'full'` unless you accept that.
+
+</Step>
+</Steps>
+
+## Options
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `postgresAdapter({ poolSize })` | `number` | `10` | Connections in the PostgreSQL pool. |
+| `postgresAdapter({ lockTimeoutMs })` | `number` | `5000` | How long a transaction waits for the IAM advisory lock before `STORAGE_BUSY`. |
+| `sqliteAdapter({ busyTimeoutMs })` | `number` | `5000` | How long SQLite waits for the writer lock. |
+| `libsqlAdapter({ busyTimeoutMs })` | `number` | `5000` | How long local libSQL waits for the writer lock. |
+| `sqliteAdapter({ durability })` | `'full' \| 'normal'` | `'full'` | `normal` makes commits cheaper in WAL mode and can lose the last commits on power loss. |
+| `accessUsage.flushIntervalMs` | `number` | one minute | How often buffered usage is written (at least one second). |
+| `accessUsage.maxBuffered` | `number` | `10000` | Buffered identity and action pairs that trigger an early write. |
+| `observability.metrics.gauges` | `boolean` | `false` | Reads the outbox and session collections on each scrape. Leave it off on very large deployments. |
+| `authentication.rateLimits.limiter` | `RateLimiter` | counters in the IAM database | Moves rate-limit counters to a shared cache such as Redis; implement `consume()`, and `reset()` if `identities.unlock` should clear its counters. |
+
+## Verify it works
+
+- The `instrumentStore` callback reports fewer calls per request after you replace loops with batch calls, and the
+  slow-call log stays quiet.
+- `better_iam_span_duration_seconds` for `kind="authorize"` and `kind="http"` falls, and `better_iam_spans_total`
+  with `code="STORAGE_BUSY"` stays at zero.
+- `better-iam doctor --strict` reports no `schema-behind`, `sweep-backlog`, or `outbox-stalled` findings.
+
+## Troubleshooting
+
+<Accordions>
+<Accordion title="Requests fail with STORAGE_BUSY under load">
+
+Transactions waited longer than `lockTimeoutMs` (PostgreSQL) or `busyTimeoutMs` (SQLite, libSQL) for the lock, and
+the whole transaction rolled back. Look for long transactions first: large imports, `store-export` (which holds the
+lock until it finishes), or your own code making network calls inside a transaction. Then batch authorization
+checks, and raise the timeout only if the waits are legitimate. See [STORAGE_BUSY](/docs/reference/errors#storage_busy).
+
+</Accordion>
+<Accordion title="Lookups are slow right after an import on PostgreSQL">
+
+The GIN index has not merged the new rows yet. Run `VACUUM ANALYZE iam_records`. Autovacuum does this in normal
+operation.
+
+</Accordion>
+<Accordion title="The outbox job gets slower every week">
+
+Delivered and abandoned messages stay until `sweep` deletes them, and `dispatchOutbox` reads the whole outbox.
+Schedule `sweep` (see [Retention sweep](/docs/operations/jobs#retention-sweep)) and check `doctor` for
+`sweep-backlog`.
+
+</Accordion>
+<Accordion title="authorizeMany fails with INVALID_INPUT">
+
+It takes 1 to 50 checks. Split larger sets into several calls, or use `listAccessible` or `planResources` for lists.
+
+</Accordion>
+<Accordion title="listAccessible fails with INVALID_RESOURCE_TYPE">
+
+Only managed resource types (registered with IAM) can be listed. For application-owned types, use
+`planResources` with a compiled filter, or `authorizeMany` over IDs you already loaded.
+
+</Accordion>
+<Accordion title="Metrics scrapes are slow">
+
+With `gauges: true`, each scrape reads the outbox and session collections. Turn gauges off, and use `doctor` for
+backlog checks instead.
+
+</Accordion>
+</Accordions>
+
+## Next steps
+
+<Cards>
+  <Card icon={<ListFilter />} title="Batches and reverse queries" href="/docs/authorization/queries">
+    `authorizeMany`, `listAccessible`, and rendering UI from decisions.
+  </Card>
+  <Card icon={<Funnel />} title="Data filtering" href="/docs/authorization/data-filtering">
+    Query plans compiled to SQL, Prisma, or MongoDB.
+  </Card>
+  <Card icon={<Database />} title="Database operations" href="/docs/operations/deployment/database">
+    Migrations, durability, indexes, and backups.
+  </Card>
+  <Card icon={<Activity />} title="Observability" href="/docs/operations/observability">
+    Spans, metrics, and what to alert on.
+  </Card>
+  <Card icon={<CalendarClock />} title="Scheduled jobs" href="/docs/operations/jobs">
+    The background work that keeps requests fast.
+  </Card>
+  <Card icon={<ShieldCheck />} title="Production checklist" href="/docs/guides/production-checklist">
+    Everything else to confirm before launch.
+  </Card>
+</Cards>

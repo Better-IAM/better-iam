@@ -1,0 +1,563 @@
+---
+title: "Migrate from Auth.js"
+description: "Move users from an Auth.js (NextAuth.js) database to one Better IAM tenant with identities.createMany, carry over their Google and GitHub links and verified emails, and replace NextAuth in a Next.js app."
+icon: ArrowLeftRight
+packages: ['better-iam', '@better-iam/server', '@better-iam/oauth', '@better-iam/next', '@better-iam/client']
+sources:
+  - packages/server/src/api/identities.ts
+  - packages/server/src/api/tenants.ts
+  - packages/server/src/federation.ts
+  - packages/auth/src/service/base.ts
+  - packages/auth/src/service/passwordless.ts
+  - packages/oauth/src/client.ts
+  - packages/next/src/index.ts
+  - apps/docs/content/docs/guides/recipes/tenancy-and-limits.mdx
+---
+
+import { ArrowLeftRight, Globe, Inbox, Users, Waypoints, Workflow } from '@/lib/icons';
+
+This guide moves a Next.js application from [Auth.js](https://authjs.dev) (NextAuth.js) to Better IAM. Auth.js signs
+people in and stores their accounts through a database adapter; Better IAM does that too, and adds tenants, roles,
+and authorization decisions. Auth.js has no organizations, so the whole application becomes one Better IAM tenant.
+Because most Auth.js applications sign people in with Google, GitHub, or emailed links, the move is mostly about
+letting those people back in without friction. You will:
+
+- map Auth.js's adapter tables and providers to Better IAM concepts;
+- create one tenant for the application;
+- import everyone 100 at a time with `identities.createMany`, with their verified email status and links to their
+  Google and GitHub accounts, so provider users click the same button as before and land in their imported account;
+- replace `NextAuth()`, `auth()`, `signIn()`, and `useSession()` with Better IAM's Next.js helpers, then cut over.
+
+## How the concepts map
+
+| Auth.js | Better IAM | Notes |
+| --- | --- | --- |
+| `NextAuth({ providers, adapter })` | `betterIam({ ... })` plus `createOAuthLogin({ connections })` | Better IAM stores its own records; no adapter tables to manage. |
+| `users` table | Identity (`kind: 'user'`) in one tenant | Every identity belongs to a [tenant](/docs/concepts/tenants-and-identities); an app without organizations uses one. |
+| `accounts` row (`type: 'oauth'` or `'oidc'`) | An [OAuth connection](/docs/federation/oauth-sign-in) per provider, and a link created at import | `providerAccountId` becomes the link's subject. |
+| `sessions` table, or JWT sessions | Session | Not imported. Everyone signs in once after the switch. |
+| `verification_token` table | Short-lived challenges | Not imported. |
+| Email provider (magic links) | [Magic links and codes](/docs/authentication/passwordless) with `passwordlessEmail: true` | Same flow, built in. |
+| Credentials provider with your own password column | Password on the identity | Your hashes are not imported; see [Passwords](#passwords). |
+| `callbacks.session` / `callbacks.jwt` adding a role | [Roles](/docs/authorization/roles) and `iam.require` | Authorization moves from the session object to decisions. |
+| `auth()` | `iamNext.getSession()` / `iamNext.requireSession()` | |
+| `export { auth as middleware }` | `createIamMiddleware` from `better-iam/next/edge` | |
+| `SessionProvider` and `useSession()` from `next-auth/react` | `IamNextProvider` and `useSession()` from `better-iam/next/client` | |
+
+Auth.js providers map to Better IAM connection kinds:
+
+| Auth.js provider | Connection `kind` |
+| --- | --- |
+| Google | `google` |
+| GitHub | `github` |
+| Microsoft Entra ID | `microsoft` |
+| Any OpenID Connect provider (Okta, Auth0, Keycloak, and others) | `oidc` with its `issuer` |
+| An OAuth 2.0 provider without OpenID Connect | `oauth2` with endpoints and `mapProfile` |
+| Email (Resend, Nodemailer, and others) | No connection: `passwordlessEmail: true` |
+| Credentials | No connection: email and password sign-in (`auth.signIn`) |
+
+## What carries over
+
+| People who today | Import them? | How they continue |
+| --- | --- | --- |
+| Sign in with an emailed link | Yes | Sign in with a Better IAM magic link. |
+| Sign in with your Credentials form | Yes | Sign in with a magic link, or set a password from an administrator's reset link. |
+| Sign in with Google, GitHub, or another provider | Yes, with a link to that provider's connection | Sign in through the same provider. The link finds their imported account, with its role and `legacyId`. |
+
+Better IAM never matches accounts by email, so the import creates each link explicitly from the `accounts` table:
+the connection, the provider's issuer, and `providerAccountId` as the subject. An address Auth.js recorded as
+verified (`users."emailVerified"` set) is imported as verified.
+
+## Prerequisites
+
+- Read access to the Auth.js database. The examples use PostgreSQL through the `pg` package and the table names of
+  the `@auth/pg-adapter` schema (`users`, `accounts`, with camelCase columns such as `"userId"`). Other adapters name
+  them differently:
+
+  | Adapter | Users table | Accounts table |
+  | --- | --- | --- |
+  | `@auth/pg-adapter` | `users` | `accounts` |
+  | `@auth/prisma-adapter` (default models) | `"User"` | `"Account"` |
+  | `@auth/drizzle-adapter` (default schema) | `"user"` | `"account"` |
+
+  If you use JWT sessions without an adapter, Auth.js stores no users at all: skip the import, and everyone enrolls
+  on first sign-in.
+- Better IAM installed, migrated, and bootstrapped, following [Installation](/docs/installation) and
+  [Quickstart](/docs/quickstart), with `@better-iam/next` set up as in [Next.js](/docs/integrations/nextjs). You
+  need the root tenant's ID from `bootstrap`.
+- An email transport in `authentication.sendEmail`, for magic links and reset links.
+
+## Migrate
+
+<Steps>
+<Step>
+
+### Count what you are moving
+
+```sql title="inventory.sql"
+SELECT count(*) AS users FROM users;
+SELECT provider, type, count(*) AS accounts FROM accounts GROUP BY provider, type ORDER BY 3 DESC;
+SELECT count(*) AS provider_users FROM users u WHERE EXISTS (SELECT 1 FROM accounts a WHERE a."userId" = u.id);
+SELECT count(*) AS import_users FROM users u WHERE NOT EXISTS (SELECT 1 FROM accounts a WHERE a."userId" = u.id);
+```
+
+The script imports both groups: `provider_users` with links to their providers, and `import_users` (people with no
+linked provider account, who used emailed links or your Credentials form) without. Each `provider` value needs a
+connection in the next step; accounts of a provider without one get no link.
+
+</Step>
+<Step>
+
+### Configure Better IAM
+
+Turn on magic links, declare an identity attribute for the Auth.js user ID, and add a connection for each provider.
+
+```ts title="lib/iam.ts"
+import { betterIam } from 'better-iam';
+import { postgresAdapter } from 'better-iam/adapter-postgres';
+import { createOAuthLogin } from 'better-iam/oauth';
+import { sendMail } from './mail';
+
+export const iam = betterIam({
+  database: postgresAdapter({ connectionString: process.env.DATABASE_URL! }),
+  secret: process.env.BETTER_IAM_SECRET!,
+  baseURL: process.env.BETTER_IAM_BASE_URL!,
+  authentication: {
+    passwordlessEmail: true, // replaces the Auth.js Email provider
+    sendEmail: async (message) => sendMail(message),
+  },
+  permissions: {
+    identityAttributes: { legacyId: 'string' }, // the Auth.js users.id, as principal.legacyId
+    resourceTypes: {
+      post: { actions: ['posts:read', 'posts:write'] },
+    },
+  },
+});
+
+const tenantId = process.env.IAM_TENANT_ID; // set after the next step
+const origin = 'https://app.example.com';
+
+// createOAuthLogin refuses a connection without a tenant ID, so the connections start once the tenant exists.
+if (tenantId)
+  iam.useProtocol(
+    createOAuthLogin({
+      ...iam.protocolHost,
+      basePath: '/api/iam/oauth/login',
+      trustedOrigins: [origin],
+      connections: [
+        {
+          id: 'google',
+          tenantId,
+          kind: 'google',
+          clientId: process.env.AUTH_GOOGLE_ID!,
+          clientSecret: process.env.AUTH_GOOGLE_SECRET!,
+          redirectUri: `${origin}/api/iam/oauth/google/callback`,
+        },
+        {
+          id: 'github',
+          tenantId,
+          kind: 'github',
+          clientId: process.env.AUTH_GITHUB_ID!,
+          clientSecret: process.env.AUTH_GITHUB_SECRET!,
+          redirectUri: `${origin}/api/iam/oauth/github/callback`,
+        },
+      ],
+    }),
+  );
+```
+
+You can keep the OAuth apps you registered for Auth.js. Add the new callback URLs
+(`https://app.example.com/api/iam/oauth/google/callback` and `.../github/callback`) to each app's allowed redirect
+URIs at Google and GitHub; the Auth.js callbacks (`/api/auth/callback/google`) can stay until you cut over.
+
+Each connection's `id` (`google`, `github`) is the `providerId` the import links people to. For someone with no
+link, such as a person who signs up after the last import run, the first sign-in through a provider creates an
+identity only when the provider reports a verified email: Google's `email_verified`, or GitHub's primary verified
+address. Otherwise it fails with `VERIFIED_EMAIL_REQUIRED`.
+
+</Step>
+<Step>
+
+### Create the application's tenant
+
+People sign in to a tenant, never to the root. Create one organization tenant for the whole application, with your
+own address as its owner. `tenants.create` needs a root sign-in from the last five minutes, and `activate: true`,
+which only a root principal may pass, makes the tenant `active` at once with your owner account, without an
+invitation.
+
+```bash
+npx better-iam login --config better-iam.config.mjs --tenant <root-tenant-id> --email root@example.com
+export BETTER_IAM_TOKEN=$(npx better-iam token --config better-iam.config.mjs)
+export ROOT_TENANT_ID=<root-tenant-id>
+export AUTHJS_DATABASE_URL=postgres://...
+```
+
+```ts title="scripts/migration/01-tenant.ts"
+import { iam } from '../../lib/iam';
+
+const admin = { token: process.env.BETTER_IAM_TOKEN! };
+
+const { tenant } = await iam.api.tenants.create(admin, {
+  parentId: process.env.ROOT_TENANT_ID!,
+  type: 'organization',
+  name: 'Example App',
+  slug: 'app',
+  ownerEmail: 'you@example.com',
+  activate: true, // active now; the owner's account is created without an invitation
+  ownerName: 'You',
+});
+console.log('IAM_TENANT_ID =', tenant.id);
+```
+
+**Route:** `POST /tenants/create`
+
+Set `IAM_TENANT_ID` in the application's environment. You sign in as the owner with a magic link, or with Google or
+GitHub once you link your account with `identities.linkProvider` (as in the import below, with your own
+`providerAccountId`). Without `activate`, `tenants.create` emails you an invitation instead, and the tenant stays
+`pending` until you accept it.
+
+</Step>
+<Step>
+
+### Import people
+
+The script adds an `iam_identity_id` column to the Auth.js `users` table, then creates every user, 100 at a time,
+with their Auth.js ID as `legacyId`, their verified email status, a link for each provider account that has a
+connection, and no password. People with an `admin` value in a `role` column you added to `users` get an Admin role;
+remove that part if you have no such column.
+
+```ts title="scripts/migration/02-import.ts"
+import pg from 'pg';
+import { iam } from '../../lib/iam';
+
+const source = new pg.Pool({ connectionString: process.env.AUTHJS_DATABASE_URL });
+const admin = { token: process.env.BETTER_IAM_TOKEN! };
+const tenantId = process.env.IAM_TENANT_ID!;
+const ownerEmail = 'you@example.com'; // the tenant owner already exists: tenants.create created them
+
+/**
+ * Auth.js accounts.provider -> the Better IAM connection that replaces it (the connections in lib/iam.ts).
+ * providerId is the connection's id; issuer is the provider's `iss`, exactly. accounts."providerAccountId" is the
+ * subject: Google's `sub`, or the numeric GitHub user ID.
+ */
+const connections: Record<string, { providerId: string; issuer: string }> = {
+  google: { providerId: 'google', issuer: 'https://accounts.google.com' },
+  github: { providerId: 'github', issuer: 'https://github.com' },
+};
+
+const roles = await iam.api.roles.list(admin, { tenantId });
+const memberRole =
+  roles.find((role) => role.name === 'Member') ??
+  (await iam.api.roles.create(admin, { tenantId, name: 'Member', permissions: ['posts:read', 'posts:write'] }));
+const adminRole =
+  roles.find((role) => role.name === 'Admin') ??
+  (await iam.api.roles.create(admin, {
+    tenantId,
+    name: 'Admin',
+    permissions: ['posts:read', 'posts:write', 'iam:identities:read', 'iam:bindings:create', 'iam:bindings:read'],
+  }));
+
+await source.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS iam_identity_id text UNIQUE');
+
+const { rows: users } = await source.query<{
+  id: string;
+  name: string | null;
+  email: string;
+  verified: boolean;
+  role: string | null;
+  accounts: Array<{ provider: string; providerAccountId: string }>;
+}>(`
+  SELECT u.id::text AS id, u.name, u.email, u."emailVerified" IS NOT NULL AS verified, u.role,
+         COALESCE((SELECT json_agg(json_build_object('provider', a.provider,
+                                                     'providerAccountId', a."providerAccountId"))
+                     FROM accounts a WHERE a."userId" = u.id), '[]') AS accounts
+    FROM users u
+   WHERE u.email IS NOT NULL
+     AND u.iam_identity_id IS NULL
+     AND lower(u.email) <> lower($1)
+   ORDER BY u.id`, [ownerEmail]);
+
+for (let start = 0; start < users.length; start += 100) {
+  const batch = users.slice(start, start + 100);
+  const { identities } = await iam.api.identities.createMany(admin, {
+    tenantId,
+    identities: batch.map((user) => ({
+      email: user.email,
+      name: user.name?.trim() || user.email.split('@')[0]!,
+      emailVerified: user.verified,
+      providers: user.accounts.flatMap((account) => {
+        const connection = connections[account.provider];
+        return connection ? [{ ...connection, subject: account.providerAccountId }] : [];
+      }),
+      attributes: { legacyId: user.id },
+      roleIds: [user.role === 'admin' ? adminRole.id : memberRole.id],
+    })),
+  });
+  // identities[i] replaces batch[i].
+  for (const [i, identity] of identities.entries())
+    await source.query('UPDATE users SET iam_identity_id = $1 WHERE id::text = $2', [identity.id, batch[i]!.id]);
+  console.log(`${start + batch.length}/${users.length}`);
+}
+
+await source.end();
+```
+
+**Route:** `POST /identities/createMany`
+
+- Each batch is one transaction: if any entry fails, nobody in it is created, and a rerun picks up where it stopped
+  because imported rows have `iam_identity_id` set.
+- An address already in the tenant fails the batch with `IDENTITY_EXISTS`; a tenant at its member limit fails with
+  `LIMIT_EXCEEDED`. The query skips the owner's address for that reason; if you have an Auth.js row of your own,
+  set its `iam_identity_id` to your Better IAM identity ID by hand.
+- Auth.js allows a user without an email (some providers return none). Such users cannot be imported; the query
+  skips them.
+- A provider account whose `provider` has no entry in `connections` gets no link; that person signs in with a magic
+  link. Two users sharing one provider account fail the batch with
+  [`ACCOUNT_LINK_CONFLICT`](/docs/reference/errors#account_link_conflict).
+
+</Step>
+<Step>
+
+### Map people to their data
+
+Your application's tables still point at the Auth.js `users.id`. Every imported row now holds its Better IAM
+identity ID, whichever way the person signs in, so look the row up by the session's identity:
+
+```ts title="lib/current-user.ts"
+import pg from 'pg';
+import { iamNext } from './iam-next';
+
+const db = new pg.Pool({ connectionString: process.env.AUTHJS_DATABASE_URL });
+
+/** The application's users row for the signed-in person. */
+export async function currentUser() {
+  const { identity } = await iamNext.requireSession();
+  const mapped = await db.query('SELECT * FROM users WHERE iam_identity_id = $1', [identity.id]);
+  return mapped.rows[0];
+}
+```
+
+Use `currentUser()` wherever you used `session.user.id` from Auth.js. People who were never in Auth.js, created at
+their first provider sign-in after the switch, have no row and hold no role until you grant one; give every new
+person the Member role with an
+[automatic assignment rule](/docs/features/privileged-access/automatic-assignment).
+
+</Step>
+<Step>
+
+### Let imported people in
+
+#### Passwords
+
+Better IAM does not import password hashes, including the ones your Credentials provider stored. It stores only
+Argon2id hashes it computed itself, and no API accepts a precomputed hash; see
+[Importing passwords from another provider](/docs/authentication/email-and-password#importing-passwords-from-another-provider).
+Imported people without a provider link continue with:
+
+- **A magic link (recommended).** `passwordlessEmail: true` is already on. An emailed sign-in also verifies an
+  address Auth.js had not verified.
+- **A reset link.** `identities.requestPasswordReset(admin, { tenantId, identityId })` emails one person a link to
+  set a password. It needs a sign-in from the last five minutes, so send these in short runs. The public "forgot
+  password" form (`auth.requestPasswordReset`) sends nothing to an unverified address, so for people imported
+  unverified it works only after a first magic-link sign-in.
+
+#### Sessions
+
+Auth.js sessions (database rows or JWTs) are not imported. Everyone signs in once after the switch.
+
+</Step>
+<Step>
+
+### Replace NextAuth in the app
+
+| Auth.js | Better IAM |
+| --- | --- |
+| `app/api/auth/[...nextauth]/route.ts` exporting `handlers` | `app/api/iam/[...path]/route.ts` with `iamNext.handlers()` |
+| `const session = await auth()` | `const session = await iamNext.getSession()` |
+| `session.user.id` | `session.identity.id` (or your row from `currentUser()`) |
+| `signIn('google')` | Navigate to `/api/iam/oauth/login/google` |
+| `signIn('resend', { email })` or `signIn('nodemailer', { email })` | `client.auth.startPasswordless({ tenantId, destination, channel: 'email', kind: 'magic-link' })` |
+| `signIn('credentials', { email, password })` | `client.auth.signIn({ tenantId, email, password })` |
+| `signOut()` | `useSignOut()` from `better-iam/next/client` |
+| `export { auth as middleware }` | `createIamMiddleware(...)` from `better-iam/next/edge` |
+| `<SessionProvider>` and `useSession()` | `<IamNextProvider>` and `useSession()` from `better-iam/next/client` |
+| Role checks on `session.user.role` | `iam.require(...)`, `iamNext.can(...)`, or `<iamNext.Can>` |
+
+<Tabs items={['Server', 'Client']}>
+<Tab value="Server">
+
+```ts title="app/api/iam/[...path]/route.ts"
+import { iamNext } from '@/lib/iam-next';
+
+export const runtime = 'nodejs';
+
+const handlers = iamNext.handlers();
+export const POST = handlers.POST;
+export const OPTIONS = handlers.OPTIONS;
+
+// The OAuth callback answers with JSON and sets the session cookie; send the browser into the app instead.
+const callbackPath = /^\/api\/iam\/oauth\/[^/]+\/callback$/;
+
+export async function GET(request: Request): Promise<Response> {
+  const response = await handlers.GET(request);
+  const cookies = response.headers.getSetCookie();
+  const signedIn = cookies.some((cookie) => cookie.includes('better-iam.session='));
+  if (!callbackPath.test(new URL(request.url).pathname) || !response.ok || !signedIn) return response;
+  const headers = new Headers({ location: '/', 'cache-control': 'no-store' });
+  for (const cookie of cookies) headers.append('set-cookie', cookie);
+  return new Response(null, { status: 303, headers });
+}
+```
+
+```ts title="middleware.ts"
+import { NextResponse } from 'next/server';
+import { createIamMiddleware } from 'better-iam/next/edge';
+
+export const middleware = createIamMiddleware({
+  loginPath: '/login',
+  publicPaths: ['/', '/login', '/api/iam/**'],
+  next: (init) => NextResponse.next(init),
+});
+export const config = { matcher: ['/((?!_next|favicon.ico).*)'] };
+```
+
+```tsx title="app/dashboard/page.tsx"
+import { currentUser } from '@/lib/current-user';
+import { iamNext } from '@/lib/iam-next';
+
+export default async function Dashboard() {
+  const session = await iamNext.requireSession();
+  const user = await currentUser();
+  return (
+    <h1>
+      Hello {session.identity.name} (old user ID {user?.id ?? 'none'})
+    </h1>
+  );
+}
+```
+
+</Tab>
+<Tab value="Client">
+
+```tsx title="app/login/sign-in.tsx"
+'use client';
+import { createIamClient } from 'better-iam/client';
+import type { iam } from '@/lib/iam';
+
+const client = createIamClient<typeof iam>();
+const tenantId = process.env.NEXT_PUBLIC_IAM_TENANT_ID!;
+
+export function SignIn() {
+  async function emailLink(form: FormData) {
+    await client.auth.startPasswordless({
+      tenantId,
+      destination: String(form.get('email')),
+      channel: 'email',
+      kind: 'magic-link',
+    });
+  }
+  return (
+    <div>
+      <a href="/api/iam/oauth/login/google">Sign in with Google</a>
+      <a href="/api/iam/oauth/login/github">Sign in with GitHub</a>
+      <form action={emailLink}>
+        <input name="email" type="email" required />
+        <button type="submit">Email me a sign-in link</button>
+      </form>
+    </div>
+  );
+}
+```
+
+</Tab>
+</Tabs>
+
+**Route:** `POST /auth/startPasswordless`, then `POST /auth/finishPasswordless` on your link page
+
+The magic-link page redeems the link with `auth.finishPasswordless({ tenantId, destination, token })`; see
+[Magic links and codes](/docs/authentication/passwordless).
+
+</Step>
+<Step>
+
+### Cut over
+
+1. Run `02-import.ts` again right before the switch: it imports only people who signed up since the first run.
+2. Deploy the app with the Better IAM route, middleware, and sign-in page, and remove `next-auth` and its
+   `app/api/auth/[...nextauth]` route.
+3. Everyone signs in once. Provider users click the same button as before; others get a magic link.
+4. Keep the Auth.js tables until you have moved your foreign keys to Better IAM identity IDs.
+
+</Step>
+</Steps>
+
+## Verify it works
+
+1. `iam.api.tenants.usage(admin, { tenantId })` reports `identities` equal to the number of imported rows plus you,
+   the owner, right after the import, and growing only as people who were never in Auth.js sign up.
+2. Sign in with Google as a test user who had a Google account in Auth.js: the dashboard shows their old user ID,
+   which proves the import linked Google to their imported account.
+3. Request a magic link as an imported user, open it, and confirm the session: `client.auth.getSession()` returns an
+   identity with `emailVerified: true`.
+4. Check an imported admin's access with
+   [`policies.effectiveActions`](/docs/authorization/reviews#what-can-a-person-do).
+
+## Troubleshooting
+
+<Accordions>
+<Accordion title="Google sign-in fails with ACCOUNT_LINK_REQUIRED">
+  The person was imported without a Google link (they had no Google account in Auth.js, but now use Google), and
+  accounts are never matched by email. Link it with `identities.linkProvider` if you know their Google `sub`, or they
+  sign in with a magic link once and link Google as shown in
+  [Link an existing account](/docs/federation/oauth-sign-in#link-an-existing-account).
+</Accordion>
+<Accordion title="GitHub sign-in fails with VERIFIED_EMAIL_REQUIRED">
+  The person has no link to the `github` connection and their GitHub account has no verified primary email, so the
+  sign-in cannot create an account. The person verifies it at GitHub, or signs in with a magic link instead.
+</Accordion>
+<Accordion title="A magic link request does nothing for a provider user">
+  Passwordless sign-in does not create accounts. A person who signed up after the last import run must sign in
+  through their provider first (or you run the import again); after that, magic links work too.
+</Accordion>
+<Accordion title="currentUser() returns undefined for someone who had an account">
+  Their Auth.js row has no `iam_identity_id`: they signed up in Auth.js after the last import run, and their first
+  provider sign-in in Better IAM created a new account. Run the import again right before the switch, and set
+  `iam_identity_id` by hand for anyone created that way.
+</Accordion>
+<Accordion title="tenants.create fails with ACCESS_DENIED">
+  Only a root principal may pass `activate: true`. Sign in to the CLI as the root administrator, in the root tenant,
+  and export that token.
+</Accordion>
+<Accordion title="createMany fails with TENANT_INACTIVE">
+  The tenant was created without `activate: true` and its owner invitation has not been accepted yet. Accept it,
+  then rerun the import.
+</Accordion>
+<Accordion title="The browser shows JSON after the provider redirects back">
+  The `GET` wrapper in `app/api/iam/[...path]/route.ts` is missing, or the tenant requires MFA and the callback
+  answered with an MFA challenge. Add the wrapper, and handle the challenge on a page of your own when you use
+  `requireMfa`.
+</Accordion>
+</Accordions>
+
+## Next steps
+
+<Cards>
+  <Card icon={<Globe />} title="OAuth and OIDC sign-in" href="/docs/federation/oauth-sign-in">
+    Providers, first sign-in, and account linking.
+  </Card>
+  <Card icon={<Inbox />} title="Magic links and codes" href="/docs/authentication/passwordless">
+    The emailed-link flow that replaces the Auth.js Email provider.
+  </Card>
+  <Card icon={<Waypoints />} title="Next.js" href="/docs/integrations/nextjs">
+    Sessions, guards, middleware, and forms in the App Router.
+  </Card>
+  <Card icon={<Workflow />} title="Automatic assignment" href="/docs/features/privileged-access/automatic-assignment">
+    Give every new person a default role.
+  </Card>
+  <Card icon={<Users />} title="Tenants and identities" href="/docs/concepts/tenants-and-identities">
+    Why every identity belongs to one tenant.
+  </Card>
+  <Card icon={<ArrowLeftRight />} title="Migration guides" href="/docs/guides/migration">
+    Moving from other identity providers.
+  </Card>
+</Cards>

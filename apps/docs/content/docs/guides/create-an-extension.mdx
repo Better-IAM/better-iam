@@ -1,0 +1,511 @@
+---
+title: Create your first extension
+description: Build a change-freeze extension with the IamPlugin contract that adds authorized API methods, a check that runs inside every IAM change, and a handler for committed audit events.
+icon: Puzzle
+packages: ['better-iam', '@better-iam/core', '@better-iam/server', '@better-iam/client']
+sources:
+  - docs/extensions.md
+  - packages/core/src/index.ts
+  - packages/server/src/plugins.ts
+  - packages/server/src/operations.ts
+  - packages/server/src/events.ts
+  - packages/server/src/http.ts
+  - packages/server/src/catalog.ts
+  - packages/projects/src/index.ts
+  - packages/client/src/index.ts
+---
+
+In this guide you build a **change freeze**: an extension that lets an organization stop all access changes for a
+while, for example during a quarter-end close or a release. An extension in Better IAM is a plugin, a plain object
+that implements the `IamPlugin` interface from `better-iam/core` and is passed to `betterIam({ plugins })`. Its
+code runs inside the same transactional, authorized, and audited envelope as the built-in API, so the freeze
+cannot be bypassed and every use of it lands in the audit log. You will build:
+
+- three new actions (`freeze:read`, `freeze:start`, `freeze:end`) that administrators grant in roles like any
+  built-in permission;
+- three API methods, mounted at `POST /api/iam/plugins/change-freeze/{start,end,status}` and callable from the
+  server and the browser client;
+- a check (`hooks.beforeOperation`) that refuses role, policy, and binding changes in a frozen organization;
+- an event handler (`afterAudit`) that tells your code when a freeze starts or ends, after the change commits;
+- a purge callback that deletes the extension's records when a tenant is purged.
+
+<Callout type="info">
+  Extensions are trusted server code. They receive the open database transaction and can read or write any
+  collection, so review them like the rest of your server and keep every read and write scoped to the tenant the
+  call is for.
+</Callout>
+
+## Prerequisites
+
+- A working Better IAM instance, as in the [Quickstart](/docs/quickstart): `better-iam` installed, a configuration
+  module, and an `iam.ts` that exports `betterIam(config)`.
+- Node.js 22.12 or newer and an ESM project (`"type": "module"`).
+- For the test in the last step: Vitest and the test fixture from [Test your integration](/docs/guides/testing#create-a-test-fixture).
+
+## Build the extension
+
+<Steps>
+<Step>
+
+### Write the extension module
+
+The whole extension is one module that returns an `IamPlugin`. Every part of it is optional except `id`; this one
+uses `actions`, `endpoints`, `hooks`, `afterAudit`, and `purge`.
+
+```ts title="iam/change-freeze.ts"
+import { randomUUID } from 'node:crypto';
+import { IamError, type AuditEvent, type IamPlugin, type StoredRecord } from 'better-iam/core';
+
+/** The one active freeze of a tenant, stored in the extension's own collection. */
+export interface ChangeFreeze extends StoredRecord {
+  reason: string;
+  startedBy: string;
+  startedAt: number;
+}
+
+export interface ChangeFreezeOptions {
+  /** Called after a freeze starts or ends, once the change has committed. */
+  onChange?(event: AuditEvent): Promise<void> | void;
+}
+
+const COLLECTION = 'changeFreezes';
+/** The natural key of the active freeze: at most one per tenant, enforced by the database. */
+const ACTIVE = 'active';
+/** Access changes the freeze blocks: creating, updating, and deleting roles, policies, and bindings. */
+const FROZEN_ACTIONS = /^iam:(roles|policies|bindings):(create|update|delete)$/;
+
+/** Rejects anything but a JSON object with only the listed fields. */
+function fields(value: unknown, allowed: string[]): Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value))
+    throw new IamError('INVALID_INPUT', 'A JSON object is required');
+  const input = value as Record<string, unknown>;
+  for (const key of Object.keys(input))
+    if (!allowed.includes(key)) throw new IamError('INVALID_INPUT', `Unexpected field ${key}`);
+  return input;
+}
+
+export function changeFreeze(options: ChangeFreezeOptions = {}): IamPlugin {
+  return {
+    id: 'change-freeze',
+    actions: ['freeze:read', 'freeze:start', 'freeze:end'],
+    endpoints: [
+      {
+        method: 'POST',
+        path: 'start',
+        action: 'freeze:start',
+        validate(value) {
+          const input = fields(value, ['tenantId', 'reason']);
+          const reason = typeof input.reason === 'string' ? input.reason.trim() : '';
+          if (!reason || reason.length > 200)
+            throw new IamError('INVALID_INPUT', 'reason must be 1-200 characters');
+          return { tenantId: input.tenantId, reason };
+        },
+        async handler({ store, principal, tenantId }, input) {
+          const [current] = await store.find<ChangeFreeze>(COLLECTION, { tenantId, uniqueKey: ACTIVE });
+          if (current) throw new IamError('CONFLICT', 'A change freeze is already active', 409);
+          return store.insert<ChangeFreeze>(COLLECTION, {
+            id: randomUUID(),
+            tenantId,
+            uniqueKey: ACTIVE,
+            reason: String(input.reason),
+            startedBy: principal.identity.id,
+            startedAt: Date.now(),
+          });
+        },
+      },
+      {
+        method: 'POST',
+        path: 'end',
+        action: 'freeze:end',
+        validate(value) {
+          const input = fields(value, ['tenantId']);
+          return { tenantId: input.tenantId };
+        },
+        async handler({ store, tenantId }) {
+          const [current] = await store.find<ChangeFreeze>(COLLECTION, { tenantId, uniqueKey: ACTIVE });
+          if (!current) throw new IamError('NOT_FOUND', 'No change freeze is active', 404);
+          await store.delete(COLLECTION, current.id);
+          return { ended: current };
+        },
+      },
+      {
+        method: 'POST',
+        path: 'status',
+        action: 'freeze:read',
+        validate(value) {
+          const input = fields(value, ['tenantId']);
+          return { tenantId: input.tenantId };
+        },
+        async handler({ store, tenantId }) {
+          const [current] = await store.find<ChangeFreeze>(COLLECTION, { tenantId, uniqueKey: ACTIVE });
+          return { freeze: current ?? null };
+        },
+      },
+    ],
+    hooks: {
+      // Runs inside every operation's transaction, after authorization and before the change.
+      async beforeOperation({ store, tenantId, action }) {
+        if (!FROZEN_ACTIONS.test(action)) return;
+        const [current] = await store.find<ChangeFreeze>(COLLECTION, { tenantId, uniqueKey: ACTIVE });
+        if (current)
+          throw new IamError('CHANGE_FREEZE', `Access changes are frozen: ${current.reason}`, 409);
+      },
+    },
+    // Runs after commit from the audit dispatcher, at least once per event.
+    async afterAudit(event) {
+      if (event.outcome !== 'allow') return;
+      if (event.action === 'freeze:start' || event.action === 'freeze:end')
+        await options.onChange?.(event);
+    },
+    // Removes the extension's records when a retention purge deletes tenants.
+    async purge(store, tenantIds) {
+      for (const tenantId of tenantIds)
+        for (const freeze of await store.find<ChangeFreeze>(COLLECTION, { tenantId }))
+          await store.delete(COLLECTION, freeze.id);
+    },
+  };
+}
+```
+
+What each part does:
+
+- **`id`** names the extension and its URL segment (`/api/iam/plugins/change-freeze/...`). It must be unique among
+  the instance's plugins.
+- **`actions`** join the permission catalog, so roles and policies can grant them. Names must not start with
+  `iam:` or `tenant/` and must not contain `*`, `?`, or whitespace. The `{area}:{verb}` shape matches the built-in
+  actions.
+- **`endpoints`** are the API methods. Each one is `method: 'POST'`, has a unique `path`, names the registered
+  `action` the caller needs, and supplies `validate` and `handler`. `validate` receives the request body with the
+  request's `tenantId` merged in; it must reject unknown fields and must not return a different `tenantId`. The handler
+  receives `{ store, principal, tenantId, deliver }`: the open transaction, the verified caller, the tenant, and a
+  function that queues an email or SMS through the outbox in the same transaction.
+- **`hooks.beforeOperation`** runs for every operation in every tenant, built-in or from a plugin, after
+  authorization and before the mutation, inside the operation's transaction. Throwing an `IamError` rolls the
+  operation back and the caller receives that error. Here it reads the freeze through the same transaction, so a
+  freeze that starts concurrently is seen consistently. Reads such as `iam:roles:read` are not matched by
+  `FROZEN_ACTIONS`, and neither are the extension's own actions, so a frozen tenant can still end its freeze. The
+  hook sees only the operation's own action: a binding created by approving an access request
+  (`iam:access-requests:review`) or by `config.apply` (`iam:config:apply`) does not match the pattern, so add
+  those actions to it if they must stop too.
+- **`afterAudit`** receives every committed audit event of the instance, including refusals
+  (`outcome: 'deny'`), so filter on `outcome` and `action`. It runs when the audit dispatcher drains its queue, not
+  inside the request.
+- **`purge`** runs inside the tenant purge transaction, after the server has deleted the purged tenants' own
+  records and before it writes the purge audit record.
+
+The records live in a collection of their own (`changeFreezes`). Collections hold JSON documents, so an extension
+needs no schema migration. `uniqueKey: 'active'` makes the database refuse a second active freeze in the same
+tenant even if two requests race past the `find`.
+
+</Step>
+<Step>
+
+### Register the extension
+
+Pass the extension to `plugins`. The instance validates it at construction: duplicate ids, endpoint actions that
+are not registered, and endpoints without `POST`, a unique path, `validate`, or `handler` fail with
+`INVALID_CONFIG` before the server starts.
+
+```ts title="iam.ts"
+import { betterIam } from 'better-iam';
+import { changeFreeze } from './iam/change-freeze';
+import config from './better-iam.config.mjs';
+
+export const iam = betterIam({
+  ...config,
+  plugins: [
+    changeFreeze({
+      onChange: (event) => {
+        console.log(`${event.action} in tenant ${event.tenantId} by ${event.actorId}`);
+      },
+    }),
+  ],
+});
+```
+
+The `better-iam` CLI loads only the configuration module, so if you run `migrate` or scheduled jobs through it,
+put `plugins` in `better-iam.config.mjs` instead. An extension's optional `migrate(store)` callback runs from
+`iam.initialize()` and from `better-iam migrate`; this extension has nothing to migrate.
+
+</Step>
+<Step>
+
+### Grant the new actions
+
+The organization's owner can call every action, including the extension's. Everyone else needs a role that grants
+them. Create the roles with `roles.create` (requires `iam:roles:create`) and bind them with `bindings.create`:
+
+```ts title="scripts/freeze-roles.ts"
+import { iam } from '../iam';
+
+const owner = { token: process.env.OWNER_TOKEN! };
+const tenantId = process.env.TENANT_ID!;
+
+const releaseManager = await iam.api.roles.create(owner, {
+  tenantId,
+  name: 'Release manager',
+  permissions: ['freeze:read', 'freeze:start', 'freeze:end'],
+});
+await iam.api.bindings.create(owner, {
+  tenantId,
+  roleId: releaseManager.id,
+  subjectType: 'identity',
+  subjectId: process.env.RELEASE_MANAGER_ID!,
+});
+```
+
+**Routes:** `POST /api/iam/roles/create`, `POST /api/iam/bindings/create`
+
+Create the roles before you start a freeze: while a freeze is active, `roles.create` and `bindings.create` are
+refused with `CHANGE_FREEZE`.
+
+</Step>
+<Step>
+
+### Call the API methods
+
+Server code calls an extension endpoint with `iam.callPlugin(credential, { pluginId, path, tenantId, input })`.
+Browser code calls it with the client's `$request(path, input)`, where `path` is relative to the IAM base path. Both
+go through validation, authorization against the endpoint's action, the transaction, and the audit log.
+
+<Tabs items={['Server', 'Client']}>
+<Tab value="Server">
+
+```ts title="freeze.ts"
+import { iam } from './iam';
+import type { ChangeFreeze } from './iam/change-freeze';
+
+/** Starts a freeze as the caller of `request` (its session cookie or bearer token). */
+export async function startFreeze(request: Request, tenantId: string, reason: string) {
+  return (await iam.callPlugin(
+    { headers: request.headers },
+    { pluginId: 'change-freeze', path: 'start', tenantId, input: { reason } },
+  )) as ChangeFreeze;
+}
+
+export async function freezeStatus(request: Request, tenantId: string) {
+  return (await iam.callPlugin(
+    { headers: request.headers },
+    { pluginId: 'change-freeze', path: 'status', tenantId },
+  )) as { freeze: ChangeFreeze | null };
+}
+
+export async function endFreeze(request: Request, tenantId: string) {
+  await iam.callPlugin({ headers: request.headers }, { pluginId: 'change-freeze', path: 'end', tenantId });
+}
+```
+
+`callPlugin` returns `Promise<unknown>`; cast the result to the type your handler returns. The credential is a
+`CredentialInput`: `{ headers }` from an incoming request, or `{ token }`.
+
+</Tab>
+<Tab value="Client">
+
+```ts title="freeze-client.ts"
+import { createIamClient } from 'better-iam/client';
+import type { iam } from './iam';
+import type { ChangeFreeze } from './iam/change-freeze';
+
+const client = createIamClient<typeof iam>();
+const tenantId = 'the-organization-id';
+
+const freeze = await client.$request<ChangeFreeze>('plugins/change-freeze/start', {
+  tenantId,
+  reason: 'Quarter-end close',
+});
+const { freeze: current } = await client.$request<{ freeze: ChangeFreeze | null }>(
+  'plugins/change-freeze/status',
+  { tenantId },
+);
+await client.$request('plugins/change-freeze/end', { tenantId });
+```
+
+</Tab>
+</Tabs>
+
+| Method | Route | Action | Input | Result |
+| --- | --- | --- | --- | --- |
+| start | `POST /api/iam/plugins/change-freeze/start` | `freeze:start` | `{ tenantId, reason }` | The stored `ChangeFreeze` |
+| end | `POST /api/iam/plugins/change-freeze/end` | `freeze:end` | `{ tenantId }` | `{ ended: ChangeFreeze }` |
+| status | `POST /api/iam/plugins/change-freeze/status` | `freeze:read` | `{ tenantId }` | `{ freeze: ChangeFreeze \| null }` |
+
+An endpoint without `resource` is authorized on the tenant itself (`iam/{tenantId}`), which suits tenant-wide
+operations like these. An endpoint that acts on one record should also set `resource`, a function of the
+validated input that names the record, such as `(input) => 'project/' + String(input.projectId)`. The action is
+then authorized on `iam/project/{id}`, so policies about that one record apply. The `@better-iam/projects` package
+does this for its per-project endpoints.
+
+</Step>
+<Step>
+
+### Deliver the events
+
+The operation's audit record is queued in the same transaction as the change. `afterAudit` (and so `onChange`)
+runs only when the audit dispatcher drains that queue with `iam.events.dispatch()`. Run it on a schedule next to
+the outbox, as described in [Scheduled jobs](/docs/operations/jobs#outbox-and-audit-hooks):
+
+```ts title="jobs/audit-hooks.ts"
+import { iam } from '../iam';
+
+// Every few seconds: hand committed audit events to plugins, events.onEvent, and subscribers.
+setInterval(() => {
+  iam.events.dispatch().catch((error) => console.error('audit dispatch failed', error));
+}, 5_000);
+```
+
+Two properties to design for:
+
+- **At least once.** A dispatcher that fails after calling your handler delivers the event again. Deduplicate on
+  `event.id` if the side effect is not idempotent.
+- **No ordering promise.** A batch is not delivered in commit order; a `freeze:end` can reach `onChange` before
+  the `freeze:start` it follows. Order by `event.timestamp` if it matters.
+
+</Step>
+<Step>
+
+### Test the extension
+
+This Vitest test uses `createIamFixture` from [Test your integration](/docs/guides/testing#create-a-test-fixture),
+which builds an in-memory instance with an organization and a signed-in owner.
+
+```ts title="test/change-freeze.test.ts"
+import { afterEach, describe, expect, it } from 'vitest';
+import type { AuditEvent } from 'better-iam/core';
+import { changeFreeze, type ChangeFreeze } from '../iam/change-freeze';
+import { createIamFixture, type IamFixture } from './iam-fixture';
+
+let f: IamFixture | undefined;
+afterEach(async () => {
+  await f?.close();
+});
+
+describe('change-freeze extension', () => {
+  it('blocks access changes while a freeze is active', async () => {
+    const changes: AuditEvent[] = [];
+    f = await createIamFixture({
+      plugins: [changeFreeze({ onChange: (event) => void changes.push(event) })],
+    });
+    const { iam, ownerCredential, tenantId } = f;
+    const call = (path: string, input: Record<string, unknown> = {}) =>
+      iam.callPlugin(ownerCredential, { pluginId: 'change-freeze', path, tenantId, input });
+
+    const started = (await call('start', { reason: 'Quarter-end close' })) as ChangeFreeze;
+    expect(started).toMatchObject({ tenantId, reason: 'Quarter-end close' });
+    await expect(call('start', { reason: 'again' })).rejects.toMatchObject({ code: 'CONFLICT' });
+    await expect(call('start', { reason: 'x', extra: 1 })).rejects.toMatchObject({
+      code: 'INVALID_INPUT',
+    });
+
+    // The check refuses writes and lets reads through.
+    await expect(
+      iam.api.roles.create(ownerCredential, { tenantId, name: 'Auditor', permissions: ['freeze:read'] }),
+    ).rejects.toMatchObject({ code: 'CHANGE_FREEZE', status: 409 });
+    await expect(iam.api.roles.list(ownerCredential, { tenantId })).resolves.toBeDefined();
+
+    await call('end');
+    await expect(
+      iam.api.roles.create(ownerCredential, { tenantId, name: 'Auditor', permissions: ['freeze:read'] }),
+    ).resolves.toMatchObject({ name: 'Auditor' });
+
+    // People need a role that grants the action.
+    const bob = await f.member('bob');
+    await expect(
+      iam.callPlugin(bob.credential, { pluginId: 'change-freeze', path: 'status', tenantId }),
+    ).rejects.toMatchObject({ code: 'ACCESS_DENIED' });
+    const ada = await f.member('ada', ['freeze:read']);
+    await expect(
+      iam.callPlugin(ada.credential, { pluginId: 'change-freeze', path: 'status', tenantId }),
+    ).resolves.toEqual({ freeze: null });
+
+    // Events reach afterAudit only when the dispatcher runs.
+    expect(changes).toHaveLength(0);
+    await iam.events.dispatch();
+    expect(changes.map((event) => event.action).sort()).toEqual(['freeze:end', 'freeze:start']);
+  });
+});
+```
+
+</Step>
+</Steps>
+
+## Verify it works
+
+Run the test:
+
+```bash
+npx vitest run test/change-freeze.test.ts
+```
+
+It passes when the freeze blocks `roles.create`, lets `roles.list` through, refuses a member without a role, and
+delivers both events after `iam.events.dispatch()`.
+
+To check the HTTP route against a running server, call it with a session token in the `Authorization` header. The
+handler requires `content-type: application/json` and `x-better-iam: 1` on every `POST`:
+
+```bash
+curl -X POST http://localhost:3000/api/iam/plugins/change-freeze/status \
+  -H 'content-type: application/json' \
+  -H 'x-better-iam: 1' \
+  -H "authorization: Bearer $TOKEN" \
+  -d '{"tenantId":"'"$TENANT_ID"'"}'
+```
+
+A successful call answers `{"data":{"freeze":null}}`. A refused one answers with the error's status and
+`{"error":{"code":"...","message":"..."}}`.
+
+## Errors
+
+| Code | When |
+| --- | --- |
+| [`INVALID_CONFIG`](/docs/reference/errors#invalid_config) | At construction: a duplicate plugin id, an endpoint whose action is not in `actions`, a reserved action name (`iam:`, `tenant/`, `*`, `?`, whitespace), or an endpoint without `POST`, a unique path, `validate`, or `handler`. |
+| [`NOT_FOUND`](/docs/reference/errors#not_found) | `Endpoint not found`: no plugin with that `pluginId` or no endpoint at that `path`. This extension also throws it from `end` when no freeze is active. |
+| [`INVALID_INPUT`](/docs/reference/errors#invalid_input) | Thrown by `validate`, or by the server when the body's `tenantId` differs from the request's (`Plugin input tenant does not match request scope`) or `validate` returns another tenant (`Plugin validation changed tenant scope`). |
+| [`ACCESS_DENIED`](/docs/reference/errors#access_denied) | The caller holds no grant for the endpoint's action in the tenant. |
+| [`UNAUTHENTICATED`](/docs/reference/errors#unauthenticated) | The credential is missing, expired, or revoked. |
+| [`CONFLICT`](/docs/reference/errors#conflict) | Thrown by `start` when a freeze is active, or by the database when two requests insert the same `uniqueKey`. |
+| `CHANGE_FREEZE` | Defined by this extension: a role, policy, or binding change in a frozen tenant. Your own codes can be any string; give them an HTTP status as the third `IamError` argument. |
+
+## Troubleshooting
+
+<Accordions>
+<Accordion title="The server does not start: INVALID_CONFIG 'Plugin endpoint action must be registered'">
+Every endpoint's `action` must appear in the same plugin's `actions` (or in `permissions.actions`). Check the
+spelling in both places. `Reserved or invalid action` means a name starts with `iam:` or `tenant/` or contains
+`*`, `?`, or whitespace.
+</Accordion>
+<Accordion title="Calls fail with NOT_FOUND 'Endpoint not found'">
+The route is `{basePath}/plugins/{id}/{path}`. Check that `pluginId` equals the plugin's `id`, that `path` has no
+leading `plugins/` when you use `callPlugin`, and that the client's `$request` path does start with `plugins/`.
+</Accordion>
+<Accordion title="The owner can call the endpoint but other people get ACCESS_DENIED">
+Owners hold every action of their tenant. Everyone else needs a role whose permissions include the endpoint's
+action, bound to them directly or through a group. Create that role while no freeze is active.
+</Accordion>
+<Accordion title="onChange is never called">
+`afterAudit` runs only from `iam.events.dispatch()` (also exposed as `iam.dispatchAuditHooks()`). Run it on a
+schedule or call it in tests. Also check the filter: refusals arrive with `outcome: 'deny'`, and this extension
+ignores them.
+</Accordion>
+<Accordion title="HTTP calls fail with CSRF_REJECTED">
+`POST` requests to the handler need `content-type: application/json` and `x-better-iam: 1`, and a request that
+carries a cookie also needs an `Origin` header. The browser client sets these for you; add them yourself in curl,
+test code, and other HTTP clients.
+</Accordion>
+</Accordions>
+
+## Next steps
+
+<Cards>
+  <Card title="Adapters and plugins" href="/docs/concepts/extensions#plugin-contract">
+    The complete IamPlugin contract, including resourceTypes and resolveContext.
+  </Card>
+  <Card title="Test your integration" href="/docs/guides/testing">
+    The in-memory fixture this guide's test uses, plus handler and end-to-end tests.
+  </Card>
+  <Card title="Events and audit" href="/docs/concepts/events">
+    The event shape afterAudit receives and the other ways to consume events.
+  </Card>
+  <Card title="Call a plugin endpoint" href="/docs/concepts/client#call-a-plugin-endpoint">
+    Using $request from the browser client.
+  </Card>
+</Cards>

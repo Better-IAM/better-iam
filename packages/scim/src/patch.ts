@@ -188,20 +188,25 @@ function applyAt(
   else parent[leaf] = value;
 }
 
-/** Applies one PatchOp operation in place to a resource's writable document. */
+/**
+ * Applies one PatchOp operation in place to a resource's writable document. `ignored` names attributes the service
+ * drops instead of applying: a key of a pathless value (`explicitPath` false) or a whole path (`explicitPath` true).
+ * An operation on one of them is skipped.
+ */
 export function applyPatchOperation(
   document: ObjectValue,
   type: ResourceType,
   operation: string,
   path: string | undefined,
   value: unknown,
+  ignored: (attribute: string, explicitPath: boolean) => boolean = () => false,
 ): void {
   if (path === undefined) {
     if (operation === 'remove') throw new IamError('noTarget', 'remove requires a path.');
     if (!isObject(value))
       throw new IamError('invalidValue', 'A PATCH without a path requires an object value.');
     for (const [name, item] of Object.entries(value)) {
-      if (name === 'schemas') continue;
+      if (name === 'schemas' || ignored(name, false)) continue;
       let segments: string[];
       try {
         segments = attributePath(name);
@@ -223,6 +228,7 @@ export function applyPatchOperation(
     }
     return;
   }
+  if (ignored(path, true)) return;
   const parsed = parsePatchPath(path, type);
   if (parsed.filter) applyFiltered(document, operation, parsed, value);
   else applyAt(document, type, operation, parsed.keys, value);

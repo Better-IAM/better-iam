@@ -1,0 +1,233 @@
+---
+title: Sign-in methods
+description: An overview of every way to sign in to Better IAM (passwords, magic links and codes, passkeys, federation, API keys, temporary tokens, and assumed roles) and how to enable and restrict them.
+icon: LogIn
+packages: ['@better-iam/auth', '@better-iam/server']
+sources:
+  - docs/authentication.md
+  - docs/security.md
+  - packages/auth/src/service/base.ts
+  - packages/auth/src/service/sessions.ts
+  - packages/auth/src/service/passwordless.ts
+  - packages/auth/src/password-policy.ts
+  - packages/server/src/api/trust.ts
+---
+
+import { FingerprintPattern, Globe, Inbox, KeySquare, LockKeyhole, Ticket } from '@/lib/icons';
+
+Better IAM supports several ways to sign in, because no single method suits everyone: passwords are familiar,
+emailed links avoid passwords altogether, passkeys resist phishing, enterprises want their own identity provider,
+and machines need keys. You choose which methods your deployment offers, and each organization (a
+<Term id="tenant">tenant</Term>) can narrow that set with its
+[tenant policy](/docs/authentication/tenant-policy).
+
+Whatever the method, a person's sign-in ends the same way: a <Term id="session">session</Term>, or an MFA challenge
+when a second factor is required (see [how a sign-in works](/docs/authentication#how-a-sign-in-works)).
+
+| Method | Calls | Session `method` | Enabled by | Guide |
+| --- | --- | --- | --- | --- |
+| Email and password | `auth.signIn`, `auth.signUp` | `password` | `emailPassword` (default `true`) | [Email and password](/docs/authentication/email-and-password) |
+| Magic link or emailed code | `auth.startPasswordless`, `auth.finishPasswordless` | `passwordless-email` | `passwordlessEmail` and `sendEmail` | [Magic links and codes](/docs/authentication/passwordless) |
+| SMS code | `auth.startPasswordless`, `auth.finishPasswordless` | `passwordless-sms` | `passwordlessSms` and `sendSms` | [Magic links and codes](/docs/authentication/passwordless) |
+| Passkey | `auth.beginPasskeyAuthentication`, `auth.finishPasskeyAuthentication` | `passkey` | `passkeys` | [Passkeys](/docs/authentication/passkeys) |
+| Federated (OAuth/OIDC, SAML) | The protocol packages, then `protocolHost.completeAuthentication` | `federated` | A protocol mount | [OAuth sign-in](/docs/federation/oauth-sign-in), [SAML](/docs/federation/saml) |
+| API key (service accounts) | `Authorization: Bearer biam_key_...` | none | Always available | [API keys](/docs/authentication/api-keys) |
+| Session token, session JWT, web identity | `sts.getSessionToken`, `sts.assumeRoleWithWebIdentity` | none | Always; JWTs need `sts.jwt`, web identity needs `sts.webIdentity.enabled` | [Tokens and JWTs](/docs/authentication/tokens) |
+| Assumed role | `roles.assume` | none | A trust created by a root administrator | [Temporary access](/docs/authorization/temporary-access#role-sessions) |
+
+The session's `method` reaches policies as `principal.authMethod`, so a policy can, for example, require a passkey
+for a sensitive action.
+
+## Choose the methods you offer
+
+Methods are switched on under `authentication` in the server options. Features that send messages need a delivery
+callback: `sendEmail` hands a queued email to your mail provider, and `sendSms` does the same for text messages.
+Construction fails with `INVALID_CONFIG` when an enabled email feature has no `sendEmail`, or SMS codes have no
+`sendSms`, so a misconfiguration is caught at startup rather than when someone tries to sign in.
+
+```ts title="iam.ts"
+import { betterIam } from 'better-iam';
+import { pwnedPasswords } from 'better-iam/auth';
+
+export const iam = betterIam({
+  // database, secret, baseURL ...
+  authentication: {
+    sendEmail: async (message) => mailer.send(message), // deduplicate retries by message.id
+    sendSms: async (message) => sms.send(message),
+    emailPassword: true, // the default; false turns password sign-in off
+    passwordlessEmail: true, // magic links and emailed codes
+    passwordlessSms: true, // SMS codes
+    signUpEnabled: false, // the default
+    passkeys: { rpID: 'example.com', rpName: 'Acme Cloud' },
+    passwordPolicy: { isBreached: pwnedPasswords() },
+  },
+});
+```
+
+## Passwords
+
+Passwords remain the default for most products. `auth.signIn({ tenantId, email, password, deviceToken? })` checks
+the password and returns a session or an MFA challenge. Passwords are hashed with Argon2id and must be 12 to 1,024
+characters long. A wrong password, an unknown address, and a disabled account all fail with the same
+`INVALID_CREDENTIALS`, and unknown accounts perform the same hashing work, so responses never reveal which accounts
+exist. `emailPassword: false` disables password sign-in, reset, and self-registration (`FEATURE_DISABLED`).
+
+[Email and password](/docs/authentication/email-and-password) covers sign-in, verification, reset, change, hashing,
+and the absence of password-hash import.
+
+### Password screening
+
+Length alone does not make a password safe. `authentication.passwordPolicy` sets a deployment-wide screen that
+applies wherever a password is set: `blockCommonPasswords` (on by default) refuses well-known passwords, keyboard
+walks, sequences, and passwords with fewer than five distinct characters (`WEAK_PASSWORD`); `isBreached` checks a
+breach corpus (`BREACHED_PASSWORD`), and `pwnedPasswords()` from `better-iam/auth` provides a k-anonymity Have I Been
+Pwned client; `check` adds your own rule. Organizations add minimum length, character classes, personal-information,
+history (`PASSWORD_REUSED`), and maximum-age (`PASSWORD_EXPIRED`) rules on top.
+
+See [password policy](/docs/authentication/email-and-password#password-policy) and
+[password rules](/docs/authentication/tenant-policy#password-rules).
+
+### Self-registration
+
+Most business products add people by invitation, so self-registration is disabled by default.
+`authentication.signUpEnabled: true` lets `auth.signUp` create an account in an existing tenant. It never creates an
+identity in the root tenant (`FORBIDDEN`), never signs the person in, and, because `requireEmailVerification`
+defaults to the value of `signUpEnabled`, queues a `verify-email` message and refuses sign-in until the address is
+verified (`EMAIL_UNVERIFIED`). See [sign up](/docs/authentication/email-and-password#sign-up) and
+[email verification](/docs/authentication/recovery#email-verification).
+
+## Magic links and one-time codes
+
+Passwordless sign-in proves the person controls an email address or phone number by sending a single-use secret
+there. `auth.startPasswordless` sends a magic link or a six-digit code, and `auth.finishPasswordless` redeems it.
+`startPasswordless` always answers `{ success: true }`, links and codes are single-use and expire after five
+minutes, SMS supports codes only and only to a verified phone number, and passwordless sign-in never creates or links
+accounts by matching an address. The tenant's `allowedMethods` must include `passwordless-email` or
+`passwordless-sms`.
+
+See [Magic links and codes](/docs/authentication/passwordless).
+
+## Passkeys
+
+<Term id="passkey">Passkeys</Term> sign people in with a device-bound or synced WebAuthn credential instead of a
+password. They cannot be phished, and they satisfy MFA on their own. With discoverable passkeys, the browser's
+autofill picks the account and no email is needed. See [passkeys](/docs/authentication/passkeys).
+
+## Federated sign-in
+
+Enterprise customers want their people to sign in with the company's own identity provider, so that joining,
+leaving, and MFA are managed in one place. Federated sign-in delegates the proof to that provider through
+<Term id="oidc">OpenID Connect</Term> (OAuth/OIDC, including Google and GitHub) or <Term id="saml">SAML</Term>.
+
+The protocol packages handle the ceremony. When it succeeds, they call `protocolHost.completeAuthentication`, which
+finishes like any other sign-in with the method `federated`: the tenant must allow the method, and root, tenant,
+and deployment MFA requirements apply.
+
+- Federation maps `(tenant, provider, issuer, subject)` to an identity. A new subject with a verified email
+  provisions an account (`VERIFIED_EMAIL_REQUIRED` without one).
+- An email that already belongs to an identity fails with `ACCOUNT_LINK_REQUIRED`. The person signs in to the
+  existing account and links the provider explicitly; an email collision is never treated as proof of ownership.
+- `mapAttributes` stores provider attributes on the identity, validated against
+  `permissions.identityAttributes`, and replaces them on every sign-in.
+
+See [OAuth sign-in](/docs/federation/oauth-sign-in) and [SAML](/docs/federation/saml).
+
+## Service accounts and API keys
+
+Scripts, integrations, and other servers cannot type a password or answer an MFA prompt. They sign in with API keys
+issued to <Term id="service-account">service accounts</Term> by `credentials.create`. A key is an opaque bearer
+token sent as `Authorization: Bearer <key>`; only its hash is stored, it is returned once, it expires (90 days by
+default), it can be scoped below what its account may do, and it keeps the ceiling of the
+<Term id="authority">grant authority</Term> that issued it. `credentials.rotate`, `credentials.revoke`,
+`credentials.update`, and `credentials.list({ unusedForMs })` keep keys clean, and a key used from a blocked network
+is refused.
+
+See [API keys and service accounts](/docs/authentication/api-keys) and the
+[credentials reference](/docs/reference/api/credentials).
+
+## Temporary tokens and web identity
+
+A script or CLI should not carry a person's browser session or a long-lived key around. `sts.getSessionToken` trades
+either for a short-lived `biam_sts_` token, optionally narrowed by a policy and stepped up with a fresh MFA code.
+With `sts.jwt`, session tokens and role sessions can be signed JWTs that other services verify offline against
+`GET /api/iam/.well-known/jwks.json`. With `sts.webIdentity.enabled`, CI jobs and workloads exchange their platform's OIDC
+token for a role session, so no IAM secret is stored.
+
+See [Tokens and JWTs](/docs/authentication/tokens).
+
+## Assumed roles
+
+Sometimes an identity in one tenant must act inside another: your support team working in a customer's
+organization, or a central automation managing many tenants. Rather than creating accounts everywhere,
+<Term id="role-assumption">role assumption</Term> gives a short-lived session with one specific role in the target
+tenant.
+
+It rests on a **trust**: an exact source-identity to target-role relationship that a root administrator creates with
+`trust.create`. The source identity then calls `roles.assume` to receive a role session:
+
+```ts title="assume.ts"
+import { iam } from './iam';
+
+const { token, session } = await iam.api.roles.assume(credential, {
+  tenantId: targetTenantId,
+  trustId,
+  durationSeconds: 900, // 15 minutes, the default; at least 60
+});
+```
+
+`roles.assume` returns the role session's bearer `token` (a `biam_rol_` token), which the caller sends as
+`Authorization: Bearer` to act in the target tenant. The HTTP handler never sets it as a cookie, so the caller's own
+session stays intact.
+
+- Assumption also requires the source identity's `iam:roles:assume` permission on `iam/{roleId}`. A trust may
+  require MFA (the default) and an external ID.
+- Role sessions last 15 minutes by default and at most an hour, unless the trust's `maxSessionSeconds` and the
+  deployment's `sts.maxRoleSessionSeconds` allow longer. They never outlive the source credential.
+- Role sessions cannot chain (`ROLE_CHAINING_DISABLED`), cannot be started from an impersonation session, and are
+  never recently authenticated, so they cannot perform sensitive operations.
+- Revoking the trust, the source session, the source identity, or a relevant grant authority ends the role
+  session at its next use.
+
+See [role sessions](/docs/authorization/temporary-access#role-sessions) for every trust and session option.
+
+## Restricting methods per tenant
+
+Not every organization wants every method you offer. A company that runs its own identity provider may insist on
+federated sign-in only. An organization's `allowedMethods` lists the sign-in methods it accepts: `password`,
+`passwordless-email`, `passwordless-sms`, `passkey`, and `federated`. Unset means every method the deployment
+enables. A method outside the list is refused with `METHOD_NOT_ALLOWED` before any credential is examined. See
+[tenant policy](/docs/authentication/tenant-policy#restricting-sign-in-methods).
+
+## Failed attempts and lockouts
+
+Attackers guess passwords and codes at scale, so sign-in, recovery, and MFA flows share persisted rate limits per
+account, and optionally per client IP. A refused attempt fails with `RATE_LIMITED` and a `retryAfterMs` that tells
+the client when to try again. A wrong password for a real, active account is also recorded as `auth:signin:fail` and
+counted in the person's [sign-in record](/docs/authentication/sessions#sign-in-records-and-alerts). When a real
+person locks themselves out, an administrator clears their counters with `identities.unlock`; when one address
+keeps attacking, an incident responder refuses it with `security.blockNetwork`. See
+[rate limits](/docs/authentication/http#rate-limits) and
+[network restrictions](/docs/authentication/tenant-policy#network-restrictions).
+
+## Next steps
+
+<Cards>
+  <Card icon={<LockKeyhole />} title="Email and password" href="/docs/authentication/email-and-password">
+    Sign-up, sign-in, verification, reset, and password rules.
+  </Card>
+  <Card icon={<Inbox />} title="Magic links and codes" href="/docs/authentication/passwordless">
+    Passwordless sign-in by email or SMS.
+  </Card>
+  <Card icon={<FingerprintPattern />} title="Passkeys" href="/docs/authentication/passkeys">
+    Phishing-resistant sign-in that also satisfies MFA.
+  </Card>
+  <Card icon={<KeySquare />} title="API keys" href="/docs/authentication/api-keys">
+    Service accounts and their keys.
+  </Card>
+  <Card icon={<Ticket />} title="Tokens and JWTs" href="/docs/authentication/tokens">
+    Session tokens, session JWTs, JWKS, and web identity.
+  </Card>
+  <Card icon={<Globe />} title="Federation" href="/docs/federation">
+    OAuth, OIDC, SAML, and SCIM.
+  </Card>
+</Cards>

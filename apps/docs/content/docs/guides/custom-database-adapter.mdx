@@ -1,0 +1,533 @@
+---
+title: Write a database adapter
+description: Implement the public IamStore contract on top of the RecordStore base class from @better-iam/core, prove it with the 23-case conformance suite, and run a Better IAM instance on it.
+icon: Database
+packages: ['@better-iam/core', 'better-iam']
+sources:
+  - docs/extensions.md
+  - packages/core/src/index.ts
+  - packages/core/src/storage.ts
+  - packages/core/src/sql.ts
+  - packages/core/src/conformance.ts
+  - packages/core/src/instrument.ts
+  - packages/adapter-sqlite/src/index.ts
+  - packages/adapter-postgres/src/index.ts
+  - packages/better-iam/package.json
+---
+
+Better IAM reads and writes all of its data through one interface, `IamStore`, so it can run on any database that
+can keep that interface's promises. The interface and the building blocks for it are public: `IamStore`,
+`RecordStore`, `RecordDriver`, `StorageRow`, and the SQL helpers are exported from `@better-iam/core` (and from the
+umbrella as `better-iam/core`), and the behavioral contract ships as a test suite in `@better-iam/core/conformance`.
+In this guide you build a complete adapter and prove it correct:
+
+- a row driver, the part that talks to your database;
+- a store class on top of `RecordStore` with serialized, nestable transactions;
+- a Vitest run of all 23 conformance cases;
+- a Better IAM instance running on the adapter, with `instrumentStore` checking that its lookups stay selective;
+- a map from each piece to the SQL statement it becomes in a real database.
+
+The adapter stores rows in JavaScript `Map`s. That keeps every line of it runnable without a database server, and
+each driver method corresponds to one SQL statement, so porting it means replacing the method bodies.
+
+<Callout type="warn">
+  The `Map` adapter keeps data in process memory and loses it on restart. It is a skeleton for your own driver,
+  not an adapter to deploy. For tests, use the reference SQLite adapter with `filename: ':memory:'`; for production,
+  use [PostgreSQL](/docs/databases/postgresql), [SQLite](/docs/databases/sqlite), or [libSQL](/docs/databases/libsql)
+  unless your database is not one of them.
+</Callout>
+
+## Prerequisites
+
+- Node.js 22.12 or newer and an ESM TypeScript project.
+- `better-iam` and `@better-iam/core` at the same version. The conformance suite is exported only from
+  `@better-iam/core/conformance`; the umbrella package has no `better-iam/core/conformance` subpath.
+- Vitest, or any runner that can await an async function per test.
+
+## Build the adapter
+
+<Steps>
+<Step>
+
+### Install the packages
+
+```npm
+npm i better-iam @better-iam/core
+```
+
+```npm
+npm i -D vitest
+```
+
+</Step>
+<Step>
+
+### Know what you implement
+
+`IamStore` has eight methods: `get`, `find`, `insert`, `put`, `delete`, `transaction`, `migrate`, and `close`, plus
+the optional `findOrdered`, `collections`, and `describe`. You can implement it from scratch, but the reference
+adapters all extend `RecordStore`, and so should yours. `RecordStore` implements `get`, `find`, `findOrdered`,
+`insert`, `put`, `delete`, and `collections` on top of a small row driver, and owns the parts that are easy to get
+subtly wrong: record validation (`INVALID_RECORD`), strict typed filter matching, code-point ordering by `id`,
+`limit`, `offset`, and the `after` keyset cursor, `put` refusing to insert or move a record to another tenant.
+
+| You write | Contract |
+| --- | --- |
+| `RecordDriver.select(collection, id?, tenantId?)` | Rows of one collection, narrowed by id and tenant when given. |
+| `RecordDriver.insert(row)` | Store a new row. A duplicate `(collection, id)` or `(collection, tenant_id, unique_key)` must fail with `CONFLICT`. |
+| `RecordDriver.update(row)` | Replace the row with the same `(collection, id, tenant_id)`; return `false` when there is none. A taken `unique_key` is a `CONFLICT`. |
+| `RecordDriver.delete(collection, id)` | Remove the row if it exists. |
+| `RecordDriver.collections()` (optional) | Distinct collection names. Store snapshots need it. |
+| `read(operation)` | Run a driver operation, inside the current transaction if there is one. |
+| `write(operation)` | Like `read`, but throw `TRANSACTION_REQUIRED` outside a transaction. |
+| `transaction(fn)` | Run `fn` serialized against every other transaction; nested calls join the outer one. |
+| `migrate()` | Create or upgrade the schema; idempotent. |
+| `close()` | Release connections; idempotent; later calls fail with `STORE_CLOSED`. |
+
+A `StorageRow` is `{ collection, id, tenant_id, unique_key, data }`, where `unique_key` is a string or `null` and
+`data` is the record serialized as a JSON string. `RecordStore` builds rows from records and decodes them back.
+
+</Step>
+<Step>
+
+### Write the row driver
+
+Each method is one statement. The comments show the SQL it stands for.
+
+```ts title="map-adapter/driver.ts"
+import { IamError, type RecordDriver, type StorageRow } from 'better-iam/core';
+
+/** The "database": rows by collection, then by id. Replace it with your database client. */
+export type Tables = Map<string, Map<string, StorageRow>>;
+
+const conflict = () =>
+  new IamError('CONFLICT', 'A record with this identifier or tenant key already exists', 409);
+
+/** Row operations over `tables`. Each method is one statement in a SQL database. */
+export function driverFor(tables: Tables): RecordDriver {
+  const table = (collection: string) => {
+    let rows = tables.get(collection);
+    if (!rows) tables.set(collection, (rows = new Map()));
+    return rows;
+  };
+  const keyTaken = (row: StorageRow) =>
+    row.unique_key !== null &&
+    [...table(row.collection).values()].some(
+      (other) =>
+        other.id !== row.id &&
+        other.tenant_id === row.tenant_id &&
+        other.unique_key === row.unique_key,
+    );
+  return {
+    async select(collection, id, tenantId) {
+      // SELECT ... FROM iam_records WHERE collection = ? [AND id = ?] [AND tenant_id = ?]
+      return [...table(collection).values()].filter(
+        (row) =>
+          (id === undefined || row.id === id) &&
+          (tenantId === undefined || row.tenant_id === tenantId),
+      );
+    },
+    async insert(row) {
+      // INSERT INTO iam_records ...; the primary key (collection, id) and the unique constraint
+      // (collection, tenant_id, unique_key) turn duplicates into a conflict.
+      if (table(row.collection).has(row.id) || keyTaken(row)) throw conflict();
+      table(row.collection).set(row.id, { ...row });
+    },
+    async update(row) {
+      // UPDATE iam_records SET data = ?, unique_key = ? WHERE collection = ? AND id = ? AND tenant_id = ?
+      const existing = table(row.collection).get(row.id);
+      if (!existing || existing.tenant_id !== row.tenant_id) return false;
+      if (keyTaken(row)) throw conflict();
+      table(row.collection).set(row.id, { ...row });
+      return true;
+    },
+    async delete(collection, id) {
+      // DELETE FROM iam_records WHERE collection = ? AND id = ?
+      table(collection).delete(id);
+    },
+    async collections() {
+      // SELECT DISTINCT collection FROM iam_records ORDER BY collection
+      return [...tables].filter(([, rows]) => rows.size > 0).map(([name]) => name);
+    },
+  };
+}
+```
+
+`select` may return rows in any order: without the optional `query` method, `RecordStore` filters and sorts the
+rows itself. The conflict message names no table, statement, or value, because the conformance suite fails an
+adapter whose errors leak SQL, table names, or record data.
+
+</Step>
+<Step>
+
+### Write the store
+
+The store adds what a driver cannot: one transaction at a time, rollback, nesting, and the closed state. It follows
+the structure of the SQLite reference adapter. An `AsyncLocalStorage` remembers the transaction the current async
+call chain is in, so a call on the outer store from inside `transaction()` joins it instead of waiting for itself.
+
+```ts title="map-adapter/store.ts"
+import { AsyncLocalStorage } from 'node:async_hooks';
+import { IamError, RecordStore, type IamStore, type RecordDriver } from 'better-iam/core';
+import { driverFor, type Tables } from './driver';
+
+/** One transaction in progress. `active` turns false when it ends, so leaked handles fail. */
+interface TransactionContext {
+  store: MapStore;
+  active: boolean;
+  rollbackOnly: boolean;
+}
+
+/**
+ * Runs one operation at a time, in arrival order: the serialization the contract requires. A call chain that
+ * already holds the lock runs straight through, because RecordStore's in-memory `findOrdered` fallback calls
+ * `find` from inside `read`.
+ */
+class Mutex {
+  #tail: Promise<void> = Promise.resolve();
+  #holder = new AsyncLocalStorage<Mutex>();
+  async run<T>(operation: () => Promise<T>): Promise<T> {
+    if (this.#holder.getStore() === this) return operation();
+    const previous = this.#tail;
+    let release!: () => void;
+    this.#tail = new Promise<void>((done) => {
+      release = done;
+    });
+    await previous;
+    try {
+      return await this.#holder.run(this, operation);
+    } finally {
+      release();
+    }
+  }
+}
+
+class MapStore extends RecordStore {
+  #state: { tables: Tables; closed: boolean };
+  #mutex: Mutex;
+  #scope: AsyncLocalStorage<TransactionContext>;
+  #context: TransactionContext | undefined;
+
+  constructor(
+    state: { tables: Tables; closed: boolean },
+    mutex: Mutex,
+    scope: AsyncLocalStorage<TransactionContext>,
+    context?: TransactionContext,
+  ) {
+    super();
+    this.#state = state;
+    this.#mutex = mutex;
+    this.#scope = scope;
+    this.#context = context;
+  }
+
+  /** The transaction this call belongs to: this handle's own, or the one the async call chain is in. */
+  #active(): TransactionContext | undefined {
+    if (this.#state.closed) throw new IamError('STORE_CLOSED', 'Database adapter is closed', 500);
+    const context = this.#context ?? this.#scope.getStore();
+    if (context && !context.active)
+      throw new IamError('TRANSACTION_CLOSED', 'Transaction has already completed', 500);
+    return context;
+  }
+
+  protected async read<T>(operation: (driver: RecordDriver) => Promise<T>): Promise<T> {
+    const context = this.#active();
+    if (context) {
+      try {
+        return await operation(driverFor(this.#state.tables));
+      } catch (error) {
+        // A failed statement dooms the whole transaction, even if the caller catches the error.
+        context.rollbackOnly = true;
+        throw error;
+      }
+    }
+    // Outside a transaction, wait for the running one so uncommitted writes are never visible.
+    return this.#mutex.run(async () => {
+      this.#active();
+      return operation(driverFor(this.#state.tables));
+    });
+  }
+
+  protected async write<T>(operation: (driver: RecordDriver) => Promise<T>): Promise<T> {
+    if (!this.#active())
+      throw new IamError('TRANSACTION_REQUIRED', 'Database writes require transaction()', 500);
+    return this.read(operation);
+  }
+
+  async transaction<T>(fn: (tx: IamStore) => Promise<T>): Promise<T> {
+    const current = this.#active();
+    if (current) {
+      // Nested call: join the outer transaction; a failure inside rolls the outer one back.
+      try {
+        return await fn(current.store);
+      } catch (error) {
+        current.rollbackOnly = true;
+        throw error;
+      }
+    }
+    return this.#mutex.run(async () => {
+      this.#active();
+      // BEGIN: remember the committed state so a failure can restore it.
+      const snapshot: Tables = new Map(
+        [...this.#state.tables].map(([name, rows]) => [name, new Map(rows)]),
+      );
+      const context = { active: true, rollbackOnly: false } as TransactionContext;
+      context.store = new MapStore(this.#state, this.#mutex, this.#scope, context);
+      try {
+        const result = await this.#scope.run(context, () => fn(context.store));
+        if (context.rollbackOnly)
+          throw new IamError(
+            'TRANSACTION_ABORTED',
+            'A nested database operation failed; transaction rolled back',
+            409,
+          );
+        return result; // COMMIT
+      } catch (error) {
+        this.#state.tables = snapshot; // ROLLBACK
+        throw error;
+      } finally {
+        context.active = false;
+      }
+    });
+  }
+
+  async migrate(): Promise<void> {
+    // CREATE TABLE IF NOT EXISTS ...: a Map needs no schema. Keep this idempotent.
+    this.#active();
+  }
+
+  async close(): Promise<void> {
+    if (this.#state.closed) return;
+    if (this.#active())
+      throw new IamError('TRANSACTION_ACTIVE', 'Cannot close an adapter inside a transaction', 500);
+    await this.#mutex.run(async () => {
+      this.#state.closed = true;
+    });
+  }
+}
+
+/** An IamStore over JavaScript Maps: the contract with no database in the way. */
+export function mapAdapter(): IamStore {
+  return new MapStore({ tables: new Map(), closed: false }, new Mutex(), new AsyncLocalStorage());
+}
+```
+
+The rules this code keeps, each of which a conformance case checks:
+
+- **Every write is in a transaction.** `write` throws `TRANSACTION_REQUIRED` otherwise.
+- **Transactions serialize.** Only one runs at a time, and reads outside a transaction wait for it, so a concurrent
+  read-modify-write never loses an update and nobody sees uncommitted rows.
+- **Nested transactions join.** `tx.transaction(...)` and `store.transaction(...)` inside a transaction run in the
+  outer one. If the inner callback throws, the outer transaction is marked `rollbackOnly` and fails with
+  `TRANSACTION_ABORTED` even when the caller catches the inner error. The same happens when a statement fails.
+- **Callback errors propagate unchanged.** A throwing callback rolls back and its own error reaches the caller.
+- **Handles expire.** A transaction handle used after the transaction ended fails with `TRANSACTION_CLOSED`.
+- **Close is final.** `close()` twice is fine; any call after it fails with `STORE_CLOSED`.
+
+</Step>
+<Step>
+
+### Run the conformance suite
+
+`adapterConformanceCases()` returns the contract as a list of `{ name, run(store) }` cases. Give each case a fresh,
+migrated store and close it afterwards; a case may close the store itself, which is why `close()` must be
+idempotent.
+
+```ts title="test/map-adapter.conformance.test.ts"
+import { describe, it } from 'vitest';
+import { adapterConformanceCases } from '@better-iam/core/conformance';
+import { mapAdapter } from '../map-adapter/store';
+
+describe('map adapter', () => {
+  for (const test of adapterConformanceCases())
+    it(test.name, async () => {
+      const store = mapAdapter();
+      await store.migrate();
+      try {
+        await test.run(store);
+      } finally {
+        await store.close();
+      }
+    });
+});
+```
+
+For a runner without per-case reporting, `runAdapterConformance(createStore)` runs every case against fresh stores
+and returns `{ passed, failed }`, where each failure carries the case `name` and its `error`:
+
+```ts title="scripts/conformance.ts"
+import { runAdapterConformance } from '@better-iam/core/conformance';
+import { mapAdapter } from '../map-adapter/store';
+
+const { passed, failed } = await runAdapterConformance(() => mapAdapter());
+console.log(`${passed.length} passed`);
+for (const failure of failed) console.error(`FAIL ${failure.name}:`, failure.error);
+process.exitCode = failed.length ? 1 : 0;
+```
+
+The cases cover:
+
+| Area | Cases |
+| --- | --- |
+| Records | JSON round trips with detached copies, validation before writing, identifiers with unpaired surrogates refused (`INVALID_RECORD`), strings with U+0000 stored and found |
+| Uniqueness | Unique ids per collection across tenants, unique natural keys within a tenant, `put` replacing whole records without upserting or moving tenants |
+| Filters | Strict typed equality (no coercion), filters on id, tenant, and natural-key columns, field names that cannot appear in SQL, numbers across the whole double range |
+| Ordering and paging | Code-point order by id, `limit` and `offset`, the `after` cursor, selective pagination over many rows, ordered and bounded reads by a numeric field |
+| Transactions | Required for writes, rollback, nesting, closed handles, serialized concurrent read-modify-write, uncommitted writes visible inside the writing transaction |
+| Lifecycle | Idempotent `migrate`, idempotent `close`, conflicts reported without SQL or record data |
+
+</Step>
+<Step>
+
+### Run Better IAM on the adapter
+
+An adapter is a value for the `database` option. Wrap it in `instrumentStore` while you develop: it reports every
+data call with its method, collection, filter keys (never values), record count, and duration, so you can see
+whether IAM's lookups reach your database as selective queries.
+
+```ts title="test/map-adapter.instance.test.ts"
+import { expect, it } from 'vitest';
+import { betterIam } from 'better-iam';
+import { instrumentStore, type StoreCall } from 'better-iam/core';
+import { mapAdapter } from '../map-adapter/store';
+
+it('runs an instance and keeps lookups selective', async () => {
+  const calls: StoreCall[] = [];
+  const database = instrumentStore(mapAdapter(), (call) => calls.push(call));
+  const iam = betterIam({
+    database,
+    secret: 'test-secret-with-at-least-32-characters',
+    baseURL: 'http://localhost:3000',
+  });
+  await iam.initialize();
+  const root = await iam.bootstrap({
+    email: 'root@example.test',
+    name: 'Root',
+    password: 'a long root test password',
+  });
+  expect(root.tenant.type).toBe('root');
+
+  // A find without filter keys reads a whole collection.
+  const unfiltered = calls.filter((call) => call.method === 'find' && !call.filterKeys?.length);
+  expect(unfiltered).toEqual([]);
+  await database.close();
+});
+```
+
+`iam.initialize()` calls `migrate()`, so the adapter's schema step runs here, followed by plugin migrations. In an
+application, pass the adapter in your configuration module the same way you would pass `sqliteAdapter(...)`, and
+the `better-iam` CLI uses it for `migrate` and every other command.
+
+</Step>
+<Step>
+
+### Port the driver to your database
+
+Replace each driver method with its statement, and each store step with your driver's transaction calls. The
+records table that the reference adapters create is:
+
+```sql title="iam_records"
+CREATE TABLE IF NOT EXISTS iam_records (
+  collection TEXT NOT NULL,
+  id         TEXT NOT NULL,
+  tenant_id  TEXT NOT NULL,
+  unique_key TEXT,
+  data       TEXT NOT NULL,
+  PRIMARY KEY (collection, id),
+  UNIQUE (collection, tenant_id, unique_key)
+)
+```
+
+| Store piece | In a SQL database |
+| --- | --- |
+| Primary key and unique constraint | As above. The unique constraint must allow many rows whose `unique_key` is `NULL`. |
+| Ordering by `id` | Code-point order: SQLite's `BINARY` collation, PostgreSQL's `COLLATE "C"`. A locale collation breaks the ordering cases unless `select` leaves sorting to `RecordStore`. |
+| `Mutex` plus snapshot | `BEGIN`, `COMMIT`, `ROLLBACK` on one connection held for the whole callback, plus a lock taken before the first read. The SQLite adapter uses an in-process mutex and `BEGIN IMMEDIATE`; the PostgreSQL adapter uses `READ COMMITTED` and a transaction-scoped advisory lock (`pg_advisory_xact_lock`) that every transaction takes before reading. |
+| `rollbackOnly` | The same: once a statement fails, the transaction must not commit. |
+| `conflict()` | Map your driver's unique-violation error to `IamError('CONFLICT', …, 409)`. `storageError(error)` from `better-iam/core` does this for PostgreSQL (`23505`) and SQLite codes, maps busy and serialization failures to `STORAGE_BUSY` (503), and everything else to `STORAGE_ERROR`, without leaking the statement. |
+| `migrate()` | Create the table and indexes. For SQLite- or PostgreSQL-compatible databases, call `applyMigrations(execute, 'sqlite' \| 'postgres')` inside a transaction: it applies the reference schema steps and records them in `iam_migrations`. Other dialects need their own DDL. |
+
+Two optional driver members make a SQL adapter fast:
+
+- **`query(query: RecordQuery)`** receives the caller's filter as typed field conditions, with `page` set when the
+  query expresses the whole filter. Return exactly the matching rows ordered by id. `sqliteSelect(query)` and
+  `postgresSelect(query)` build the statement for those two dialects. A driver that returns extra rows is caught
+  and the query is repeated without paging, so a lenient driver is slow but correct; a driver that drops matching
+  rows is wrong, and the filter and paging cases are designed to catch it.
+- **`queryCapabilities: { json, order }`** declares that `query` evaluates `json` conditions and `order` (ordered
+  reads by a numeric field). Without `order: true`, `findOrdered` falls back to reading the matching records and
+  sorting them in memory, which is why the `Mutex` above must let a call chain that holds it run through.
+
+A store can also implement `describe()` for `better-iam doctor`; `describeRecords(execute, adapterName, settings)`
+builds the description from a SQL executor. See [Adapters and plugins](/docs/concepts/extensions#optional-methods).
+
+</Step>
+</Steps>
+
+## Verify it works
+
+```bash
+npx vitest run test/map-adapter.conformance.test.ts test/map-adapter.instance.test.ts
+```
+
+All 23 conformance cases and the instance test pass. Run the conformance suite again after every change to the
+driver, and before you trust the adapter with data run your own application's tests against it as well.
+
+## Errors
+
+| Code | Raised by | When |
+| --- | --- | --- |
+| [`CONFLICT`](/docs/reference/errors#conflict) | Driver, `RecordStore` | Duplicate id or natural key; `put` changing a record's tenant. |
+| [`NOT_FOUND`](/docs/reference/errors#not_found) | `RecordStore` | `put` on a record that does not exist. |
+| [`INVALID_RECORD`](/docs/reference/errors#invalid_record) | `RecordStore` | A record that is not a JSON object with valid identifiers. |
+| [`INVALID_FILTER`](/docs/reference/errors#invalid_filter) | `RecordStore` | A filter that is not an object, negative or fractional paging, a non-string cursor. |
+| [`TRANSACTION_REQUIRED`](/docs/reference/errors#transaction_required) | Your `write` | A write outside `transaction()`. |
+| [`TRANSACTION_ABORTED`](/docs/reference/errors#transaction_aborted) | Your `transaction` | A statement or nested transaction failed and the callback still returned. |
+| [`TRANSACTION_CLOSED`](/docs/reference/errors#transaction_closed) | Your store | A transaction handle used after the transaction ended. |
+| [`TRANSACTION_ACTIVE`](/docs/reference/errors#transaction_active) | Your `close` | `close()` called inside a transaction. |
+| [`STORE_CLOSED`](/docs/reference/errors#store_closed) | Your store | Any call after `close()`. |
+| [`STORAGE_BUSY`](/docs/reference/errors#storage_busy), [`STORAGE_ERROR`](/docs/reference/errors#storage_error) | `storageError` | A busy or failed database, mapped without leaking SQL. |
+
+## Troubleshooting
+
+<Accordions>
+<Accordion title="'orders, bounds, and pages by a numeric field' times out">
+Without `query` and `queryCapabilities.order`, `RecordStore.findOrdered` calls `find` from inside `read`. A lock
+that is not re-entrant for the same async call chain then waits for itself. Let the holder run through, as the
+`Mutex` above does with `AsyncLocalStorage`, or implement ordered queries in the driver.
+</Accordion>
+<Accordion title="'serializes concurrent read-modify-write transactions' loses updates">
+Two transactions read the same row before either wrote it. Take the lock before the first read of a transaction,
+not at the first write, and make reads outside transactions wait for it as well.
+</Accordion>
+<Accordion title="'rolls back failed transactions and joins nested ones' fails or hangs">
+A call on the outer store inside `transaction()` must join the running transaction. Track the current transaction
+per async call chain (`AsyncLocalStorage`), and mark it `rollbackOnly` when a nested callback or a statement fails.
+</Accordion>
+<Accordion title="'reports storage conflicts without leaking SQL or record data' fails">
+The error, its message, its properties, and its `cause` must not contain SQL keywords such as `insert` or `select`,
+the table name, or record values. Throw a fresh `IamError('CONFLICT', ...)`, or pass the driver error through
+`storageError`, instead of rethrowing the driver's error.
+</Accordion>
+<Accordion title="'orders by id in code-point order and paginates deterministically' fails on a SQL database">
+The database sorts `id` with a locale collation. Declare the text columns with a binary or `"C"` collation, or
+return rows from `select` unsorted and let `RecordStore` sort them.
+</Accordion>
+</Accordions>
+
+## Next steps
+
+<Cards>
+  <Card title="Adapters and plugins" href="/docs/concepts/extensions#adapter-contract">
+    The full adapter contract and the optional store methods.
+  </Card>
+  <Card title="Database operations" href="/docs/databases/operations">
+    Snapshots, copying between adapters, and doctor.
+  </Card>
+  <Card title="Test your integration" href="/docs/guides/testing">
+    Application tests on an in-memory SQLite instance.
+  </Card>
+  <Card title="Error codes" href="/docs/reference/errors">
+    Every storage error code and how to handle it.
+  </Card>
+</Cards>

@@ -11,7 +11,7 @@ own: it takes effect when a role lists it in `policyIds` and that role is bound 
 policy, instead of inline in a role, lets several roles share it, keeps every change as a version you can list and
 restore, and lets editors test a draft before saving it. This group also holds the administrator-only review reads
 (`simulate`, `whoCan`, `effectiveActions`) that explain access without creating a session or granting anything.
-The document format itself is described in [policy documents](/docs/guides/authorization/policies).
+The document format itself is described in [policy documents](/docs/authorization/policies).
 
 ## Versions and edit rights
 
@@ -19,7 +19,7 @@ The document format itself is described in [policy documents](/docs/guides/autho
   current version and saves the next one, so `listVersions` always shows the full history.
 - **Optimistic concurrency.** `update` takes the `version` you read and fails with `VERSION_CONFLICT` when someone
   saved in between, so two editors cannot silently overwrite each other.
-- **Edits stay with their authority.** A policy records the [grant authority](/docs/guides/authorization/roles#grant-authorities)
+- **Edits stay with their authority.** A policy records the [grant authority](/docs/authorization/roles#grant-authorities)
   it was created under. Only that authority's holder, or root, may update, restore, or delete it, and its ceiling
   keeps bounding the policy wherever it is attached, even when a higher authority attaches it to a role.
 - **Validated against the catalog.** Documents are checked when they are created, updated, or restored:
@@ -34,7 +34,7 @@ The document format itself is described in [policy documents](/docs/guides/autho
 user session (an API-key session for service accounts), without MFA unless you pass `assumeMfa: true`. The ordinary
 evaluator runs, so conditions, boundaries, authority ceilings, access windows, relationships, and just-in-time
 eligibility (only live activations count) all apply. Results are advisory: they explain access, they never enforce
-it. See [access reviews](/docs/guides/authorization/reviews).
+it. See [access reviews](/docs/authorization/reviews).
 
 | Reason | Meaning |
 | --- | --- |
