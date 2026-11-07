@@ -140,8 +140,8 @@ func (s *Retention) sweepTargets(now any, retention, grace float64) []*sweepTarg
 	}
 }
 
-// sweepBatch is what an act over one batch answers: the records it left in place, and whether to stop.
-type sweepBatch struct {
+// retentionBatch is what an act over one batch answers: the records it left in place, and whether to stop.
+type retentionBatch struct {
 	read      []*core.Object
 	survivors []*core.Object
 	stop      bool
@@ -159,7 +159,7 @@ func retentionWalk(ctx context.Context, store core.IamStore, target *sweepTarget
 		if size == 0 {
 			return false, nil
 		}
-		step := func(ctx context.Context, reader core.IamStore) (sweepBatch, error) {
+		step := func(ctx context.Context, reader core.IamStore) (retentionBatch, error) {
 			filter := target.filter
 			if filter == nil {
 				filter = core.NewObject()
@@ -179,17 +179,17 @@ func retentionWalk(ctx context.Context, store core.IamStore, target *sweepTarget
 				read, err = core.FindOrdered(ctx, reader, target.collection, filter, order, nil)
 			}
 			if err != nil {
-				return sweepBatch{}, err
+				return retentionBatch{}, err
 			}
 			survivors, stop, err := act(ctx, reader, read)
 			if err != nil {
-				return sweepBatch{}, err
+				return retentionBatch{}, err
 			}
-			return sweepBatch{read: read, survivors: survivors, stop: stop}, nil
+			return retentionBatch{read: read, survivors: survivors, stop: stop}, nil
 		}
 		// Deleting: each batch reads and deletes in one short transaction, so a record renewed between batches is
 		// judged again on its current state.
-		var batch sweepBatch
+		var batch retentionBatch
 		var err error
 		if transactional {
 			batch, err = core.Transact(ctx, store, step)
