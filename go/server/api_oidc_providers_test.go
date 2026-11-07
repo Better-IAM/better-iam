@@ -229,7 +229,7 @@ func TestOidcProvidersCreateReadUpdateDelete(t *testing.T) {
 	if got := oidcSortedKeys(created); got != "algorithms,audiences,authorityId,clockToleranceSeconds,createdAt,createdBy,enabled,id,issuer,jwks,maxTokenLifetimeSeconds,name,replayProtection,tenantId,updatedAt" {
 		t.Fatalf("public members: %s", got)
 	}
-	expectJSON(t, created.Get("algorithms"), `["RS256","ES256"]`)
+	expectJSONValue(t, created.Get("algorithms"), `["RS256","ES256"]`)
 	if created.Get("maxTokenLifetimeSeconds") != 3600.0 || created.Get("clockToleranceSeconds") != 30.0 ||
 		created.Get("replayProtection") != "single-use" || created.Get("enabled") != true || created.Get("createdBy") != f.ownerID ||
 		jsNumber(created.Get("createdAt")) != float64(f.now()) {
@@ -243,7 +243,7 @@ func TestOidcProvidersCreateReadUpdateDelete(t *testing.T) {
 		t.Fatalf("authority %v", authority)
 	}
 	got := f.mustPorted(f.oidcGet(f.owner, created.Get("id")))
-	expectJSON(t, got, core.MustStringify(created))
+	expectJSONValue(t, got, core.MustStringify(created))
 	f.advance(1000)
 	updated, err := f.oidcUpdate(f.owner, created.Get("id"), core.NewObject("name", "GitHub",
 		"audiences", []any{oidcAudience, "sts.amazonaws.com"}, "jwks", nil, "jwksUri", "https://token.actions.example.test/.well-known/jwks",
@@ -264,7 +264,7 @@ func TestOidcProvidersCreateReadUpdateDelete(t *testing.T) {
 	expectError(t, err, "INVALID_INPUT", "Give jwks or jwksUri, not both")
 	deleted, err := f.oidcDelete(f.owner, created.Get("id"))
 	appsPorted(t, err)
-	expectJSON(t, appsValue(t, deleted, err), `{"deleted":true}`)
+	expectJSONValue(t, appsValue(t, deleted, err), `{"deleted":true}`)
 	_, err = f.oidcGet(f.owner, created.Get("id"))
 	appsCode(t, err, "NOT_FOUND")
 }
@@ -277,7 +277,7 @@ func TestOidcProvidersReadAndManageUnderThePermissionsAndRecentAuthentication(t 
 	_, nobody, _ := f.administrator("nobody", []string{"iam:trust:read"}, false)
 	provider := f.seedProvider(key, oidcIssuer, f.ownerAuthorityID)
 	public := ToPublicOidcProvider(provider)
-	expectJSON(t, f.mustPorted(f.oidcGet(reader, provider.Get("id"))), core.MustStringify(public))
+	expectJSONValue(t, f.mustPorted(f.oidcGet(reader, provider.Get("id"))), core.MustStringify(public))
 	if got := oidcSortedKeys(public); got != "algorithms,audiences,authorityId,clockToleranceSeconds,createdAt,createdBy,enabled,id,issuer,jwks,maxTokenLifetimeSeconds,name,replayProtection,tenantId,updatedAt" {
 		t.Fatalf("public members: %s", got)
 	}
@@ -303,7 +303,7 @@ func TestOidcProvidersReadAndManageUnderThePermissionsAndRecentAuthentication(t 
 	_, err = f.oidcRevokeSessions(fresh, provider.Get("id"), float64(f.now()+2))
 	expectError(t, err, "INVALID_INPUT", "before must be a time no later than now")
 	revoked := f.mustPorted(f.oidcRevokeSessions(fresh, provider.Get("id"), core.Undefined))
-	expectJSON(t, revoked, `{"providerId":"`+jsString(provider.Get("id"))+`","sessionsRevokedBefore":`+core.NumberString(float64(f.now()+1))+`,"revoked":0}`)
+	expectJSONValue(t, revoked, `{"providerId":"`+jsString(provider.Get("id"))+`","sessionsRevokedBefore":`+core.NumberString(float64(f.now()+1))+`,"revoked":0}`)
 	stored := f.get("oidcProviders", jsString(provider.Get("id")))
 	if jsNumber(stored.Get("sessionsRevokedBefore")) != float64(f.now()+1) || stored.Get("updatedAt") != provider.Get("updatedAt") {
 		t.Fatalf("stored after revokeSessions: %v", stored)
@@ -322,7 +322,7 @@ func TestOidcProvidersReadAndManageUnderThePermissionsAndRecentAuthentication(t 
 	if jsNumber(again.Get("sessionsRevokedBefore")) != float64(f.now()+1) {
 		t.Fatalf("watermark moved back: %v", again)
 	}
-	expectJSON(t, appsValue(t, f.mustPorted(f.oidcDelete(fresh, provider.Get("id"))), nil), `{"deleted":true}`)
+	expectJSONValue(t, appsValue(t, f.mustPorted(f.oidcDelete(fresh, provider.Get("id"))), nil), `{"deleted":true}`)
 }
 
 func TestOidcProvidersAreGatedByTheFeatureExceptReadsDisablingAndDeletion(t *testing.T) {

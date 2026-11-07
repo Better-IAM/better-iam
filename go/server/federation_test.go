@@ -99,7 +99,7 @@ func TestFederationLinksSCIMAccountsOnlyWhenTheConnectionTrustsThatSCIMConnectio
 	if audited == nil {
 		t.Fatal("the link is not audited")
 	}
-	expectJSON(t, audited.Get("metadata"), `{"providerId":"acme-okta","via":"scim"}`)
+	expectJSONValue(t, audited.Get("metadata"), `{"providerId":"acme-okta","via":"scim"}`)
 	// Later sign-ins use the link, whatever the connection's setting.
 	again, err := federated(f, "okta-ada", "ada@acme.test")
 	if err != nil {
@@ -247,7 +247,7 @@ func TestFederationLiveGrantsListOnlyRolesInForce(t *testing.T) {
 	f.insert("bindings", core.NewObject("id", ID(), "tenantId", f.tenantID, "subjectType", "identity", "subjectId", alice.Get("id"),
 		"roleId", later.Get("id"), "authorityId", f.ownerAuthorityID, "startsAt", float64(f.now()+appsDay)))
 	host := federationHost(f)
-	expectJSON(t, must(host.LiveGrants(f.ctx, jsString(alice.Get("id")), f.tenantID)), `{"groupIds":[],"roleIds":[]}`)
+	expectJSONValue(t, must(host.LiveGrants(f.ctx, jsString(alice.Get("id")), f.tenantID)), `{"groupIds":[],"roleIds":[]}`)
 	// Live grants: a started binding (twice, listed once) and a live membership.
 	f.insert("bindings", core.NewObject("id", ID(), "tenantId", f.tenantID, "subjectType", "identity", "subjectId", alice.Get("id"),
 		"roleId", deployer.Get("id"), "authorityId", f.ownerAuthorityID))
@@ -255,7 +255,7 @@ func TestFederationLiveGrantsListOnlyRolesInForce(t *testing.T) {
 	f.addMember(engineering.Get("id"), alice.Get("id"))
 	f.insert("bindings", core.NewObject("id", ID(), "tenantId", f.tenantID, "subjectType", "group", "subjectId", engineering.Get("id"),
 		"roleId", deployer.Get("id"), "authorityId", f.ownerAuthorityID))
-	expectJSON(t, must(host.LiveGrants(f.ctx, jsString(alice.Get("id")), f.tenantID)),
+	expectJSONValue(t, must(host.LiveGrants(f.ctx, jsString(alice.Get("id")), f.tenantID)),
 		`{"groupIds":["`+jsString(engineering.Get("id"))+`"],"roleIds":["`+jsString(deployer.Get("id"))+`"]}`)
 }
 

@@ -243,7 +243,7 @@ func appsCode(t *testing.T, err error, code string) {
 }
 
 // expectJSON compares a model value's JSON with the expected text.
-func expectJSON(t *testing.T, value any, want string) {
+func expectJSONValue(t *testing.T, value any, want string) {
 	t.Helper()
 	text, _, err := core.Stringify(value)
 	if err != nil {
@@ -350,7 +350,7 @@ func TestApplicationsLauncherShowsAssignedAppsAndRecordsLaunches(t *testing.T) {
 	}
 	// Launching needs the app; launches are counted.
 	launched, err := s.apps.Launch(s.ctx, alice, Input[apitypes.ApplicationsLaunchInput](core.NewObject("tenantId", s.tenantID, "appId", ci.Get("id"))))
-	expectJSON(t, appsValue(t, launched.Value, err), `{"url":"https://ci.acme.test/"}`)
+	expectJSONValue(t, appsValue(t, launched.Value, err), `{"url":"https://ci.acme.test/"}`)
 	_, err = s.apps.Launch(s.ctx, alice, Input[apitypes.ApplicationsLaunchInput](core.NewObject("tenantId", s.tenantID, "appId", payroll.Get("id"))))
 	appsCode(t, err, "ACCESS_DENIED")
 	mine := s.mine(alice)
@@ -415,7 +415,7 @@ func TestApplicationsCheckAssignmentsAndReportUnusedOnes(t *testing.T) {
 	if got := s.allowed(core.NewObject("identityId", s.bob.Get("id"), "appId", crm.Get("id"))); got.Get("allowed") != false {
 		t.Fatalf("bob: %v", got)
 	}
-	expectJSON(t, s.allowed(core.NewObject("identityId", s.bob.Get("id"), "oauthClientId", "not-in-catalog")), `{"allowed":true,"governed":false}`)
+	expectJSONValue(t, s.allowed(core.NewObject("identityId", s.bob.Get("id"), "oauthClientId", "not-in-catalog")), `{"allowed":true,"governed":false}`)
 	_, err := s.iam.Applications.Allowed(s.ctx, core.NewObject("tenantId", s.tenantID, "identityId", s.bob.Get("id")))
 	expectError(t, err, "INVALID_INPUT", "Name exactly one of appId or oauthClientId")
 	s.advance(100 * appsDay)
@@ -431,7 +431,7 @@ func TestApplicationsCheckAssignmentsAndReportUnusedOnes(t *testing.T) {
 	}
 	removed, err := s.apps.RemoveUnused(s.ctx, owner, Input[apitypes.ApplicationsRemoveUnusedInput](core.NewObject("tenantId", s.tenantID,
 		"appId", crm.Get("id"), "unusedDays", 90.0)))
-	expectJSON(t, appsValue(t, removed.Value, err), `{"removed":1}`)
+	expectJSONValue(t, appsValue(t, removed.Value, err), `{"removed":1}`)
 	listed, err := s.apps.ListAssignments(s.ctx, owner, Input[apitypes.ApplicationsListAssignmentsInput](core.NewObject("tenantId", s.tenantID, "appId", crm.Get("id"))))
 	if got := appsList(t, listed.Value, err); len(got) != 0 {
 		t.Fatalf("assignments left: %v", got)
@@ -468,7 +468,7 @@ func TestApplicationsCheckAssignmentsAndReportUnusedOnes(t *testing.T) {
 	// The check API answers the same question, under iam:applications:read.
 	checked, err := s.apps.Check(s.ctx, owner, Input[apitypes.ApplicationsCheckInput](core.NewObject("tenantId", s.tenantID,
 		"identityId", s.alice.Get("id"), "appId", crm.Get("id"))))
-	expectJSON(t, appsValue(t, checked.Value, err), `{"allowed":false,"governed":true,"appId":"`+jsString(crm.Get("id"))+`"}`)
+	expectJSONValue(t, appsValue(t, checked.Value, err), `{"allowed":false,"governed":true,"appId":"`+jsString(crm.Get("id"))+`"}`)
 	_, err = s.apps.Check(s.ctx, alice, Input[apitypes.ApplicationsCheckInput](core.NewObject("tenantId", s.tenantID,
 		"identityId", s.alice.Get("id"), "appId", crm.Get("id"))))
 	appsCode(t, err, "ACCESS_DENIED")
@@ -482,7 +482,7 @@ func TestApplicationsKeepTheCatalogHonest(t *testing.T) {
 	expectError(t, err, "INVALID_INPUT", "App keys use lowercase letters, digits, dots, underscores or hyphens")
 	carol := s.memberIdentity("carol")
 	wiki := s.mustCreate(core.NewObject("key", "wiki", "name", "Wiki", "launchUrl", "https://wiki.acme.test", "ownerIds", []any{carol.Get("id")}))
-	expectJSON(t, wiki.Get("ownerIds"), `["`+jsString(carol.Get("id"))+`"]`)
+	expectJSONValue(t, wiki.Get("ownerIds"), `["`+jsString(carol.Get("id"))+`"]`)
 	_, err = s.create(s.owner, core.NewObject("key", "wiki", "name", "Wiki again", "launchUrl", "https://wiki.acme.test"))
 	expectError(t, err, "CONFLICT", "An app with this key exists")
 	_, err = s.update(s.owner, core.NewObject("appId", wiki.Get("id"), "key", "renamed"))
@@ -498,7 +498,7 @@ func TestApplicationsKeepTheCatalogHonest(t *testing.T) {
 	if disabled.Get("enabled") != false {
 		t.Fatalf("disabled: %v", disabled)
 	}
-	expectJSON(t, disabled.Get("ownerIds"), `[]`)
+	expectJSONValue(t, disabled.Get("ownerIds"), `[]`)
 	must(s.update(s.owner, core.NewObject("appId", wiki.Get("id"), "enabled", true)))
 	// Group assignments go with the group (groups.delete releases them).
 	temp := s.group("Temp")
@@ -535,7 +535,7 @@ func TestApplicationsKeepTheCatalogHonest(t *testing.T) {
 		"name", "Mine", "launchUrl", "https://mine.acme.test")))
 	appsCode(t, err, "ACCESS_DENIED")
 	removed, err := s.apps.Unassign(s.ctx, bob, Input[apitypes.ApplicationsUnassignInput](core.NewObject("tenantId", s.tenantID, "assignmentId", seen[0].Get("id"))))
-	expectJSON(t, appsValue(t, removed.Value, err), `{"removed":true}`)
+	expectJSONValue(t, appsValue(t, removed.Value, err), `{"removed":true}`)
 	_, err = s.apps.Unassign(s.ctx, s.owner, Input[apitypes.ApplicationsUnassignInput](core.NewObject("tenantId", s.tenantID, "assignmentId", seen[0].Get("id"))))
 	appsCode(t, err, "NOT_FOUND")
 	// Launches are refused while an administrator views as the person.
@@ -604,7 +604,7 @@ func TestApplicationsGovernOAuthClients(t *testing.T) {
 	appsCode(t, err, "CONFLICT")
 	deleted, err := s.apps.Delete(s.ctx, s.owner, Input[apitypes.ApplicationsDeleteInput](core.NewObject("tenantId", s.tenantID,
 		"appId", crm.Get("id"), "releaseClient", true)))
-	expectJSON(t, appsValue(t, deleted.Value, err), `{"deleted":true}`)
+	expectJSONValue(t, appsValue(t, deleted.Value, err), `{"deleted":true}`)
 	if !gate(s.bob.Get("id"), clientID) {
 		t.Fatal("a released client is still governed")
 	}
