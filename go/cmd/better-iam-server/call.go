@@ -34,6 +34,7 @@ var topLevel = map[string]bool{
 	"vault": true, "quotas": true, "privacy": true, "workflows": true, "compliance": true, "applications": true,
 	"ssh": true, "verifiableCredentials": true, "ldap": true, "signals": true, "licenses": true, "guests": true,
 	"clearances": true, "sessionTokens": true, "hosts": true, "events": true, "metrics": true, "auth": true, "api": true,
+	"protocolHost": true,
 }
 
 var initialisms = map[string]string{"Id": "ID", "Ids": "IDs", "Url": "URL", "Urls": "URLs", "Api": "API", "Json": "JSON", "Ip": "IP", "Uri": "URI", "Ips": "IPs"}
