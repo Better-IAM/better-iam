@@ -354,6 +354,8 @@ type sjwtVerifyOptions struct {
 	algorithms []string
 	issuer     string
 	hasIssuer  bool
+	// issuers, when set, is jose's array form of the issuer option: any of them is accepted (hasIssuer must be true).
+	issuers []string
 	// audience is nil when unset.
 	audience []string
 	// typ is "" when unset.
@@ -547,8 +549,14 @@ func sjwtClaimsSet(header *core.Object, encoded []byte, options sjwtVerifyOption
 	unexpected := func(claim string) error {
 		return sjwtClaimFail("JWTClaimValidationFailed", `unexpected "`+claim+`" claim value`, claim, "check_failed")
 	}
-	if options.hasIssuer && payload.Get("iss") != options.issuer {
-		return nil, unexpected("iss")
+	if options.hasIssuer {
+		accepted := options.issuers
+		if accepted == nil {
+			accepted = []string{options.issuer}
+		}
+		if iss, isText := payload.Get("iss").(string); !isText || !containsString(accepted, iss) {
+			return nil, unexpected("iss")
+		}
 	}
 	if options.audience != nil && !sjwtAudiencePresent(payload.Get("aud"), options.audience) {
 		return nil, unexpected("aud")
