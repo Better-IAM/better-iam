@@ -555,13 +555,13 @@ impl ImpactApi {
                     .map(decode)
                     .collect::<IamResult<_>>()?;
                     let invariants_before =
-                        evaluate_invariants(ctx, &tx, &tenant, &guardrails, None).await?;
+                        evaluate_invariants(ctx, &tx, &tenant, &guardrails, false).await?;
                     apply(ctx, &tx, principal, tenant_id, change).await?;
                     let after =
                         allowed(ctx, &tx, &tenant, &people, &resources, &actions, assume_mfa)
                             .await?;
                     let invariants_after =
-                        evaluate_invariants(ctx, &tx, &tenant, &guardrails, None).await?;
+                        evaluate_invariants(ctx, &tx, &tenant, &guardrails, false).await?;
                     let mut identities: Vec<Value> = Vec::new();
                     let mut gained_total = 0usize;
                     let mut lost_total = 0usize;
