@@ -1,2133 +1,951 @@
-//! Port of tests/teams.test.ts and tests/security-team-authority.test.ts: the `teams` API group (api/teams.ts).
-//!
-//! The suites that create a team need the team helpers of teams.ts (`slugFromName`, `loadTeam`, `teamChain`,
-//! `liveTeamMember`, `syncTeamGroups`, ..., ported by the teams unit), `afterIdentityChange` (package-automation unit),
-//! and for some of them `completeTeamReview` (team-reviews unit), departments, access analysis and configuration
-//! sync; until those land they are `#[ignore]`d with that reason. What works without them runs now: reads of an
-//! organization without teams, the self-service guard, the team-scoped envelope refusing callers without standing,
-//! and input validation in the TypeScript order.
+//! Port of the tests of `teams.ts`: tests/teams.test.ts (nested teams and their backing groups, roles through the
+//! backing groups, principal.teams, temporary memberships and offboarding, team sync) and the helpers other modules
+//! use (`teamsOf`, `primaryTeamOf`, `teamMaintainers`, `isTeamMaintainer`). The teams, groups, roles and bindings
+//! API groups belong to other port units, so the records are written as those groups store them and the module
+//! functions are called directly. Team sync reconciles license seats afterwards (licenses.ts, another unit), so the
+//! sync scenario stays ignored until that is ported.
 
-mod organization_fixture;
+#![allow(clippy::cloned_ref_to_slice_refs)]
 
-use std::sync::{Arc, Mutex};
+mod org_fixture;
+mod teams_fixture;
 
-use better_iam_auth::{DeliveryMessage, delivery_fn};
-use better_iam_core::{CredentialInput, IamStoreExt};
-use better_iam_server::options::{AuthorizationRequest, ResourceTarget};
-use organization_fixture::{Org, assert_matches, body, code, fails, ok, organization, run};
+use better_iam_core::{Filter, IamStoreExt};
+use better_iam_server::teams::{
+    MAX_TEAM_DEPTH, Team, assert_no_team_groups, assert_not_team_group, is_team_group,
+    is_team_maintainer, load_team, primary_team_of, role_holds_deny, slug_from_name,
+    sync_team_groups, sync_teams_from_groups, team_chain, team_chain_bindings, team_context,
+    team_descendants, team_maintainers, team_slug, team_sync_groups, teams_of, teams_syncing_from,
+    tenant_teams,
+};
+use org_fixture::{DAY, Org, code, run};
 use serde_json::{Value, json};
-
-const DAY: f64 = 86_400_000.0;
+use teams_fixture::{
+    TeamRef, add_team_member, bind, can, create_team, group_members, leave_all_teams,
+    permission_role, remove_team_member, role,
+};
 
 struct Scenario {
-    f: Org,
-    tenant_id: String,
-    owner: CredentialInput,
+    org: Org,
     alice: String,
     bob: String,
     carol: String,
-    reader: Value,
-    writer: Value,
-    platform: Value,
-    sre: Value,
-    inbox: Arc<Mutex<Vec<DeliveryMessage>>>,
-}
-
-/// The organization fixture with a captured email outbox.
-async fn fixture() -> (Org, Arc<Mutex<Vec<DeliveryMessage>>>) {
-    let inbox: Arc<Mutex<Vec<DeliveryMessage>>> = Arc::default();
-    let sink = inbox.clone();
-    let f = organization(move |options| {
-        if let Some(authentication) = options.authentication.as_mut() {
-            authentication.send_email = Some(delivery_fn(move |message| {
-                sink.lock().unwrap().push(message);
-                async { Ok(()) }
-            }));
-        }
-    })
-    .await;
-    (f, inbox)
-}
-
-async fn role(f: &Org, owner: &CredentialInput, input: Value) -> Value {
-    ok(f.iam.api.roles.create(owner, body(input)).await)
-}
-
-async fn bind_group(f: &Org, owner: &CredentialInput, role_id: &Value, group_id: &Value) {
-    ok(f.iam
-        .api
-        .bindings
-        .create(
-            owner,
-            body(json!({
-                "tenantId": f.tenant_id,
-                "roleId": role_id,
-                "subjectType": "group",
-                "subjectId": group_id,
-            })),
-        )
-        .await);
+    reader: String,
+    platform: TeamRef,
+    sre: TeamRef,
 }
 
 async fn scenario() -> Scenario {
-    let (f, inbox) = fixture().await;
-    let tenant_id = f.tenant_id.clone();
-    let owner = f.owner_credential.clone();
-    let alice = f.member("alice").await;
-    let bob = f.member("bob").await;
-    let carol = f.member("carol").await;
-    let reader = role(
-        &f,
-        &owner,
-        json!({ "tenantId": tenant_id, "name": "Reader", "permissions": ["documents:read"] }),
-    )
-    .await;
-    let writer = role(
-        &f,
-        &owner,
-        json!({ "tenantId": tenant_id, "name": "Writer", "permissions": ["documents:write"] }),
-    )
-    .await;
-    let platform = ok(f
-        .iam
-        .api
-        .teams
-        .create(
-            &owner,
-            body(json!({
-                "tenantId": tenant_id,
-                "name": "Platform",
-                "description": "Runs the platform",
-                "maintainerIds": [bob],
-            })),
-        )
-        .await);
-    let sre = ok(f
-        .iam
-        .api
-        .teams
-        .create(
-            &owner,
-            body(json!({
-                "tenantId": tenant_id,
-                "name": "Site Reliability",
-                "slug": "sre",
-                "parentId": platform["id"],
-            })),
-        )
-        .await);
+    let org = Org::new(|_| {}).await;
+    let alice = org.member("alice").await.id;
+    let bob = org.member("bob").await.id;
+    let carol = org.member("carol").await.id;
+    let reader = permission_role(&org, "Reader", "documents:read").await;
+    let platform = create_team(&org, "Platform", "platform", None, &[]).await;
+    add_team_member(&org, &platform.id, &bob, "maintainer", None).await;
+    let sre = create_team(&org, "Site Reliability", "sre", Some(&platform.id), &[]).await;
     Scenario {
-        f,
-        tenant_id,
-        owner,
+        org,
         alice,
         bob,
         carol,
         reader,
-        writer,
         platform,
         sre,
-        inbox,
     }
-}
-
-impl Scenario {
-    async fn can(&self, credential: &CredentialInput, action: &str) -> bool {
-        self.f
-            .iam
-            .authorize(&AuthorizationRequest {
-                credential: credential.clone(),
-                tenant_id: self.tenant_id.clone(),
-                action: action.into(),
-                resource: ResourceTarget {
-                    kind: "documents".into(),
-                    id: "a".into(),
-                },
-            })
-            .await
-            .expect("authorize")
-            .allowed
-    }
-
-    async fn add_member(
-        &self,
-        credential: &CredentialInput,
-        team: &Value,
-        identity_id: &str,
-    ) -> Value {
-        ok(self
-            .f
-            .iam
-            .api
-            .teams
-            .add_member(
-                credential,
-                body(json!({ "tenantId": self.tenant_id, "teamId": team["id"], "identityId": identity_id })),
-            )
-            .await)
-    }
-
-    async fn create(&self, input: Value) -> Value {
-        let mut input = input;
-        input["tenantId"] = json!(self.tenant_id);
-        ok(self.f.iam.api.teams.create(&self.owner, body(input)).await)
-    }
-
-    async fn audit(&self, action: &str) -> Vec<Value> {
-        let listed = ok(self
-            .f
-            .iam
-            .api
-            .audit
-            .list(
-                &self.owner,
-                body(json!({ "tenantId": self.tenant_id, "action": action })),
-            )
-            .await);
-        match listed {
-            Value::Array(items) => items,
-            other => other["events"].as_array().cloned().unwrap_or_default(),
-        }
-    }
-
-    fn mail(&self, template: &str) -> Option<DeliveryMessage> {
-        self.inbox
-            .lock()
-            .unwrap()
-            .iter()
-            .find(|message| message.template == template)
-            .cloned()
-    }
-}
-
-fn names(list: &Value, key: &str) -> Vec<String> {
-    list.as_array()
-        .unwrap()
-        .iter()
-        .map(|item| item[key].as_str().unwrap_or_default().to_owned())
-        .collect()
-}
-
-// --- Without the teams.ts helpers -----------------------------------------------------------------------------------
-
-#[test]
-fn reads_an_organization_without_teams() {
-    run(|| async {
-        let (f, _) = fixture().await;
-        let owner = f.owner_credential.clone();
-        let alice = f.member("alice").await;
-        let tenant_id = f.tenant_id.clone();
-        assert_eq!(
-            ok(f.iam
-                .api
-                .teams
-                .list(&owner, body(json!({ "tenantId": tenant_id })))
-                .await),
-            json!([])
-        );
-        assert_eq!(
-            ok(f.iam
-                .api
-                .teams
-                .list(
-                    &owner,
-                    body(json!({ "tenantId": tenant_id, "parentId": null, "query": "plat" }))
-                )
-                .await),
-            json!([])
-        );
-        assert_eq!(
-            ok(f.iam
-                .api
-                .teams
-                .list_for_identity(
-                    &owner,
-                    body(json!({ "tenantId": tenant_id, "identityId": alice }))
-                )
-                .await),
-            json!([])
-        );
-        assert_eq!(
-            ok(f.iam
-                .api
-                .teams
-                .list_reviews(
-                    &owner,
-                    body(json!({ "tenantId": tenant_id, "status": "open" }))
-                )
-                .await),
-            json!([])
-        );
-        let session = f.sign_in(&alice).await;
-        assert_eq!(
-            ok(f.iam
-                .api
-                .teams
-                .list_mine(&session, body(json!({ "tenantId": tenant_id })))
-                .await),
-            json!({ "reviews": [], "teams": [], "requests": [], "joinable": [] })
-        );
-        // An identity of another tenant is not found.
-        let error = fails(
-            f.iam
-                .api
-                .teams
-                .list_for_identity(
-                    &owner,
-                    body(json!({ "tenantId": tenant_id, "identityId": f.root_id })),
-                )
-                .await,
-        );
-        assert_eq!(code(&error), "NOT_FOUND");
-    });
 }
 
 #[test]
-fn self_service_needs_a_persons_own_session_in_the_organization() {
-    run(|| async {
-        let (f, _) = fixture().await;
-        let tenant_id = f.tenant_id.clone();
-        // The root administrator acts from the root tenant.
-        let error = fails(
-            f.iam
-                .api
-                .teams
-                .list_mine(&f.root_credential, body(json!({ "tenantId": tenant_id })))
-                .await,
-        );
-        assert_eq!(code(&error), "ACCESS_DENIED");
-        assert_eq!(error.status, 403);
+fn validates_and_derives_slugs() {
+    assert_eq!(
+        team_slug(Some(&json!("platform-team"))).unwrap(),
+        "platform-team"
+    );
+    assert_eq!(team_slug(Some(&json!("a"))).unwrap(), "a");
+    for bad in [
+        json!("-lead"),
+        json!("trail-"),
+        json!("Upper"),
+        json!(""),
+        json!(7),
+    ] {
+        let error = team_slug(Some(&bad)).unwrap_err();
+        assert_eq!(error.code, "INVALID_INPUT");
         assert_eq!(
             error.message,
-            "Teams are joined and left from a person’s own session in their organization"
+            "slug must use 1-64 lowercase letters, digits, or inner hyphens"
         );
-        // The tenant is validated before the credential is read.
-        let error = fails(
-            f.iam
-                .api
-                .teams
-                .request_to_join(&CredentialInput::default(), body(json!({ "teamId": "x" })))
-                .await,
-        );
-        assert_eq!(
-            (code(&error), error.message.as_str()),
-            ("INVALID_INPUT", "Invalid tenantId")
-        );
-        // Withdrawing a request that does not exist.
-        let alice = f.member("alice").await;
-        let session = f.sign_in(&alice).await;
-        let error = fails(
-            f.iam
-                .api
-                .teams
-                .cancel_request(
-                    &session,
-                    body(json!({ "tenantId": tenant_id, "requestId": "nope" })),
-                )
-                .await,
-        );
-        assert_eq!(code(&error), "NOT_FOUND");
+    }
+    assert_eq!(team_slug(None).unwrap_err().code, "INVALID_INPUT");
+    assert_eq!(
+        team_slug(Some(&json!("a".repeat(65)))).unwrap_err().code,
+        "INVALID_INPUT"
+    );
+
+    assert_eq!(
+        slug_from_name("Platform Team").unwrap().as_deref(),
+        Some("platform-team")
+    );
+    assert_eq!(
+        slug_from_name("Site Reliability").unwrap().as_deref(),
+        Some("site-reliability")
+    );
+    assert_eq!(
+        slug_from_name("  Équipe Données!  ").unwrap().as_deref(),
+        Some("equipe-donnees")
+    );
+    assert_eq!(
+        slug_from_name("R&D / Ops").unwrap().as_deref(),
+        Some("r-d-ops")
+    );
+    assert_eq!(slug_from_name("!!!").unwrap(), None);
+    assert_eq!(slug_from_name("数据").unwrap(), None);
+    // 64 characters at most, without a trailing hyphen left by the cut.
+    let long = format!("{} tail", "a".repeat(63));
+    assert_eq!(
+        slug_from_name(&long).unwrap().as_deref(),
+        Some("a".repeat(63).as_str())
+    );
+}
+
+fn team(id: &str, parent: Option<&str>) -> Team {
+    let mut record = json!({
+        "id": id, "tenantId": "t", "name": id, "slug": id, "groupId": format!("g-{id}"),
+        "joinPolicy": "closed", "memberManagement": "maintainers",
+        "createdAt": 1, "createdBy": "x", "updatedAt": 1,
     });
+    if let Some(parent) = parent {
+        record["parentId"] = json!(parent);
+    }
+    serde_json::from_value(record).unwrap()
 }
 
 #[test]
-fn refuses_callers_without_a_permission_or_standing() {
+fn walks_chains_and_descendants() {
+    let teams: indexmap::IndexMap<String, Team> = [
+        team("root", None),
+        team("child", Some("root")),
+        team("grandchild", Some("child")),
+        team("orphan", Some("missing")),
+        team("loop-a", Some("loop-b")),
+        team("loop-b", Some("loop-a")),
+    ]
+    .into_iter()
+    .map(|team| (team.id.clone(), team))
+    .collect();
+    let ids = |chain: Vec<Team>| chain.into_iter().map(|team| team.id).collect::<Vec<_>>();
+    assert_eq!(
+        ids(team_chain(&teams, "grandchild").unwrap()),
+        ["grandchild", "child", "root"]
+    );
+    assert_eq!(ids(team_chain(&teams, "orphan").unwrap()), ["orphan"]);
+    assert_eq!(
+        ids(team_chain(&teams, "loop-a").unwrap()),
+        ["loop-a", "loop-b"]
+    );
+    assert!(team_chain(&teams, "unknown").unwrap().is_empty());
+    let list = json!(teams.values().collect::<Vec<_>>());
+    assert_eq!(
+        ids(team_descendants(&list, "root").unwrap()),
+        ["child", "grandchild"]
+    );
+    assert!(team_descendants(&list, "grandchild").unwrap().is_empty());
+    assert_eq!(ids(team_descendants(&list, "loop-a").unwrap()), ["loop-b"]);
+
+    // A chain stops after the team and MAX_TEAM_DEPTH levels above it.
+    let mut deep: indexmap::IndexMap<String, Team> = indexmap::IndexMap::new();
+    for level in 0..20 {
+        let parent = (level > 0).then(|| format!("t{}", level - 1));
+        let team = team(&format!("t{level}"), parent.as_deref());
+        deep.insert(team.id.clone(), team);
+    }
+    assert_eq!(
+        team_chain(&deep, "t19").unwrap().len(),
+        MAX_TEAM_DEPTH as usize + 1
+    );
+}
+
+#[test]
+fn gives_child_team_members_the_parent_team_roles_through_the_backing_groups() {
     run(|| async {
-        let (f, _) = fixture().await;
-        let tenant_id = f.tenant_id.clone();
-        let alice = f.member("alice").await;
-        let session = f.sign_in(&alice).await;
-        let error = fails(
-            f.iam
-                .api
-                .teams
-                .list(&session, body(json!({ "tenantId": tenant_id })))
-                .await,
-        );
-        assert_eq!(code(&error), "ACCESS_DENIED");
-        // A team that does not exist gives no standing: the ordinary operation refuses.
-        for result in [
-            fails(f.iam.api.teams.get(&session, body(json!({ "tenantId": tenant_id, "teamId": "missing" }))).await),
-            fails(
-                f.iam
-                    .api
-                    .teams
-                    .list_members(&session, body(json!({ "tenantId": tenant_id, "teamId": "missing" })))
-                    .await,
-            ),
-            fails(
-                f.iam
-                    .api
-                    .teams
-                    .add_member(
-                        &session,
-                        body(json!({ "tenantId": tenant_id, "teamId": "missing", "identityId": alice })),
-                    )
-                    .await,
-            ),
-            fails(
-                f.iam
-                    .api
-                    .teams
-                    .get_review(&session, body(json!({ "tenantId": tenant_id, "reviewId": "missing" })))
-                    .await,
-            ),
-            fails(
-                f.iam
-                    .api
-                    .teams
-                    .approve_request(&session, body(json!({ "tenantId": tenant_id, "requestId": "missing" })))
-                    .await,
-            ),
-        ] {
-            assert_eq!(code(&result), "ACCESS_DENIED", "{result:?}");
-        }
-        let denied = f
+        let s = scenario().await;
+        let org = &s.org;
+        bind(org, "group", &s.platform.group_id, &s.reader).await;
+        let alice = org.sign_in("alice").await;
+        assert!(!can(org, &alice, "documents:read").await);
+        add_team_member(org, &s.sre.id, &s.alice, "member", None).await;
+        assert!(can(org, &alice, "documents:read").await);
+        // Bob directly, Alice through SRE; SRE's own group holds Alice only.
+        let mut expected = vec![s.alice.clone(), s.bob.clone()];
+        expected.sort();
+        assert_eq!(group_members(org, &s.platform.group_id).await, expected);
+        assert_eq!(group_members(org, &s.sre.group_id).await, [s.alice.clone()]);
+        let inherited = org
             .find(
-                "audit",
-                better_iam_core::Filter::new().eq("action", "iam:teams:read"),
+                "groupMembers",
+                Filter::new()
+                    .eq("groupId", s.platform.group_id.as_str())
+                    .eq("identityId", s.alice.as_str()),
             )
             .await;
+        assert_eq!(inherited[0]["teamId"], json!(s.platform.id));
+        assert_eq!(
+            inherited[0]["uniqueKey"],
+            json!(format!("{}:{}", s.platform.group_id, s.alice))
+        );
+
+        // Helpers other modules use (billing attributes spend with them).
+        let tx = org.iam.store.clone();
+        assert_eq!(
+            teams_of(&tx, &org.tenant_id, &s.alice, None).await.unwrap(),
+            [s.sre.id.clone()]
+        );
+        let mut both = teams_of(
+            &tx,
+            &org.tenant_id,
+            &s.alice,
+            Some(&json!({ "includeAncestors": true })),
+        )
+        .await
+        .unwrap();
+        both.sort();
+        let mut expected = vec![s.platform.id.clone(), s.sre.id.clone()];
+        expected.sort();
+        assert_eq!(both, expected);
+        assert_eq!(
+            primary_team_of(&tx, &org.tenant_id, &s.alice, None)
+                .await
+                .unwrap(),
+            Some(s.sre.id.clone())
+        );
+        assert_eq!(
+            team_maintainers(&tx, &org.tenant_id, &s.platform.id, None)
+                .await
+                .unwrap(),
+            [s.bob.clone()]
+        );
         assert!(
-            denied
-                .iter()
-                .any(|event| event["outcome"] == "deny" && event["resourceId"] == "missing")
-        );
-    });
-}
-
-#[test]
-fn validates_input_in_the_typescript_order() {
-    run(|| async {
-        let (f, _) = fixture().await;
-        let tenant_id = f.tenant_id.clone();
-        let owner = f.owner_credential.clone();
-        // The team ID is checked before the credential.
-        let error = fails(
-            f.iam
-                .api
-                .teams
-                .get(
-                    &CredentialInput::default(),
-                    body(json!({ "tenantId": tenant_id, "teamId": 5 })),
-                )
-                .await,
-        );
-        assert_eq!(
-            (code(&error), error.message.as_str()),
-            ("INVALID_INPUT", "Invalid teamId")
-        );
-        let error = fails(
-            f.iam
-                .api
-                .teams
-                .list_reviews(
-                    &owner,
-                    body(json!({ "tenantId": tenant_id, "status": "bogus" })),
-                )
-                .await,
-        );
-        assert_eq!(
-            (code(&error), error.message.as_str()),
-            (
-                "INVALID_INPUT",
-                "status must be one of open, completed, cancelled"
-            )
-        );
-        let error = fails(
-            f.iam
-                .api
-                .teams
-                .get_review(&owner, body(json!({ "tenantId": tenant_id })))
-                .await,
-        );
-        assert_eq!(
-            (code(&error), error.message.as_str()),
-            ("INVALID_INPUT", "Invalid reviewId")
-        );
-        let error = fails(
-            f.iam
-                .api
-                .teams
-                .deny_request(
-                    &owner,
-                    body(json!({ "tenantId": tenant_id, "requestId": "r", "note": 7 })),
-                )
-                .await,
-        );
-        assert_eq!(
-            (code(&error), error.message.as_str()),
-            ("INVALID_INPUT", "Invalid note")
-        );
-        let error = fails(
-            f.iam
-                .api
-                .teams
-                .list(&owner, body(json!({ "tenantId": tenant_id, "query": "" })))
-                .await,
-        );
-        assert_eq!(
-            (code(&error), error.message.as_str()),
-            ("INVALID_INPUT", "Invalid query")
-        );
-    });
-}
-
-// --- tests/teams.test.ts --------------------------------------------------------------------------------------------
-
-#[test]
-#[ignore = "needs the teams.ts helpers (teams unit) and afterIdentityChange (package-automation unit)"]
-fn creates_nested_teams_with_backing_groups_and_derived_slugs() {
-    run(|| async {
-        let s = scenario().await;
-        assert_matches(
-            &s.platform,
-            json!({
-                "name": "Platform",
-                "slug": "platform",
-                "joinPolicy": "closed",
-                "memberManagement": "maintainers",
-                "memberCount": 1,
-                "maintainerCount": 1,
-                "path": [],
-            }),
-        );
-        assert_eq!(names(&s.platform["maintainers"], "id"), vec![s.bob.clone()]);
-        assert_matches(
-            &s.sre,
-            json!({ "slug": "sre", "parentId": s.platform["id"] }),
-        );
-        assert_eq!(names(&s.sre["path"], "slug"), vec!["platform"]);
-        let group = ok(s
-            .f
-            .iam
-            .api
-            .groups
-            .get(
-                &s.owner,
-                body(json!({ "tenantId": s.tenant_id, "groupId": s.platform["groupId"] })),
-            )
-            .await);
-        assert_matches(
-            &group,
-            json!({ "name": "team:platform", "teamId": s.platform["id"] }),
-        );
-        let error = fails(
-            s.f.iam
-                .api
-                .teams
-                .create(
-                    &s.owner,
-                    body(json!({ "tenantId": s.tenant_id, "name": "platform" })),
-                )
-                .await,
-        );
-        assert_eq!(code(&error), "CONFLICT");
-        let list = ok(s
-            .f
-            .iam
-            .api
-            .teams
-            .list(&s.owner, body(json!({ "tenantId": s.tenant_id })))
-            .await);
-        let pairs: Vec<(String, f64)> = list
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|team| {
-                (
-                    team["slug"].as_str().unwrap().to_owned(),
-                    team["childCount"].as_f64().unwrap(),
-                )
-            })
-            .collect();
-        assert_eq!(pairs, vec![("platform".into(), 1.0), ("sre".into(), 0.0)]);
-        let top = ok(s
-            .f
-            .iam
-            .api
-            .teams
-            .list(
-                &s.owner,
-                body(json!({ "tenantId": s.tenant_id, "parentId": null })),
-            )
-            .await);
-        assert_eq!(names(&top, "slug"), vec!["platform"]);
-    });
-}
-
-#[test]
-#[ignore = "needs the teams.ts helpers (teams unit) and afterIdentityChange (package-automation unit)"]
-fn gives_child_team_members_the_parent_teams_roles_through_the_backing_groups() {
-    run(|| async {
-        let s = scenario().await;
-        bind_group(&s.f, &s.owner, &s.reader["id"], &s.platform["groupId"]).await;
-        let alice = s.f.sign_in(&s.alice).await;
-        assert!(!s.can(&alice, "documents:read").await);
-        s.add_member(&s.owner, &s.sre, &s.alice).await;
-        assert!(s.can(&alice, "documents:read").await);
-        let detail = ok(s
-            .f
-            .iam
-            .api
-            .teams
-            .get(
-                &s.owner,
-                body(json!({ "tenantId": s.tenant_id, "teamId": s.sre["id"] })),
-            )
-            .await);
-        let roles = detail["roles"].as_array().unwrap();
-        assert_eq!(roles.len(), 1);
-        assert_matches(
-            &roles[0],
-            json!({ "roleName": "Reader", "inherited": true, "team": { "slug": "platform" } }),
-        );
-        let platform = ok(s
-            .f
-            .iam
-            .api
-            .teams
-            .get(
-                &s.owner,
-                body(json!({ "tenantId": s.tenant_id, "teamId": s.platform["id"] })),
-            )
-            .await);
-        // Bob directly, Alice through SRE.
-        assert_eq!(platform["totalMemberCount"], json!(2));
-        assert_eq!(platform["memberCount"], json!(1));
-        let members = ok(s
-            .f
-            .iam
-            .api
-            .teams
-            .list_members(
-                &s.owner,
-                body(json!({ "tenantId": s.tenant_id, "teamId": s.platform["id"], "includeChildTeams": true })),
-            )
-            .await);
-        let rows: Vec<(String, String, String)> = members
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|member| {
-                (
-                    member["name"].as_str().unwrap().to_owned(),
-                    member["role"].as_str().unwrap().to_owned(),
-                    member["team"]["slug"].as_str().unwrap().to_owned(),
-                )
-            })
-            .collect();
-        assert_eq!(
-            rows,
-            vec![
-                ("bob".into(), "maintainer".into(), "platform".into()),
-                ("alice".into(), "member".into(), "sre".into()),
-            ]
-        );
-        ok(s
-            .f
-            .iam
-            .api
-            .teams
-            .remove_member(
-                &s.owner,
-                body(json!({ "tenantId": s.tenant_id, "teamId": s.sre["id"], "identityId": s.alice })),
-            )
-            .await);
-        assert!(!s.can(&alice, "documents:read").await);
-    });
-}
-
-#[test]
-#[ignore = "needs the teams.ts helpers (teams unit) and afterIdentityChange (package-automation unit)"]
-fn lets_maintainers_manage_membership_without_an_administrator_permission() {
-    run(|| async {
-        let s = scenario().await;
-        let bob = s.f.sign_in(&s.bob).await;
-        // Bob maintains Platform, so he manages SRE below it too.
-        ok(s.f
-            .iam
-            .api
-            .teams
-            .add_member(
-                &bob,
-                body(json!({
-                    "tenantId": s.tenant_id,
-                    "teamId": s.sre["id"],
-                    "identityId": s.carol,
-                    "role": "maintainer",
-                })),
-            )
-            .await);
-        let carol = s.f.sign_in(&s.carol).await;
-        s.add_member(&carol, &s.sre, &s.alice).await;
-        // Carol maintains SRE, not Platform.
-        let error = fails(
-            s.f.iam
-                .api
-                .teams
-                .add_member(
-                    &carol,
-                    body(json!({ "tenantId": s.tenant_id, "teamId": s.platform["id"], "identityId": s.alice })),
-                )
-                .await,
-        );
-        assert_eq!(code(&error), "ACCESS_DENIED");
-        // Settings stay with administrators.
-        let error = fails(
-            s.f.iam
-                .api
-                .teams
-                .update(
-                    &bob,
-                    body(json!({ "tenantId": s.tenant_id, "teamId": s.sre["id"], "name": "Ops" })),
-                )
-                .await,
-        );
-        assert_eq!(code(&error), "ACCESS_DENIED");
-        let added = s.audit("team:member:add").await;
-        assert_eq!(
-            added
-                .iter()
-                .filter(|event| event["metadata"]["via"] == "maintainer")
-                .count(),
-            2
-        );
-        let updates = s.audit("iam:teams:update").await;
-        assert!(updates.iter().any(|event| {
-            event["outcome"] == "allow" && event["metadata"]["via"] == "team-maintainer"
-        }));
-
-        // With memberManagement 'admins' maintainers are refused.
-        ok(s
-            .f
-            .iam
-            .api
-            .teams
-            .update(
-                &s.owner,
-                body(json!({ "tenantId": s.tenant_id, "teamId": s.sre["id"], "memberManagement": "admins" })),
-            )
-            .await);
-        let error = fails(
-            s.f.iam
-                .api
-                .teams
-                .remove_member(
-                    &carol,
-                    body(json!({ "tenantId": s.tenant_id, "teamId": s.sre["id"], "identityId": s.alice })),
-                )
-                .await,
-        );
-        assert_eq!(code(&error), "ACCESS_DENIED");
-    });
-}
-
-#[test]
-#[ignore = "needs the teams.ts helpers (teams unit) and afterIdentityChange (package-automation unit)"]
-fn lets_members_read_their_own_team_but_not_others() {
-    run(|| async {
-        let s = scenario().await;
-        s.add_member(&s.owner, &s.sre, &s.alice).await;
-        let other = s.create(json!({ "name": "Sales" })).await;
-        let alice = s.f.sign_in(&s.alice).await;
-        let own = ok(s
-            .f
-            .iam
-            .api
-            .teams
-            .get(
-                &alice,
-                body(json!({ "tenantId": s.tenant_id, "teamId": s.sre["id"] })),
-            )
-            .await);
-        assert_eq!(own["slug"], "sre");
-        // Being in SRE makes Alice part of Platform as well.
-        ok(s.f
-            .iam
-            .api
-            .teams
-            .list_members(
-                &alice,
-                body(json!({ "tenantId": s.tenant_id, "teamId": s.platform["id"] })),
-            )
-            .await);
-        let error = fails(
-            s.f.iam
-                .api
-                .teams
-                .get(
-                    &alice,
-                    body(json!({ "tenantId": s.tenant_id, "teamId": other["id"] })),
-                )
-                .await,
-        );
-        assert_eq!(code(&error), "ACCESS_DENIED");
-        let error = fails(
-            s.f.iam
-                .api
-                .teams
-                .list(&alice, body(json!({ "tenantId": s.tenant_id })))
-                .await,
-        );
-        assert_eq!(code(&error), "ACCESS_DENIED");
-        // Members are not maintainers.
-        let error = fails(
-            s.f.iam
-                .api
-                .teams
-                .add_member(
-                    &alice,
-                    body(json!({ "tenantId": s.tenant_id, "teamId": s.sre["id"], "identityId": s.carol })),
-                )
-                .await,
-        );
-        assert_eq!(code(&error), "ACCESS_DENIED");
-    });
-}
-
-#[test]
-#[ignore = "needs the teams.ts helpers (teams unit), afterIdentityChange (package-automation unit) and the config export/plan (org-sync unit)"]
-fn keeps_team_managed_groups_out_of_the_groups_packages_and_invitation_apis() {
-    run(|| async {
-        let s = scenario().await;
-        let group_id = s.platform["groupId"].clone();
-        let error = fails(
-            s.f.iam
-                .api
-                .groups
-                .add_member(
-                    &s.owner,
-                    body(json!({ "tenantId": s.tenant_id, "groupId": group_id, "identityId": s.alice })),
-                )
-                .await,
-        );
-        assert_eq!(code(&error), "TEAM_MANAGED");
-        let error = fails(
-            s.f.iam
-                .api
-                .groups
-                .remove_member(
-                    &s.owner,
-                    body(json!({ "tenantId": s.tenant_id, "groupId": group_id, "identityId": s.bob })),
-                )
-                .await,
-        );
-        assert_eq!(code(&error), "TEAM_MANAGED");
-        let error = fails(
-            s.f.iam
-                .api
-                .groups
-                .delete(
-                    &s.owner,
-                    body(json!({ "tenantId": s.tenant_id, "groupId": group_id })),
-                )
-                .await,
-        );
-        assert_eq!(code(&error), "TEAM_MANAGED");
-        let error = fails(
-            s.f.iam
-                .api
-                .packages
-                .create(
-                    &s.owner,
-                    body(json!({ "tenantId": s.tenant_id, "name": "Platform kit", "groupIds": [group_id] })),
-                )
-                .await,
-        );
-        assert_eq!(code(&error), "TEAM_MANAGED");
-        // Configuration sync leaves team groups (and what is bound to them) alone.
-        bind_group(&s.f, &s.owner, &s.reader["id"], &group_id).await;
-        let exported = ok(s
-            .f
-            .iam
-            .api
-            .config
-            .export(&s.owner, body(json!({ "tenantId": s.tenant_id })))
-            .await);
-        assert!(
-            !exported["groups"]
-                .as_array()
-                .cloned()
-                .unwrap_or_default()
-                .iter()
-                .any(|group| group["name"]
-                    .as_str()
-                    .unwrap_or_default()
-                    .starts_with("team:"))
-        );
-        assert_eq!(
-            exported.get("bindings").cloned().unwrap_or(json!([])),
-            json!([])
-        );
-        let plan = ok(s
-            .f
-            .iam
-            .api
-            .config
-            .plan(
-                &s.owner,
-                body(json!({ "tenantId": s.tenant_id, "config": exported, "prune": true })),
-            )
-            .await);
-        assert!(
-            plan["changes"]
-                .as_array()
+            !is_team_maintainer(&tx, &org.tenant_id, &s.sre.id, &s.bob, None)
+                .await
                 .unwrap()
-                .iter()
-                .all(|change| change["action"] == "unchanged")
         );
-    });
-}
-
-#[test]
-#[ignore = "needs the teams.ts helpers (teams unit) and afterIdentityChange (package-automation unit)"]
-fn refuses_cycles_overly_deep_nesting_and_deleting_a_team_with_teams_below_it() {
-    run(|| async {
-        let s = scenario().await;
-        let error = fails(
-            s.f.iam
-                .api
-                .teams
-                .update(
-                    &s.owner,
-                    body(json!({ "tenantId": s.tenant_id, "teamId": s.platform["id"], "parentId": s.sre["id"] })),
-                )
-                .await,
-        );
-        assert_eq!(code(&error), "INVALID_INPUT");
-        let error = fails(
-            s.f.iam
-                .api
-                .teams
-                .delete(
-                    &s.owner,
-                    body(json!({ "tenantId": s.tenant_id, "teamId": s.platform["id"] })),
-                )
-                .await,
-        );
-        assert_eq!(code(&error), "RESOURCE_IN_USE");
-        let mut parent = s.sre["id"].clone();
-        for depth in 3..=10 {
-            parent = s
-                .create(json!({ "name": format!("Level {depth}"), "parentId": parent }))
-                .await["id"]
-                .clone();
-        }
-        let error = fails(
-            s.f.iam
-                .api
-                .teams
-                .create(
-                    &s.owner,
-                    body(
-                        json!({ "tenantId": s.tenant_id, "name": "Too deep", "parentId": parent }),
-                    ),
-                )
-                .await,
-        );
-        assert_eq!(code(&error), "INVALID_INPUT");
-    });
-}
-
-#[test]
-#[ignore = "needs the teams.ts helpers (teams unit) and afterIdentityChange (package-automation unit)"]
-fn moves_a_team_and_recomputes_both_parents() {
-    run(|| async {
-        let s = scenario().await;
-        let other = s.create(json!({ "name": "Data" })).await;
-        bind_group(&s.f, &s.owner, &s.reader["id"], &s.platform["groupId"]).await;
-        bind_group(&s.f, &s.owner, &s.writer["id"], &other["groupId"]).await;
-        s.add_member(&s.owner, &s.sre, &s.alice).await;
-        let alice = s.f.sign_in(&s.alice).await;
-        assert_eq!(
-            (
-                s.can(&alice, "documents:read").await,
-                s.can(&alice, "documents:write").await
-            ),
-            (true, false)
-        );
-        let moved = ok(s
-            .f
-            .iam
-            .api
-            .teams
-            .update(
-                &s.owner,
-                body(json!({ "tenantId": s.tenant_id, "teamId": s.sre["id"], "parentId": other["id"] })),
+        assert!(
+            is_team_maintainer(
+                &tx,
+                &org.tenant_id,
+                &s.sre.id,
+                &s.bob,
+                Some(&json!({ "includeAncestors": true }))
             )
-            .await);
-        assert_eq!(names(&moved["path"], "slug"), vec!["data"]);
-        assert_eq!(
-            (
-                s.can(&alice, "documents:read").await,
-                s.can(&alice, "documents:write").await
-            ),
-            (false, true)
-        );
-        let top = ok(s
-            .f
-            .iam
-            .api
-            .teams
-            .update(
-                &s.owner,
-                body(json!({ "tenantId": s.tenant_id, "teamId": s.sre["id"], "parentId": null })),
-            )
-            .await);
-        assert!(top.get("parentId").is_none());
-        assert!(!s.can(&alice, "documents:write").await);
-    });
-}
-
-#[test]
-#[ignore = "needs the teams.ts helpers (teams unit) and afterIdentityChange (package-automation unit)"]
-fn handles_join_requests_end_to_end() {
-    run(|| async {
-        let s = scenario().await;
-        let teams = &s.f.iam.api.teams;
-        ok(teams
-            .update(
-                &s.owner,
-                body(json!({ "tenantId": s.tenant_id, "teamId": s.platform["id"], "joinPolicy": "request" })),
-            )
-            .await);
-        let alice = s.f.sign_in(&s.alice).await;
-        let mine = ok(teams
-            .list_mine(&alice, body(json!({ "tenantId": s.tenant_id })))
-            .await);
-        assert_eq!(names(&mine["joinable"], "slug"), vec!["platform"]);
-        let error = fails(
-            teams
-                .request_to_join(
-                    &alice,
-                    body(json!({ "tenantId": s.tenant_id, "teamId": s.sre["id"] })),
-                )
-                .await,
-        );
-        assert_eq!(code(&error), "INVALID_TRANSITION");
-        let request = ok(teams
-            .request_to_join(
-                &alice,
-                body(json!({
-                    "tenantId": s.tenant_id,
-                    "teamId": s.platform["id"],
-                    "justification": "On call next week",
-                })),
-            )
-            .await);
-        assert_matches(
-            &request,
-            json!({ "status": "pending", "justification": "On call next week" }),
-        );
-        let error = fails(
-            teams
-                .request_to_join(
-                    &alice,
-                    body(json!({ "tenantId": s.tenant_id, "teamId": s.platform["id"] })),
-                )
-                .await,
-        );
-        assert_eq!(code(&error), "CONFLICT");
-        s.f.iam.auth.dispatch_outbox(None).await.unwrap();
-        let mail = s.mail("team-join-request").expect("join request mail");
-        assert_eq!(mail.to, "bob@acme.test");
-        assert_matches(
-            &Value::Object(mail.payload.clone()),
-            json!({ "teamName": "Platform", "requesterName": "alice" }),
-        );
-
-        let bob = s.f.sign_in(&s.bob).await;
-        let pending = ok(teams
-            .list_requests(
-                &bob,
-                body(json!({ "tenantId": s.tenant_id, "teamId": s.platform["id"] })),
-            )
-            .await);
-        let requesters: Vec<Value> = pending
-            .as_array()
+            .await
             .unwrap()
-            .iter()
-            .map(|item| item["requester"]["id"].clone())
-            .collect();
-        assert_eq!(requesters, vec![json!(s.alice)]);
-        let approved = ok(teams
-            .approve_request(
-                &bob,
-                body(json!({ "tenantId": s.tenant_id, "requestId": request["id"], "note": "Welcome" })),
-            )
-            .await);
-        assert_matches(
-            &approved,
-            json!({ "status": "approved", "decidedBy": s.bob, "note": "Welcome" }),
         );
-        s.f.iam.auth.dispatch_outbox(None).await.unwrap();
-        assert_matches(
-            &Value::Object(s.mail("team-join-decided").expect("decision mail").payload),
-            json!({ "decision": "approved", "teamName": "Platform" }),
+        assert!(
+            teams_of(&tx, &org.tenant_id, &s.carol, None)
+                .await
+                .unwrap()
+                .is_empty()
         );
-        let after = ok(teams
-            .list_mine(&alice, body(json!({ "tenantId": s.tenant_id })))
-            .await);
-        let rows: Vec<(String, String)> = after["teams"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|team| {
-                (
-                    team["slug"].as_str().unwrap().to_owned(),
-                    team["role"].as_str().unwrap().to_owned(),
-                )
-            })
-            .collect();
-        assert_eq!(rows, vec![("platform".into(), "member".into())]);
-        assert_eq!(after["joinable"], json!([]));
 
-        // Nobody decides their own request; carol asks, then withdraws.
-        let carol = s.f.sign_in(&s.carol).await;
-        let second = ok(teams
-            .request_to_join(
-                &carol,
-                body(json!({ "tenantId": s.tenant_id, "teamId": s.platform["id"] })),
-            )
-            .await);
-        let error = fails(
-            teams
-                .approve_request(
-                    &carol,
-                    body(json!({ "tenantId": s.tenant_id, "requestId": second["id"] })),
-                )
-                .await,
+        remove_team_member(org, &s.sre.id, &s.alice).await;
+        assert!(!can(org, &alice, "documents:read").await);
+        assert_eq!(
+            group_members(org, &s.platform.group_id).await,
+            [s.bob.clone()]
         );
-        assert_eq!(code(&error), "ACCESS_DENIED");
-        let cancelled = ok(teams
-            .cancel_request(
-                &carol,
-                body(json!({ "tenantId": s.tenant_id, "requestId": second["id"] })),
-            )
-            .await);
-        assert_eq!(cancelled["status"], "cancelled");
-        let error = fails(
-            teams
-                .deny_request(
-                    &bob,
-                    body(json!({ "tenantId": s.tenant_id, "requestId": second["id"] })),
-                )
-                .await,
-        );
-        assert_eq!(code(&error), "INVALID_TRANSITION");
-
-        // Requests lapse after fourteen days.
-        let third = ok(teams
-            .request_to_join(
-                &carol,
-                body(json!({ "tenantId": s.tenant_id, "teamId": s.platform["id"] })),
-            )
-            .await);
-        s.f.advance(15.0 * DAY);
-        let late = s.f.sign_in(&s.bob).await;
-        let error = fails(
-            teams
-                .approve_request(
-                    &late,
-                    body(json!({ "tenantId": s.tenant_id, "requestId": third["id"] })),
-                )
-                .await,
-        );
-        assert_eq!(code(&error), "INVALID_TRANSITION");
-
-        // Alice leaves.
-        let alice_again = s.f.sign_in(&s.alice).await;
-        ok(teams
-            .leave(
-                &alice_again,
-                body(json!({ "tenantId": s.tenant_id, "teamId": s.platform["id"] })),
-            )
-            .await);
-        let mine = ok(teams
-            .list_mine(&alice_again, body(json!({ "tenantId": s.tenant_id })))
-            .await);
-        assert_eq!(mine["teams"], json!([]));
+        assert!(group_members(org, &s.sre.group_id).await.is_empty());
     });
 }
 
 #[test]
-#[ignore = "needs the teams.ts helpers (teams unit) and afterIdentityChange (package-automation unit)"]
 fn exposes_principal_teams_to_policies_including_the_teams_above() {
     run(|| async {
         let s = scenario().await;
-        let policy_role = role(
-            &s.f,
-            &s.owner,
-            json!({
-                "tenantId": s.tenant_id,
-                "name": "Platform readers",
-                "document": {
-                    "version": 1,
-                    "statements": [{
-                        "effect": "allow",
-                        "actions": ["documents:read"],
-                        "resources": ["*"],
-                        "conditions": { "ArrayContains": { "principal.teams": [s.platform["id"]] } },
-                    }],
-                },
-            }),
+        let org = &s.org;
+        let readers = role(
+            org,
+            "Platform readers",
+            json!([{
+                "effect": "allow",
+                "actions": ["documents:read"],
+                "resources": ["*"],
+                "conditions": { "ArrayContains": { "principal.teams": [s.platform.id] } },
+            }]),
         )
         .await;
-        ok(s.f
-            .iam
-            .api
-            .bindings
-            .create(
-                &s.owner,
-                body(json!({
-                    "tenantId": s.tenant_id,
-                    "roleId": policy_role["id"],
-                    "subjectType": "identity",
-                    "subjectId": s.alice,
-                })),
-            )
-            .await);
-        let alice = s.f.sign_in(&s.alice).await;
-        assert!(!s.can(&alice, "documents:read").await);
-        s.add_member(&s.owner, &s.sre, &s.alice).await;
-        assert!(s.can(&alice, "documents:read").await);
+        bind(org, "identity", &s.alice, &readers).await;
+        let alice = org.sign_in("alice").await;
+        assert!(!can(org, &alice, "documents:read").await);
+        add_team_member(org, &s.sre.id, &s.alice, "member", None).await;
+        assert!(can(org, &alice, "documents:read").await);
+
+        let context = team_context(&org.iam.store, &org.tenant_id, &s.alice, org.now())
+            .await
+            .unwrap();
+        let mut expected = vec![s.platform.id.clone(), s.sre.id.clone()];
+        expected.sort();
+        assert_eq!(context["principal.teams"], json!(expected));
+        let empty = team_context(&org.iam.store, &org.tenant_id, &s.carol, org.now())
+            .await
+            .unwrap();
+        assert_eq!(Value::Object(empty), json!({ "principal.teams": [] }));
     });
 }
 
 #[test]
-#[ignore = "needs the teams.ts helpers (teams unit), afterIdentityChange (package-automation unit) and sodVerify (sod unit)"]
-fn enforces_separation_of_duties_across_teams() {
-    run(|| async {
-        let s = scenario().await;
-        let payments = s.create(json!({ "name": "Payments" })).await;
-        bind_group(&s.f, &s.owner, &s.reader["id"], &s.platform["groupId"]).await;
-        bind_group(&s.f, &s.owner, &s.writer["id"], &payments["groupId"]).await;
-        ok(s.f
-            .iam
-            .api
-            .sod
-            .create(
-                &s.owner,
-                body(json!({
-                    "tenantId": s.tenant_id,
-                    "name": "Readers never write",
-                    "roleIds": [s.reader["id"], s.writer["id"]],
-                })),
-            )
-            .await);
-        s.add_member(&s.owner, &payments, &s.alice).await;
-        let error = fails(
-            s.f.iam
-                .api
-                .teams
-                .add_member(
-                    &s.owner,
-                    body(json!({ "tenantId": s.tenant_id, "teamId": s.sre["id"], "identityId": s.alice })),
-                )
-                .await,
-        );
-        assert_eq!(code(&error), "SOD_CONFLICT");
-        // The maintainer path is checked too.
-        let bob = s.f.sign_in(&s.bob).await;
-        let error = fails(
-            s.f.iam
-                .api
-                .teams
-                .add_member(
-                    &bob,
-                    body(json!({ "tenantId": s.tenant_id, "teamId": s.sre["id"], "identityId": s.alice })),
-                )
-                .await,
-        );
-        assert_eq!(code(&error), "SOD_CONFLICT");
-    });
-}
-
-#[test]
-#[ignore = "needs the teams.ts helpers (teams unit), afterIdentityChange (package-automation unit) and offboarding (identities lifecycle)"]
 fn ends_temporary_memberships_and_cleans_up_on_offboarding_and_deletion() {
     run(|| async {
         let s = scenario().await;
-        bind_group(&s.f, &s.owner, &s.reader["id"], &s.platform["groupId"]).await;
-        ok(s.f
-            .iam
-            .api
-            .teams
-            .add_member(
-                &s.owner,
-                body(json!({
-                    "tenantId": s.tenant_id,
-                    "teamId": s.sre["id"],
-                    "identityId": s.alice,
-                    "expiresAt": s.f.now() + 3_600_000.0,
-                })),
-            )
-            .await);
-        let alice = s.f.sign_in(&s.alice).await;
-        assert!(s.can(&alice, "documents:read").await);
-        s.f.advance(2.0 * 3_600_000.0);
-        assert!(!s.can(&alice, "documents:read").await);
-        // The retention sweep removes the ended membership record.
-        let swept = s.f.iam.sweep_expired(None).await.unwrap();
-        assert_eq!(swept["deleted"]["teamMembers"], json!(1));
-        assert!(
-            s.f.find(
-                "teamMembers",
-                better_iam_core::Filter::new()
-                    .eq("tenantId", s.tenant_id.clone())
-                    .eq("identityId", s.alice.clone()),
-            )
-            .await
-            .is_empty()
-        );
-
-        s.add_member(&s.owner, &s.sre, &s.alice).await;
-        let owner = s.f.session(&s.f.owner_id, false).await;
-        let result = ok(s
-            .f
-            .iam
-            .api
-            .identities
-            .offboard(
-                &owner,
-                body(json!({ "tenantId": s.tenant_id, "identityId": s.alice, "reason": "Left the company" })),
-            )
-            .await);
-        assert_matches(&result, json!({ "teamsLeft": 1 }));
-        assert!(
-            s.f.find(
+        let org = &s.org;
+        bind(org, "group", &s.platform.group_id, &s.reader).await;
+        add_team_member(
+            org,
+            &s.sre.id,
+            &s.alice,
+            "member",
+            Some(org.now() + 3_600_000.0),
+        )
+        .await;
+        let alice = org.sign_in("alice").await;
+        assert!(can(org, &alice, "documents:read").await);
+        let inherited = org
+            .find(
                 "groupMembers",
-                better_iam_core::Filter::new()
-                    .eq("tenantId", s.tenant_id.clone())
-                    .eq("identityId", s.alice.clone()),
+                Filter::new()
+                    .eq("groupId", s.platform.group_id.as_str())
+                    .eq("identityId", s.alice.as_str()),
+            )
+            .await;
+        assert_eq!(inherited[0]["expiresAt"], num(org.now() + 3_600_000.0));
+        org.advance(2.0 * 3_600_000.0);
+        assert!(!can(org, &alice, "documents:read").await);
+        let tx = org.iam.store.clone();
+        assert!(
+            teams_of(
+                &tx,
+                &org.tenant_id,
+                &s.alice,
+                Some(&json!({ "at": org.now() }))
             )
             .await
+            .unwrap()
             .is_empty()
         );
+        // At an earlier moment the membership still counted.
+        assert_eq!(
+            teams_of(
+                &tx,
+                &org.tenant_id,
+                &s.alice,
+                Some(&json!({ "at": org.now() - 3.0 * 3_600_000.0 }))
+            )
+            .await
+            .unwrap(),
+            [s.sre.id.clone()]
+        );
+        // The retention sweep removes ended records; a sync leaves the lapsed person out of the backing groups.
+        for member in org
+            .find(
+                "teamMembers",
+                Filter::new().eq("identityId", s.alice.as_str()),
+            )
+            .await
+        {
+            let id = member["id"].as_str().unwrap().to_owned();
+            org.iam
+                .store
+                .transaction(|tx| async move { tx.delete("teamMembers", &id).await })
+                .await
+                .unwrap();
+        }
 
-        ok(s.f
-            .iam
-            .api
-            .identities
-            .delete(
-                &owner,
-                body(json!({ "tenantId": s.tenant_id, "identityId": s.bob })),
+        add_team_member(org, &s.sre.id, &s.alice, "member", None).await;
+        // A pending join request is cancelled with the memberships.
+        let request_id = better_iam_server::utils::id();
+        org.insert(
+            "teamJoinRequests",
+            json!({
+                "id": request_id, "tenantId": org.tenant_id, "teamId": s.platform.id,
+                "identityId": s.alice, "status": "pending", "requestedAt": org.now(),
+                "expiresAt": org.now() + 7.0 * DAY,
+            }),
+        )
+        .await;
+        // A stale backing-group membership written before a repair goes too.
+        let stray = create_team(org, "Stray", "stray", None, &[]).await;
+        org.insert(
+            "groupMembers",
+            json!({
+                "id": better_iam_server::utils::id(), "tenantId": org.tenant_id,
+                "uniqueKey": format!("{}:{}", stray.group_id, s.alice), "groupId": stray.group_id,
+                "identityId": s.alice, "teamId": stray.id,
+            }),
+        )
+        .await;
+        // An ordinary group membership stays.
+        let ordinary = org.group("Ordinary").await;
+        org.add_member(&ordinary, &s.alice).await;
+        assert_eq!(leave_all_teams(org, &s.alice).await, 1.0);
+        let left: Vec<String> = org
+            .find(
+                "groupMembers",
+                Filter::new()
+                    .eq("tenantId", org.tenant_id.as_str())
+                    .eq("identityId", s.alice.as_str()),
             )
-            .await);
-        let platform = ok(s
-            .f
+            .await
+            .iter()
+            .map(|member| member["groupId"].as_str().unwrap().to_owned())
+            .collect();
+        assert_eq!(left, [ordinary.clone()]);
+        let request = org.get("teamJoinRequests", &request_id).await.unwrap();
+        assert_eq!(request["status"], json!("cancelled"));
+        assert_eq!(request["decidedAt"], num(org.now()));
+        assert!(!can(org, &alice, "documents:read").await);
+        assert_eq!(leave_all_teams(org, &s.alice).await, 0.0);
+
+        // A deleted person leaves the backing groups on the next sync.
+        org.patch("identities", &s.bob, json!({ "status": "deleted" }))
+            .await;
+        let tenant_id = org.tenant_id.clone();
+        let platform_id = s.platform.id.clone();
+        let now = org.now();
+        let result = org
             .iam
-            .api
-            .teams
-            .get(
-                &owner,
-                body(json!({ "tenantId": s.tenant_id, "teamId": s.platform["id"] })),
-            )
-            .await);
-        assert_eq!(platform["maintainers"], json!([]));
-        assert_eq!(platform["totalMemberCount"], json!(0));
+            .store
+            .transaction(|tx| async move {
+                sync_team_groups(&tx, &tenant_id, &json!([platform_id]), now).await
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            (result.added, result.removed, result.updated),
+            (0.0, 1.0, 0.0)
+        );
+        assert!(group_members(org, &s.platform.group_id).await.is_empty());
     });
 }
 
 #[test]
-#[ignore = "needs the teams.ts helpers (teams unit) and afterIdentityChange (package-automation unit)"]
-fn keeps_a_team_in_step_with_its_source_groups() {
+fn merges_memberships_and_ends_activations_of_the_backing_group() {
     run(|| async {
         let s = scenario().await;
-        let groups = &s.f.iam.api.groups;
-        let directory = ok(groups
-            .create(
-                &s.owner,
-                body(json!({ "tenantId": s.tenant_id, "name": "Okta: Engineers" })),
+        let org = &s.org;
+        // Temporary in SRE and permanent in Platform: permanent in Platform's group.
+        add_team_member(org, &s.sre.id, &s.alice, "member", Some(org.now() + DAY)).await;
+        add_team_member(org, &s.platform.id, &s.alice, "member", None).await;
+        assert!(
+            membership(org, &s.platform.group_id, &s.alice)
+                .await
+                .get("expiresAt")
+                .is_none()
+        );
+        // Two temporary sources: the latest end counts.
+        let deep = create_team(org, "Deep", "deep", Some(&s.sre.id), &[]).await;
+        add_team_member(
+            org,
+            &deep.id,
+            &s.carol,
+            "member",
+            Some(org.now() + 2.0 * DAY),
+        )
+        .await;
+        add_team_member(
+            org,
+            &s.sre.id,
+            &s.carol,
+            "member",
+            Some(org.now() + 5.0 * DAY),
+        )
+        .await;
+        let carol = org
+            .find(
+                "groupMembers",
+                Filter::new()
+                    .eq("groupId", s.platform.group_id.as_str())
+                    .eq("identityId", s.carol.as_str()),
             )
-            .await);
-        ok(groups
-            .add_members(
-                &s.owner,
-                body(json!({
-                    "tenantId": s.tenant_id,
-                    "groupId": directory["id"],
-                    "identityIds": [s.alice, s.bob],
-                })),
-            )
-            .await);
-        let engineers = s
-            .create(json!({ "name": "Engineers", "syncGroupIds": [directory["id"]] }))
             .await;
+        assert_eq!(carol[0]["expiresAt"], num(org.now() + 5.0 * DAY));
+        let deep_group = org
+            .find(
+                "groupMembers",
+                Filter::new()
+                    .eq("groupId", deep.group_id.as_str())
+                    .eq("identityId", s.carol.as_str()),
+            )
+            .await;
+        assert_eq!(deep_group[0]["expiresAt"], num(org.now() + 2.0 * DAY));
+
+        // An eligible binding on Platform's group, activated by Alice, ends when she leaves the group.
+        let binding = bind(org, "group", &s.platform.group_id, &s.reader).await;
+        org.patch("bindings", &binding, json!({ "eligible": true }))
+            .await;
+        let activation = better_iam_server::utils::id();
+        org.insert(
+            "bindingActivations",
+            json!({
+                "id": activation, "tenantId": org.tenant_id,
+                "uniqueKey": format!("{binding}:{}", s.alice), "bindingId": binding,
+                "identityId": s.alice, "roleId": s.reader, "activatedAt": org.now(),
+                "expiresAt": org.now() + 3_600_000.0, "createdBy": s.alice,
+            }),
+        )
+        .await;
+        remove_team_member(org, &s.platform.id, &s.alice).await;
+        // Still in Platform's group through SRE (temporary now): the activation stays.
         assert_eq!(
-            engineers["syncGroups"],
-            json!([{ "id": directory["id"], "name": "Okta: Engineers" }])
+            membership(org, &s.platform.group_id, &s.alice).await["expiresAt"],
+            num(org.now() + DAY)
         );
-        let members = || async {
-            let listed = ok(s
-                .f
-                .iam
-                .api
-                .teams
-                .list_members(
-                    &s.owner,
-                    body(json!({ "tenantId": s.tenant_id, "teamId": engineers["id"] })),
-                )
-                .await);
-            let mut rows: Vec<String> = listed
-                .as_array()
-                .unwrap()
-                .iter()
-                .map(|member| {
-                    format!(
-                        "{}:{}",
-                        member["name"].as_str().unwrap(),
-                        member["source"].as_str().unwrap_or("manual")
-                    )
-                })
-                .collect();
-            rows.sort();
-            rows
-        };
-        assert_eq!(members().await, vec!["alice:sync", "bob:sync"]);
+        assert!(org.get("bindingActivations", &activation).await.is_some());
+        remove_team_member(org, &s.sre.id, &s.alice).await;
+        assert!(org.get("bindingActivations", &activation).await.is_none());
 
-        // Group changes flow into the team; manual members stay.
-        s.add_member(&s.owner, &engineers, &s.carol).await;
-        ok(groups
-            .remove_member(
-                &s.owner,
-                body(json!({ "tenantId": s.tenant_id, "groupId": directory["id"], "identityId": s.alice })),
-            )
-            .await);
-        ok(groups
-            .add_member(
-                &s.owner,
-                body(json!({
-                    "tenantId": s.tenant_id,
-                    "groupId": directory["id"],
-                    "identityId": s.carol,
-                    "expiresAt": s.f.now() + DAY,
-                })),
-            )
-            .await);
-        assert_eq!(members().await, vec!["bob:sync", "carol:manual"]);
-
-        // A temporary source membership makes a temporary synced membership.
-        let dave = s.f.member("dave").await;
-        ok(groups
-            .add_member(
-                &s.owner,
-                body(json!({
-                    "tenantId": s.tenant_id,
-                    "groupId": directory["id"],
-                    "identityId": dave,
-                    "expiresAt": s.f.now() + 3_600_000.0,
-                })),
-            )
-            .await);
-        let listed = ok(s
-            .f
-            .iam
-            .api
-            .teams
-            .list_members(
-                &s.owner,
-                body(json!({ "tenantId": s.tenant_id, "teamId": engineers["id"] })),
-            )
-            .await);
-        let dave_row = listed
-            .as_array()
+        // A backing-group membership changed by hand loses its package link and regains the team on the next sync.
+        let manual = membership(org, &s.sre.group_id, &s.carol).await["id"]
+            .as_str()
             .unwrap()
-            .iter()
-            .find(|member| member["name"] == "dave")
-            .cloned()
-            .expect("dave");
-        assert_matches(
-            &dave_row,
-            json!({ "source": "sync", "expiresAt": s.f.now() + 3_600_000.0 }),
-        );
-
-        // Synced members are managed through the source group.
-        let error = fails(
-            s.f.iam
-                .api
-                .teams
-                .remove_member(
-                    &s.owner,
-                    body(json!({ "tenantId": s.tenant_id, "teamId": engineers["id"], "identityId": s.bob })),
-                )
-                .await,
-        );
-        assert_eq!(code(&error), "INVALID_TRANSITION");
-        let error = fails(
-            groups
-                .delete(
-                    &s.owner,
-                    body(json!({ "tenantId": s.tenant_id, "groupId": directory["id"] })),
-                )
-                .await,
-        );
-        assert_eq!(code(&error), "RESOURCE_IN_USE");
-
-        // A directory push (SCIM) that drops Bob reaches the team through the protocol host.
-        let host = s.f.iam.protocol_host();
-        let (tenant_id, group_id, bob_id) = (
-            s.tenant_id.clone(),
-            directory["id"].as_str().unwrap().to_owned(),
-            s.bob.clone(),
-        );
-        s.f.iam
+            .to_owned();
+        org.patch(
+            "groupMembers",
+            &manual,
+            json!({ "packageAssignmentId": "assignment", "teamId": null }),
+        )
+        .await;
+        let tenant_id = org.tenant_id.clone();
+        let sre_id = s.sre.id.clone();
+        let now = org.now();
+        let result = org
+            .iam
             .store
             .transaction(|tx| async move {
-                use better_iam_core::Filter;
-                for row in tx
-                    .find(
-                        "groupMembers",
-                        &Filter::new()
-                            .eq("tenantId", tenant_id.clone())
-                            .eq("groupId", group_id.clone())
-                            .eq("identityId", bob_id.clone()),
-                        &better_iam_core::FindOptions::default(),
-                    )
-                    .await?
-                {
-                    tx.delete("groupMembers", row["id"].as_str().unwrap())
-                        .await?;
-                }
-                host.sync_role_mappings(
+                sync_team_groups(&tx, &tenant_id, &json!([sre_id]), now).await
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            (result.added, result.removed, result.updated),
+            (0.0, 0.0, 1.0)
+        );
+        let repaired = org.get("groupMembers", &manual).await.unwrap();
+        assert!(repaired.get("packageAssignmentId").is_none());
+        assert_eq!(repaired["teamId"], json!(s.sre.id));
+        assert_eq!(repaired["expiresAt"], num(org.now() + 5.0 * DAY));
+        // Idempotent.
+        let tenant_id = org.tenant_id.clone();
+        let sre_id = s.sre.id.clone();
+        let again = org
+            .iam
+            .store
+            .transaction(|tx| async move {
+                sync_team_groups(&tx, &tenant_id, &json!([sre_id, "unknown"]), now).await
+            })
+            .await
+            .unwrap();
+        assert_eq!((again.added, again.removed, again.updated), (0.0, 0.0, 0.0));
+    });
+}
+
+#[test]
+fn loads_teams_and_guards_their_backing_groups() {
+    run(|| async {
+        let s = scenario().await;
+        let org = &s.org;
+        let tx = org.iam.store.clone();
+        let loaded = load_team(&tx, &org.tenant_id, Some(&json!(s.sre.id)))
+            .await
+            .unwrap();
+        assert_eq!(loaded.slug, "sre");
+        assert_eq!(loaded.parent_id.as_deref(), Some(s.platform.id.as_str()));
+        let missing = load_team(&tx, &org.tenant_id, Some(&json!("nope")))
+            .await
+            .unwrap_err();
+        assert_eq!(
+            (
+                missing.code.as_str(),
+                missing.message.as_str(),
+                missing.status
+            ),
+            ("NOT_FOUND", "Team not found", 404)
+        );
+        let foreign = load_team(&tx, &org.root_tenant_id, Some(&json!(s.sre.id)))
+            .await
+            .unwrap_err();
+        assert_eq!(foreign.code, "NOT_FOUND");
+        for bad in [None, Some(json!("")), Some(json!(5))] {
+            let error = load_team(&tx, &org.tenant_id, bad.as_ref())
+                .await
+                .unwrap_err();
+            assert_eq!(
+                (error.code.as_str(), error.message.as_str()),
+                ("INVALID_INPUT", "Invalid teamId")
+            );
+        }
+        assert_eq!(tenant_teams(&tx, &org.tenant_id).await.unwrap().len(), 2);
+
+        let backing = org
+            .get("groups", &s.platform.group_id)
+            .await
+            .map(Value::Object);
+        assert!(is_team_group(backing.as_ref()).unwrap());
+        let error = assert_not_team_group(backing.as_ref()).unwrap_err();
+        assert_eq!(
+            (error.code.as_str(), error.message.as_str(), error.status),
+            (
+                "TEAM_MANAGED",
+                "This group belongs to a team; manage its members with the teams API",
+                409
+            )
+        );
+        let ordinary_id = org.group("Ordinary").await;
+        let ordinary = org.get("groups", &ordinary_id).await.map(Value::Object);
+        assert!(!is_team_group(ordinary.as_ref()).unwrap());
+        assert!(assert_not_team_group(ordinary.as_ref()).is_ok());
+        assert!(assert_not_team_group(None).is_ok());
+        assert!(!is_team_group(Some(&json!({ "teamId": 5 }))).unwrap());
+        assert!(
+            assert_no_team_groups(&tx, &[ordinary_id.clone(), "missing".into()])
+                .await
+                .is_ok()
+        );
+        assert_eq!(
+            code(assert_no_team_groups(&tx, &[ordinary_id.clone(), s.sre.group_id.clone()]).await),
+            "TEAM_MANAGED"
+        );
+    });
+}
+
+#[test]
+fn validates_source_groups_and_finds_the_teams_syncing_from_them() {
+    run(|| async {
+        let s = scenario().await;
+        let org = &s.org;
+        let tx = org.iam.store.clone();
+        let directory = org.group("Okta: Engineers").await;
+        assert_eq!(
+            team_sync_groups(&tx, &org.tenant_id, Some(&json!([directory, directory])))
+                .await
+                .unwrap(),
+            [directory.clone()]
+        );
+        assert!(
+            team_sync_groups(&tx, &org.tenant_id, Some(&json!([])))
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        let too_many = json!((0..11).map(|n| format!("g{n}")).collect::<Vec<_>>());
+        for bad in [Some(too_many), Some(json!("x")), None] {
+            let error = team_sync_groups(&tx, &org.tenant_id, bad.as_ref())
+                .await
+                .unwrap_err();
+            assert_eq!(
+                (error.code.as_str(), error.message.as_str()),
+                ("INVALID_INPUT", "syncGroupIds must list at most 10 groups")
+            );
+        }
+        let missing = team_sync_groups(&tx, &org.tenant_id, Some(&json!(["nope"])))
+            .await
+            .unwrap_err();
+        assert_eq!(
+            (
+                missing.code.as_str(),
+                missing.message.as_str(),
+                missing.status
+            ),
+            ("NOT_FOUND", "Group nope not found", 404)
+        );
+        let backing = team_sync_groups(&tx, &org.tenant_id, Some(&json!([s.platform.group_id])))
+            .await
+            .unwrap_err();
+        assert_eq!(
+            (backing.code.as_str(), backing.message.as_str()),
+            (
+                "INVALID_INPUT",
+                "A team cannot sync from another team\u{2019}s backing group"
+            )
+        );
+
+        let engineers =
+            create_team(org, "Engineers", "engineers", None, &[directory.clone()]).await;
+        let syncing: Vec<String> = teams_syncing_from(&tx, &org.tenant_id, &directory)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|team| team.id)
+            .collect();
+        assert_eq!(syncing, [engineers.id.clone()]);
+        assert!(
+            teams_syncing_from(&tx, &org.tenant_id, "other")
+                .await
+                .unwrap()
+                .is_empty()
+        );
+
+        // Nothing to sync: no reconciliation, nothing changes.
+        let ctx = org.iam.ctx.clone();
+        let tenant_id = org.tenant_id.clone();
+        let result = org
+            .iam
+            .store
+            .transaction(|tx| async move {
+                sync_teams_from_groups(
+                    &ctx,
                     &tx,
-                    &json!({
-                        "tenantId": tenant_id,
-                        "connectionId": "scim",
-                        "groupId": group_id,
-                        "identityIds": [],
-                        "roleIds": [],
-                    }),
+                    &tenant_id,
+                    &json!({ "teamIds": [], "actorId": "directory-sync" }),
                 )
                 .await
             })
             .await
             .unwrap();
-        assert_eq!(members().await, vec!["carol:manual", "dave:sync"]);
-        let events = s.audit("team:member:remove").await;
-        assert!(
-            events
-                .iter()
-                .any(|event| event["actorId"] == "directory-sync")
+        assert_eq!(
+            (result.added, result.removed, result.updated),
+            (0.0, 0.0, 0.0)
         );
-
-        // Turning sync off removes the synced members and keeps the manual ones.
-        ok(s
-            .f
-            .iam
-            .api
-            .teams
-            .update(
-                &s.owner,
-                body(json!({ "tenantId": s.tenant_id, "teamId": engineers["id"], "syncGroupIds": null })),
-            )
-            .await);
-        assert_eq!(members().await, vec!["carol:manual"]);
-        ok(groups
-            .delete(
-                &s.owner,
-                body(json!({ "tenantId": s.tenant_id, "groupId": directory["id"] })),
-            )
-            .await);
-        let error = fails(
-            s.f.iam
-                .api
-                .teams
-                .create(
-                    &s.owner,
-                    body(json!({
-                        "tenantId": s.tenant_id,
-                        "name": "Loop",
-                        "syncGroupIds": [s.platform["groupId"]],
-                    })),
-                )
-                .await,
-        );
-        assert_eq!(code(&error), "INVALID_INPUT");
+        assert!(result.teams.is_empty());
     });
 }
 
 #[test]
-#[ignore = "needs the teams.ts helpers (teams unit), afterIdentityChange (package-automation unit) and access packages"]
-fn follows_access_packages_that_grant_a_source_group() {
+fn finds_what_a_team_chain_hands_out_and_which_roles_carry_denies() {
     run(|| async {
         let s = scenario().await;
-        let directory = ok(s
-            .f
-            .iam
-            .api
-            .groups
-            .create(
-                &s.owner,
-                body(json!({ "tenantId": s.tenant_id, "name": "On-call" })),
-            )
-            .await);
-        let team = s
-            .create(json!({ "name": "Responders", "syncGroupIds": [directory["id"]] }))
-            .await;
-        let pkg = ok(s
-            .f
-            .iam
-            .api
-            .packages
-            .create(
-                &s.owner,
-                body(json!({ "tenantId": s.tenant_id, "name": "On-call kit", "groupIds": [directory["id"]] })),
-            )
-            .await);
-        let week = s.f.now() + 7.0 * DAY;
-        ok(s.f
-            .iam
-            .api
-            .packages
-            .assign(
-                &s.owner,
-                body(json!({
-                    "tenantId": s.tenant_id,
-                    "packageId": pkg["id"],
-                    "identityId": s.alice,
-                    "expiresAt": week,
-                })),
-            )
-            .await);
-        let members = || async {
-            let listed = ok(s
-                .f
-                .iam
-                .api
-                .teams
-                .list_members(
-                    &s.owner,
-                    body(json!({ "tenantId": s.tenant_id, "teamId": team["id"] })),
-                )
-                .await);
-            listed
-                .as_array()
+        let org = &s.org;
+        let tx = org.iam.store.clone();
+        let parent_binding = bind(org, "group", &s.platform.group_id, &s.reader).await;
+        let writer = permission_role(org, "Writer", "documents:write").await;
+        let child_binding = bind(org, "group", &s.sre.group_id, &writer).await;
+        bind(org, "identity", &s.alice, &writer).await;
+        let ids = |bindings: Vec<better_iam_server::models::Binding>| {
+            bindings
+                .into_iter()
+                .map(|binding| binding.id)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            ids(team_chain_bindings(&tx, &org.tenant_id, &json!([s.sre.id]))
+                .await
+                .unwrap()),
+            [child_binding.clone(), parent_binding.clone()]
+        );
+        assert_eq!(
+            ids(
+                team_chain_bindings(&tx, &org.tenant_id, &json!([s.platform.id, s.sre.id]))
+                    .await
+                    .unwrap()
+            ),
+            [parent_binding.clone(), child_binding.clone()]
+        );
+        assert!(
+            team_chain_bindings(&tx, &org.tenant_id, &json!([]))
+                .await
                 .unwrap()
+                .is_empty()
+        );
+
+        // Deny in an attached policy of an inherited role.
+        let policy = better_iam_server::utils::id();
+        org.insert(
+            "policies",
+            json!({
+                "id": policy, "tenantId": org.tenant_id, "name": "No deletes",
+                "document": { "version": 1, "statements": [
+                    { "effect": "deny", "actions": ["documents:delete"], "resources": ["*"] }
+                ] },
+            }),
+        )
+        .await;
+        let base = better_iam_server::utils::id();
+        org.insert(
+            "roles",
+            json!({ "id": base, "tenantId": org.tenant_id, "name": "Base", "policyIds": [policy], "protected": false }),
+        )
+        .await;
+        let derived = better_iam_server::utils::id();
+        org.insert(
+            "roles",
+            json!({
+                "id": derived, "tenantId": org.tenant_id, "name": "Derived", "policyIds": [],
+                "inherits": [base, derived], "protected": false,
+                "document": { "version": 1, "statements": [
+                    { "effect": "allow", "actions": ["documents:read"], "resources": ["*"] }
+                ] },
+            }),
+        )
+        .await;
+        assert!(role_holds_deny(&tx, &derived).await.unwrap());
+        assert!(role_holds_deny(&tx, &base).await.unwrap());
+        assert!(!role_holds_deny(&tx, &s.reader).await.unwrap());
+        assert!(!role_holds_deny(&tx, "missing").await.unwrap());
+        let inline = role(
+            org,
+            "Inline deny",
+            json!([{ "effect": "deny", "actions": ["documents:read"], "resources": ["*"] }]),
+        )
+        .await;
+        assert!(role_holds_deny(&tx, &inline).await.unwrap());
+    });
+}
+
+/// tests/teams.test.ts "keeps a team in step with its source groups (team sync)", through the module: needs
+/// licenses.ts `reconcileGroupLicenses` (another unit) after every change.
+#[test]
+#[ignore = "needs licenses.ts reconcileGroupLicenses (port unit licenses)"]
+fn keeps_a_team_in_step_with_its_source_groups() {
+    run(|| async {
+        let s = scenario().await;
+        let org = &s.org;
+        let directory = org.group("Okta: Engineers").await;
+        org.add_member(&directory, &s.alice).await;
+        org.add_member(&directory, &s.bob).await;
+        let engineers =
+            create_team(org, "Engineers", "engineers", None, &[directory.clone()]).await;
+        let sync = |group_id: Option<&str>| {
+            let ctx = org.iam.ctx.clone();
+            let tenant_id = org.tenant_id.clone();
+            let mut options = json!({ "actorId": "directory-sync" });
+            match group_id {
+                Some(group_id) => options["groupId"] = json!(group_id),
+                None => options["teamIds"] = json!([engineers.id]),
+            }
+            async move {
+                org.iam
+                    .store
+                    .transaction(|tx| async move {
+                        sync_teams_from_groups(&ctx, &tx, &tenant_id, &options).await
+                    })
+                    .await
+                    .unwrap()
+            }
+        };
+        let members = || async {
+            let mut names: Vec<String> = org
+                .find(
+                    "teamMembers",
+                    Filter::new().eq("teamId", engineers.id.as_str()),
+                )
+                .await
                 .iter()
                 .map(|member| {
                     format!(
                         "{}:{}",
-                        member["name"].as_str().unwrap(),
-                        member["expiresAt"]
-                            .as_f64()
-                            .map(|at| format!("{at}"))
-                            .unwrap_or_else(|| "permanent".into())
-                    )
-                })
-                .collect::<Vec<_>>()
-        };
-        assert_eq!(members().await, vec![format!("alice:{week}")]);
-        // Extending the package extends the synced membership.
-        let fortnight = s.f.now() + 14.0 * DAY;
-        let owner = s.f.session(&s.f.owner_id, false).await;
-        ok(s.f
-            .iam
-            .api
-            .packages
-            .extend(
-                &owner,
-                body(json!({
-                    "tenantId": s.tenant_id,
-                    "packageId": pkg["id"],
-                    "identityId": s.alice,
-                    "expiresAt": fortnight,
-                })),
-            )
-            .await);
-        assert_eq!(members().await, vec![format!("alice:{fortnight}")]);
-        ok(s
-            .f
-            .iam
-            .api
-            .packages
-            .revoke(
-                &s.owner,
-                body(json!({ "tenantId": s.tenant_id, "packageId": pkg["id"], "identityId": s.alice })),
-            )
-            .await);
-        assert!(members().await.is_empty());
-    });
-}
-
-#[test]
-#[ignore = "needs the teams.ts helpers (teams unit), afterIdentityChange (package-automation unit), departments and access analysis"]
-fn reports_risky_teams_and_departments_in_access_analysis() {
-    run(|| async {
-        let s = scenario().await;
-        let admin = role(
-            &s.f,
-            &s.owner,
-            json!({
-                "tenantId": s.tenant_id,
-                "name": "Administrator",
-                "document": { "version": 1, "statements": [{ "effect": "allow", "actions": ["*"], "resources": ["*"] }] },
-            }),
-        )
-        .await;
-        bind_group(&s.f, &s.owner, &admin["id"], &s.platform["groupId"]).await;
-        s.add_member(&s.owner, &s.sre, &s.alice).await;
-        let orphan = s.create(json!({ "name": "Data" })).await;
-        s.add_member(&s.owner, &orphan, &s.carol).await;
-        let sales = ok(s
-            .f
-            .iam
-            .api
-            .departments
-            .create(
-                &s.owner,
-                body(json!({ "tenantId": s.tenant_id, "name": "Sales" })),
-            )
-            .await);
-        ok(s
-            .f
-            .iam
-            .api
-            .departments
-            .assign(
-                &s.owner,
-                body(json!({ "tenantId": s.tenant_id, "departmentId": sales["id"], "identityIds": [s.carol] })),
-            )
-            .await);
-        let kinds = || async {
-            let findings = ok(s
-                .f
-                .iam
-                .api
-                .analysis
-                .findings(&s.owner, body(json!({ "tenantId": s.tenant_id })))
-                .await);
-            let mut rows: Vec<String> = findings["findings"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .filter(|finding| {
-                    ["team", "department"]
-                        .contains(&finding["subject"]["type"].as_str().unwrap_or_default())
-                })
-                .map(|finding| {
-                    format!(
-                        "{}:{}",
-                        finding["kind"].as_str().unwrap(),
-                        finding["subject"]["name"].as_str().unwrap()
+                        member["identityId"].as_str().unwrap(),
+                        member
+                            .get("source")
+                            .and_then(Value::as_str)
+                            .unwrap_or("manual")
                     )
                 })
                 .collect();
-            rows.sort();
-            rows
+            names.sort();
+            names
         };
-        // Bob maintains Platform, so he can make anyone an administrator through Platform or SRE.
+        let first = sync(None).await;
         assert_eq!(
-            kinds().await,
-            vec![
-                "department-without-head:Sales",
-                "team-maintainers-grant-admin:Platform",
-                "team-maintainers-grant-admin:Site Reliability",
-                "team-without-maintainer:Data",
-            ]
+            (first.added, first.teams.clone()),
+            (2.0, vec![engineers.id.clone()])
         );
-        ok(s
-            .f
-            .iam
-            .api
-            .teams
-            .update(
-                &s.owner,
-                body(json!({ "tenantId": s.tenant_id, "teamId": s.platform["id"], "memberManagement": "admins" })),
-            )
-            .await);
-        ok(s
-            .f
-            .iam
-            .api
-            .departments
-            .update(
-                &s.owner,
-                body(json!({ "tenantId": s.tenant_id, "departmentId": sales["id"], "headId": s.bob })),
-            )
-            .await);
-        assert_eq!(
-            kinds().await,
-            vec![
-                "team-maintainers-grant-admin:Site Reliability",
-                "team-without-maintainer:Data",
-            ]
-        );
-    });
-}
+        let mut expected = vec![format!("{}:sync", s.alice), format!("{}:sync", s.bob)];
+        expected.sort();
+        assert_eq!(members().await, expected);
+        let mut backing = vec![s.alice.clone(), s.bob.clone()];
+        backing.sort();
+        assert_eq!(group_members(org, &engineers.group_id).await, backing);
 
-#[test]
-#[ignore = "needs the teams.ts helpers (teams unit), afterIdentityChange (package-automation unit) and packagesNaming (org-rules unit)"]
-fn deletes_a_team_with_its_backing_group_and_rejects_people_who_cannot_belong() {
-    run(|| async {
-        let s = scenario().await;
-        let service = ok(s
-            .f
-            .iam
-            .api
-            .service_accounts
-            .create(
-                &s.owner,
-                body(json!({ "tenantId": s.tenant_id, "name": "deployer" })),
+        // Group changes flow into the team; manual members stay.
+        add_team_member(org, &engineers.id, &s.carol, "member", None).await;
+        for member in org
+            .find(
+                "groupMembers",
+                Filter::new()
+                    .eq("groupId", directory.as_str())
+                    .eq("identityId", s.alice.as_str()),
             )
-            .await);
-        let error = fails(
-            s.f.iam
-                .api
-                .teams
-                .add_member(
-                    &s.owner,
-                    body(json!({ "tenantId": s.tenant_id, "teamId": s.sre["id"], "identityId": service["id"] })),
-                )
-                .await,
-        );
-        assert_eq!(code(&error), "INVALID_INPUT");
-        s.add_member(&s.owner, &s.sre, &s.alice).await;
-        let error = fails(
-            s.f.iam
-                .api
-                .teams
-                .add_member(
-                    &s.owner,
-                    body(json!({ "tenantId": s.tenant_id, "teamId": s.sre["id"], "identityId": s.alice })),
-                )
-                .await,
-        );
-        assert_eq!(code(&error), "CONFLICT");
-        let removed = ok(s
-            .f
-            .iam
-            .api
-            .teams
-            .delete(
-                &s.owner,
-                body(json!({ "tenantId": s.tenant_id, "teamId": s.sre["id"] })),
-            )
-            .await);
-        assert_eq!(removed, json!({ "deleted": true, "members": 1 }));
-        assert!(
-            s.f.iam
-                .store
-                .get("groups", s.sre["groupId"].as_str().unwrap())
-                .await
-                .unwrap()
-                .is_none()
-        );
-        let platform = ok(s
-            .f
-            .iam
-            .api
-            .teams
-            .get(
-                &s.owner,
-                body(json!({ "tenantId": s.tenant_id, "teamId": s.platform["id"] })),
-            )
-            .await);
-        // Only Bob remains in Platform's group once SRE is gone.
-        assert_eq!(platform["totalMemberCount"], json!(1));
-        let repaired = ok(s
-            .f
-            .iam
-            .api
-            .teams
-            .reconcile(&s.owner, body(json!({ "tenantId": s.tenant_id })))
-            .await);
-        assert_matches(
-            &repaired,
-            json!({
-                "added": 0,
-                "removed": 0,
-                "updated": 0,
-                "synced": { "added": 0, "removed": 0, "updated": 0, "teams": [] },
-            }),
-        );
-    });
-}
-
-// --- tests/security-team-authority.test.ts --------------------------------------------------------------------------
-
-struct Privileged {
-    f: Org,
-    tenant_id: String,
-    owner: CredentialInput,
-    mallory: String,
-    eve: String,
-    ops: Value,
-    m: CredentialInput,
-    e: CredentialInput,
-}
-
-/// Mallory administers teams (no grant authority); Ops's backing group holds the owner-bound Writer role.
-async fn privileged_team(ops: impl FnOnce(&str) -> Value) -> Privileged {
-    let (f, _) = fixture().await;
-    let tenant_id = f.tenant_id.clone();
-    let owner = f.owner_credential.clone();
-    let mallory = f.member("mallory").await;
-    let eve = f.member("eve").await;
-    let team_admin = role(
-        &f,
-        &owner,
-        json!({
-            "tenantId": tenant_id,
-            "name": "Team admin",
-            "permissions": ["iam:teams:create", "iam:teams:update", "iam:teams:read"],
-        }),
-    )
-    .await;
-    ok(f.iam
-        .api
-        .bindings
-        .create(
-            &owner,
-            body(json!({
-                "tenantId": tenant_id,
-                "roleId": team_admin["id"],
-                "subjectType": "identity",
-                "subjectId": mallory,
-            })),
-        )
-        .await);
-    let writer = role(
-        &f,
-        &owner,
-        json!({ "tenantId": tenant_id, "name": "Writer", "permissions": ["documents:write"] }),
-    )
-    .await;
-    let mut input = ops(&eve);
-    input["tenantId"] = json!(tenant_id);
-    input["name"] = json!("Ops");
-    let team = ok(f.iam.api.teams.create(&owner, body(input)).await);
-    bind_group(&f, &owner, &writer["id"], &team["groupId"]).await;
-    let m = f.sign_in(&mallory).await;
-    let e = f.sign_in(&eve).await;
-    Privileged {
-        f,
-        tenant_id,
-        owner,
-        mallory,
-        eve,
-        ops: team,
-        m,
-        e,
-    }
-}
-
-impl Privileged {
-    async fn may_write(&self) -> bool {
-        self.f
-            .iam
-            .authorize(&AuthorizationRequest {
-                credential: self.m.clone(),
-                tenant_id: self.tenant_id.clone(),
-                action: "documents:write".into(),
-                resource: ResourceTarget {
-                    kind: "documents".into(),
-                    id: "a".into(),
-                },
-            })
             .await
-            .expect("authorize")
-            .allowed
-    }
-}
-
-#[test]
-#[ignore = "needs the teams.ts helpers (teams unit) and afterIdentityChange (package-automation unit)"]
-fn refuses_moving_a_privileged_team_under_a_team_whose_maintainers_the_mover_chose() {
-    run(|| async {
-        let p = privileged_team(|_| json!({})).await;
-        let shadow = ok(p
-            .f
-            .iam
-            .api
-            .teams
-            .create(
-                &p.m,
-                body(
-                    json!({ "tenantId": p.tenant_id, "name": "Shadow", "maintainerIds": [p.eve] }),
-                ),
-            )
-            .await);
-        let error = fails(
-            p.f.iam
-                .api
-                .teams
-                .update(
-                    &p.m,
-                    body(json!({ "tenantId": p.tenant_id, "teamId": p.ops["id"], "parentId": shadow["id"] })),
-                )
-                .await,
-        );
-        assert_eq!(error.status, 403);
-        fails(
-            p.f.iam
-                .api
-                .teams
-                .add_member(
-                    &p.e,
-                    body(json!({ "tenantId": p.tenant_id, "teamId": p.ops["id"], "identityId": p.mallory })),
-                )
-                .await,
-        );
-        assert!(!p.may_write().await);
-    });
-}
-
-#[test]
-#[ignore = "needs the teams.ts helpers (teams unit) and afterIdentityChange (package-automation unit)"]
-fn refuses_opening_an_admins_only_team_to_its_maintainers_without_grant_authority() {
-    run(|| async {
-        let p =
-            privileged_team(|eve| json!({ "memberManagement": "admins", "maintainerIds": [eve] }))
-                .await;
-        let error = fails(
-            p.f.iam
-                .api
-                .teams
-                .update(
-                    &p.m,
-                    body(json!({ "tenantId": p.tenant_id, "teamId": p.ops["id"], "memberManagement": "maintainers" })),
-                )
-                .await,
-        );
-        assert_eq!(error.status, 403);
-        fails(
-            p.f.iam
-                .api
-                .teams
-                .add_member(
-                    &p.e,
-                    body(json!({ "tenantId": p.tenant_id, "teamId": p.ops["id"], "identityId": p.mallory })),
-                )
-                .await,
-        );
-        assert!(!p.may_write().await);
-    });
-}
-
-#[test]
-#[ignore = "needs the teams.ts helpers (teams unit) and afterIdentityChange (package-automation unit)"]
-fn still_lets_an_administrator_with_grant_authority_move_and_open_teams() {
-    run(|| async {
-        let p = privileged_team(|_| json!({ "memberManagement": "admins" })).await;
-        let parent = ok(p
-            .f
-            .iam
-            .api
-            .teams
-            .create(
-                &p.owner,
-                body(json!({ "tenantId": p.tenant_id, "name": "Engineering" })),
-            )
-            .await);
-        ok(p.f
-            .iam
-            .api
-            .teams
-            .update(
-                &p.owner,
-                body(json!({
-                    "tenantId": p.tenant_id,
-                    "teamId": p.ops["id"],
-                    "parentId": parent["id"],
-                    "memberManagement": "maintainers",
-                })),
-            )
-            .await);
-        let ops = ok(p
-            .f
-            .iam
-            .api
-            .teams
-            .get(
-                &p.owner,
-                body(json!({ "tenantId": p.tenant_id, "teamId": p.ops["id"] })),
-            )
-            .await);
-        assert_matches(
-            &ops,
-            json!({ "parentId": parent["id"], "memberManagement": "maintainers" }),
-        );
-    });
-}
-
-#[test]
-#[ignore = "needs the teams.ts helpers (teams unit) and afterIdentityChange (package-automation unit)"]
-fn keeps_an_explicit_deny_in_force_for_a_maintainer() {
-    run(|| async {
-        let (f, _) = fixture().await;
-        let tenant_id = f.tenant_id.clone();
-        let owner = f.owner_credential.clone();
-        let bob = f.member("bob").await;
-        let alice = f.member("alice").await;
-        let platform = ok(f
-            .iam
-            .api
-            .teams
-            .create(
-                &owner,
-                body(json!({ "tenantId": tenant_id, "name": "Platform", "maintainerIds": [bob] })),
-            )
-            .await);
-        let b = f.sign_in(&bob).await;
-        // Without the deny, the maintainer path works as designed.
-        ok(f.iam
-            .api
-            .teams
-            .add_member(
-                &b,
-                body(
-                    json!({ "tenantId": tenant_id, "teamId": platform["id"], "identityId": alice }),
-                ),
-            )
-            .await);
-        let lockout = role(
-            &f,
-            &owner,
+        {
+            let id = member["id"].as_str().unwrap().to_owned();
+            org.iam
+                .store
+                .transaction(|tx| async move { tx.delete("groupMembers", &id).await })
+                .await
+                .unwrap();
+        }
+        org.insert(
+            "groupMembers",
             json!({
-                "tenantId": tenant_id,
-                "name": "No team management",
-                "document": {
-                    "version": 1,
-                    "statements": [{ "effect": "deny", "actions": ["iam:teams:*"], "resources": ["*"] }],
-                },
+                "id": better_iam_server::utils::id(), "tenantId": org.tenant_id,
+                "uniqueKey": format!("{directory}:{}", s.carol), "groupId": directory,
+                "identityId": s.carol, "expiresAt": org.now() + DAY,
             }),
         )
         .await;
-        ok(f.iam
-            .api
-            .bindings
-            .create(
-                &owner,
-                body(json!({
-                    "tenantId": tenant_id,
-                    "roleId": lockout["id"],
-                    "subjectType": "identity",
-                    "subjectId": bob,
-                })),
+        let second = sync(Some(&directory)).await;
+        assert_eq!((second.added, second.removed), (0.0, 1.0));
+        let mut expected = vec![format!("{}:sync", s.bob), format!("{}:manual", s.carol)];
+        expected.sort();
+        assert_eq!(members().await, expected);
+
+        // A temporary source membership makes a temporary synced membership.
+        let dave = org.member("dave").await.id;
+        org.insert(
+            "groupMembers",
+            json!({
+                "id": better_iam_server::utils::id(), "tenantId": org.tenant_id,
+                "uniqueKey": format!("{directory}:{dave}"), "groupId": directory,
+                "identityId": dave, "expiresAt": org.now() + 3_600_000.0,
+            }),
+        )
+        .await;
+        sync(Some(&directory)).await;
+        let synced = org
+            .find(
+                "teamMembers",
+                Filter::new()
+                    .eq("teamId", engineers.id.as_str())
+                    .eq("identityId", dave.as_str()),
             )
-            .await);
-        let error = fails(
-            f.iam
-                .api
-                .teams
-                .remove_member(
-                    &b,
-                    body(json!({ "tenantId": tenant_id, "teamId": platform["id"], "identityId": alice })),
-                )
-                .await,
+            .await;
+        assert_eq!(synced[0]["source"], json!("sync"));
+        assert_eq!(synced[0]["expiresAt"], num(org.now() + 3_600_000.0));
+        let events = org
+            .find(
+                "audit",
+                Filter::new()
+                    .eq("tenantId", org.tenant_id.as_str())
+                    .eq("action", "team:member:remove"),
+            )
+            .await;
+        assert!(
+            events
+                .iter()
+                .any(|event| event["actorId"] == json!("directory-sync")
+                    && event["metadata"]["source"] == json!("sync")
+                    && event["metadata"]["team"] == json!("engineers"))
         );
-        assert_eq!(code(&error), "ACCESS_DENIED");
-        let members = ok(f
-            .iam
-            .api
-            .teams
-            .list_members(
-                &owner,
-                body(json!({ "tenantId": tenant_id, "teamId": platform["id"] })),
-            )
-            .await);
-        assert!(names(&members, "id").contains(&alice));
+
+        // Turning sync off removes the synced members and keeps the manual ones.
+        org.patch("teams", &engineers.id, json!({ "syncGroupIds": null }))
+            .await;
+        sync(None).await;
+        assert_eq!(members().await, [format!("{}:manual", s.carol)]);
     });
+}
+
+/// One person's membership of one group.
+async fn membership(org: &Org, group_id: &str, identity_id: &str) -> better_iam_core::Record {
+    org.find(
+        "groupMembers",
+        Filter::new()
+            .eq("groupId", group_id)
+            .eq("identityId", identity_id),
+    )
+    .await
+    .remove(0)
+}
+
+/// A JavaScript number as the server writes it (`1`, not `1.0`).
+fn num(value: f64) -> Value {
+    better_iam_server::js::number(value)
 }
