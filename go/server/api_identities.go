@@ -179,8 +179,8 @@ func identityLinksOf(ctx context.Context, tx core.IamStore, identityID any) ([]*
 	return append(left, right...), nil
 }
 
-// rootProtected refuses a target root administrator unless the caller is a root principal.
-func rootProtected(ctx context.Context, server *ServerContext, tx core.IamStore, principal *Principal, identity *core.Object) error {
+// identityRootProtected refuses a target root administrator unless the caller is a root principal.
+func identityRootProtected(ctx context.Context, server *ServerContext, tx core.IamStore, principal *Principal, identity *core.Object) error {
 	if !truthy(identity.Get("rootAdmin")) {
 		return nil
 	}
@@ -204,7 +204,7 @@ func DeleteIdentity(ctx context.Context, server *ServerContext, tx core.IamStore
 	if core.StrictEquals(identity.Get("id"), principal.Identity.Get("id")) {
 		return nil, invalidInput("An identity cannot delete itself")
 	}
-	if err := rootProtected(ctx, server, tx, principal, identity); err != nil {
+	if err := identityRootProtected(ctx, server, tx, principal, identity); err != nil {
 		return nil, err
 	}
 	if err := AssertOwnerControl(ctx, server, tx, principal, identity, "Only an owner can delete an owner"); err != nil {
@@ -403,8 +403,8 @@ func ownsTenant(principal *Principal, tenantID any) bool {
 		core.StrictEquals(principal.Session.Get("tenantId"), tenantID)
 }
 
-// ownerOrRoot is `ownsTenant(principal, tenantId) || (await ctx.rootPrincipal(tx, principal))`.
-func ownerOrRoot(ctx context.Context, server *ServerContext, tx core.IamStore, principal *Principal, tenantID any) (bool, error) {
+// identityOwnerOrRoot is `ownsTenant(principal, tenantId) || (await ctx.rootPrincipal(tx, principal))`.
+func identityOwnerOrRoot(ctx context.Context, server *ServerContext, tx core.IamStore, principal *Principal, tenantID any) (bool, error) {
 	if ownsTenant(principal, tenantID) {
 		return true, nil
 	}
@@ -419,7 +419,7 @@ func AssertOwnerControl(ctx context.Context, server *ServerContext, tx core.IamS
 	if !truthy(identity.Get("owner")) {
 		return nil
 	}
-	allowed, err := ownerOrRoot(ctx, server, tx, principal, identity.Get("tenantId"))
+	allowed, err := identityOwnerOrRoot(ctx, server, tx, principal, identity.Get("tenantId"))
 	if err != nil {
 		return err
 	}
@@ -533,9 +533,9 @@ func identityAfterChange(ctx context.Context, server *ServerContext, tenantID an
 	return AfterIdentityChange(ctx, server, jsString(tenantID), ids, result)
 }
 
-// withoutTokenHash is `({ tokenHash, uniqueKey, ...safe }) => safe`: a session or invitation without its token hash
+// identityWithoutTokenHash is `({ tokenHash, uniqueKey, ...safe }) => safe`: a session or invitation without its token hash
 // and unique key.
-func withoutTokenHash(record *core.Object) *core.Object {
+func identityWithoutTokenHash(record *core.Object) *core.Object {
 	safe := record.Spread()
 	safe.Delete("tokenHash")
 	safe.Delete("uniqueKey")
@@ -582,7 +582,7 @@ func identityGrantChecks(ctx context.Context, server *ServerContext, tx core.Iam
 			return err
 		}
 		for _, binding := range bindings {
-			if _, err := server.GrantingAuthority(ctx, tx, principal, tenantID, authorityIDOf(binding.Get("authorityId"))); err != nil {
+			if _, err := server.GrantingAuthority(ctx, tx, principal, tenantID, identityAuthorityArg(binding.Get("authorityId"))); err != nil {
 				return err
 			}
 		}
@@ -590,8 +590,8 @@ func identityGrantChecks(ctx context.Context, server *ServerContext, tx core.Iam
 	return nil
 }
 
-// authorityIDOf is an optional authority ID argument ("" for none).
-func authorityIDOf(value any) string {
+// identityAuthorityArg is an optional authority ID argument ("" for none).
+func identityAuthorityArg(value any) string {
 	if s, ok := value.(string); ok {
 		return s
 	}
@@ -942,7 +942,7 @@ func (api *IdentitiesAPI) List(ctx context.Context, credential core.CredentialIn
 			}
 			matches = append(matches, identity)
 		}
-		sortByNameThenID(matches)
+		identitySortByName(matches)
 		list := make([]any, len(matches))
 		for index, identity := range matches {
 			list[index] = PublicIdentity(identity)
@@ -952,8 +952,8 @@ func (api *IdentitiesAPI) List(ctx context.Context, credential core.CredentialIn
 	return Out[apitypes.IdentitiesListOutput]{Value: result}, err
 }
 
-// sortByNameThenID is `a.name.localeCompare(b.name, 'en') || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)`.
-func sortByNameThenID(list []*core.Object) {
+// identitySortByName is `a.name.localeCompare(b.name, 'en') || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)`.
+func identitySortByName(list []*core.Object) {
 	sort.SliceStable(list, func(i, j int) bool {
 		left, _ := list[i].Get("name").(string)
 		right, _ := list[j].Get("name").(string)
@@ -964,8 +964,8 @@ func sortByNameThenID(list []*core.Object) {
 	})
 }
 
-// newestFirst orders records by a numeric member descending, then id ascending.
-func newestFirst(list []*core.Object, key string) {
+// identityNewestFirst orders records by a numeric member descending, then id ascending.
+func identityNewestFirst(list []*core.Object, key string) {
 	sort.SliceStable(list, func(i, j int) bool {
 		left, _ := list[i].Get(key).(float64)
 		right, _ := list[j].Get(key).(float64)
@@ -996,10 +996,10 @@ func (api *IdentitiesAPI) ListSessions(ctx context.Context, credential core.Cred
 				live = append(live, session)
 			}
 		}
-		newestFirst(live, "lastSeenAt")
+		identityNewestFirst(live, "lastSeenAt")
 		list := make([]any, len(live))
 		for index, session := range live {
-			list[index] = withoutTokenHash(session)
+			list[index] = identityWithoutTokenHash(session)
 		}
 		return list, nil
 	}, false)
@@ -1020,8 +1020,8 @@ func (api *IdentitiesAPI) Get(ctx context.Context, credential core.CredentialInp
 	return Out[apitypes.IdentitiesGetOutput]{Value: result}, err
 }
 
-// objectsOf is a record list as a model array.
-func objectsOf(records []*core.Object) []any {
+// identityRecordList is a record list as a model array.
+func identityRecordList(records []*core.Object) []any {
 	list := make([]any, len(records))
 	for index, record := range records {
 		list[index] = record
@@ -1086,11 +1086,11 @@ func (api *IdentitiesAPI) Export(ctx context.Context, credential core.Credential
 			if err != nil {
 				return nil, err
 			}
-			newestFirst(events, "timestamp")
+			identityNewestFirst(events, "timestamp")
 			if len(events) > 5000 {
 				events = events[:5000]
 			}
-			audit = objectsOf(events)
+			audit = identityRecordList(events)
 		}
 		if err := server.Events.Audit(ctx, tx, principal, "identity:export", tenantID, jsString(id), "allow", false,
 			core.NewObject("kind", identity.Get("kind"), "auditIncluded", auditAllowed)); err != nil {
@@ -1102,7 +1102,7 @@ func (api *IdentitiesAPI) Export(ctx context.Context, credential core.Credential
 		}
 		sessions := make([]any, len(sessionRows))
 		for index, session := range sessionRows {
-			sessions[index] = withoutTokenHash(session)
+			sessions[index] = identityWithoutTokenHash(session)
 		}
 		mfa, err := tx.Get(ctx, "authMfa", jsString(id))
 		if err != nil {
@@ -1174,8 +1174,8 @@ func (api *IdentitiesAPI) Export(ctx context.Context, credential core.Credential
 			"externalIdentities", externalIdentities,
 			"bindings", bindings,
 			"groups", groups,
-			"relationships", objectsOf(relationships),
-			"accessRequests", objectsOf(accessRequests),
+			"relationships", identityRecordList(relationships),
+			"accessRequests", identityRecordList(accessRequests),
 			"boundaries", boundaries,
 			"grantAuthorities", authorities,
 			"links", links,
@@ -1263,7 +1263,7 @@ func (api *IdentitiesAPI) Impersonate(ctx context.Context, credential core.Crede
 			core.NewObject("reason", reason, "sessionId", session.Get("id"), "expiresAt", session.Get("expiresAt"))); err != nil {
 			return nil, err
 		}
-		return core.NewObject("token", issued.Get("token"), "session", withoutTokenHash(session), "identity", PublicIdentity(identity)), nil
+		return core.NewObject("token", issued.Get("token"), "session", identityWithoutTokenHash(session), "identity", PublicIdentity(identity)), nil
 	}, false)
 	return Out[apitypes.IdentitiesImpersonateOutput]{Value: result}, err
 }
@@ -1404,7 +1404,7 @@ func (api *IdentitiesAPI) ListProviders(ctx context.Context, credential core.Cre
 		sort.SliceStable(views, func(i, j int) bool {
 			return compareUTF16(jsString(views[i].Get("providerId")), jsString(views[j].Get("providerId"))) < 0
 		})
-		return objectsOf(views), nil
+		return identityRecordList(views), nil
 	}, false)
 	return Out[apitypes.IdentitiesListProvidersOutput]{Value: result}, err
 }
@@ -1431,7 +1431,7 @@ func (api *IdentitiesAPI) RevokeSessions(ctx context.Context, credential core.Cr
 		if err != nil {
 			return nil, err
 		}
-		if err := rootProtected(ctx, server, tx, principal, identity); err != nil {
+		if err := identityRootProtected(ctx, server, tx, principal, identity); err != nil {
 			return nil, err
 		}
 		id := jsString(identity.Get("id"))
@@ -1536,7 +1536,7 @@ func (api *IdentitiesAPI) Offboard(ctx context.Context, credential core.Credenti
 		if core.StrictEquals(identity.Get("id"), principal.Identity.Get("id")) {
 			return nil, invalidInput("You cannot offboard yourself")
 		}
-		if err := rootProtected(ctx, server, tx, principal, identity); err != nil {
+		if err := identityRootProtected(ctx, server, tx, principal, identity); err != nil {
 			return nil, err
 		}
 		if err := server.ProtectLastOwner(ctx, tx, identity); err != nil {
@@ -1563,7 +1563,7 @@ func (api *IdentitiesAPI) Offboard(ctx context.Context, credential core.Credenti
 		counts := &offboardCounts{sessions: len(sessions)}
 		// Ownership goes first: the protected Owner binding is removed like setOwner(false).
 		if truthy(identity.Get("owner")) {
-			allowed, err := ownerOrRoot(ctx, server, tx, principal, tenantID)
+			allowed, err := identityOwnerOrRoot(ctx, server, tx, principal, tenantID)
 			if err != nil {
 				return nil, err
 			}
@@ -1864,7 +1864,7 @@ func (api *IdentitiesAPI) Update(ctx context.Context, credential core.Credential
 			next.Set("attributes", values)
 		}
 		if !isUndefined(expiresAt) {
-			if err := rootProtected(ctx, server, tx, principal, identity); err != nil {
+			if err := identityRootProtected(ctx, server, tx, principal, identity); err != nil {
 				return nil, err
 			}
 			if err := AssertOwnerControl(ctx, server, tx, principal, identity, "Only an owner can change an owner’s expiry"); err != nil {
@@ -1919,7 +1919,7 @@ func (api *IdentitiesAPI) Update(ctx context.Context, credential core.Credential
 			(!sameAttributes(next.Get("attributes"), identity.Get("attributes")) ||
 				!core.StrictEquals(next.Get("managerId"), identity.Get("managerId")) ||
 				!core.StrictEquals(next.Get("expiresAt"), identity.Get("expiresAt"))) {
-			allowed, err := ownerOrRoot(ctx, server, tx, principal, tenantID)
+			allowed, err := identityOwnerOrRoot(ctx, server, tx, principal, tenantID)
 			if err != nil {
 				return nil, err
 			}
@@ -2035,7 +2035,7 @@ func (api *IdentitiesAPI) ListReports(ctx context.Context, credential core.Crede
 				active = append(active, report)
 			}
 		}
-		sortByNameThenID(active)
+		identitySortByName(active)
 		list := make([]any, len(active))
 		for index, report := range active {
 			list[index] = PublicIdentity(report)
@@ -2236,7 +2236,7 @@ func (api *IdentitiesAPI) ListInvitations(ctx context.Context, credential core.C
 		}
 		list := make([]any, len(invitations))
 		for index, invitation := range invitations {
-			list[index] = withoutTokenHash(invitation)
+			list[index] = identityWithoutTokenHash(invitation)
 		}
 		return list, nil
 	}, false)
@@ -2260,7 +2260,7 @@ func (api *IdentitiesAPI) RevokeInvitation(ctx context.Context, credential core.
 		if err != nil {
 			return nil, err
 		}
-		return withoutTokenHash(stored), nil
+		return identityWithoutTokenHash(stored), nil
 	}, false)
 	return Out[apitypes.IdentitiesRevokeInvitationOutput]{Value: result}, err
 }
@@ -2352,7 +2352,7 @@ func (api *IdentitiesAPI) SetStatus(ctx context.Context, credential core.Credent
 		if identity.Get("kind") == "agent" {
 			return nil, invalidInput("Use agents.suspend and agents.resume to stop or restart an agent")
 		}
-		if err := rootProtected(ctx, server, tx, principal, identity); err != nil {
+		if err := identityRootProtected(ctx, server, tx, principal, identity); err != nil {
 			return nil, err
 		}
 		if status == "disabled" {
@@ -2405,7 +2405,7 @@ func (api *IdentitiesAPI) SetOwner(ctx context.Context, credential core.Credenti
 			return nil, err
 		}
 		tenantID := jsString(rawTenantID)
-		allowed, err := ownerOrRoot(ctx, server, tx, principal, tenantID)
+		allowed, err := identityOwnerOrRoot(ctx, server, tx, principal, tenantID)
 		if err != nil {
 			return nil, err
 		}

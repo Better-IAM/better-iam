@@ -453,8 +453,8 @@ func (api *CredentialsAPI) List(ctx context.Context, credential core.CredentialI
 			}
 			summaries = append(summaries, summary)
 		}
-		newestFirst(summaries, "createdAt")
-		return objectsOf(summaries), nil
+		identityNewestFirst(summaries, "createdAt")
+		return identityRecordList(summaries), nil
 	}, false)
 	return Out[apitypes.CredentialsListOutput]{Value: result}, err
 }
@@ -606,7 +606,7 @@ func (api *CredentialsAPI) Update(ctx context.Context, credential core.Credentia
 			if err := server.Auth.RequireRecent(principal.Auth()); err != nil {
 				return nil, err
 			}
-			if _, err := server.GrantingAuthority(ctx, tx, principal, tenantID, authorityIDOf(session.Get("credentialAuthorityId"))); err != nil {
+			if _, err := server.GrantingAuthority(ctx, tx, principal, tenantID, identityAuthorityArg(session.Get("credentialAuthorityId"))); err != nil {
 				return nil, err
 			}
 		}
@@ -688,7 +688,7 @@ func (api *CredentialsAPI) Rotate(ctx context.Context, credential core.Credentia
 		if callerPolicy := principal.Session.Get("policy"); truthy(callerPolicy) && !withinKeyPolicy(callerPolicy, old.Get("policy")) {
 			return nil, core.NewIamError("ACCESS_DENIED", "A key can only rotate keys within its own scopes or policy", 403)
 		}
-		authority, err := server.GrantingAuthority(ctx, tx, principal, tenantID, authorityIDOf(old.Get("credentialAuthorityId")))
+		authority, err := server.GrantingAuthority(ctx, tx, principal, tenantID, identityAuthorityArg(old.Get("credentialAuthorityId")))
 		if err != nil {
 			return nil, err
 		}
