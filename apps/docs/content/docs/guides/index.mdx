@@ -1,141 +1,170 @@
 ---
-title: Introduction
-description: Better IAM is an embeddable TypeScript platform for authentication, identity provisioning, and access management, running in your app on your own database.
-icon: Sparkles
+title: "Guides"
+description: "Task-oriented walkthroughs for building, securing, extending, running, migrating, and upgrading applications on Better IAM, plus a cookbook of short recipes."
+icon: BookOpen
 ---
 
-import { Blocks, Building2, Fingerprint, KeyRound, LockKeyhole, Network, ScrollText, ShieldCheck, Workflow } from '@/lib/icons';
+import {
+  ArrowDownToLine,
+  ArrowLeftRight,
+  Blocks,
+  Bot,
+  Building,
+  ChefHat,
+  ClipboardCheck,
+  Database,
+  Funnel,
+  Globe,
+  Hourglass,
+  KeyRound,
+  LifeBuoy,
+  Plug,
+  Receipt,
+  RefreshCw,
+  Rocket,
+  ScrollText,
+  ShieldCheck,
+  SlidersHorizontal,
+  Users,
+  Wrench,
+  Zap,
+} from '@/lib/icons';
 
-Better IAM gives an application the identity layer that is usually bought as a hosted service: multi-tenant
-organizations, sign-in with every modern method, fine-grained authorization, governance, and enterprise
-federation. It is a library, not a SaaS. It runs in your process, stores its data in your PostgreSQL,
-SQLite, or libSQL database, and exposes a typed API to your server and browser code.
+Guides take one outcome from an empty starting point to working, verified code. Each one lists what you will build
+and its prerequisites, then walks through numbered steps with complete files, every import shown and every file
+named by its path. Each ends with a way to check that it works, the failures you are most likely to hit, and where
+to go next.
 
-You create one instance with `betterIam()`, giving it a database, a deployment secret, and the URL it is served
-from, and import that instance wherever your server code needs identity or authorization:
+Use a guide when you know what you want to build. To learn how a feature works, or to look up every option of an
+API, start from [Concepts](/docs/concepts), the feature pages, or the [Reference](/docs/reference) instead; guides
+link to them wherever a step relies on them.
 
-```ts twoslash title="iam.ts"
-// @noErrors
-import { betterIam } from 'better-iam';
-import { sqliteAdapter } from 'better-iam/adapter-sqlite';
-
-export const iam = betterIam({
-  database: sqliteAdapter({ filename: './iam.db' }),
-  secret: process.env.BETTER_IAM_SECRET!,
-  baseURL: 'https://identity.example.com',
-});
-```
-
-## Why it exists
-
-Most business software eventually needs the same identity features: customers are organizations rather than
-individuals, each organization wants its own roles and its own single sign-on, security teams ask who can do what
-and who changed it, and enterprise buyers expect SCIM provisioning, MFA policies, and an audit trail. Teams usually
-assemble this from several services: a hosted sign-in provider, a separate authorization service, and later a
-governance or provisioning tool. That works, but it has costs:
-
-- **Your identity data lives somewhere else.** People, sessions, and roles sit in a vendor's database, so every
-  permission check is a network call, and keeping that data consistent with your own records is your problem.
-- **Authorization is disconnected from your data.** Deciding "may Alice approve this invoice?" needs the invoice's
-  owner and amount, which the external service does not have.
-- **Each service has its own model.** Tenants, roles, and audit logs are defined three times and reconciled by hand.
-
-Better IAM takes the other approach: it is a library that runs inside your application and stores everything in
-your database, in the same transactions as your own writes. One <Term id="tenant">tenant</Term> model, one
-authorization engine, and one tamper-evident <Term id="audit-chain">audit log</Term> cover sign-in, access
-decisions, governance, and federation, all behind a single typed API.
-
-<Callout type="info" title="When you may not need it">
-  If your application has individual users and no organizations, roles, or enterprise customers, a simpler
-  authentication library is enough. Better IAM earns its place when access control, multi-tenancy, and auditability
-  are part of the product.
-</Callout>
-
-## What it covers
-
-<FeatureGrid>
-  <Feature icon={<Building2 />} title="Tenants and organizations" href="/docs/guides/concepts/tenants-and-identities">
-    Tenant trees with isolated identity directories, invitations, sign-in aliases, and platform root
-    administration.
-  </Feature>
-  <Feature icon={<Fingerprint />} title="Authentication" href="/docs/guides/authentication">
-    Passwords, passkeys, magic links, email and SMS codes, TOTP, trusted devices, and per-tenant sign-in
-    policies.
-  </Feature>
-  <Feature icon={<ShieldCheck />} title="Authorization" href="/docs/guides/authorization">
-    Roles, versioned JSON policies with conditions and variables, relationships (ReBAC), boundaries, and
-    reverse queries.
-  </Feature>
-  <Feature icon={<KeyRound />} title="Privileged access" href="/docs/guides/privileged-access">
-    Just-in-time elevation with approvals, access packages, temporary bindings, and configuration as code.
-  </Feature>
-  <Feature icon={<Workflow />} title="Governance" href="/docs/guides/governance">
-    Access reviews, certification campaigns, separation of duties, role mining, invariants, change previews,
-    privacy and consent, lifecycle workflows, compliance evidence, and an app catalog.
-  </Feature>
-  <Feature icon={<LockKeyhole />} title="Security services" href="/docs/guides/secrets-and-keys">
-    Tenant keys, a secrets vault, tokenization, a private CA, SSH certificates, device posture, and identity
-    threat detection.
-  </Feature>
-  <Feature icon={<Network />} title="Federation" href="/docs/federation">
-    OAuth/OIDC sign-in and provider, SAML SSO, SCIM in and out, Shared Signals (CAEP/RISC) both ways,
-    verifiable credentials, and an LDAP gateway.
-  </Feature>
-  <Feature icon={<ScrollText />} title="Audit and events" href="/docs/guides/events">
-    A tamper-evident, hash-chained audit log with webhooks, subscribers, metrics, and spans.
-  </Feature>
-  <Feature icon={<Blocks />} title="Every framework" href="/docs/frameworks">
-    A typed client plus Next.js, React, Vue, Nuxt, SvelteKit, React Router, NestJS, Express, Hono, and
-    Fastify integrations.
-  </Feature>
-</FeatureGrid>
-
-## How it fits together
-
-```mermaid
-flowchart LR
-  subgraph App[Your application]
-    UI[Browser UI] -->|typed client| H[HTTP handler /api/iam]
-    S[Server code] -->|iam.api / iam.require| C
-    H --> C[betterIam core]
-  end
-  C --> A[(Your database)]
-  C --> E[Events, webhooks, audit chain]
-  IdP[Enterprise IdPs] -->|OIDC / SAML / SCIM| C
-  C -->|OAuth provider, SCIM out, SSF| Apps[Downstream apps]
-```
-
-Every operation, whether it comes from a browser, a server action, the CLI, or a SCIM connector, runs
-through the same pipeline:
-
-1. **Resolve the <Term id="credential">credential</Term>.** A session cookie, bearer token, API key, or assumed role
-   becomes a <Term id="principal">principal</Term>: who is calling, how they signed in, and whether they used MFA.
-2. **Authorize.** The principal's <Term id="role">roles</Term>, <Term id="policy">policies</Term>, and
-   <Term id="boundary">boundaries</Term> in that tenant decide whether the action is allowed.
-3. **Apply the change in one transaction** in your database, so a failure leaves nothing half done.
-4. **Record it.** A hash-chained audit event is appended in the same transaction and then fans out to
-   <Term id="webhook">webhooks</Term>, in-process subscribers, and metrics.
-
-Because there is only one path, nothing can bypass authorization or the audit log, and an administrator using the
-console is held to the same rules as your own API calls.
-
-## Who makes it
-
-Better IAM is created and maintained by Sean Filimon. Every package is open source under the Apache License 2.0.
-
-## Where to go next
+## Build
 
 <Cards>
-  <Card title="Quickstart" href="/docs/guides/quickstart">
-    Create an instance, bootstrap a tenant, and make your first authorization check in minutes.
+  <Card icon={<Building />} title="Build a multi-tenant B2B SaaS" href="/docs/guides/b2b-saas">
+    Organizations, owner and member invitations, product roles, per-organization sign-in policy, an organization
+    switcher, and authorized routes in Next.js.
   </Card>
-  <Card title="Installation" href="/docs/guides/installation">
-    Packages, subpath imports, databases, and runtime requirements.
+  <Card icon={<ShieldCheck />} title="SAML single sign-on with Okta" href="/docs/guides/enterprise-sso-okta">
+    One organization signs in with its Okta through a tenant-managed SAML connection, with a verified domain and
+    just-in-time accounts.
   </Card>
-  <Card title="Policy playground" href="/playground">
-    Evaluate policy documents in your browser with the real policy engine.
+  <Card icon={<ArrowDownToLine />} title="SCIM provisioning with Entra ID and Okta" href="/docs/guides/scim-provisioning">
+    A customer's directory creates, updates, and deactivates its people, and its groups grant roles.
   </Card>
-  <Card title="API reference" href="/docs/reference/api">
-    Every server API method with HTTP routes and TypeScript signatures.
+  <Card icon={<KeyRound />} title="Protect an API with OAuth" href="/docs/guides/protect-an-api">
+    Issue OAuth access tokens and verify them in a separate API service.
+  </Card>
+  <Card icon={<Plug />} title="Secure an MCP server" href="/docs/guides/secure-an-mcp-server">
+    OAuth authorization and per-tool permissions for a Model Context Protocol server.
+  </Card>
+  <Card icon={<Bot />} title="AI agents that act for users" href="/docs/guides/ai-agents-on-behalf-of-users">
+    Give an AI agent its own identity, delegated access, and human confirmations.
+  </Card>
+</Cards>
+
+## Access and compliance
+
+<Cards>
+  <Card icon={<Funnel />} title="Row-level data filtering" href="/docs/guides/row-level-data-filtering">
+    Turn authorization policies into database filters for Prisma, Drizzle, and SQL.
+  </Card>
+  <Card icon={<Hourglass />} title="Just-in-time admin access" href="/docs/guides/just-in-time-admin-access">
+    Replace standing admin rights with time-boxed, approved elevation.
+  </Card>
+  <Card icon={<ClipboardCheck />} title="Audit readiness for SOC 2" href="/docs/guides/soc2-audit-readiness">
+    Access reviews, audit evidence, and change control that auditors ask for.
+  </Card>
+  <Card icon={<Receipt />} title="Usage-based billing" href="/docs/guides/usage-based-billing">
+    Meter usage, apply rate cards, and invoice each tenant.
+  </Card>
+</Cards>
+
+## Extend and test
+
+<Cards>
+  <Card icon={<Blocks />} title="Create your first extension" href="/docs/guides/create-an-extension">
+    Add your own API methods, events, and checks to Better IAM.
+  </Card>
+  <Card icon={<Database />} title="Write a database adapter" href="/docs/guides/custom-database-adapter">
+    Implement the storage adapter contract and pass the conformance suite.
+  </Card>
+  <Card icon={<Wrench />} title="Test your integration" href="/docs/guides/testing">
+    Unit and end-to-end tests for code that uses Better IAM.
+  </Card>
+</Cards>
+
+## Production
+
+<Cards>
+  <Card icon={<Rocket />} title="Production checklist" href="/docs/guides/production-checklist">
+    Everything to check before real users sign in.
+  </Card>
+  <Card icon={<Zap />} title="Optimize performance" href="/docs/guides/performance">
+    Fast authorization checks, sign-in, and storage at scale.
+  </Card>
+  <Card icon={<Globe />} title="Run in multiple regions" href="/docs/guides/multi-region">
+    Pin organizations to regions and route sign-in to the right deployment.
+  </Card>
+</Cards>
+
+## Migrate and upgrade
+
+<Cards>
+  <Card icon={<ArrowLeftRight />} title="Migration guides" href="/docs/guides/migration">
+    Move users, organizations, and permissions from another identity provider.
+  </Card>
+  <Card title="From Auth0" href="/docs/guides/migration/from-auth0">
+    Users, organizations, roles, and connections.
+  </Card>
+  <Card title="From Clerk" href="/docs/guides/migration/from-clerk">
+    Users, organizations, and roles.
+  </Card>
+  <Card title="From WorkOS" href="/docs/guides/migration/from-workos">
+    Organizations, SSO connections, and directories.
+  </Card>
+  <Card title="From Better Auth" href="/docs/guides/migration/from-better-auth">
+    Users, organizations, members, and roles.
+  </Card>
+  <Card title="From Auth.js" href="/docs/guides/migration/from-authjs">
+    Users and accounts from Auth.js (NextAuth).
+  </Card>
+  <Card title="From Keycloak" href="/docs/guides/migration/from-keycloak">
+    Realms, users, groups, and roles.
+  </Card>
+  <Card icon={<RefreshCw />} title="Upgrade guides" href="/docs/guides/upgrade">
+    Breaking changes and upgrade steps between releases.
+  </Card>
+  <Card title="Upgrade to 0.3" href="/docs/guides/upgrade/v0-3">
+    The steps from Better IAM 0.2 to 0.3.
+  </Card>
+</Cards>
+
+## Cookbook
+
+Recipes are short, copy-ready answers to one question each, grouped by topic.
+
+<Cards>
+  <Card icon={<ChefHat />} title="Recipes" href="/docs/guides/recipes">
+    Every recipe, by topic.
+  </Card>
+  <Card icon={<Users />} title="Sharing and access questions" href="/docs/guides/recipes/sharing-and-reviews">
+    Relationships, who can do what, policy tests and rollback, time-bound roles, and guardrails.
+  </Card>
+  <Card icon={<SlidersHorizontal />} title="Sign-in and devices" href="/docs/guides/recipes/sign-in-and-devices">
+    Per-organization MFA and method rules, trusted browsers, device lists, and sign-out everywhere.
+  </Card>
+  <Card icon={<LifeBuoy />} title="Support and privacy" href="/docs/guides/recipes/support-and-privacy">
+    View as a member, export everything stored about a person, and render the outbox's emails.
+  </Card>
+  <Card icon={<Building />} title="Tenancy and limits" href="/docs/guides/recipes/tenancy-and-limits">
+    Plan limits and metering, bulk onboarding, migrations, and libSQL or Turso storage.
+  </Card>
+  <Card icon={<Hourglass />} title="Access lifecycle" href="/docs/guides/recipes/access-lifecycle">
+    Approved elevation, contractor expiry, API key hygiene, configuration as code, and offboarding.
+  </Card>
+  <Card icon={<ScrollText />} title="Operations recipes" href="/docs/guides/recipes/operations">
+    Audit chain verification and archiving, assertions, latency, and webhook redelivery.
   </Card>
 </Cards>

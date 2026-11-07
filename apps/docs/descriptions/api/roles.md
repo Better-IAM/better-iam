@@ -4,7 +4,7 @@ Roles are named sets of permissions for a job function, such as Editor or Approv
 and groups. You define what an editor may do once, [bind](/docs/reference/api/bindings#create) the role to everyone
 who edits, and change it in one place when the job changes: every holder sees the change at their next request. A
 role can build on other roles through inheritance, and it can also be taken on temporarily through a trust with
-`assume` instead of a binding. The guide is [roles and bindings](/docs/guides/authorization/roles).
+`assume` instead of a binding. The guide is [roles and bindings](/docs/authorization/roles).
 
 ## How a role grants
 
@@ -18,7 +18,7 @@ A role grants the union of three sources:
 - **Inherited roles.** `inherits` lists up to 20 roles whose grants this role includes, recursively. A role cannot
   inherit itself, form a cycle, or inherit a protected role.
 
-Every role also records the [grant authority](/docs/guides/authorization/roles#grant-authorities) it was created
+Every role also records the [grant authority](/docs/authorization/roles#grant-authorities) it was created
 under. That authority's ceiling bounds everything the role grants, whoever binds it, and inherited grants are
 bounded by the inheriting role's ceilings as well as their own, so inheriting a broader role never widens a
 delegated administrator's reach. Only the holder of that authority, or root, may edit or delete the role.
@@ -92,7 +92,7 @@ Deletes a role together with its bindings and their activations.
 - **Permission:** `iam:roles:delete` on the role, and the grant authority the role was created under (or root).
 - **Audited as:** `iam:roles:delete`.
 - **Errors:** `RESOURCE_IN_USE` (409) while another role inherits it or an
-  [access package](/docs/guides/privileged-access/access-packages) includes it; `PROTECTED_RESOURCE` for a
+  [access package](/docs/features/privileged-access/access-packages) includes it; `PROTECTED_RESOURCE` for a
   protected role; `ACCESS_DENIED` when another administrator's authority created the role; `NOT_FOUND`;
   `INVARIANT_VIOLATION`.
 

@@ -3,7 +3,7 @@
 Root administrators run the platform itself: they create organizations, set plan limits, and help customers who are
 locked out. Their authority reaches every tenant, so it is a protected capability that only existing root
 administrators can grant or remove, and this group is where they do it. See
-[root administration](/docs/guides/concepts/tenants-and-identities#root-administration).
+[root administration](/docs/concepts/tenants-and-identities#root-administration).
 
 ## What root authority is
 

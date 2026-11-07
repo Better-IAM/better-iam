@@ -19,16 +19,16 @@ import { StaggerChild, StaggerList } from '@/components/site/motion-text';
 import { cx } from '@/utils/cx';
 
 const frameworks: [name: string, logo: IconType, href: string][] = [
-  ['Next.js', SiNextdotjs, '/docs/frameworks/nextjs'],
-  ['React', SiReact, '/docs/frameworks/react'],
-  ['Vue', SiVuedotjs, '/docs/frameworks/vue'],
-  ['Nuxt', SiNuxt, '/docs/frameworks/nuxt'],
-  ['SvelteKit', SiSvelte, '/docs/frameworks/sveltekit'],
-  ['React Router', SiReactrouter, '/docs/frameworks/react-router'],
-  ['NestJS', SiNestjs, '/docs/frameworks/nestjs'],
-  ['Express', SiExpress, '/docs/frameworks/node'],
-  ['Hono', SiHono, '/docs/frameworks/node'],
-  ['Fastify', SiFastify, '/docs/frameworks/node'],
+  ['Next.js', SiNextdotjs, '/docs/integrations/nextjs'],
+  ['React', SiReact, '/docs/integrations/react'],
+  ['Vue', SiVuedotjs, '/docs/integrations/vue'],
+  ['Nuxt', SiNuxt, '/docs/integrations/nuxt'],
+  ['SvelteKit', SiSvelte, '/docs/integrations/sveltekit'],
+  ['React Router', SiReactrouter, '/docs/integrations/react-router'],
+  ['NestJS', SiNestjs, '/docs/integrations/nestjs'],
+  ['Express', SiExpress, '/docs/integrations/express'],
+  ['Hono', SiHono, '/docs/integrations/hono'],
+  ['Fastify', SiFastify, '/docs/integrations/fastify'],
 ];
 
 const corners = [
@@ -50,7 +50,7 @@ export function FrameworkStrip() {
       >
         <p className="eyebrow">Works with the stack you already run</p>
         <TextLink
-          href="/docs/frameworks"
+          href="/docs/integrations"
           trailingIcon={RiArrowRightLine}
           className="text-body-2-medium"
         >

@@ -1,0 +1,852 @@
+---
+title: "Build a multi-tenant B2B SaaS"
+description: "Build a Next.js B2B app where each customer is an organization with its own owner, invited members, product roles, sign-in policy, organization switcher, and authorized routes."
+icon: Building
+packages: ['@better-iam/next', '@better-iam/server', '@better-iam/client', '@better-iam/auth', '@better-iam/adapter-sqlite', '@better-iam/cli']
+sources:
+  - packages/server/src/api/tenants.ts
+  - packages/server/src/api/identities.ts
+  - packages/server/src/api/trust.ts
+  - packages/server/src/api/bindings.ts
+  - packages/server/src/decisions.ts
+  - packages/server/src/options.ts
+  - packages/server/src/flows.ts
+  - packages/auth/src/templates.ts
+  - packages/auth/src/service/base.ts
+  - packages/next/src/index.ts
+  - examples/nextjs/lib/iam.ts
+  - examples/nextjs/app/[org]/layout.tsx
+---
+
+import { Building, KeyRound, ShieldCheck, SlidersHorizontal, Users, Workflow } from '@/lib/icons';
+
+This guide builds the identity layer of a B2B product on the Next.js App Router. Every customer is an
+**organization**: a <Term id="tenant">tenant</Term> with its own people, roles, and sign-in rules, served under its
+own path (`/acme/...`). The platform team creates organizations, each organization's owner invites their
+colleagues, and every route checks access inside the organization the data belongs to. You will build:
+
+- a configured Better IAM instance with a `project` resource type and a resolver that reports which organization
+  owns each project;
+- organization creation by a platform administrator, with an owner invitation email;
+- an invitation page for owners and members, and default product roles (_Admin_, _Member_) created for each new
+  organization;
+- member invitations with a role, and delegation so admins other than the owner can invite;
+- an organization settings page that sets the organization's own sign-in policy;
+- an organization layout at `/[org]`, an organization switcher, and project routes that authorize every request.
+
+## Prerequisites
+
+- Node.js 22.12 or newer, and a Next.js 15 App Router project with `"type": "module"` in `package.json`.
+- A root administrator created with `better-iam bootstrap` and enrolled in MFA. The [Quickstart](/docs/quickstart)
+  walks through both. Keep the root tenant's ID (`tenant.id` in the bootstrap output).
+- The [Next.js integration](/docs/integrations/nextjs) concepts: `createIamNext`, `page`, `route`, and `action`.
+  This guide uses them without re-explaining each option.
+
+<Steps>
+<Step>
+
+### Install the packages
+
+```npm
+npm i @better-iam/next @better-iam/client @better-iam/server @better-iam/auth @better-iam/adapter-sqlite
+npm i -D @better-iam/cli
+```
+
+`@better-iam/cli` provides the `better-iam` command for migrations and scheduled jobs. To use a different database,
+swap the adapter (see [Installation](/docs/installation)).
+
+</Step>
+<Step>
+
+### Configure the instance
+
+The configuration lives in a module the CLI can load, `better-iam.config.mjs`. Its default export holds the options;
+your application and `better-iam migrate` both read it.
+
+```js title="better-iam.config.mjs"
+import { sqliteAdapter } from '@better-iam/adapter-sqlite';
+import { renderDeliveryMessage } from '@better-iam/auth/templates';
+import { IamError } from '@better-iam/server';
+import { findProject } from './lib/projects-store.mjs';
+
+const origin = process.env.BETTER_IAM_BASE_URL ?? 'http://localhost:3000';
+
+export default {
+  database: sqliteAdapter({ filename: process.env.BETTER_IAM_DATABASE ?? '.data/iam.db' }),
+  secret: process.env.BETTER_IAM_SECRET,
+  baseURL: origin,
+  authentication: {
+    // Development only: prints each message. In production, hand `rendered` to your mail provider.
+    sendEmail: async (message) => {
+      const rendered = renderDeliveryMessage(message, {
+        appName: 'Acme Cloud',
+        links: {
+          invitation: ({ kind, tenantId, token }) =>
+            `${origin}/invite?kind=${kind}&tenantId=${tenantId}&token=${token}`,
+          passwordReset: ({ tenantId, token }) => `${origin}/reset?tenantId=${tenantId}&token=${token}`,
+        },
+      });
+      console.log(message.to, rendered?.subject, rendered?.text);
+    },
+  },
+  permissions: {
+    resourceTypes: {
+      project: { actions: ['projects:read', 'projects:write', 'projects:delete'] },
+    },
+  },
+  // Authorization asks which organization owns a resource. Never trust a tenant ID from the request.
+  resolveResource: async ({ tenantId, type, id }) => {
+    // Product actions checked on the organization itself (such as creating a project) name iam/{tenantId}.
+    if (type === 'iam' && id === tenantId) return { tenantId, type, id };
+    const project = type === 'project' ? await findProject(id) : undefined;
+    if (!project) throw new IamError('NOT_FOUND', 'Resource not found', 404);
+    return { type, id, tenantId: project.tenantId };
+  },
+  // Every new organization starts with these sign-in rules.
+  tenantDefaults: {
+    authPolicy: { requireMfaForOwners: true },
+  },
+  // Lets one person link their accounts in several organizations, for the organization switcher.
+  onboarding: { mode: 'linked' },
+};
+```
+
+- `authentication.sendEmail` is required: `tenants.create` fails with `DELIVERY_REQUIRED` without it, because the
+  owner invitation is an email. `renderDeliveryMessage` builds the subject, text, and HTML of the built-in
+  templates; `links.invitation` points owner and member invitations at the `/invite` page you build in a later step.
+- `permissions.resourceTypes` declares what your product protects, so roles that name `projects:*` actions are
+  validated when they are saved.
+- `resolveResource` returns the owning `tenantId` of each project. When it differs from the tenant a check runs in,
+  the check fails with `RESOURCE_MISMATCH` (403), which is what stops one organization from reading another's
+  project by guessing its ID. Checks of `iam:*` actions never reach the resolver, but checks of your own actions
+  do, including a check on the organization itself (`iam/{tenantId}`, the default resource of `<iamNext.Can>`,
+  `allowed()`, and the guards' `authorize`), so the resolver answers for that resource too.
+- `tenantDefaults.authPolicy` is stamped on every tenant `tenants.create` creates.
+- `onboarding: { mode: 'linked' }` enables account linking (`links.create`); without it linking fails with
+  `LINKING_DISABLED`.
+
+The resolver reads your own data. A minimal in-memory store keeps this guide self-contained; replace it with your
+database:
+
+```js title="lib/projects-store.mjs"
+/** @type {Map<string, { id: string; tenantId: string; name: string }>} */
+const projects = new Map();
+
+export async function findProject(id) {
+  return projects.get(id);
+}
+
+export async function listProjects(tenantId) {
+  return [...projects.values()].filter((project) => project.tenantId === tenantId);
+}
+
+export async function createProject(tenantId, name) {
+  const project = { id: crypto.randomUUID(), tenantId, name };
+  projects.set(project.id, project);
+  return project;
+}
+```
+
+Create the instance and the Next.js helpers:
+
+```ts title="lib/iam.ts"
+import { betterIam } from '@better-iam/server';
+import config from '../better-iam.config.mjs';
+
+export const iam = betterIam(config);
+```
+
+```ts title="lib/iam-next.ts"
+import { createIamNext } from '@better-iam/next';
+import { iam } from './iam';
+
+export const iamNext = createIamNext(iam, {
+  loginPath: '/login',
+  stepUpPath: '/reauth',
+  interrupts: 'forbidden',
+  dispatchAfterResponse: true, // deliver queued email after each response
+});
+```
+
+Keep the server and its native modules out of the bundle, and enable auth interrupts for `interrupts: 'forbidden'`:
+
+```js title="next.config.mjs"
+/** @type {import('next').NextConfig} */
+export default {
+  serverExternalPackages: [
+    '@better-iam/server',
+    '@better-iam/auth',
+    '@better-iam/adapter-sqlite',
+    'argon2',
+    'better-sqlite3',
+  ],
+  experimental: { authInterrupts: true },
+};
+```
+
+</Step>
+<Step>
+
+### Migrate, mount, and add the auth pages
+
+Create the schema with the CLI. Run it in a shell where `BETTER_IAM_SECRET` and `BETTER_IAM_BASE_URL` are set.
+
+```bash
+npx better-iam migrate --config better-iam.config.mjs
+```
+
+Mount the IAM HTTP API, which the browser client, the sign-in forms, and protocol mounts use:
+
+```ts title="app/api/iam/[...path]/route.ts"
+import { iamNext } from '@/lib/iam-next';
+
+export const runtime = 'nodejs';
+export const { GET, POST, OPTIONS } = iamNext.handlers();
+```
+
+Export the drop-in authentication server actions. `discover: true` finds the organization from a verified email
+domain when the form names none.
+
+```ts title="app/auth-actions.ts"
+'use server';
+import { iamNext } from '@/lib/iam-next';
+
+const auth = iamNext.authActions({ afterSignIn: '/', discover: true });
+export const signIn = auth.signIn;
+export const reauthenticate = auth.reauthenticate;
+export const acceptInvitation = auth.acceptInvitation;
+export async function signOut() {
+  await auth.signOut();
+}
+```
+
+The login page receives `?org=` and `?next=` from the organization layout's redirect:
+
+```tsx title="app/login/page.tsx"
+import { SignInForm } from '@better-iam/next/client';
+import { signIn } from '../auth-actions';
+
+export default async function Login(props: {
+  searchParams: Promise<{ next?: string; org?: string; tenantId?: string }>;
+}) {
+  const { next, org, tenantId } = await props.searchParams;
+  return (
+    <main>
+      <h1>Sign in</h1>
+      <SignInForm
+        action={signIn}
+        keepSignedIn
+        {...(org ? { org } : {})}
+        {...(tenantId ? { tenantId } : {})}
+        {...(next ? { next } : {})}
+      />
+    </main>
+  );
+}
+```
+
+The invitation page serves both kinds of invitation email. Owners continue to `/welcome`, members to the home page:
+
+```tsx title="app/invite/page.tsx"
+import { InvitationForm } from '@better-iam/next/client';
+import { acceptInvitation } from '../auth-actions';
+
+export default async function Invite(props: {
+  searchParams: Promise<{ kind?: string; tenantId?: string; token?: string }>;
+}) {
+  const { kind, tenantId, token } = await props.searchParams;
+  if (!tenantId || !token || (kind !== 'owner' && kind !== 'member'))
+    return <p>This invitation link is incomplete.</p>;
+  return (
+    <main>
+      <h1>{kind === 'owner' ? 'Set up your organization' : 'Join your team'}</h1>
+      <InvitationForm
+        action={acceptInvitation}
+        kind={kind}
+        tenantId={tenantId}
+        token={token}
+        next={kind === 'owner' ? '/welcome' : '/'}
+      />
+    </main>
+  );
+}
+```
+
+Redirect signed-out visitors at the edge, keeping the invitation page public. The middleware's default `protect`
+leaves the login path and `/api/iam` public, so identity providers and the browser client reach it.
+
+```ts title="middleware.ts"
+import { NextResponse } from 'next/server';
+import { createIamMiddleware } from '@better-iam/next/edge';
+
+export const middleware = createIamMiddleware({
+  loginPath: '/login',
+  publicPaths: ['/', '/invite'],
+  next: (init) => NextResponse.next(init),
+});
+export const config = { matcher: ['/((?!_next|favicon.ico).*)'] };
+```
+
+</Step>
+<Step>
+
+### Create organizations
+
+Organizations are created by the platform. `tenants.create` creates a `pending` child tenant under the root, claims
+its alias (`slug`), and queues the `owner-invitation` email. It requires `iam:tenants:create` on the parent, a valid
+<Term id="authority">grant authority</Term>, and a credential authenticated within the last five minutes
+(`authentication.recentAuthenticationMs`, default 5 minutes). Better IAM has no unauthenticated "create an
+organization" endpoint, so call it from a platform administration page that only root administrators reach.
+
+```tsx title="app/platform/page.tsx"
+import { iamNext } from '@/lib/iam-next';
+import { createOrganization } from './actions';
+
+export default iamNext.page(
+  async () => (
+    <main>
+      <h1>New organization</h1>
+      <form action={createOrganization}>
+        <input name="name" placeholder="Acme" required />
+        <input name="slug" placeholder="acme" required />
+        <input name="ownerEmail" type="email" placeholder="owner@acme.com" required />
+        <button type="submit">Create and invite the owner</button>
+      </form>
+    </main>
+  ),
+  { authorize: { action: 'iam:tenants:create' }, stepUp: { maxAgeMs: 5 * 60_000 } },
+);
+```
+
+```ts title="app/platform/actions.ts"
+'use server';
+import { redirect } from 'next/navigation';
+import { iamNext } from '@/lib/iam-next';
+
+export async function createOrganization(form: FormData) {
+  // Re-checks the session and its age when the form is posted, not only when the page rendered.
+  const session = await iamNext.requireSession({ stepUp: { maxAgeMs: 5 * 60_000 } });
+  const { tenant } = await iamNext.client().tenants.create({
+    parentId: session.session.tenantId, // the root tenant the administrator signed in to
+    type: 'organization',
+    name: String(form.get('name')),
+    slug: String(form.get('slug')),
+    ownerEmail: String(form.get('ownerEmail')),
+  });
+  redirect(`/platform?created=${tenant.id}`);
+}
+```
+
+The page guard checks `iam:tenants:create` in the administrator's own tenant (the root) and sends anyone whose
+sign-in is older than five minutes to the step-up page first. `tenants.create` enforces the permission again, so a
+failed check rejects the action with an `IamClientError` carrying the server's `code`. Root administrators sign in
+at `/login?tenantId=<root tenant ID>` and must complete MFA. For the step-up page itself, see
+[Step-up](/docs/integrations/nextjs/advanced#step-up).
+
+The new tenant stays `pending`, and its alias does not resolve, until the owner accepts. Owner invitations last 24
+hours (`onboarding.invitationLifetimeMs`); `tenants.resendInvitation` sends a fresh link.
+
+**Route:** `POST /api/iam/tenants/create`
+
+</Step>
+<Step>
+
+### Create the default roles
+
+Roles belong to a tenant, so each organization needs its own copy of your product roles. Create them once, as the
+owner, right after the owner accepts. A role whose name already exists is skipped, so the function is safe to run
+again.
+
+```ts title="lib/org-defaults.ts"
+import { iam } from './iam';
+
+/** `{ headers }` or `{ token }`: who is calling. */
+type CredentialInput = Parameters<typeof iam.api.roles.list>[0];
+
+const defaults = [
+  {
+    name: 'Admin',
+    description: 'Manages projects and members',
+    permissions: [
+      'projects:read',
+      'projects:write',
+      'projects:delete',
+      'iam:identities:create',
+      'iam:identities:read',
+      'iam:bindings:create',
+      'iam:bindings:read',
+      'iam:bindings:delete',
+      'iam:roles:read',
+    ],
+  },
+  { name: 'Member', description: 'Reads and edits projects', permissions: ['projects:read', 'projects:write'] },
+];
+
+export async function ensureDefaultRoles(credential: CredentialInput, tenantId: string) {
+  const existing = new Set((await iam.api.roles.list(credential, { tenantId })).map((role) => role.name));
+  for (const role of defaults)
+    if (!existing.has(role.name)) await iam.api.roles.create(credential, { tenantId, ...role });
+}
+```
+
+The owner lands on `/welcome` after accepting. The page offers one button that creates the roles and continues to
+the organization:
+
+```tsx title="app/welcome/page.tsx"
+import { iamNext } from '@/lib/iam-next';
+import { finishSetup } from './actions';
+
+export default iamNext.page(async (_props, { session }) => (
+  <main>
+    <h1>Welcome, {session.identity.name}</h1>
+    <form action={finishSetup}>
+      <button type="submit">Create the Admin and Member roles</button>
+    </form>
+  </main>
+));
+```
+
+```ts title="app/welcome/actions.ts"
+'use server';
+import { redirect } from 'next/navigation';
+import { iamNext } from '@/lib/iam-next';
+import { ensureDefaultRoles } from '@/lib/org-defaults';
+
+export async function finishSetup() {
+  const session = await iamNext.requireSession();
+  const tenantId = session.session.tenantId;
+  await ensureDefaultRoles(await iamNext.credential(), tenantId);
+  const tenant = await iamNext.client().tenants.get({ tenantId });
+  redirect(`/${tenant.slug}`);
+}
+```
+
+A role records the grant authority of whoever creates it, and only that authority (or a root administrator) can
+edit it later. Running this as the owner makes the owner's authority the roles' issuer, so the organization manages
+its own roles instead of depending on the platform. `roles.create` needs `iam:roles:create` and a grant authority;
+the owner's protected Owner role allows every action in the tenant. See [Roles and bindings](/docs/authorization/roles).
+
+**Route:** `POST /api/iam/roles/create`
+
+</Step>
+<Step>
+
+### Serve each organization under its path
+
+`requireTenantSession({ slug })` resolves the alias in the URL and requires a session in that organization. Unknown
+or inactive aliases render a 404, and a visitor signed in to a different organization is sent to
+`/login?org={slug}&next=...`.
+
+```tsx title="app/[org]/layout.tsx"
+import type { ReactNode } from 'react';
+import Link from 'next/link';
+import { iamNext } from '@/lib/iam-next';
+import { signOut } from '../auth-actions';
+import { OrgSwitcher } from './org-switcher';
+
+export default async function OrgLayout(props: { params: Promise<{ org: string }>; children: ReactNode }) {
+  const { org } = await props.params;
+  const { tenant, session } = await iamNext.requireTenantSession({ slug: org });
+  return (
+    <>
+      <header>
+        <Link href={`/${org}`}>
+          <strong>{tenant.name}</strong>
+        </Link>
+        <OrgSwitcher current={org} />
+        <form action={signOut}>
+          <span>{session.identity.name} </span>
+          <button type="submit">Sign out</button>
+        </form>
+      </header>
+      {props.children}
+    </>
+  );
+}
+```
+
+`tenant` is `{ tenantId, name, type, slug }`. Wrap each page below the layout with `iamNext.page` too, because
+Next.js keeps layouts across client-side navigations instead of re-rendering them.
+
+</Step>
+<Step>
+
+### Add the organization switcher
+
+Identities are per organization: a consultant who works with Acme and Globex has two separate accounts, each with
+its own password, factors, and roles. Linking the accounts lets the switcher list both. `links.list` returns the
+current identity's linked accounts with `tenantName` and `tenantSlug`.
+
+```tsx title="app/[org]/org-switcher.tsx"
+import Link from 'next/link';
+import { iamNext } from '@/lib/iam-next';
+
+export async function OrgSwitcher({ current }: { current: string }) {
+  const linked = await iamNext.client().links.list();
+  const others = linked.filter((account) => account.tenantSlug && account.tenantSlug !== current);
+  if (!others.length) return null;
+  return (
+    <nav aria-label="Switch organization">
+      {others.map((account) => (
+        <Link key={account.id} href={`/${account.tenantSlug}`}>
+          {account.tenantName}
+        </Link>
+      ))}
+    </nav>
+  );
+}
+```
+
+Following a link to another organization's path makes its layout's `requireTenantSession` send the person to
+`/login?org={slug}`, where they sign in to that account. The browser holds one session at a time, so switching is
+a sign-in, never a shared session: each organization's MFA and sign-in policy still apply.
+[`links.switch`](/docs/reference/api/links#switch) does the same from the API, and also requires a recently
+authenticated credential for the target account.
+
+Accounts are linked with `links.create({ targetCredential })`, which needs recent authentication on both accounts.
+An owner can link their existing account while accepting an owner invitation by passing `linkCredential` to
+`tenants.acceptInvitation`. Root administrators can never link. See
+[Account linking](/docs/concepts/tenants-and-identities#account-linking).
+
+**Route:** `POST /api/iam/links/list`
+
+</Step>
+<Step>
+
+### Invite members with a role
+
+`identities.invite` records the email with the roles to apply, stores only a hash of the token, and queues a
+`member-invitation` email that links to your `/invite` page. The inviter needs `iam:identities:create`, plus
+`iam:bindings:create` on each role, so an invitation never grants more than the inviter could grant directly.
+
+```tsx title="app/[org]/members/page.tsx"
+import { iamNext } from '@/lib/iam-next';
+import { InviteForm } from './invite-form';
+
+export default iamNext.page(
+  async (_props: { params: Promise<{ org: string }> }, { session }) => {
+    const tenantId = session.session.tenantId;
+    const [members, roles] = await Promise.all([
+      iamNext.client().identities.list({ tenantId, kind: 'user' }),
+      iamNext.client().roles.list({ tenantId }),
+    ]);
+    const assignable = roles.filter((role) => !role.protected);
+    return (
+      <main>
+        <h1>Members</h1>
+        <ul>
+          {members.map((member) => (
+            <li key={member.id}>
+              {member.name} ({member.email})
+            </li>
+          ))}
+        </ul>
+        <InviteForm roles={assignable.map((role) => ({ id: role.id, name: role.name }))} />
+      </main>
+    );
+  },
+  { authorize: { action: 'iam:identities:read' } },
+);
+```
+
+```ts title="app/[org]/members/actions.ts"
+'use server';
+import { revalidatePath } from 'next/cache';
+import { iamNext } from '@/lib/iam-next';
+
+export const inviteMember = iamNext.action(
+  async (session, _previous: unknown, form: FormData) => {
+    const invitation = await iamNext.client().identities.invite({
+      tenantId: session.session.tenantId,
+      email: String(form.get('email')),
+      roleIds: [String(form.get('roleId'))],
+    });
+    revalidatePath('/[org]/members', 'page');
+    return { email: invitation.email, expiresAt: invitation.expiresAt };
+  },
+  { authorize: { action: 'iam:identities:create' } },
+);
+```
+
+```tsx title="app/[org]/members/invite-form.tsx"
+'use client';
+import { useActionState } from 'react';
+import { inviteMember } from './actions';
+
+export function InviteForm({ roles }: { roles: { id: string; name: string }[] }) {
+  const [state, formAction, pending] = useActionState(inviteMember, null);
+  return (
+    <form action={formAction}>
+      <input name="email" type="email" required />
+      <select name="roleId">
+        {roles.map((role) => (
+          <option key={role.id} value={role.id}>
+            {role.name}
+          </option>
+        ))}
+      </select>
+      <button disabled={pending}>Invite</button>
+      {state?.ok === true && <p role="status">Invitation sent to {state.data.email}.</p>}
+      {state?.ok === false && <p role="alert">{state.error.message}</p>}
+    </form>
+  );
+}
+```
+
+Acceptance creates the identity with a verified email and binds the roles under the inviter's grant authority,
+which is checked again at that moment. Inviting an email that already has an identity in the organization fails
+with `IDENTITY_EXISTS`. `identities.listInvitations`, `identities.resendInvitation`, and
+`identities.revokeInvitation` manage pending invitations.
+
+**Route:** `POST /api/iam/identities/invite`
+
+</Step>
+<Step>
+
+### Let admins other than the owner invite
+
+Creating bindings, which an invitation with roles does, needs a grant authority as well as the permission. The
+owner holds one; anyone else has none until it is delegated, and their invitations with roles fail with
+`GRANT_AUTHORITY_REQUIRED`. The owner delegates an authority whose **ceiling** caps everything the admin can ever
+grant:
+
+```ts title="app/[org]/members/delegate.ts"
+'use server';
+import { iamNext } from '@/lib/iam-next';
+
+// Called by the owner when they make someone an Admin.
+export const delegateInviting = iamNext.action(
+  async (session, identityId: string) =>
+    iamNext.client().authorities.create({
+      tenantId: session.session.tenantId,
+      identityId,
+      ceiling: {
+        version: 1,
+        statements: [{ effect: 'allow', actions: ['projects:*'], resources: ['*'] }],
+      },
+    }),
+  { stepUp: { maxAgeMs: 5 * 60_000 } },
+);
+```
+
+With this ceiling, an admin can invite people as _Member_, but whatever a role says, a binding they issue grants no
+more than `projects:*`. `authorities.create` requires `iam:authorities:create` and recent authentication. Revoking
+the authority (`authorities.revoke`) disables every grant issued under it. See
+[Grant authorities](/docs/authorization/roles#grant-authorities).
+
+**Route:** `POST /api/iam/authorities/create`
+
+</Step>
+<Step>
+
+### Let each organization set its sign-in policy
+
+`tenants.setAuthPolicy` replaces an organization's sign-in rules. A policy can only tighten what the deployment
+allows. It needs `iam:tenants:update` and recent authentication, and `tenants.get` returns the current policy as
+`authPolicy`.
+
+```tsx title="app/[org]/settings/security/page.tsx"
+import { iamNext } from '@/lib/iam-next';
+import { savePolicy } from './actions';
+
+export default iamNext.page(
+  async (_props: { params: Promise<{ org: string }> }, { session }) => {
+    const tenant = await iamNext.client().tenants.get({ tenantId: session.session.tenantId });
+    const policy = tenant.authPolicy ?? {};
+    return (
+      <form action={savePolicy}>
+        <label>
+          <input type="checkbox" name="requireMfa" defaultChecked={policy.requireMfa === true} /> Require MFA for
+          everyone
+        </label>
+        <label>
+          Idle timeout (minutes)
+          <input name="idleMinutes" type="number" min={1} defaultValue={(policy.sessionIdleTimeoutMs ?? 0) / 60_000 || ''} />
+        </label>
+        <button type="submit">Save</button>
+      </form>
+    );
+  },
+  { authorize: { action: 'iam:tenants:update' }, stepUp: { maxAgeMs: 5 * 60_000 } },
+);
+```
+
+```ts title="app/[org]/settings/security/actions.ts"
+'use server';
+import { revalidatePath } from 'next/cache';
+import { iamNext } from '@/lib/iam-next';
+
+export async function savePolicy(form: FormData) {
+  const session = await iamNext.requireSession({ stepUp: { maxAgeMs: 5 * 60_000 } });
+  const tenantId = session.session.tenantId;
+  const current = (await iamNext.client().tenants.get({ tenantId })).authPolicy ?? {};
+  const idleMinutes = Number(form.get('idleMinutes'));
+  // setAuthPolicy replaces the whole policy and enforces iam:tenants:update itself.
+  await iamNext.client().tenants.setAuthPolicy({
+    tenantId,
+    authPolicy: {
+      ...current,
+      requireMfa: form.get('requireMfa') === 'on',
+      ...(idleMinutes > 0 ? { sessionIdleTimeoutMs: idleMinutes * 60_000 } : {}),
+    },
+  });
+  revalidatePath('/[org]/settings/security', 'page');
+}
+```
+
+Existing sessions follow the new policy at their next use: turning on `requireMfa` stops sessions that did not
+complete MFA. Every field (allowed methods, IP ranges, password rules, session limits) is listed in
+[Tenant authentication policy](/docs/authentication/tenant-policy#options).
+
+**Route:** `POST /api/iam/tenants/setAuthPolicy`
+
+</Step>
+<Step>
+
+### Authorize every project route
+
+Pages, route handlers, and server actions each check the action on the specific project. The tenant defaults to the
+session's organization, and `resolveResource` confirms the project belongs to it.
+
+```ts title="app/api/projects/[id]/route.ts"
+import { iamNext } from '@/lib/iam-next';
+import { findProject } from '@/lib/projects-store.mjs';
+
+export const runtime = 'nodejs';
+
+export const GET = iamNext.route<{ id: string }>(
+  async (_request, { params }) => findProject(params.id),
+  {
+    authorize: {
+      action: 'projects:read',
+      resource: ({ params }) => ({ type: 'project', id: params.id }),
+    },
+  },
+);
+```
+
+```ts title="app/[org]/projects/actions.ts"
+'use server';
+import { revalidatePath } from 'next/cache';
+import { iamNext } from '@/lib/iam-next';
+import { createProject } from '@/lib/projects-store.mjs';
+
+export async function newProject(form: FormData) {
+  const session = await iamNext.requireSession();
+  const tenantId = session.session.tenantId;
+  // Creating a project is checked on the organization itself (iam/{tenantId}).
+  await iamNext.require({ tenantId, action: 'projects:write', resource: { type: 'iam', id: tenantId } });
+  await createProject(tenantId, String(form.get('name')));
+  revalidatePath('/[org]/projects', 'page');
+}
+```
+
+```tsx title="app/[org]/projects/page.tsx"
+import { iamNext } from '@/lib/iam-next';
+import { listProjects } from '@/lib/projects-store.mjs';
+import { newProject } from './actions';
+
+export default iamNext.page(async (_props: { params: Promise<{ org: string }> }, { session }) => {
+  const projects = await listProjects(session.session.tenantId);
+  return (
+    <main>
+      <h1>Projects</h1>
+      <iamNext.Can action="projects:write" fallback={<p>You can view projects but not create them.</p>}>
+        <form action={newProject}>
+          <input name="name" required />
+          <button type="submit">New project</button>
+        </form>
+      </iamNext.Can>
+      <ul>
+        {projects.map((project) => (
+          <li key={project.id}>{project.name}</li>
+        ))}
+      </ul>
+    </main>
+  );
+});
+```
+
+- `route()` answers a signed-out request with `401` and a denial with `403`, as a JSON error envelope
+  (`{ error: { code, message } }`).
+- A project from another organization fails with `RESOURCE_MISMATCH` (403), even for that organization's owner.
+- `<iamNext.Can>` is an advisory check for rendering. Enforce the mutation itself with `action()` or `route()`.
+
+For lists, filter by `session.session.tenantId` in your own query as above, or turn policies into a query filter
+with [data filtering](/docs/authorization/data-filtering).
+
+</Step>
+</Steps>
+
+## Verify it works
+
+1. Start the app, sign in at `/login?tenantId=<root tenant ID>` as the root administrator, and complete MFA.
+2. On `/platform`, create `Acme` with the slug `acme` and your own address as the owner. The terminal prints the
+   owner invitation with its `/invite?kind=owner...` link.
+3. Open the link, choose a name and password, and enroll an authenticator when asked (`requireMfaForOwners` from
+   `tenantDefaults` applies to the new owner). Press the button on `/welcome`. You land on `/acme`.
+4. On `/acme/projects`, create a project. On `/acme/members`, invite a second address as _Member_ and accept that
+   invitation in a private window.
+5. As the member, open `/api/projects/<id>` for the `acme` project: it answers `200` with the project. Create a
+   second organization the same way, add a project there, and open its ID as the `acme` member: it answers `403`
+   with `RESOURCE_MISMATCH`.
+6. As the owner, turn on **Require MFA for everyone** on `/acme/settings/security`. The member's session stops
+   working at its next use, and their next sign-in asks them to enroll an authenticator.
+
+The audit log records each step: `tenant:activate` when the owner accepts, `identity:invitation:accept` for the
+member, and `tenant:auth-policy` for the policy change.
+
+## Troubleshooting
+
+<Accordions>
+<Accordion title="tenants.create fails with RECENT_AUTH_REQUIRED">
+  The administrator's session authenticated more than five minutes ago. The `stepUp: { maxAgeMs }` guard on the page
+  sends them to the step-up page first; a long-lived API key also fails, because an API key's authentication time is
+  its creation time. See [RECENT_AUTH_REQUIRED](/docs/reference/errors#recent_auth_required).
+</Accordion>
+<Accordion title="tenants.create fails with DELIVERY_REQUIRED">
+  `authentication.sendEmail` is not configured. Organization creation sends the owner invitation by email and refuses
+  to run without a delivery callback. See [DELIVERY_REQUIRED](/docs/reference/errors#delivery_required).
+</Accordion>
+<Accordion title="/acme answers 404 right after creating the organization">
+  The tenant is `pending` until the owner accepts the invitation, and `tenants.lookup` resolves active tenants only.
+  Accept the owner invitation first.
+</Accordion>
+<Accordion title="An admin's invitation fails with GRANT_AUTHORITY_REQUIRED">
+  Only the owner holds a grant authority in a new organization. Delegate one to the admin with `authorities.create`.
+  See [GRANT_AUTHORITY_REQUIRED](/docs/reference/errors#grant_authority_required).
+</Accordion>
+<Accordion title="Project checks fail with RESOURCE_RESOLVER_REQUIRED or RESOURCE_MISMATCH">
+  `RESOURCE_RESOLVER_REQUIRED` means `resolveResource` is missing from the options. `RESOURCE_MISMATCH` means the
+  resolver returned a different tenant, type, or ID than the check named: the project belongs to another organization,
+  or the resolver returned the wrong record. See [RESOURCE_MISMATCH](/docs/reference/errors#resource_mismatch).
+</Accordion>
+<Accordion title="Sign-in fails with METHOD_NOT_ALLOWED after changing the policy">
+  `allowedMethods` in the organization's policy no longer includes the method the person used. Members then need an
+  allowed method; an owner who locked themselves out needs a root administrator to change the policy. See
+  [METHOD_NOT_ALLOWED](/docs/reference/errors#method_not_allowed).
+</Accordion>
+</Accordions>
+
+## Next steps
+
+<Cards>
+  <Card icon={<ShieldCheck />} title="SAML single sign-on with Okta" href="/docs/guides/enterprise-sso-okta">
+    Let one organization sign in with its own identity provider.
+  </Card>
+  <Card icon={<Users />} title="SCIM provisioning" href="/docs/guides/scim-provisioning">
+    Let a customer's directory create and remove its members.
+  </Card>
+  <Card icon={<SlidersHorizontal />} title="Tenant authentication policy" href="/docs/authentication/tenant-policy">
+    Every per-organization sign-in rule.
+  </Card>
+  <Card icon={<KeyRound />} title="Roles and bindings" href="/docs/authorization/roles">
+    Role inheritance, group bindings, and grant authorities.
+  </Card>
+  <Card icon={<Building />} title="Tenants and identities" href="/docs/concepts/tenants-and-identities">
+    Tenant trees, plan limits, suspension, and deletion.
+  </Card>
+  <Card icon={<Workflow />} title="Usage-based billing" href="/docs/guides/usage-based-billing">
+    Meter usage and invoice each organization.
+  </Card>
+</Cards>

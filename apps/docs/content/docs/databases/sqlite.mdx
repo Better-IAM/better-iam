@@ -1,0 +1,251 @@
+---
+title: SQLite
+description: Run Better IAM on a local SQLite file with sqliteAdapter, including its options, WAL and durability settings, several processes on one file, and in-memory test databases.
+icon: HardDrive
+packages: ['@better-iam/adapter-sqlite', '@better-iam/core']
+sources:
+  - packages/adapter-sqlite/src/index.ts
+  - packages/core/src/sql.ts
+  - packages/core/src/storage.ts
+  - packages/server/src/self-check.ts
+  - packages/cli/src/config.ts
+  - packages/cli/src/commands/setup.ts
+  - examples/sqlite/README.md
+---
+
+The SQLite adapter stores Better IAM in a single file on local disk through the native `better-sqlite3` driver and
+Kysely. Use it for development, automated tests, and single-host deployments with a persistent disk. When several
+hosts must share the data, or writes are sustained, use [PostgreSQL](/docs/databases/postgresql); when you want
+SQLite semantics over the network, use [libSQL](/docs/databases/libsql).
+
+## Installation
+
+<Steps>
+<Step>
+
+### Install the package
+
+```npm
+npm i better-iam
+```
+
+The umbrella package includes the adapter as `better-iam/adapter-sqlite`. To install only what you use, add
+`@better-iam/server` and `@better-iam/adapter-sqlite`.
+
+`better-sqlite3` is a native module. Your package manager must be allowed to run its install script (for pnpm,
+list it in `onlyBuiltDependencies`). In Next.js, list the server packages and native modules in
+`serverExternalPackages`; see [Next.js](/docs/integrations/nextjs).
+
+</Step>
+<Step>
+
+### Configure the adapter
+
+```ts title="iam.ts"
+import { betterIam } from 'better-iam';
+import { sqliteAdapter } from 'better-iam/adapter-sqlite';
+
+export const iam = betterIam({
+  database: sqliteAdapter({ filename: './iam.db' }),
+  secret: process.env.BETTER_IAM_SECRET!,
+  baseURL: process.env.BETTER_IAM_BASE_URL!,
+});
+```
+
+`filename` is a file path (relative paths resolve against the working directory) or `:memory:`. URI filenames
+starting with `file:` are refused with `INVALID_CONFIG`.
+
+</Step>
+<Step>
+
+### Create the schema
+
+```bash
+npx better-iam migrate --config better-iam.config.mjs
+```
+
+The CLI and your application must point at the same file. A relative `filename` resolves against each process's
+working directory, so prefer an absolute path or run both from the same directory.
+
+</Step>
+<Step>
+
+### Check the database
+
+```bash
+npx better-iam doctor --config better-iam.config.mjs
+```
+
+Under `storage.settings`, the SQLite adapter reports `journalMode`, `synchronous`, `sizeBytes`, `freeBytes`, and
+`inMemory`. `doctor` reports `sqlite-durability` (an error) for a rollback journal at `durability: 'normal'`, and
+`in-memory-database` (a warning) for `:memory:`.
+
+</Step>
+</Steps>
+
+## Usage
+
+### Choose durability
+
+Committed IAM writes, such as a revoked session, must survive a crash. The defaults keep them durable:
+
+| `journalMode` | `durability` | SQLite pragmas | Behavior on power loss or OS crash |
+| --- | --- | --- | --- |
+| `'wal'` (default) | `'full'` (default) | `journal_mode = WAL`, `synchronous = FULL` | Every committed transaction survives. Readers in other processes never block the writer. |
+| `'wal'` | `'normal'` | `journal_mode = WAL`, `synchronous = NORMAL` | The last commits can be lost; the database is never corrupted. Much cheaper writes. |
+| `'delete'` | `'full'` | `journal_mode = DELETE`, `synchronous = FULL` | Every committed transaction survives. Use on file systems without shared-memory support, such as network shares. |
+| `'delete'` | `'normal'` | `journal_mode = DELETE`, `synchronous = NORMAL` | Can corrupt the database. `doctor` reports `sqlite-durability`. Do not use. |
+
+```ts title="iam.ts"
+import { sqliteAdapter } from 'better-iam/adapter-sqlite';
+
+// A database on a network share, where WAL's shared memory is not available.
+export const database = sqliteAdapter({
+  filename: '/mnt/shared/iam.db',
+  journalMode: 'delete',
+  durability: 'full',
+});
+```
+
+`journalMode` is ignored for `:memory:`.
+
+### Share one file between processes
+
+Your application, background workers, and CLI commands can open the same file:
+
+- **Within one process**, the adapter serializes every operation on a file through an in-process lock keyed by the
+  file's canonical path (symbolic links, relative paths, and Windows short names all resolve to one lock, and the
+  lock is shared even when two copies of the adapter package are loaded).
+- **Across processes**, each transaction starts with `BEGIN IMMEDIATE`, taking SQLite's writer lock before any
+  read. Another process waiting for that lock retries for up to `busyTimeoutMs` and then fails with
+  `STORAGE_BUSY`, which can be retried.
+
+Raise `busyTimeoutMs` when long CLI commands, such as `store-export` or a large `sweep`, run beside a busy
+application. Opening a second adapter on a file inside a transaction that already holds it, for example copying a
+database onto itself, fails with `DATABASE_IN_USE` instead of waiting forever.
+
+### Configure from environment variables only
+
+The CLI and `configFromEnv()` from `better-iam/cli` create a SQLite adapter when `BETTER_IAM_DATABASE_URL` is
+`sqlite:PATH`, a path ending in `.db`, `.sqlite`, or `.sqlite3`, or `:memory:`. `sqlite:` with no path opens an
+in-memory database.
+
+```bash
+export BETTER_IAM_DATABASE_URL=sqlite:./iam.db
+export BETTER_IAM_SECRET=paste-a-generated-secret
+npx better-iam migrate
+```
+
+`better-iam init --database sqlite` writes a configuration whose adapter reads `BETTER_IAM_DATABASE`, falling back
+to `./better-iam.db`.
+
+### Close the database
+
+`iam.store.close()` releases the file. Close it at the end of scripts and tests, especially on Windows, where an
+open handle prevents deleting the file.
+
+```ts title="scripts/count.ts"
+import { iam } from '../iam';
+
+try {
+  console.log(await iam.store.describe?.());
+} finally {
+  await iam.store.close();
+}
+```
+
+## Options
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `filename` | `string` | required | The database file, or `:memory:`. `file:` URIs are not supported. |
+| `busyTimeoutMs` | `number` | `5000` | 0 to 60000. How long to wait for another process's writer lock before failing with `STORAGE_BUSY`. |
+| `journalMode` | `'wal' \| 'delete'` | `'wal'` | WAL lets readers proceed during a write. `delete` is the classic rollback journal for file systems without shared memory. Ignored for `:memory:`. |
+| `durability` | `'full' \| 'normal'` | `'full'` | `full` flushes every commit. `normal` can lose the last commits on power loss in WAL mode. Keep `full` with `journalMode: 'delete'`. |
+
+Invalid values throw `INVALID_CONFIG` when the adapter is created.
+
+## Performance
+
+- **Prepared statements are cached.** The adapter reuses up to 256 prepared statements by SQL text. SQLite's compile
+  time grows with the number of indexes a write maintains, so caching keeps inserts cheap.
+- **Lookups use partial expression indexes**, one per field in `INDEXED_FIELDS`, so a session token lookup stays
+  fast as the sessions collection grows. See [Schema](/docs/databases/schema#indexed-fields).
+- **One writer at a time.** SQLite has a single writer per file. For sustained concurrent writes from several
+  hosts, move to PostgreSQL with
+  [`store-copy`](/docs/databases/operations#snapshots-and-moving-between-databases).
+
+SQLite is not suited to serverless hosts or containers without a persistent volume: the file must survive restarts
+and every instance must see the same file on the same host.
+
+## Testing
+
+`:memory:` gives each adapter its own private database that disappears when it is closed, which makes it the fastest
+way to test code that uses Better IAM. Two adapters created with `:memory:` never share data, so create one per test
+(or per test file) and close it afterwards.
+
+```ts title="tests/iam.test.ts"
+import { afterEach, beforeEach, expect, it } from 'vitest';
+import { betterIam, type BetterIam } from 'better-iam';
+import { sqliteAdapter } from 'better-iam/adapter-sqlite';
+
+let iam: BetterIam;
+
+beforeEach(async () => {
+  iam = betterIam({
+    database: sqliteAdapter({ filename: ':memory:' }),
+    secret: 'test-only-secret-with-at-least-32-characters',
+    baseURL: 'http://localhost:3000',
+  });
+  await iam.initialize(); // creates the schema in the new in-memory database
+});
+
+afterEach(async () => {
+  await iam.store.close();
+});
+
+it('creates the root tenant once', async () => {
+  const { tenant } = await iam.bootstrap({
+    email: 'root@example.com',
+    name: 'Root',
+    password: 'a long root password',
+  });
+  expect(tenant.type).toBe('root');
+  await expect(
+    iam.bootstrap({ email: 'other@example.com', name: 'Other', password: 'another long password' }),
+  ).rejects.toMatchObject({ code: 'ALREADY_INITIALIZED' });
+});
+```
+
+The SQLite, libSQL, and PostgreSQL adapters pass the same conformance suite (`@better-iam/core/conformance`), so
+behavior you test on `:memory:` holds on PostgreSQL. For more patterns, see [Test your integration](/docs/guides/testing).
+
+## Errors
+
+| Code | When |
+| --- | --- |
+| [`INVALID_CONFIG`](/docs/reference/errors#invalid_config) | `filename` is missing or a `file:` URI, or `busyTimeoutMs`, `journalMode`, or `durability` is invalid. |
+| [`STORAGE_BUSY`](/docs/reference/errors#storage_busy) | Another process held the writer lock for longer than `busyTimeoutMs` (`SQLITE_BUSY`, `SQLITE_BUSY_SNAPSHOT`, `SQLITE_LOCKED`). Retry the operation. |
+| [`DATABASE_IN_USE`](/docs/reference/errors#database_in_use) | A call chain that already holds this file through one adapter instance used another instance on the same file. |
+| [`CONFLICT`](/docs/reference/errors#conflict) | A record with the same id, or the same natural key in its tenant, already exists. |
+| [`STORAGE_ERROR`](/docs/reference/errors#storage_error) | Any other database failure, for example a missing directory or a read-only file. |
+| [`TRANSACTION_REQUIRED`](/docs/reference/errors#transaction_required) | A write was attempted outside `transaction()`. |
+| [`TRANSACTION_ABORTED`](/docs/reference/errors#transaction_aborted) | A nested operation failed inside a transaction whose callback then returned normally; everything rolled back. |
+| [`TRANSACTION_CLOSED`](/docs/reference/errors#transaction_closed) | A transaction handle was used after its transaction ended. |
+| [`TRANSACTION_ACTIVE`](/docs/reference/errors#transaction_active) | `close()` was called inside a transaction. |
+| [`STORE_CLOSED`](/docs/reference/errors#store_closed) | The adapter was used after `close()`. |
+| [`SCHEMA_VERSION`](/docs/reference/errors#schema_version) | `iam_schema_version` holds a version this release does not support. |
+
+## Next steps
+
+<Cards>
+  <Card title="Migrations" href="/docs/databases/migrations">
+    Schema steps, upgrades, and running migrate in CI.
+  </Card>
+  <Card title="Move to PostgreSQL" href="/docs/databases/operations#snapshots-and-moving-between-databases">
+    Copy a SQLite deployment into PostgreSQL in one step.
+  </Card>
+  <Card title="libSQL and Turso" href="/docs/databases/libsql">
+    SQLite-compatible storage over the network, with embedded replicas.
+  </Card>
+</Cards>

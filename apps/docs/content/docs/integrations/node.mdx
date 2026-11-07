@@ -1,0 +1,426 @@
+---
+title: Node.js and custom servers
+metaTitle: Node.js http and custom servers
+description: Serve Better IAM from a plain node:http server or any framework without an adapter, using iam.nodeHandler, iam.handler, and the framework-neutral core in better-iam/middleware.
+icon: Nodejs
+packages:
+  - '@better-iam/middleware'
+  - '@better-iam/server'
+sources:
+  - docs/node-frameworks.md
+  - packages/middleware/README.md
+  - packages/middleware/src/index.ts
+  - packages/server/src/http.ts
+  - packages/server/src/index.ts
+  - tests/middleware.test.ts
+---
+
+import { Express, Hono, Fastify, NestJS, Globe, Building } from '@/lib/icons';
+
+Every `betterIam()` instance serves its own HTTP API: `iam.nodeHandler(req, res)` for Node's `http` module and
+`iam.handler(request)` for any server built on Web-standard `Request` and `Response`. This page covers serving that
+API from a plain `node:http` server or a custom server, and protecting your own routes there with the
+framework-neutral core that the Express, Hono, Fastify, SvelteKit, and React Router integrations are built from.
+
+Use an adapter when one exists for your framework; it wires everything on this page for you:
+
+<Cards>
+  <Card icon={<Express />} title="Express" href="/docs/integrations/express">
+    `createIamExpress`: middleware, `req.iam`, guards, and an error handler.
+  </Card>
+  <Card icon={<Hono />} title="Hono" href="/docs/integrations/hono">
+    `createIamHono`: middleware, `c.get('iam')`, guards, and `onError`.
+  </Card>
+  <Card icon={<Fastify />} title="Fastify" href="/docs/integrations/fastify">
+    `createIamFastify`: a plugin, `request.iam`, `preHandler` guards, and an error handler.
+  </Card>
+  <Card icon={<NestJS />} title="NestJS" href="/docs/integrations/nestjs">
+    A module, a guard, and decorators.
+  </Card>
+</Cards>
+
+## Installation
+
+<Steps>
+<Step>
+
+### Install the package
+
+```npm
+npm i better-iam
+```
+
+The umbrella package exposes the core as `better-iam/middleware`. With scoped packages, install
+`@better-iam/middleware` (and `@better-iam/server` for the instance) and import from `@better-iam/middleware`.
+
+</Step>
+<Step>
+
+### Create the instance
+
+```ts title="src/iam.ts"
+import { betterIam } from 'better-iam';
+import config from '../better-iam.config.mjs';
+
+export const iam = betterIam(config);
+```
+
+The configuration file is the one the [quickstart](/docs/quickstart) builds. Run
+`npx better-iam migrate --config better-iam.config.mjs` before the first start.
+
+</Step>
+<Step>
+
+### Mount the handler
+
+When the server does nothing but serve the IAM API, hand every request to `iam.nodeHandler`:
+
+```ts title="src/server.ts"
+import { createServer } from 'node:http';
+import { iam } from './iam.js';
+
+createServer(iam.nodeHandler).listen(3000);
+```
+
+When the same server also has routes of its own, send only the IAM base path (`iam.endpoint.basePath`, `/api/iam`
+by default) to the handler. `underPath` matches on path-segment boundaries, so `/api/iam` covers `/api/iam/auth/signIn`
+but not `/api/iamx`.
+
+```ts title="src/server.ts"
+import { createServer } from 'node:http';
+import { underPath } from 'better-iam/middleware';
+import { iam } from './iam.js';
+import { app } from './app.js'; // your own (req, res) handler
+
+createServer(async (req, res) => {
+  const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
+  if (underPath(url.pathname, iam.endpoint.basePath)) return iam.nodeHandler(req, res);
+  return app(req, res);
+}).listen(3000);
+```
+
+`iam.nodeHandler` reads the raw request body, so nothing may consume the stream before it. It also runs node-only
+protocol mounts such as the OAuth provider; `iam.handler` does not. Mounts outside the base path (`/oauth`,
+`/.well-known`) need their own prefixes routed to the handler; see
+[Protocol mounts](/docs/operations/deployment/protocol-mounts).
+
+</Step>
+<Step>
+
+### Create the browser client
+
+```ts title="web/iam-client.ts"
+import { createIamClient } from 'better-iam/client';
+import type { iam } from '../src/iam.js';
+
+export const client = createIamClient<typeof iam>({
+  baseURL: window.location.origin, // calls go to /api/iam/{group}/{method}
+});
+```
+
+See [Typed client](/docs/concepts/client). A front end on a different origin also needs that origin in the
+instance's `trustedOrigins` option.
+
+</Step>
+</Steps>
+
+## Protect routes
+
+`createRequestHelpers` builds the same per-request helpers the adapters attach as `req.iam`. `enforceGuard` runs a
+guard (origin check, session, step-up, then authorization) and throws the refusal; `refusalResponse` decides
+whether to answer it with a redirect or the JSON envelope.
+
+### A node:http server
+
+```ts title="src/app.ts"
+import type { IncomingMessage, ServerResponse } from 'node:http';
+import {
+  checkRequestOrigin,
+  createRequestHelpers,
+  enforceGuard,
+  isIamRefusal,
+  nodeHeaders,
+  safeRedirectPath,
+} from 'better-iam/middleware';
+import { answerRefusal } from './answer-refusal.js'; // shown in the next section
+import { iam } from './iam.js';
+import { listProjects } from './data.js'; // your data layer
+
+function sendJson(res: ServerResponse, status: number, body: unknown) {
+  res.statusCode = status;
+  res.setHeader('content-type', 'application/json');
+  res.end(JSON.stringify(body));
+}
+
+export async function app(req: IncomingMessage, res: ServerResponse) {
+  const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
+  const headers = nodeHeaders(req.headers);
+  const method = req.method ?? 'GET';
+  const helpers = createRequestHelpers(async () => iam, {
+    url,
+    headers,
+    setCookie: (header) => res.appendHeader('set-cookie', header), // cookies the in-process client receives
+  });
+  try {
+    if (method === 'GET' && url.pathname === '/projects') {
+      await enforceGuard(
+        helpers,
+        req,
+        { authorize: { action: 'projects:read' } },
+        { method, url, headers, trustedOrigins: [iam.endpoint.origin] },
+      );
+      const session = await helpers.requireSession(); // memoized: no second lookup
+      return sendJson(res, 200, await listProjects(session.session.tenantId));
+    }
+    if (method === 'POST' && url.pathname === '/logout') {
+      const refusal = checkRequestOrigin({ method, url, headers }, [iam.endpoint.origin]);
+      if (refusal) throw refusal;
+      await helpers.signOut();
+      res.statusCode = 303;
+      res.setHeader('location', safeRedirectPath(url.searchParams.get('next')));
+      return res.end();
+    }
+    sendJson(res, 404, { error: { code: 'NOT_FOUND', message: 'Not found' } });
+  } catch (error) {
+    if (!isIamRefusal(error)) {
+      console.error(error);
+      return sendJson(res, 500, { error: { code: 'INTERNAL_ERROR', message: 'Internal error' } });
+    }
+    answerRefusal(res, error, { url, headers, method });
+  }
+}
+```
+
+The guard spec is `{ stepUp?, authorize?: { action, resource?, tenantId? } }`, where `resource` and `tenantId` are
+functions of `(request, session)`. Without `authorize`, `enforceGuard` only requires a session (and the step-up).
+Pass the fourth argument to run the origin check first; leave it out for routes that only accept bearer tokens.
+
+### Answer refusals your routes throw
+
+`refusalResponse(error, request, { loginPath?, stepUpPath? })` returns `{ redirect }` for a page navigation (a
+`GET` or `HEAD` with `Accept: text/html`) that should go to the login or step-up page, and `{ status, body }`
+otherwise. The body is the IAM JSON error envelope, `{ "error": { "code", "message" } }`.
+
+```ts title="src/answer-refusal.ts"
+import type { ServerResponse } from 'node:http';
+import { refusalResponse } from 'better-iam/middleware';
+
+export function answerRefusal(
+  res: ServerResponse,
+  error: Error & { code: string; status: number; reason?: string },
+  request: { url: URL; headers: Headers; method: string },
+) {
+  const answer = refusalResponse(error, request, { loginPath: '/login', stepUpPath: '/verify' });
+  if ('redirect' in answer) {
+    res.statusCode = 303;
+    res.setHeader('location', answer.redirect); // /login?next=... or /verify?next=...&reason=mfa|recent|impersonation
+    return res.end();
+  }
+  res.statusCode = answer.status;
+  res.setHeader('content-type', 'application/json');
+  res.setHeader('cache-control', 'no-store');
+  res.end(answer.body);
+}
+```
+
+The Express, Hono, and Fastify error handlers do exactly this. They answer every error that carries an IAM `code`
+and HTTP `status`, including `QUOTA_EXCEEDED` (`429`) and the server's own `IamError`.
+
+### A Web-standard fetch handler
+
+Servers built on `Request` and `Response` (Bun, Deno, workers, or your own router) use `iam.handler` and pass
+`request.headers` straight to the helpers.
+
+```ts title="src/handle.ts"
+import {
+  createRequestHelpers,
+  enforceGuard,
+  isIamRefusal,
+  refusalResponse,
+  underPath,
+} from 'better-iam/middleware';
+import { iam } from './iam.js';
+import { listProjects } from './data.js'; // your data layer
+
+export async function handle(request: Request): Promise<Response> {
+  const url = new URL(request.url);
+  if (underPath(url.pathname, iam.endpoint.basePath)) return iam.handler(request);
+
+  const cookies: string[] = [];
+  const helpers = createRequestHelpers(async () => iam, {
+    url,
+    headers: request.headers,
+    setCookie: (header) => cookies.push(header),
+  });
+  let response: Response;
+  try {
+    await enforceGuard(helpers, request, { authorize: { action: 'projects:read' } }, {
+      method: request.method,
+      url,
+      headers: request.headers,
+      trustedOrigins: [iam.endpoint.origin],
+    });
+    const session = await helpers.requireSession();
+    response = Response.json({ projects: await listProjects(session.session.tenantId) });
+  } catch (error) {
+    if (!isIamRefusal(error)) throw error;
+    const answer = refusalResponse(
+      error,
+      { url, headers: request.headers, method: request.method },
+      { loginPath: '/login' },
+    );
+    response =
+      'redirect' in answer
+        ? new Response(null, { status: 303, headers: { location: answer.redirect } })
+        : new Response(answer.body, {
+            status: answer.status,
+            headers: { 'content-type': 'application/json', 'cache-control': 'no-store' },
+          });
+  }
+  for (const cookie of cookies) response.headers.append('set-cookie', cookie);
+  return response;
+}
+```
+
+### The CSRF check
+
+Browsers attach cookies to requests other sites' pages send, so a cookie-authenticated state change must be checked
+for where it came from. `checkRequestOrigin(request, trustedOrigins)` applies the rule the adapters' guards use, and
+returns the refusal or `null`:
+
+- `GET`, `HEAD`, and `OPTIONS` requests pass, and so does any request with an `Authorization` header (browsers never
+  attach bearer tokens on their own) or without a session cookie.
+- A `Sec-Fetch-Site: same-origin` request passes.
+- Otherwise the `Origin` must be the request's own origin (or the `X-Forwarded-Host` origin), the IAM origin, or one
+  of `trustedOrigins`. A missing `Origin` is refused with `CSRF_REJECTED`, any other origin (including `null`) with
+  `UNTRUSTED_ORIGIN`, both `403`.
+
+Why it matters: session cookies are `SameSite=Lax`, which browsers still send with form posts from sibling
+subdomains, so without the check a page on another subdomain could make changes as the signed-in person. The IAM
+HTTP API checks its own requests; your routes need this check, through a guard or `checkRequestOrigin`.
+
+## Read the session
+
+### Per-request helpers
+
+The helpers are created once per request and memoize the session lookup. Every adapter exposes the same object:
+`req.iam` (Express), `c.get('iam')` (Hono), `request.iam` (Fastify), `event.locals.iam`
+([SvelteKit](/docs/integrations/sveltekit)), and `iamRouter.helpers(args)`
+([React Router](/docs/integrations/react-router)).
+
+| Member | Returns / does |
+| --- | --- |
+| `getSession()` | The session, or `null` when the request has no usable session (memoized for the request) |
+| `requireSession({ stepUp? })` | The session, or throws `IamRequestError` (`401`, or `403` with a `reason`) |
+| `require(action, resource?, { tenantId? })` | Throws the server's refusal (`401`, `403`, `429`) when not allowed |
+| `can(action, resource?, { tenantId? })` | An <Term id="advisory">advisory</Term> boolean; checks made in the same tick share one `authorizeMany` call. `false` when signed out |
+| `authorize(checks, { tenantId? })` | `{ action, resource, allowed, reason }[]`; every check is denied (`UNAUTHENTICATED`) when signed out |
+| `listAccessible({ action, type, tenantId?, limit?, offset? })` | The registered resources of a managed type the caller may act on |
+| `plan({ action, type, tenantId? })` | A filter for your own query of the resources the caller may act on; `never` when signed out ([Data filtering](/docs/authorization/data-filtering)) |
+| `assertion({ tenantId, audience, ttlSeconds?, claims? })` | A signed <Term id="assertion">assertion</Term> for a downstream service |
+| `client` | A typed client calling `iam.handler` in process; its `Set-Cookie` answers go on this response |
+| `credential()` | `{ headers }` for `iam.api.*` calls, including cookies set earlier in the request |
+| `signOut()` | Ends the session and clears its cookie; never throws for an already-dead session |
+
+The resource defaults to the tenant (`iam/{tenantId}`), and the tenant to the session's. `getSession()` reads the
+server's `UNAUTHENTICATED`, `MFA_REQUIRED`, `EMAIL_UNVERIFIED`, `TENANT_INACTIVE`, and `TENANT_UNAVAILABLE` answers
+as signed out. Cookies the in-process client receives override the incoming ones for later calls in the same
+request, so `getSession()` after a sign-in sees the new session.
+
+### What the in-process client sends
+
+`helpers.client` calls `iam.handler` directly, with no network hop. It forwards the caller's cookies and these
+headers: `authorization`, `user-agent`, `accept-language`, `x-forwarded-for`, `x-forwarded-host`,
+`x-forwarded-proto`, `x-real-ip`, `x-request-id`, and `x-better-iam-device`. It sets `Origin` to the IAM origin
+(`iam.endpoint.origin`, or the request's origin when the instance has no `endpoint`), so the server treats the call
+as a same-site browser call.
+
+### Direct API calls
+
+```ts title="src/me.ts"
+import type { IamRequest } from 'better-iam/middleware';
+import { iam } from './iam.js';
+
+export async function mySessions(helpers: IamRequest<typeof iam>) {
+  return iam.api.auth.listSessions(helpers.credential());
+}
+```
+
+**Route:** `POST /api/iam/auth/listSessions`
+
+API keys and temporary credentials are refused by `requireSession` (it builds on `auth.getSession`, which serves
+signed-in people only). Check machine callers with `helpers.require(action, resource, { tenantId })` or
+`iam.api.sts.getCallerIdentity(helpers.credential())`; see [Temporary access](/docs/authorization/temporary-access).
+
+## Organizations
+
+The helpers act in the session's <Term id="tenant">tenant</Term> unless you pass `tenantId`. To find the
+organization a request is for:
+
+- **By alias.** `iam.api.tenants.lookup({ slug })` resolves an organization's alias to
+  `{ tenantId, name, type, slug }`, and throws `NOT_FOUND` for unknown or inactive aliases
+  (**Route:** `POST /api/iam/tenants/lookup`). Compare its `tenantId` with `tenantOf(session)` and send visitors
+  signed in elsewhere to your login page.
+- **By address.** With [organization sign-in addresses](/docs/operations/deployment/hosts-and-regions),
+  `iam.hosts.resolve(host)` returns the organization an address belongs to: `undefined` for the deployment's own
+  and unknown hosts, `NOT_FOUND` for an address no active organization holds, and `WRONG_REGION` when another region
+  serves it. Calls through `helpers.client` keep the visitor's host, so the server pins them to that organization.
+
+## Options
+
+`createRequestHelpers(resolveIam, binding, options?)` takes a function that resolves the instance, the request
+binding, and options:
+
+| Parameter | Type | Default | Description |
+| --- | --- | --- | --- |
+| `binding.url` | `URL` | required | The request's URL; its origin is used for the in-process client when the instance has no `endpoint` |
+| `binding.headers` | `Headers` | required | The request's headers (`nodeHeaders(req.headers)` converts a Node header record) |
+| `binding.setCookie` | `(header: string) => void` | required | Appends one `Set-Cookie` header to your response |
+| `options.basePath` | `string` | the instance's `endpoint.basePath`, else `/api/iam` | Where the IAM API is served, for the in-process client |
+| `options.now` | `() => number` | `Date.now` | The clock for step-up recency checks, for tests |
+
+The adapters add `loginPath`, `stepUpPath`, `serve`, `trustedOrigins`, and `csrf`; see the
+[Express options](/docs/integrations/express#options).
+
+### Core exports
+
+| Export | What it does |
+| --- | --- |
+| `createRequestHelpers(resolveIam, { url, headers, setCookie }, { basePath?, now? })` | Builds the per-request helpers over any request and response |
+| `enforceGuard(helpers, request, spec, origin?)` | Runs a guard: the origin check when `origin` is given, then session, step-up, and authorization. Resolves with the session or throws the refusal |
+| `refusalResponse(error, request, { loginPath?, stepUpPath? })` | `{ redirect }` for page navigations, else `{ status, body }` with the JSON envelope |
+| `checkRequestOrigin(request, trustedOrigins)` | The CSRF rule; returns the refusal or `null` |
+| `checkStepUp(session, requirement, now?)` | The step-up rule; returns `null` or `{ code, reason, message, status }` |
+| `safeRedirectPath(value, fallback?)` | A same-site path, or the fallback (default `/`); refuses schemes, `//host`, and backslashes |
+| `IamRequestError`, `isIamRefusal(error)`, `isAuthenticationError(error)` | The refusal class the helpers throw (`code`, `status`, `reason`), a test for any IAM refusal, and a test for "no usable session" errors |
+| `errorBody(error)`, `errorCode(error)`, `errorStatus(error)` | The JSON envelope string for a refusal, and safe readers for an error's `code` and `status` |
+| `underPath(pathname, prefix)`, `withQuery(target, params)` | Prefix matching on path-segment boundaries, and appending query parameters (skipping `undefined`) |
+| `nodeHeaders(record)`, `parseCookieHeader(header)`, `setCookieSummary(header)` | Convert a Node header record to `Headers`, split a `Cookie` header, and read a `Set-Cookie` header's name, value, and whether it deletes the cookie |
+| `tenantOf(session)` | The tenant a session acts in |
+
+## Errors
+
+| Code | Status | When |
+| --- | --- | --- |
+| [`UNAUTHENTICATED`](/docs/reference/errors#unauthenticated) | 401 | `requireSession` or a guard ran with no usable session |
+| [`MFA_REQUIRED`](/docs/reference/errors#mfa_required) | 403 | A `stepUp.mfa` requirement was not met |
+| [`RECENT_AUTH_REQUIRED`](/docs/reference/errors#recent_auth_required) | 403 | A `stepUp.maxAgeMs` requirement was not met |
+| [`IMPERSONATION_RESTRICTED`](/docs/reference/errors#impersonation_restricted) | 403 | An impersonated session met a `maxAgeMs` or `'fresh'` requirement |
+| [`ACCESS_DENIED`](/docs/reference/errors#access_denied) | 403 | `require` or a guard's authorization was denied |
+| [`UNTRUSTED_ORIGIN`](/docs/reference/errors#untrusted_origin) | 403 | `checkRequestOrigin` refused an untrusted origin |
+| [`CSRF_REJECTED`](/docs/reference/errors#csrf_rejected) | 403 | `checkRequestOrigin` refused a cookie request without `Origin` |
+| [`INVALID_INPUT`](/docs/reference/errors#invalid_input) | 400 | A guard with `authorize` had no tenant to check in |
+
+## Related
+
+<Cards>
+  <Card icon={<Globe />} title="Typed client" href="/docs/concepts/client">
+    Call the API you mounted from the browser.
+  </Card>
+  <Card title="Protocol mounts" href="/docs/operations/deployment/protocol-mounts">
+    Serve OAuth, SAML, and SCIM next to the JSON API.
+  </Card>
+  <Card icon={<Building />} title="Hosts and regions" href="/docs/operations/deployment/hosts-and-regions">
+    Organization sign-in addresses and pinning.
+  </Card>
+</Cards>

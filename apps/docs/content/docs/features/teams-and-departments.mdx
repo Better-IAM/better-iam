@@ -1,0 +1,652 @@
+---
+title: Teams and departments
+description: Nested teams whose maintainers manage membership and take join requests, and the department tree with heads that policies and approvals follow.
+icon: UsersRound
+status: new
+packages: ['@better-iam/server', '@better-iam/client', '@better-iam/react']
+sources:
+  - docs/teams-and-departments.md
+  - packages/server/src/teams.ts
+  - packages/server/src/team-reviews.ts
+  - packages/server/src/departments.ts
+  - packages/server/src/api/teams.ts
+  - packages/server/src/api/departments.ts
+  - packages/server/src/lifecycle.ts
+  - packages/auth/src/templates.ts
+---
+
+A growing organization stops thinking in individual permissions. People work in teams (Platform, Site Reliability,
+the Payments squad) and sit in a reporting structure (Engineering, then Platform under it). Access should follow the
+team, the person who runs a team should be able to add a newcomer without filing a ticket with IT, and a policy should
+be able to say "anyone in Engineering". <Term id="group">Groups</Term> alone cannot do that: they are flat, and only
+administrators with authority over their <Term id="binding">bindings</Term> change them.
+
+Better IAM adds two structures inside a <Term id="tenant">tenant</Term>:
+
+- **Teams**: working units that nest, have **maintainers** who manage their membership, can take **join requests**,
+  and give their members access through roles bound to the team.
+- **Departments**: the reporting structure. Each person belongs to one department, a department can name a **head**,
+  and heads can become everyone's managers so manager approvals follow the org chart.
+
+Use teams when membership should be managed by the people who run the work, and departments when access, approvals,
+or spend reports should follow the reporting line. Both live in the `teams` and `departments` API groups
+(`client.teams.*` and `client.departments.*` over HTTP).
+
+## Setup
+
+Teams and departments are always on: there is no option to enable and no package to install beyond
+`@better-iam/server` (or the umbrella `better-iam`).
+
+<Steps>
+<Step>
+
+### Configure email delivery
+
+Join requests and membership reviews email the team's maintainers (`team-join-request`, `team-review-requested`), and
+decisions email the requester (`team-join-decided`). They need `authentication.sendEmail`. To link the emails to your
+own team page, give `renderDeliveryMessage` a `links.team` builder; without it the emails fall back to `links.account`.
+To import departments from a directory attribute, declare that attribute as a string.
+
+```ts title="iam.ts"
+import { betterIam } from 'better-iam';
+import { sqliteAdapter } from 'better-iam/adapter-sqlite';
+import { renderDeliveryMessage } from 'better-iam/auth/templates';
+import { mailer } from './mailer';
+
+export const iam = betterIam({
+  database: sqliteAdapter({ filename: './iam.db' }),
+  secret: process.env.BETTER_IAM_SECRET!,
+  baseURL: process.env.BETTER_IAM_BASE_URL!,
+  authentication: {
+    sendEmail: async (message) => {
+      const rendered = renderDeliveryMessage(message, {
+        appName: 'Acme Cloud',
+        links: {
+          team: ({ tenantId, teamId }) => `https://app.acme.test/${tenantId}/teams/${teamId}`,
+        },
+      });
+      if (rendered) await mailer.send({ to: message.to, ...rendered });
+    },
+  },
+  permissions: {
+    // Filled by SCIM or onboarding; departments.importFromAttribute reads it.
+    identityAttributes: { department: 'string' },
+  },
+});
+```
+
+</Step>
+<Step>
+
+### Migrate
+
+Teams and departments are stored in the shared `iam_records` table, so the ordinary migration creates everything they
+need.
+
+```bash
+npx better-iam migrate --config better-iam.config.mjs
+```
+
+</Step>
+<Step>
+
+### Create the client
+
+People manage their own teams (join requests, leaving, maintainer tools) from the browser through the typed client.
+
+```ts title="lib/iam-client.ts"
+import { createIamClient } from 'better-iam/client';
+import type { iam } from './iam';
+
+export const client = createIamClient<typeof iam>({ baseURL: 'https://app.acme.test' });
+```
+
+</Step>
+<Step>
+
+### Schedule the review job
+
+Membership reviews past their due date complete when `iam.closeOverdueTeamReviews()` runs. Run it hourly.
+
+```ts title="jobs.ts"
+import { iam } from './iam';
+
+setInterval(() => void iam.closeOverdueTeamReviews().catch(console.error), 60 * 60_000).unref();
+```
+
+</Step>
+</Steps>
+
+## How a team grants access
+
+Every team owns a **backing group** (`team.groupId`, named `team:{slug}`). You give a team access by binding
+<Term id="role">roles</Term> to that group, exactly as you would for any group:
+
+```ts
+const platform = await iam.api.teams.create(admin, {
+  tenantId,
+  name: 'Platform',
+  joinPolicy: 'request',
+  maintainerIds: [bob.id],
+});
+const sre = await iam.api.teams.create(admin, {
+  tenantId,
+  name: 'Site Reliability',
+  slug: 'sre',
+  parentId: platform.id,
+});
+
+await iam.api.bindings.create(admin, {
+  tenantId,
+  roleId: deployer.id,
+  subjectType: 'group',
+  subjectId: platform.groupId,
+});
+```
+
+The teams module keeps the backing group in step with the team: it holds the team's live members **and the members of
+every team below it**. Alice, added to Site Reliability, therefore holds Deployer through Platform. Because access flows
+through an ordinary group, everything that reads groups reads teams: <Term id="sod">separation of duties</Term>,
+<Term id="invariant">invariants</Term>, access reviews, <Term id="certification">certifications</Term>, role mining,
+<Term id="relationship">relationships</Term>, and `principal.groups`.
+
+Only the teams API changes who is in a backing group. The groups API refuses with `TEAM_MANAGED`, access packages,
+invitations, and onboarding flows cannot name a backing group, and configuration as code keeps team groups out of
+its `groups` and `bindings` kinds. `teams.reconcile` (`iam:teams:update`) recomputes every backing group from team
+membership after a restore or repair.
+
+## Usage
+
+### Create a team
+
+`teams.create` (`iam:teams:create`) creates the team and its backing group. `parentId` nests it under another team, up
+to ten levels deep; placing a team under a parent also needs `iam:teams:update` on the parent and authority over the
+parent's bindings, because the nested team's members receive the parent's access. `teams.update` changes the settings
+(`null` clears `description`, `parentId`, `departmentId`, or `syncGroupIds`), and `teams.delete` (`iam:teams:delete`)
+removes a team that has no teams below it.
+
+```ts
+const payments = await iam.api.teams.create(admin, {
+  tenantId,
+  name: 'Payments',
+  description: 'Card and invoice processing',
+  parentId: platform.id,
+  departmentId: engineering.id,
+  joinPolicy: 'request',
+  memberManagement: 'maintainers',
+  maintainerIds: [dana.id],
+});
+```
+
+**Route:** `POST /api/iam/teams/create`
+
+### Add, change, and remove members
+
+Team members are people (identities of kind `user`); service accounts and agents get access through bindings. A
+member is a `member` or a `maintainer`, and a membership can be temporary (`expiresAt`), ending by itself like a
+temporary group membership.
+
+```ts
+await iam.api.teams.addMember(admin, {
+  tenantId,
+  teamId: platform.id,
+  identityId: alice.id,
+  role: 'member',
+  expiresAt: Date.now() + 30 * 86_400_000,
+});
+await iam.api.teams.addMembers(admin, { tenantId, teamId: platform.id, identityIds: [carol.id, dave.id] });
+await iam.api.teams.updateMember(admin, { tenantId, teamId: platform.id, identityId: alice.id, role: 'maintainer' });
+await iam.api.teams.removeMember(admin, { tenantId, teamId: platform.id, identityId: alice.id });
+```
+
+**Route:** `POST /api/iam/teams/addMember` (also `/teams/addMembers`, `/teams/updateMember`, `/teams/removeMember`)
+
+Administrators hold `iam:teams:update` and, as with `groups.addMember`, authority over what the team (and the teams
+above it) hold.
+
+### Let maintainers manage membership
+
+A team's members are `member`s or `maintainer`s. Maintainers of a team, or of any team above it, manage membership from
+their own session without an administrator permission: they add, update, and remove members (`teams.candidates` lists
+people they can add), decide join requests, and answer membership reviews. Their calls go through the same transaction
+as an administrator's, so separation-of-duties rules and enforced invariants still apply, and the audit trail records
+`via: team-maintainer`.
+
+<Tabs items={['Server', 'Client']}>
+<Tab value="Server">
+
+```ts
+// Bob maintains Platform, so he also manages Site Reliability below it.
+await iam.api.teams.addMember(bobSession, { tenantId, teamId: sre.id, identityId: carol.id });
+```
+
+</Tab>
+<Tab value="Client">
+
+```ts
+import { client } from './lib/iam-client';
+
+const [carol] = await client.teams.candidates({ tenantId, teamId: sreId, query: 'carol' });
+if (carol) await client.teams.addMember({ tenantId, teamId: sreId, identityId: carol.id });
+```
+
+</Tab>
+</Tabs>
+
+**Route:** `POST /api/iam/teams/candidates`
+
+Maintainers skip the grant-authority check: making someone a maintainer delegates the team's access to them. Set
+`memberManagement: 'admins'` on a team whose membership only administrators should change, and remember when you
+bind a role to a team that its maintainers can hand that role to anyone they add. Maintainers cannot change a team's
+settings, delete it, or bind roles to it.
+
+Members see their own team (`teams.get`, `teams.listMembers`) without `iam:teams:read`.
+
+### Sync a team from your directory
+
+Most organizations already keep team rosters in their identity provider. Give a team `syncGroupIds` (up to ten
+ordinary groups, such as the groups Okta or Microsoft Entra push over [SCIM](/docs/federation/scim)) and its
+membership follows them: everyone in a source group is a member marked `source: 'sync'`, leaving the group removes
+them, and a temporary group membership makes a temporary team membership. Each SCIM push updates the team in the same
+transaction. People added by hand, and maintainers, stay as they are; synced members are changed through the source
+group (`INVALID_TRANSITION` when you try to remove one directly).
+
+```ts
+await iam.api.teams.update(admin, { tenantId, teamId: platform.id, syncGroupIds: [oktaPlatformGroupId] });
+```
+
+**Route:** `POST /api/iam/teams/update`
+
+A source group cannot be deleted while a team syncs from it (`RESOURCE_IN_USE`), a team's backing group cannot be a
+source, and `syncGroupIds: null` stops syncing and removes the synced members.
+
+### Take join requests
+
+A team with `joinPolicy: 'request'` takes join requests. `teams.listMine` shows a person their teams, their requests,
+the teams they can ask to join, and the open reviews waiting for them; `teams.requestToJoin` sends the request, and the
+team's maintainers (or, when it has none, those of the nearest team above) get a `team-join-request` email. A
+maintainer or administrator answers with `teams.approveRequest` (optionally with `expiresAt` for a temporary membership)
+or `teams.denyRequest`, and the requester gets a `team-join-decided` email. Requests lapse after fourteen days; nobody
+decides their own. `teams.cancelRequest` withdraws a pending request and `teams.leave` leaves a team.
+
+<Tabs items={['Server', 'Client']}>
+<Tab value="Server">
+
+```ts
+const mine = await iam.api.teams.listMine(aliceSession, { tenantId });
+// mine.teams, mine.requests, mine.joinable
+
+const request = await iam.api.teams.requestToJoin(aliceSession, {
+  tenantId,
+  teamId: platform.id,
+  justification: 'Joining the on-call rotation',
+});
+await iam.api.teams.approveRequest(bobSession, { tenantId, requestId: request.id });
+```
+
+</Tab>
+<Tab value="Client">
+
+```tsx
+import { useTeams } from 'better-iam/react';
+
+export function MyTeams({ tenantId }: { tenantId: string }) {
+  const { teams, joinable, requestToJoin, leave } = useTeams({ tenantId });
+  return (
+    <>
+      {teams.map((team) => (
+        <button key={team.id} onClick={() => leave(team.id)}>
+          Leave {team.name}
+        </button>
+      ))}
+      {joinable.map((team) => (
+        <button key={team.id} onClick={() => requestToJoin(team.id)}>
+          Ask to join {team.name}
+        </button>
+      ))}
+    </>
+  );
+}
+```
+
+</Tab>
+</Tabs>
+
+**Route:** `POST /api/iam/teams/requestToJoin` (also `/teams/listMine`, `/teams/approveRequest`, `/teams/denyRequest`,
+`/teams/cancelRequest`, `/teams/leave`)
+
+`@better-iam/vue` has a `useTeams` composable with the same fields as refs.
+
+### Review team membership
+
+Teams grow and rarely shrink. A membership review asks a team's maintainers to confirm who still belongs:
+
+```ts
+const review = await iam.api.teams.startReview(admin, {
+  tenantId,
+  teamId: platform.id,
+  dueAt: Date.now() + 14 * 86_400_000, // one to 90 days ahead; 14 days by default
+  onUndecided: 'remove', // or 'keep' (the default)
+  note: 'Quarterly access review',
+});
+
+// A maintainer, from their own session:
+await iam.api.teams.decideReview(bobSession, {
+  tenantId,
+  reviewId: review.id,
+  decisions: [
+    { identityId: alice.id, decision: 'keep' },
+    { identityId: carol.id, decision: 'remove', note: 'Moved to Sales' },
+  ],
+});
+await iam.api.teams.completeReview(bobSession, { tenantId, reviewId: review.id });
+```
+
+**Route:** `POST /api/iam/teams/startReview` (also `/teams/decideReview`, `/teams/completeReview`,
+`/teams/cancelReview`, `/teams/getReview`, `/teams/listReviews`)
+
+- An administrator (`iam:teams:update`) starts a review; every live manual member becomes an item, and the maintainers
+  receive a `team-review-requested` email. Synced members are left out: review their source group instead. One review
+  per team is open at a time (`CONFLICT`).
+- Maintainers of the team or of a team above, and administrators, decide `keep` or `remove`. Nobody decides on their
+  own membership.
+- Decisions take effect when the review completes: people decided `remove` leave the team, and people nobody decided
+  on follow `onUndecided`. Administrators may complete a review early or cancel it.
+- A review past `dueAt` completes when `iam.closeOverdueTeamReviews()` runs.
+
+### Read teams
+
+| Method | Returns | Route |
+| --- | --- | --- |
+| `teams.list` | Every team with member, maintainer and child counts; filters `parentId` (null for top level), `departmentId`, `query` | `POST /api/iam/teams/list` |
+| `teams.get` | One team with its path, children, department, maintainers, and the roles its members hold through it or a team above | `POST /api/iam/teams/get` |
+| `teams.listMembers` | Live direct members with role and expiry; `includeChildTeams` adds the members of the teams below | `POST /api/iam/teams/listMembers` |
+| `teams.listForIdentity` | The teams one person belongs to directly | `POST /api/iam/teams/listForIdentity` |
+| `teams.listRequests` | Join requests of a team (pending by default) | `POST /api/iam/teams/listRequests` |
+| `teams.candidates` | Active people who are not yet direct members, matched by name or email | `POST /api/iam/teams/candidates` |
+
+### Build the org chart
+
+```ts
+const engineering = await iam.api.departments.create(admin, {
+  tenantId,
+  name: 'Engineering',
+  code: 'ENG',
+  headId: alice.id,
+  costCenter: 'CC-100',
+});
+const platformDept = await iam.api.departments.create(admin, {
+  tenantId,
+  name: 'Platform',
+  parentId: engineering.id,
+  headId: bob.id,
+});
+await iam.api.departments.assign(admin, {
+  tenantId,
+  departmentId: platformDept.id,
+  identityIds: [carol.id, erin.id],
+  title: 'Engineer',
+});
+```
+
+**Route:** `POST /api/iam/departments/create` (also `/departments/update`, `/departments/delete`,
+`/departments/assign`, `/departments/unassign`)
+
+A person belongs to one department at a time, so assigning moves them. Names and codes are unique per tenant
+(ignoring case), and departments nest up to twenty levels. Teams can be filed under a department (`departmentId`).
+Deleting a department unassigns its people and unfiles its teams; a department with sub-departments cannot be deleted
+(`RESOURCE_IN_USE`).
+
+Reading needs `iam:departments:read`: `departments.list` (flat, with member counts), `departments.tree` (the org chart
+with heads), `departments.get`, `departments.listMembers` (`includeSubdepartments`), and `departments.ofIdentity` (a
+person's department with the path above it).
+
+### Import departments and sync managers
+
+Two operations connect the org chart to the rest of the system:
+
+- **`importFromAttribute`** places everyone whose string identity attribute (for example `department`, filled by SCIM
+  provisioning) names a department, by name or code, and can create the departments that are missing. Run it with
+  `dryRun: true` first.
+- **`syncManagers`** makes each person's department head their manager, and a head's the nearest head above, so
+  approvals routed to managers (manager approval on eligible bindings and access packages, manager-reviewed
+  certifications) follow the org chart. It needs `iam:identities:update` and `iam:departments:read`, changes only
+  people without a manager unless `overwrite` is set, and never creates a cycle.
+
+```ts
+const preview = await iam.api.departments.importFromAttribute(admin, {
+  tenantId,
+  attribute: 'department',
+  createMissing: true,
+  dryRun: true,
+});
+// { dryRun: true, created: ['Sales'], assigned: 12, unchanged: 30, unmatched: [], missing: 2 }
+
+await iam.api.departments.syncManagers(admin, { tenantId, dryRun: true });
+```
+
+**Route:** `POST /api/iam/departments/importFromAttribute` (also `/departments/syncManagers`)
+
+### See your own department
+
+`departments.mine` needs only a person's own session. It returns their department (with the path from the top, their
+title, and their head) and, for department heads, the people of every department they head and the departments below,
+so managers get a view of their organization without `iam:departments:read`.
+
+<Tabs items={['Server', 'Client']}>
+<Tab value="Server">
+
+```ts
+const mine = await iam.api.departments.mine(carolSession, { tenantId });
+```
+
+</Tab>
+<Tab value="Client">
+
+```ts
+import { client } from './lib/iam-client';
+
+const mine = await client.departments.mine({ tenantId });
+```
+
+</Tab>
+</Tabs>
+
+**Route:** `POST /api/iam/departments/mine`
+
+### Suggest birthright packages
+
+`teams.suggestBirthright` and `departments.suggestBirthright` (`iam:analysis:read`) look at what people already hold by
+hand and propose access packages: for each team or department with at least 3 people, the roles and groups at least 80%
+of them hold directly, as a `package` ready for `packages.create`. Rules for
+[automatic assignment](/docs/features/privileged-access/automatic-assignment) can test `identity.teams` and
+`identity.departments`.
+
+```ts
+const [suggestion] = await iam.api.departments.suggestBirthright(admin, { tenantId, departmentId: engineering.id });
+if (suggestion) await iam.api.packages.create(admin, { tenantId, ...suggestion.package });
+```
+
+**Route:** `POST /api/iam/departments/suggestBirthright` (also `/teams/suggestBirthright`)
+
+### Helpers for your own code
+
+`@better-iam/server` exports the lookups other modules build on (billing attributes spend to teams with them). They run
+inside a store transaction:
+
+```ts
+import { teamsOf, primaryTeamOf, isTeamMaintainer, departmentOf, departmentPath } from 'better-iam/server';
+import { iam } from './iam';
+
+await iam.store.transaction(async (tx) => {
+  const teams = await teamsOf(tx, tenantId, identityId, { includeAncestors: true });
+  const primary = await primaryTeamOf(tx, tenantId, identityId);
+  const maintains = await isTeamMaintainer(tx, tenantId, teamId, identityId, { includeAncestors: true });
+  const departmentId = await departmentOf(tx, tenantId, identityId);
+  const path = departmentId ? await departmentPath(tx, tenantId, departmentId) : [];
+});
+```
+
+There is no membership history, so attribute things to teams when they happen.
+
+## Teams and departments as code
+
+[Configuration as code](/docs/features/privileged-access/config-as-code) has a `teams` kind (matched by slug, with
+parent, department, join settings, maintainers and members by email, and the roles the team holds by name) and a
+`departments` kind (matched by name, with code, parent, head, cost center, and people by email). Listing a team's
+`maintainers` or `members` makes its permanent direct members match exactly; temporary memberships and join requests
+are left alone. Apply creates parents before children and, with `prune`, deletes children first.
+
+```json
+{
+  "version": 1,
+  "departments": [{ "name": "Engineering", "code": "ENG", "head": "alice@acme.test" }],
+  "teams": [
+    {
+      "name": "Platform",
+      "slug": "platform",
+      "department": "Engineering",
+      "maintainers": ["bob@acme.test"],
+      "members": ["alice@acme.test"],
+      "roles": ["Deployer"]
+    }
+  ]
+}
+```
+
+## In policies
+
+| Key                      | Type       | Value                                                                        |
+| ------------------------ | ---------- | ---------------------------------------------------------------------------- |
+| `principal.teams`        | list       | IDs of the person's teams and of every team above them                       |
+| `principal.departments`  | list       | The person's department ID and the IDs of every department above it         |
+| `principal.departmentId` | identifier | The person's own department; absent without one                             |
+
+```json
+{
+  "version": 1,
+  "statements": [
+    {
+      "effect": "allow",
+      "actions": ["documents:read"],
+      "resources": ["document/*"],
+      "conditions": { "ArrayContains": { "principal.departments": ["<engineering id>"] } }
+    },
+    {
+      "effect": "allow",
+      "actions": ["documents:write"],
+      "resources": ["document/*"],
+      "conditions": { "StringEquals": { "principal.departmentId": "${resource.departmentId}" } }
+    }
+  ]
+}
+```
+
+The keys are loaded only when a document names them, and describe people in their own organization: an assumed role
+sees empty lists.
+
+## Leaving
+
+Offboarding removes a person from every team (`teamsLeft`) and hands the departments they head to the successor
+(`departmentsReassigned`). Deleting an identity ends its memberships and clears the departments it headed.
+
+## Options
+
+There is no server option for teams or departments. These deployment settings change how they behave:
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `authentication.sendEmail` | `(message: DeliveryMessage) => Promise<void>` | none | Delivers `team-join-request`, `team-join-decided`, and `team-review-requested` emails. |
+| `permissions.identityAttributes` | `Record<string, 'string' \| 'number' \| 'boolean'>` | none | Declares the string attribute `departments.importFromAttribute` reads. |
+| `links.team` (`renderDeliveryMessage`) | `(input: { tenantId, teamId, signInUrl? }) => string` | `links.account` | The link in team emails. |
+
+Each team carries its own settings, set with `teams.create` and `teams.update`:
+
+| Setting | Type | Default | Description |
+| --- | --- | --- | --- |
+| `name` | `string` | required | Up to 100 characters. |
+| `slug` | `string` | derived from the name | Unique in the tenant; names the backing group `team:{slug}`. |
+| `parentId` | `string \| null` | none | The team above, up to ten levels deep. |
+| `departmentId` | `string \| null` | none | The department the team is filed under. |
+| `joinPolicy` | `'closed' \| 'request'` | `'closed'` | Whether people can ask to join. |
+| `memberManagement` | `'maintainers' \| 'admins'` | `'maintainers'` | Who may change membership. |
+| `maintainerIds` | `string[]` | `[]` | Up to 20 maintainers of a new team (`teams.create` only). |
+| `syncGroupIds` | `string[] \| null` | none | Up to ten source groups for team sync. |
+
+Each department takes `name` (required), `code` (1 to 32 letters, digits, `-`, `_` or `.`), `description`, `parentId`,
+`headId` (an active person of the tenant), and `costCenter`.
+
+## Permissions
+
+| Action | Methods |
+| --- | --- |
+| `iam:teams:create` | `teams.create` |
+| `iam:teams:update` | `teams.update`, `addMember`, `addMembers`, `updateMember`, `removeMember`, `candidates`, `approveRequest`, `denyRequest`, `reconcile`, `startReview`, `decideReview`, `completeReview`, `cancelReview` (maintainers need none for membership, requests, and reviews of their teams) |
+| `iam:teams:delete` | `teams.delete` |
+| `iam:teams:read` | `teams.list`, `get`, `listMembers`, `listForIdentity`, `listRequests`, `getReview`, `listReviews` (members read their own team without it) |
+| `iam:departments:manage` | `departments.create`, `update`, `delete`, `assign`, `unassign`, `importFromAttribute` |
+| `iam:departments:read` | `departments.list`, `tree`, `get`, `listMembers`, `ofIdentity` |
+| `iam:identities:update` | `departments.syncManagers` (with `iam:departments:read`) |
+| `iam:analysis:read` | `teams.suggestBirthright`, `departments.suggestBirthright` |
+| None | `teams.listMine`, `requestToJoin`, `cancelRequest`, `leave`, `departments.mine` (the caller's own session) |
+
+Team events: `team:create`, `team:update`, `team:delete`, `team:member:add`, `team:member:update`,
+`team:member:remove`, `team:join:request`, `team:join:approve`, `team:join:deny`, `team:join:cancel`, `team:leave`,
+`team:review:start`, `team:review:decide`, `team:review:complete`, `team:review:cancel`. Department events:
+`department:create`, `department:update`, `department:delete`, `department:assign`, `department:unassign`,
+`department:sync-managers`.
+
+## Schema
+
+Records live in the `iam_records` table under these tenant-scoped collections, and are removed when their tenant is
+purged.
+
+| Collection | Holds | Key fields |
+| --- | --- | --- |
+| `teams` | One team | `name`, `slug`, `description`, `parentId`, `departmentId`, `groupId` (backing group), `joinPolicy`, `memberManagement`, `syncGroupIds`, `createdAt`, `createdBy`, `updatedAt` |
+| `teamMembers` | One person's direct membership | `teamId`, `identityId`, `role`, `addedAt`, `addedBy`, `expiresAt`, `source` (`'sync'` for synced members) |
+| `teamJoinRequests` | A join request | `teamId`, `identityId`, `status` (`pending`, `approved`, `denied`, `cancelled`, `expired`), `requestedAt`, `expiresAt`, `justification`, `decidedBy`, `decidedAt`, `note` |
+| `teamReviews` | A membership review | `teamId`, `status` (`open`, `completed`, `cancelled`), `onUndecided`, `startedAt`, `startedBy`, `dueAt`, `note`, `completedAt`, `completedBy`, `outcome` |
+| `teamReviewItems` | One member under review | `reviewId`, `teamId`, `identityId`, `role`, `decision`, `decidedBy`, `decidedAt`, `note` |
+| `departments` | One department | `name`, `code`, `description`, `parentId`, `headId`, `costCenter`, `createdAt`, `updatedAt` |
+| `departmentMembers` | A person's department (one per person) | `departmentId`, `identityId`, `title`, `since`, `assignedBy` |
+
+A tenant holds at most 1,000 teams and 2,000 departments.
+
+## Errors
+
+| Code | Status | When |
+| --- | --- | --- |
+| [`TEAM_MANAGED`](/docs/reference/errors#team_managed) | 409 | The groups API, a package, an invitation, or an onboarding flow names a team's backing group |
+| [`CONFLICT`](/docs/reference/errors#conflict) | 409 | A slug, department name, or department code is taken; the person is already in the team or already asked to join; the team already has an open review |
+| [`INVALID_TRANSITION`](/docs/reference/errors#invalid_transition) | 409 | Deciding a request that is no longer pending or a review that is no longer open; removing or changing a synced member directly; asking to join a team whose `joinPolicy` is `closed`; starting a review of a team with no manually added members; a maintainer completing a review before every person is decided |
+| [`RESOURCE_IN_USE`](/docs/reference/errors#resource_in_use) | 409 | Deleting a team with teams below it, a department with sub-departments, a source group of team sync, or a team or department an automatic package rule names |
+| [`LIMIT_EXCEEDED`](/docs/reference/errors#limit_exceeded) | 409 | More than 1,000 teams or 2,000 departments in a tenant |
+| [`ACCESS_DENIED`](/docs/reference/errors#access_denied) | 403 | Missing permission or authority; deciding your own join request or your own review item |
+| [`INVALID_INPUT`](/docs/reference/errors#invalid_input) | 400 | A value out of range, too many sync groups or maintainers, a nesting cycle, or nesting too deep |
+| [`NOT_FOUND`](/docs/reference/errors#not_found) | 404 | An unknown team, department, request, review, or person |
+| [`TENANT_INACTIVE`](/docs/reference/errors#tenant_inactive) | 403 | Changing teams in an organization that is not active |
+
+## In the console
+
+**Directory → Teams** lists your teams and the teams you can ask to join, shows every team as a tree, and opens a page
+per team with members, join requests, the roles the team holds (its own and inherited), and settings. Maintainers see
+the same page with the membership tools only. **Directory → Departments** shows the org chart, imports departments
+from attributes, and syncs managers. Member pages show a person's teams and department.
+
+## Next steps
+
+<Cards>
+  <Card title="Teams API" href="/docs/reference/api/teams">
+    Every method, permission, and error of the teams group.
+  </Card>
+  <Card title="Departments API" href="/docs/reference/api/departments">
+    The org chart, imports, and manager sync.
+  </Card>
+  <Card title="Automatic assignment" href="/docs/features/privileged-access/automatic-assignment">
+    Birthright packages that follow teams and departments.
+  </Card>
+  <Card title="Conditions" href="/docs/authorization/conditions">
+    The operators and context keys policies can test, including principal.teams and principal.departments.
+  </Card>
+</Cards>

@@ -1,0 +1,560 @@
+---
+title: "Upgrade to 0.3"
+description: "Every breaking and behavior change between Better IAM 0.2.0 and 0.3.x, with before and after code, the commands to run, and how to verify the upgrade."
+icon: RefreshCw
+packages: ['better-iam', '@better-iam/server', '@better-iam/next', '@better-iam/react', '@better-iam/vue', '@better-iam/svelte', '@better-iam/nestjs', '@better-iam/react-router']
+sources:
+  - CHANGELOG.md
+  - packages/server/src/catalog.ts
+  - packages/server/src/context-keys.ts
+  - packages/server/src/options.ts
+  - packages/server/src/api/identities.ts
+  - packages/next/package.json
+  - packages/react/package.json
+  - packages/vue/package.json
+  - packages/svelte/package.json
+  - packages/nestjs/package.json
+  - packages/react-router/package.json
+---
+
+import { History, RefreshCw, ScrollText, ShieldHalf, Timer, UserPlus } from '@/lib/icons';
+
+This guide moves a deployment from Better IAM 0.2.0 to 0.3.1, the latest 0.3 release. Version 0.3.0 added three
+access-governance domains (guest collaboration, license management, and security clearances) and stopped installing
+every web framework with the umbrella package. Version 0.3.1 fixes only the security clearances module. You will:
+
+- upgrade every `better-iam` and `@better-iam/*` package to the same version;
+- install your web framework explicitly if you relied on the integration packages to pull it in;
+- rename identity attributes and `resolveContext` keys that now collide with server-owned names;
+- run the migration and the deployment self-check;
+- schedule the new jobs, if you turn on the new features.
+
+For most deployments the upgrade is a version bump plus `npx better-iam migrate`. The changes below matter only if
+your configuration uses one of the names that became reserved, or if you enable the new `clearances` option.
+
+## Summary of changes
+
+| Change | Version | Who is affected | What to do |
+| --- | --- | --- | --- |
+| Framework peers of `@better-iam/next`, `react`, `vue`, `svelte`, `nestjs`, and `react-router` are optional | 0.3.0 | Apps that use a framework without listing it in their own `package.json` | [Install the framework explicitly](#framework-peer-dependencies-are-optional) |
+| `guest`, `guestSponsorId`, `homeTenantId`, and `licenses` are reserved principal names | 0.3.0 | Deployments that declare an identity attribute with one of these names | [Rename the attribute](#reserved-principal-names) |
+| `principal.guest`, `principal.guestSponsorId`, `principal.homeTenantId`, and `principal.licenses` are server-owned | 0.3.0 | Apps whose `resolveContext` or plugin returns one of these keys | [Rename the key](#server-owned-context-keys) |
+| `identities.resendInvitation` refuses an invitation that acceptance would refuse | 0.3.0 | Apps that resend member invitations | [Revoke and invite again](#resending-an-invitation-checks-it-first) |
+| Birthright, onboarding, and workflow rules that never test `identity.guest` no longer match guests | 0.3.0 | Deployments that start inviting guests | [Review rules before inviting guests](#rules-and-guests) |
+| Adding people to a group that holds license seats needs `iam:licenses:assign` | 0.3.0 | Deployments that assign license products to groups | [Grant the permission](#licensed-groups-need-iamlicensesassign) |
+| More reserved names, and root administrators no longer read up on labeled resources | 0.3.0 | Only deployments that set the new `clearances` option | [Clearances changes](#only-with-the-clearances-option) |
+| Label and scheme rules tightened | 0.3.1 | Only deployments that set `clearances` on 0.3.0 | [0.3.0 to 0.3.1](#from-030-to-031) |
+
+There is no new schema step in 0.3: the built-in migration steps are the same six as in 0.2.0 (`0001_records` through
+`0006_protection_indexes`), and the new collections are records in the existing tables. Running the migration is
+still required, because it is how every release applies plugin migrations and confirms the schema.
+
+## Prerequisites
+
+- A deployment running Better IAM 0.2.0. Coming from 0.1, read [Upgrade guides](/docs/guides/upgrade#from-01-to-02)
+  first and upgrade in order.
+- Access to run the `better-iam` CLI against the deployment's configuration (the same `better-iam.config.mjs` your
+  application loads), with the `BETTER_IAM_SECRET` and database environment variables set.
+- A backup or snapshot of the database, for example
+  `npx better-iam store-export --config better-iam.config.mjs --output backup.jsonl`; see
+  [Database operations](/docs/databases/operations).
+
+## Upgrade steps
+
+<Steps>
+<Step>
+
+### Update every package to 0.3.1
+
+Better IAM packages are released together at one version. Upgrade them all at once, never one package at a time.
+
+With the umbrella package:
+
+```npm
+npm i better-iam@0.3.1
+```
+
+With individual packages, list each one you use at the same version:
+
+```npm
+npm i @better-iam/server@0.3.1 @better-iam/client@0.3.1 @better-iam/adapter-postgres@0.3.1 @better-iam/next@0.3.1
+```
+
+The Nuxt module, `@better-iam/nuxt`, is not part of the umbrella package; upgrade it to the same version if you use it.
+
+</Step>
+<Step>
+
+### Install your framework explicitly
+
+If your application imports a framework (Next.js, React, Vue, Svelte, SvelteKit, NestJS, or React Router) but does
+not list it in its own `dependencies`, add it now. See
+[Framework peer dependencies are optional](#framework-peer-dependencies-are-optional).
+
+```npm
+npm i next react react-dom
+```
+
+</Step>
+<Step>
+
+### Rename reserved names
+
+Search your configuration for identity attributes named `guest`, `guestSponsorId`, `homeTenantId`, or `licenses`,
+and your `resolveContext` and plugins for the matching `principal.*` keys. Rename them as shown in
+[Reserved principal names](#reserved-principal-names). A configuration that still declares one fails at construction
+with `INVALID_CONFIG`, so this step must happen before the deploy.
+
+</Step>
+<Step>
+
+### Run the migration
+
+```bash
+npx better-iam migrate --config better-iam.config.mjs
+```
+
+It prints `Database and plugin migrations applied.` and is safe to run again. From code, `iam.initialize()` does the
+same; see [Migrations](/docs/databases/migrations).
+
+</Step>
+<Step>
+
+### Check the deployment
+
+```bash
+npx better-iam doctor --config better-iam.config.mjs --strict
+```
+
+`doctor` reports the schema version, applied migrations, record counts, and configuration findings such as a missing
+email transport or jobs that are not scheduled. With `--strict` it exits non-zero (`DOCTOR_FINDINGS`) on any error or
+warning, such as `schema-behind`, so it can gate a pipeline. See
+[Gate the deploy with doctor](/docs/databases/migrations#gate-the-deploy-with-doctor).
+
+</Step>
+<Step>
+
+### Schedule the new jobs (only for features you use)
+
+The three new domains add instance jobs. Schedule the ones for features you turn on; see
+[Scheduled jobs](/docs/operations/jobs).
+
+| Feature | Job | How often |
+| --- | --- | --- |
+| [Guests](/docs/features/guests) | `iam.guests.sweep()`, then `iam.guests.sendReviewReminders()` | Hourly, then the outbox |
+| [Licenses](/docs/features/licenses) | `iam.licenses.reconcile()` | Hourly |
+| [Licenses](/docs/features/licenses) | `iam.licenses.reclaim()` | Daily |
+| [Security clearances](/docs/features/security-clearances) | `iam.clearances.sendReminders()` | Daily, then the outbox |
+
+```ts title="jobs.ts"
+import { iam } from './iam';
+
+setInterval(async () => {
+  await iam.guests.sweep();
+  await iam.guests.sendReviewReminders();
+  await iam.licenses.reconcile();
+  await iam.auth.dispatchOutbox();
+}, 60 * 60_000).unref();
+
+setInterval(async () => {
+  await iam.licenses.reclaim();
+}, 24 * 60 * 60_000).unref();
+```
+
+</Step>
+<Step>
+
+### Deploy
+
+Deploy the new version after the migration has run. No 0.3 change invalidates sessions, API keys, or tokens issued
+by 0.2.0, so people should not have to sign in again; step 4 of [Verify it works](#verify-it-works) checks it.
+
+</Step>
+</Steps>
+
+## Breaking changes
+
+### Framework peer dependencies are optional
+
+**What changed.** `@better-iam/next`, `@better-iam/react`, `@better-iam/vue`, `@better-iam/svelte`,
+`@better-iam/nestjs`, and `@better-iam/react-router` now mark their framework peers as optional in
+`peerDependenciesMeta`. npm, pnpm, and Yarn therefore no longer install Next.js, React, Vue, Svelte, NestJS, or React
+Router automatically. The umbrella package already did this in 0.2.0, so installing `better-iam` alone no longer
+installs every framework either.
+
+**Who is affected.** An application that uses a framework only because an integration package installed it, without
+listing the framework in its own `package.json`. After the upgrade, imports such as `import { useState } from 'react'`
+fail to resolve.
+
+| Package | Optional peers |
+| --- | --- |
+| `@better-iam/next` | `next`, `react` |
+| `@better-iam/react` | `react` |
+| `@better-iam/vue` | `vue` |
+| `@better-iam/svelte` | `svelte`, `@sveltejs/kit` |
+| `@better-iam/nestjs` | `@nestjs/common`, `@nestjs/core`, `reflect-metadata`, `rxjs` |
+| `@better-iam/react-router` | `react-router` |
+
+<Tabs items={['Before (0.2)', 'After (0.3)']}>
+<Tab value="Before (0.2)">
+
+```json title="package.json"
+{
+  "dependencies": {
+    "@better-iam/next": "0.2.0",
+    "@better-iam/server": "0.2.0"
+  }
+}
+```
+
+</Tab>
+<Tab value="After (0.3)">
+
+```json title="package.json"
+{
+  "dependencies": {
+    "@better-iam/next": "0.3.1",
+    "@better-iam/server": "0.3.1",
+    "next": "^15.5.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0"
+  }
+}
+```
+
+</Tab>
+</Tabs>
+
+The peer ranges themselves did not change: `@better-iam/next` still expects `next` `^15.0.0` and `react` `^19.0.0`.
+
+### Reserved principal names
+
+**What changed.** Four names are now reserved for values the server sets on every decision:
+
+| Name | Policy key | Set by |
+| --- | --- | --- |
+| `guest` | `principal.guest` | [Guests](/docs/features/guests#policies-for-guests): true while the identity is a guest of the deciding tenant |
+| `guestSponsorId` | `principal.guestSponsorId` | Guests: the guest's sponsor |
+| `homeTenantId` | `principal.homeTenantId` | Guests: the tenant that verified the guest's email domain |
+| `licenses` | `principal.licenses` | [Licenses](/docs/features/licenses): keys of the products the principal holds an active seat for |
+
+**Who is affected.** A deployment that declares an identity attribute with one of these names. Construction fails
+with `INVALID_CONFIG` and the message `identityAttributes cannot redefine principal.licenses` (or the name you used).
+
+<Tabs items={['Before (0.2)', 'After (0.3)']}>
+<Tab value="Before (0.2)">
+
+```ts title="iam.ts"
+import { betterIam } from 'better-iam';
+import { postgresAdapter } from 'better-iam/adapter-postgres';
+
+export const iam = betterIam({
+  database: postgresAdapter({ connectionString: process.env.DATABASE_URL! }),
+  secret: process.env.BETTER_IAM_SECRET!,
+  baseURL: process.env.BETTER_IAM_BASE_URL!,
+  permissions: {
+    identityAttributes: { department: 'string', licenses: 'string' },
+  },
+});
+```
+
+</Tab>
+<Tab value="After (0.3)">
+
+```ts title="iam.ts"
+import { betterIam } from 'better-iam';
+import { postgresAdapter } from 'better-iam/adapter-postgres';
+
+export const iam = betterIam({
+  database: postgresAdapter({ connectionString: process.env.DATABASE_URL! }),
+  secret: process.env.BETTER_IAM_SECRET!,
+  baseURL: process.env.BETTER_IAM_BASE_URL!,
+  permissions: {
+    // Renamed: `licenses` is now principal.licenses, owned by the server.
+    identityAttributes: { department: 'string', plan: 'string' },
+  },
+});
+```
+
+</Tab>
+</Tabs>
+
+After renaming, copy the stored values to the new attribute with `identities.update(credential, { tenantId,
+identityId, attributes })`, and replace `principal.licenses` with `principal.plan` in your policies and role
+documents. If what the attribute described is really a product seat, model it with the
+[licenses](/docs/features/licenses) domain instead and keep using `principal.licenses`.
+
+### Server-owned context keys
+
+**What changed.** Values for `principal.guest`, `principal.guestSponsorId`, `principal.homeTenantId`, and
+`principal.licenses` that your `resolveContext` callback or a plugin returns are removed before the server sets its
+own, the same treatment every other `principal.*` key already had.
+
+**Who is affected.** An application that supplied one of these keys itself. Its value is silently dropped, so
+policies that tested it see the server's value (for example `principal.licenses` is `[]` for a person without a seat).
+
+<Tabs items={['Before (0.2)', 'After (0.3)']}>
+<Tab value="Before (0.2)">
+
+```ts title="iam.ts"
+import { betterIam } from 'better-iam';
+import { billing } from './billing';
+
+export const iam = betterIam({
+  // ...database, secret, baseURL
+  async resolveContext(principal) {
+    const account = await billing.accountFor(principal.session.tenantId);
+    return { 'principal.licenses': account.products };
+  },
+});
+```
+
+</Tab>
+<Tab value="After (0.3)">
+
+```ts title="iam.ts"
+import { betterIam } from 'better-iam';
+import { billing } from './billing';
+
+export const iam = betterIam({
+  // ...database, secret, baseURL
+  async resolveContext(principal) {
+    const account = await billing.accountFor(principal.session.tenantId);
+    // Application keys use your own prefix; principal.* keys belong to the server.
+    return { 'app.products': account.products };
+  },
+});
+```
+
+</Tab>
+</Tabs>
+
+Then change the conditions that read the old key:
+
+```json title="policy.json"
+{
+  "effect": "allow",
+  "actions": ["reports:export"],
+  "resources": ["*"],
+  "conditions": { "ArrayContains": { "app.products": "analytics" } }
+}
+```
+
+See [Application keys](/docs/authorization/conditions#application-keys) for how `resolveContext` keys reach
+policies.
+
+### Resending an invitation checks it first
+
+**What changed.** `identities.resendInvitation` now sends only an invitation that could still be accepted. When the
+inviter can no longer grant a role or group the invitation carries (for example their grant authority was revoked,
+or the group now holds license seats they may not assign), the call fails with `INVITATION_INVALID` and
+the message ends with `revoke this invitation and invite the person again`. In 0.2 it sent a fresh token that
+acceptance then refused.
+
+**Who is affected.** Applications and admin screens that resend member invitations. Handle the new error by revoking
+the old invitation and creating a new one under a caller who can grant what it contains.
+
+```ts title="scripts/resend-invitation.ts"
+import { IamError } from 'better-iam';
+import { iam } from './iam';
+
+export async function resend(
+  credential: { token: string },
+  tenantId: string,
+  invitation: { id: string; email: string; roleIds?: string[]; groupIds?: string[] },
+) {
+  try {
+    await iam.api.identities.resendInvitation(credential, { tenantId, invitationId: invitation.id });
+  } catch (error) {
+    if (!(error instanceof IamError) || error.code !== 'INVITATION_INVALID') throw error;
+    await iam.api.identities.revokeInvitation(credential, { tenantId, invitationId: invitation.id });
+    await iam.api.identities.invite(credential, {
+      tenantId,
+      email: invitation.email,
+      roleIds: invitation.roleIds,
+      groupIds: invitation.groupIds,
+    });
+  }
+}
+```
+
+**Route:** `POST /identities/resendInvitation`, `POST /identities/revokeInvitation`, `POST /identities/invite`
+
+## Behavior changes for the new features
+
+These changes only take effect once you use guests or licenses, but they change what existing rules and calls do, so
+review them before you invite the first guest or assign the first product.
+
+### Rules and guests
+
+Birthright package rules, onboarding scopes, and workflow scopes gain the key `identity.guest`. A rule that never
+tests it **no longer matches guests**, so guests do not receive the default access you give members. To give guests
+access through a rule, write a rule that tests `identity.guest` explicitly. See
+[Birthright rules and guests](/docs/features/guests#birthright-rules-and-guests).
+
+### Licensed groups need iam:licenses:assign
+
+Once a license product is assigned to a group, every call that adds people to that group claims seats, and also
+needs `iam:licenses:assign`. Without it the call fails with `ACCESS_DENIED` and nothing is saved. This covers:
+
+- `identities.createMany` and `identities.invite` with `groupIds` (re-checked at acceptance and by
+  `identities.resendInvitation`);
+- `groups.addMember`, `groups.addMembers`, and `groups.updateMember`;
+- guest invitations, `guests.convertToMember` with `clearExpiry`, access packages, onboarding completion groups,
+  team administrators, and configuration sync.
+
+Team maintainers, directory sync (SCIM), and guest renewals stay exempt. Grant `iam:licenses:assign` on
+`iam/licenses/assignments` to the administrators and service accounts that onboard people into those groups; see
+[Licenses](/docs/features/licenses).
+
+### Other changes you may notice
+
+| Change | Detail |
+| --- | --- |
+| `threats.rules` lists 22 rules | The new `classified-access-attempts` rule counts clearance refusals. It is on by default and stays silent without the `clearances` option, because nothing produces clearance refusals. |
+| `threats.listIncidents` takes a list of statuses | `status: ['open', 'investigating']` lists every active incident in one call. A single status still works. |
+| `threats.timeline` takes `until` | Bounds the window; `since` defaults to seven days before it. |
+| Threat views carry the subject's `kind` | Detections and incidents name identity subjects with `user`, `service`, or `agent`. |
+| `threats.reportSuspicious` and `threats.configure` name people as the rules do | `Carol (carol@acme.test)` rather than `Carol`. Update code that parsed the old text. |
+
+## Only with the clearances option
+
+Security clearances are off unless the deployment sets `clearances`. Without it, nothing below applies and the
+`clearances` API group answers `FEATURE_DISABLED` (403). If you turn it on during or after the upgrade:
+
+- **The option is an object.** `clearances: {}` or `clearances: { appliesToRoot: false }`. `clearances: true` fails
+  construction with `INVALID_CONFIG` (`clearances must be an object`), as does any unknown setting.
+- **More reserved names.** `clearanceLevel`, `clearanceRank`, `clearanceStatus`, `clearanceCompartments`, and
+  `clearanceCitizenship` become reserved principal names (`INVALID_CONFIG` at startup), and `classification`,
+  `classificationRank`, `compartments`, `noforn`, and `releasableTo` become reserved resource attribute names
+  (`INVALID_CONFIG` for types in your configuration, `INVALID_INPUT` for tenant-registered types). Values under those
+  names from `resolveContext` or a plugin are removed.
+- **Root administrators no longer read up.** With `appliesToRoot` left at its default (`true`), a root administrator
+  is refused with `CLEARANCE_REQUIRED` (`ACCESS_DENIED` to callers) on every labeled application resource above its
+  own clearance, in `authorize`, `listAccessible`, and data filter plans. Every `iam:*` action keeps the root
+  override. Set `appliesToRoot: false` to keep the 0.2 behavior.
+- **Plugin endpoints on `iam/{type}/{id}` records.** In a tenant whose scheme requires labels, a plugin endpoint with
+  its own (non-`iam:`) action on a record of a required type is refused until that record is labeled, or until the
+  scheme sets a `defaultLabel`.
+- **"View as" refusals.** A refusal caused by the impersonating administrator's own clearance is now
+  `CLEARANCE_REQUIRED` instead of `IMPERSONATOR_DENIED`.
+
+<Tabs items={['Before (0.2)', 'After (0.3)']}>
+<Tab value="Before (0.2)">
+
+```ts title="iam.ts"
+import { betterIam } from 'better-iam';
+
+export const iam = betterIam({
+  // ...database, secret, baseURL, permissions, resolveResource
+});
+```
+
+</Tab>
+<Tab value="After (0.3)">
+
+```ts title="iam.ts"
+import { betterIam } from 'better-iam';
+
+export const iam = betterIam({
+  // ...database, secret, baseURL, permissions, resolveResource
+  clearances: { appliesToRoot: true }, // the default; false keeps root's override on labeled resources
+});
+```
+
+</Tab>
+</Tabs>
+
+See [Security clearances](/docs/features/security-clearances#turn-it-on) for defining a scheme, granting
+clearances, and labeling resources.
+
+## From 0.3.0 to 0.3.1
+
+Version 0.3.1 changes only the security clearances module. If you never set `clearances`, upgrade with the same
+steps and nothing else changes. If you enabled clearances on 0.3.0, upgrade now: 0.3.0 let some labels stop
+applying. The fixes refuse things 0.3.0 allowed:
+
+| Call or rule | 0.3.0 | 0.3.1 |
+| --- | --- | --- |
+| `tenants.reparent` into a subtree with another scheme | Allowed; labels in the moved tenant stopped applying | Refused with `RESOURCE_IN_USE` while the subtree holds labels or live (interim, active, suspended) clearances |
+| A label in a tenant that no scheme applies to | Ignored | Refuses everyone, root included |
+| `resources.delete` of a resource with an inherited label | Dropped the inherited label | Keeps it as the resource's own label (audited as `classification:label` with `reason: 'resource-deleted'`) |
+| Label types containing `/` | Accepted | `INVALID_INPUT`: label types must be resource type names |
+| `updateScheme` re-ranking a level | Allowed for levels not in use | Never allowed; a removed level comes back only at its former rank (`RESOURCE_IN_USE`) |
+| `requireLabels: ['*']` | Also covered the built-in `model-tool` type, which refused every `inference:use-tool` decision | Covers application types only |
+| Labels on `model/{name}` | Applied only in the tenant that set them | Apply in every tenant below too |
+| Labels on `ssh-host/{host}` | Followed `inheritToChildren` | Apply to every login of the host |
+| Verifiable credential offers (`iam:vc:issue`) | Did not check the holder's clearance | Need the holder to dominate the credential type's label at offer, redemption, and every `verifiableCredentials.sweep()` |
+
+After upgrading a deployment that uses clearances and issues verifiable credentials, run
+`iam.verifiableCredentials.sweep()` once (the hourly job does it too), so credentials whose holder no longer
+dominates the credential type's label are revoked.
+
+## Verify it works
+
+1. `npx better-iam migrate --config better-iam.config.mjs` prints `Database and plugin migrations applied.`
+2. `npx better-iam doctor --config better-iam.config.mjs` reports no errors, and `iam.selfCheck()` returns no
+   findings you did not expect.
+3. Your application starts without `INVALID_CONFIG`.
+4. A person who signed in before the upgrade still reaches a protected page, which confirms their session carried
+   over.
+5. If you renamed a context key or attribute, check one person with
+   [`policies.effectiveActions`](/docs/authorization/reviews#what-can-a-person-do) and confirm the actions that
+   depend on the renamed key are still allowed.
+
+## Troubleshooting
+
+<Accordions>
+<Accordion title="Startup fails with INVALID_CONFIG: identityAttributes cannot redefine principal.licenses">
+  Your configuration declares an identity attribute with a name that 0.3 reserves (`guest`, `guestSponsorId`,
+  `homeTenantId`, or `licenses`, plus the clearance names when `clearances` is set). Rename the attribute and update
+  the policies that read it, as shown in [Reserved principal names](#reserved-principal-names).
+</Accordion>
+<Accordion title="Module not found: 'react' (or 'next', 'vue', 'svelte') after upgrading">
+  The integration package no longer installs its framework. Add the framework to your own `dependencies`, as shown
+  in [Framework peer dependencies are optional](#framework-peer-dependencies-are-optional).
+</Accordion>
+<Accordion title="A policy that tested principal.licenses or principal.guest stopped matching">
+  Values your `resolveContext` returned under those keys are removed now, and the server sets its own. Move your
+  value to an application key such as `app.products`, as shown in [Server-owned context keys](#server-owned-context-keys).
+</Accordion>
+<Accordion title="resendInvitation fails with INVITATION_INVALID">
+  The inviter can no longer grant something the invitation carries. Revoke the invitation with
+  `identities.revokeInvitation` and send a new one with `identities.invite` as an administrator who can grant it.
+</Accordion>
+<Accordion title="Adding a member to a group fails with ACCESS_DENIED after assigning a license product">
+  The group holds license seats, so adding members also needs `iam:licenses:assign`. Grant it to the caller, or
+  assign the product to people directly with `licenses.assign` instead of through the group.
+</Accordion>
+<Accordion title="Root administrators are refused with CLEARANCE_REQUIRED">
+  The deployment sets `clearances` and the resource is labeled above root's clearance. Grant root a clearance under
+  the root tenant's scheme, or set `clearances: { appliesToRoot: false }` to restore the 0.2 behavior.
+</Accordion>
+<Accordion title="tenants.reparent fails with RESOURCE_IN_USE after upgrading to 0.3.1">
+  The move would change the classification scheme in force for a subtree that holds labels or live clearances. Move
+  the tenant below a parent governed by the same scheme, or declassify and debrief what the subtree holds first.
+</Accordion>
+</Accordions>
+
+## Next steps
+
+<Cards>
+  <Card icon={<History />} title="Upgrade guides" href="/docs/guides/upgrade">
+    The general upgrade procedure and every release.
+  </Card>
+  <Card icon={<ScrollText />} title="Changelog" href="/docs/reference/changelog">
+    The complete release notes for 0.3.0 and 0.3.1.
+  </Card>
+  <Card icon={<UserPlus />} title="Guests" href="/docs/features/guests">
+    Invite people from outside the organization with a sponsor and an end date.
+  </Card>
+  <Card icon={<RefreshCw />} title="Licenses" href="/docs/features/licenses">
+    Products, seat pools, assignments, and principal.licenses.
+  </Card>
+  <Card icon={<ShieldHalf />} title="Security clearances" href="/docs/features/security-clearances">
+    Classification schemes, clearances, and labels.
+  </Card>
+  <Card icon={<Timer />} title="Scheduled jobs" href="/docs/operations/jobs">
+    Every job a deployment runs and how often.
+  </Card>
+</Cards>

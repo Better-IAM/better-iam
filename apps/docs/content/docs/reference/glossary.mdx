@@ -16,43 +16,43 @@ shown with a dotted underline open the same definition on hover.
 
 A named bundle of roles and group memberships that can be assigned in one step, requested by members, or granted automatically by a rule (birthright access).
 
-[Learn more](/docs/guides/privileged-access/access-packages)
+[Learn more](/docs/features/privileged-access/access-packages)
 
 ### Access request
 
 A person asking for a role for a limited time, decided by a reviewer who must themselves be allowed to grant it.
 
-[Learn more](/docs/guides/authorization/temporary-access)
+[Learn more](/docs/authorization/temporary-access)
 
 ### Access window
 
 A weekly schedule attached to a binding, such as weekdays 09:00 to 17:00, outside which the binding grants nothing.
 
-[Learn more](/docs/guides/authorization/temporary-access)
+[Learn more](/docs/authorization/temporary-access)
 
 ### Action
 
 A named operation that can be allowed or denied, written as `namespace:verb` such as `documents:write`. Built-in administration actions start with `iam:` (for example `iam:identities:create`).
 
-[Learn more](/docs/guides/authorization/catalog)
+[Learn more](/docs/authorization/catalog)
 
 ### Activation
 
 A time-limited use of an eligible binding. It ends by itself, can be ended early, and is audited from request to expiry.
 
-[Learn more](/docs/guides/privileged-access/elevation)
+[Learn more](/docs/features/privileged-access/elevation)
 
 ### Advisory decision
 
 A decision used to shape a user interface, such as hiding a button. It is never enforcement: the server must still check with `iam.require` right before the protected operation.
 
-[Learn more](/docs/guides/authorization/queries)
+[Learn more](/docs/authorization/queries)
 
 ### Agreement
 
 A versioned terms-of-use text that members accept. Policies can require acceptance through `principal.agreements`, and a new version asks everyone to accept again.
 
-[Learn more](/docs/guides/governance/agreements)
+[Learn more](/docs/features/governance/agreements)
 
 ### Assertion
 
@@ -64,7 +64,7 @@ A short-lived signed token that tells a downstream service who is calling and wi
 
 The per-tenant audit log in which every event includes the SHA-256 hash of the previous one, so any edited, removed, or reordered event is detected by verification.
 
-[Learn more](/docs/guides/events/audit-chain)
+[Learn more](/docs/concepts/events/audit-chain)
 
 ## B
 
@@ -72,19 +72,19 @@ The per-tenant audit log in which every event includes the SHA-256 hash of the p
 
 The record that gives a role to an identity or a group within a tenant. Bindings can expire, start in the future, apply only in an access window, or be eligible (activated just in time).
 
-[Learn more](/docs/guides/authorization/roles)
+[Learn more](/docs/authorization/roles)
 
 ### Birthright access
 
 Access everyone matching a rule should have automatically, such as "everyone in the engineering department gets the Engineering package". Rules on access packages assign it and remove it again when a person stops matching.
 
-[Learn more](/docs/guides/privileged-access/automatic-assignment)
+[Learn more](/docs/features/privileged-access/automatic-assignment)
 
 ### Boundary
 
 A policy that limits the maximum access something can have without granting any. Tenants, principals, sessions, and credentials can each carry one, and a request must be allowed by every boundary that applies.
 
-[Learn more](/docs/guides/authorization/policies)
+[Learn more](/docs/authorization/policies)
 
 ## C
 
@@ -92,19 +92,19 @@ A policy that limits the maximum access something can have without granting any.
 
 An upper bound attached to a grant authority, a trust, or a credential. Whatever the role says, access through that path can never exceed the ceiling; like a boundary, it only takes access away.
 
-[Learn more](/docs/guides/authorization/roles)
+[Learn more](/docs/authorization/roles)
 
 ### Certification campaign
 
 A periodic review in which reviewers confirm or revoke each person's access, with evidence of use, so access that is no longer needed gets removed.
 
-[Learn more](/docs/guides/governance/certifications)
+[Learn more](/docs/features/governance/certifications)
 
 ### Condition
 
 An extra test inside a statement that compares a context value with expected values using an operator such as `StringEquals`, `IpAddress`, or `DateBefore`. A missing value never satisfies a condition.
 
-[Learn more](/docs/guides/authorization/conditions)
+[Learn more](/docs/authorization/conditions)
 
 ### Consent
 
@@ -142,7 +142,7 @@ A task that runs from your deploy scripts, a worker, or cron rather than from a 
 
 The `better-iam doctor` command and `iam.selfCheck()`: a report of configuration and storage problems such as a schema that is behind, a weak secret, a missing email transport, or jobs that are not running.
 
-[Learn more](/docs/operations/storage)
+[Learn more](/docs/databases/operations)
 
 ### DPoP
 
@@ -156,13 +156,13 @@ Demonstrating Proof of Possession (RFC 9449): the client signs each request with
 
 A role binding that grants nothing until the person activates it for a bounded time, optionally with a justification, MFA, or an approver's decision. It replaces standing administrator access with just-in-time elevation.
 
-[Learn more](/docs/guides/privileged-access/elevation)
+[Learn more](/docs/features/privileged-access/elevation)
 
 ### Explicit deny
 
 A matching `deny` statement. It overrides every allow, which makes deny statements the tool for exceptions such as "never delete without MFA".
 
-[Learn more](/docs/guides/authorization/policies)
+[Learn more](/docs/authorization/policies)
 
 ## G
 
@@ -170,13 +170,13 @@ A matching `deny` statement. It overrides every allow, which makes deny statemen
 
 An allow that comes from a role or policy bound to the principal. Grants form a union: one matching allow is enough, unless a deny or a boundary blocks it.
 
-[Learn more](/docs/guides/authorization)
+[Learn more](/docs/authorization)
 
 ### Grant authority
 
 Who may hand out a role. A binding records the authority it was created under, and only someone holding that authority (or a higher one) may change or revoke it, which stops people from granting access they could not grant directly.
 
-[Learn more](/docs/guides/authorization/roles)
+[Learn more](/docs/authorization/roles)
 
 ### Group
 
@@ -198,25 +198,25 @@ In a multi-region deployment, the region whose deployment serves an organization
 
 A person or service account inside one tenant. The same human who belongs to two organizations has two identities, which can be linked so they can switch between them.
 
-[Learn more](/docs/guides/concepts/tenants-and-identities)
+[Learn more](/docs/concepts/tenants-and-identities)
 
 ### Impact preview
 
 A dry run of a change to a role, policy, or binding that shows who would gain or lose access, and which invariants would break, before you apply it.
 
-[Learn more](/docs/guides/governance/change-safety)
+[Learn more](/docs/features/governance/change-safety)
 
 ### Impersonation
 
 An administrator viewing the product as a member ("view as") for support. It is audited, visible to policies, and never allows more than the administrator could do themselves.
 
-[Learn more](/docs/guides/authentication/impersonation)
+[Learn more](/docs/authentication/impersonation)
 
 ### Invariant
 
 A guardrail that must stay true whatever roles and policies say, such as "contractors can never delete the payroll workspace". Invariants are checked on demand, in CI, and on a schedule.
 
-[Learn more](/docs/guides/governance/change-safety)
+[Learn more](/docs/features/governance/change-safety)
 
 ## O
 
@@ -230,7 +230,7 @@ The identity layer on top of OAuth 2.0 that lets people sign in with an external
 
 An identity marked as an owner of its tenant, usually the person who accepted the organization's first invitation. Owners hold the protected Owner role, and policies can test `principal.owner`.
 
-[Learn more](/docs/guides/concepts/tenants-and-identities)
+[Learn more](/docs/concepts/tenants-and-identities)
 
 ## P
 
@@ -238,37 +238,37 @@ An identity marked as an owner of its tenant, usually the person who accepted th
 
 A WebAuthn credential stored on a device or password manager that signs people in without a password and cannot be phished. It can also serve as the second factor.
 
-[Learn more](/docs/guides/authentication/passkeys)
+[Learn more](/docs/authentication/passkeys)
 
 ### Permission catalog
 
 The list of every action that exists: built-in `iam:*` actions, the actions of your declared resource types, and tenant-defined actions. Roles and policies can only refer to actions in the catalog.
 
-[Learn more](/docs/guides/authorization/catalog)
+[Learn more](/docs/authorization/catalog)
 
 ### Plugin
 
 An extension that adds resource types, context values, operation hooks, or endpoints to the same authorized, audited pipeline as built-in operations.
 
-[Learn more](/docs/operations/extensions)
+[Learn more](/docs/concepts/extensions)
 
 ### Policy
 
 A versioned JSON document of statements that allow or deny actions on resources, optionally under conditions. Roles can be built from policies, and boundaries are policies too.
 
-[Learn more](/docs/guides/authorization/policies)
+[Learn more](/docs/authorization/policies)
 
 ### Policy variable
 
 A placeholder like `${principal.id}` inside a resource pattern or condition value, replaced with the caller's actual value before matching. Substituted values always match literally, so they cannot widen a pattern.
 
-[Learn more](/docs/guides/authorization/policies)
+[Learn more](/docs/authorization/policies)
 
 ### Principal
 
 Whoever is making a request after the credential has been checked: the identity plus the session it is using. Policies read facts about it as `principal.*` context keys, such as `principal.id` or `principal.mfa`.
 
-[Learn more](/docs/guides/authorization)
+[Learn more](/docs/authorization)
 
 ## R
 
@@ -276,25 +276,25 @@ Whoever is making a request after the credential has been checked: the identity 
 
 Proof that the person signed in or re-authenticated a few minutes ago. Sensitive operations such as changing an email or creating a webhook require it, so a stolen long-lived session cannot perform them.
 
-[Learn more](/docs/guides/authentication/sessions)
+[Learn more](/docs/authentication/sessions)
 
 ### Reconciliation
 
 The scheduled job that re-applies access-package rules: it gives packages to people who now match a rule and removes automatic assignments from people who no longer do.
 
-[Learn more](/docs/guides/privileged-access/automatic-assignment)
+[Learn more](/docs/features/privileged-access/automatic-assignment)
 
 ### Relationship
 
 A tuple that says a person or group has a named relation, such as `editor`, to one resource. Policies read them as `resource.relations`, which is how per-document sharing works (relationship-based access control, ReBAC).
 
-[Learn more](/docs/guides/authorization/relationships)
+[Learn more](/docs/authorization/relationships)
 
 ### Resource
 
 The thing an action is performed on, identified as `type/id` (for example `document/doc_42`). Resources are either resolved by your application at decision time or registered with IAM as managed resources with owners and parents.
 
-[Learn more](/docs/guides/concepts/resources-and-catalog)
+[Learn more](/docs/concepts/resources-and-catalog)
 
 ### Resource server
 
@@ -306,7 +306,7 @@ An API that accepts access tokens issued by Better IAM's OAuth provider and chec
 
 A declared kind of resource with its actions, typed attributes, and relations. Types come from your configuration or are defined by a tenant at runtime.
 
-[Learn more](/docs/guides/authorization/catalog)
+[Learn more](/docs/authorization/catalog)
 
 ### Retention sweep
 
@@ -318,13 +318,13 @@ The scheduled `sweep` job that deletes expired sessions, devices, protocol artif
 
 Asking which resources a person may act on, instead of whether they may act on one. `listAccessible` powers list pages; `authorizeMany` answers up to 50 checks at once for a UI.
 
-[Learn more](/docs/guides/authorization/queries)
+[Learn more](/docs/authorization/queries)
 
 ### Role
 
 A named bundle of permissions (or of policy documents) that can be given to people, such as "Editor". A role grants nothing until it is bound to someone. Roles can inherit other roles.
 
-[Learn more](/docs/guides/authorization/roles)
+[Learn more](/docs/authorization/roles)
 
 ### Role assumption
 
@@ -336,7 +336,7 @@ A platform-controlled way to act in another tenant with a specific role through 
 
 The tenant at the top of the tree, created once by `bootstrap`. Its administrators operate the platform itself: they create organizations, set plan limits, and recover access. The root administrator must enroll MFA before doing anything else.
 
-[Learn more](/docs/guides/concepts/tenants-and-identities)
+[Learn more](/docs/concepts/tenants-and-identities)
 
 ## S
 
@@ -356,7 +356,7 @@ System for Cross-domain Identity Management (RFC 7643/7644): the standard API id
 
 A rule that one person must not hold two conflicting kinds of access, such as creating and approving payments. Grants that would break a rule fail with `SOD_CONFLICT`.
 
-[Learn more](/docs/guides/authorization/separation-of-duties)
+[Learn more](/docs/authorization/separation-of-duties)
 
 ### Service account
 
@@ -368,7 +368,7 @@ An identity for a machine rather than a person (`kind: 'service'`). It authentic
 
 A signed-in period stored in your database. It records how the person authenticated (password, passkey, MFA), when, and from which device, and it can be revoked at any time, which takes effect on the next request.
 
-[Learn more](/docs/guides/authentication/sessions)
+[Learn more](/docs/authentication/sessions)
 
 ### Shared Signals
 
@@ -386,31 +386,31 @@ An organization's own address for signing in, like an AWS account's sign-in URL:
 
 Powerful access that is always on, such as a permanent administrator role. It is convenient but risky, because a stolen account has that power all the time; eligible bindings replace it with elevation on demand.
 
-[Learn more](/docs/guides/privileged-access)
+[Learn more](/docs/features/privileged-access)
 
 ### Statement
 
 One rule inside a policy: an effect (`allow` or `deny`), the actions and resource patterns it covers, and optional conditions. A statement matches when all three match the request.
 
-[Learn more](/docs/guides/authorization/policies)
+[Learn more](/docs/authorization/policies)
 
 ### Step-up authentication
 
 Asking a signed-in person to authenticate again, or with MFA, right before a sensitive operation such as changing their email or deleting an account.
 
-[Learn more](/docs/guides/authentication/mfa)
+[Learn more](/docs/authentication/mfa)
 
 ### Storage adapter
 
 The module that stores Better IAM's records in a database: PostgreSQL, SQLite, and libSQL are included, and the adapter contract lets you add others.
 
-[Learn more](/docs/operations/storage)
+[Learn more](/docs/databases/operations)
 
 ### Synthetic session
 
 The simulated session that access reviews such as `whoCan` and `simulate` evaluate an identity in, without anyone signing in. It has no client address and uses MFA only when you ask for it.
 
-[Learn more](/docs/guides/authorization/reviews)
+[Learn more](/docs/authorization/reviews)
 
 ## T
 
@@ -418,13 +418,13 @@ The simulated session that access reviews such as `whoCan` and `simulate` evalua
 
 An account that people sign in to: your platform's root, an organization, or a project inside one. Tenants form a tree; each has its own identity directory, roles, policies, and audit chain, and nothing crosses tenant boundaries unless a trust or a linked account says so.
 
-[Learn more](/docs/guides/concepts/tenants-and-identities)
+[Learn more](/docs/concepts/tenants-and-identities)
 
 ### Tenant access policy
 
 Minimum rules for just-in-time elevation in one tenant, such as a maximum activation length or always requiring MFA, that individual bindings cannot weaken.
 
-[Learn more](/docs/guides/privileged-access/elevation)
+[Learn more](/docs/features/privileged-access/elevation)
 
 ### Trust
 
@@ -436,7 +436,7 @@ A root-created permission for identities of one tenant to assume a role in anoth
 
 A browser or device remembered after a successful second factor ("remember this device"), so later sign-ins there skip MFA until the tenant's trusted-device window ends or the device is revoked.
 
-[Learn more](/docs/guides/authentication/mfa)
+[Learn more](/docs/authentication/mfa)
 
 ## W
 
@@ -444,4 +444,4 @@ A browser or device remembered after a successful second factor ("remember this 
 
 A signed HTTP callback that a tenant subscribes to receive audit events, with filters, retries, and redelivery.
 
-[Learn more](/docs/guides/events/webhooks)
+[Learn more](/docs/concepts/events/webhooks)

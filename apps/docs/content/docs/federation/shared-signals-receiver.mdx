@@ -27,7 +27,7 @@ signed Security Event Tokens (SETs, RFC 8417) with the CAEP and RISC event types
 4. Its subject is **matched** to a person of the source's organization: through federation links, SCIM-provisioned
    users, or email addresses at verified domains.
 5. The event is **recorded** for 90 days and **audited** as `signal:received`, which
-   [threat detection](/docs/guides/threat-detection) reads.
+   [threat detection](/docs/features/threat-detection) reads.
 6. Where the source asks for it, the person's **sessions end** at once. Nothing more drastic happens on its own:
    disabling or containing an account is left to threat-detection playbooks.
 
@@ -390,7 +390,7 @@ await iam.api.threats.createPlaybook(admin, {
 
 The playbook protections apply: owners and root administrators are never contained automatically, and the brake
 limits how many people one run contains. To forward received events to a SIEM, subscribe a
-[webhook](/docs/guides/events/webhooks) to `signal:*`.
+[webhook](/docs/concepts/events/webhooks) to `signal:*`.
 
 ## Avoid echo loops
 
@@ -566,6 +566,56 @@ setInterval(() => void iam.signals.poll().catch(reportError), 60_000).unref();
   deployment, give providers the push URL of the organization's <Term id="home-region">home region</Term>:
   transmitters, Better IAM's included, do not follow redirects.
 
+## API methods
+
+Every method of the `signals` group takes an administrator's credential and is served over HTTP under the IAM base
+path (`/api/iam` by default). Full parameters and per-method errors are in the
+[signals API reference](/docs/reference/api/signals).
+
+| Method | Route | Permission | What it does |
+| --- | --- | --- | --- |
+| `iam.api.signals.createSource` | `POST /signals/createSource` | `iam:signals:manage` | Registers a provider; returns `{ source, pushUrl?, pushToken? }`. |
+| `iam.api.signals.listSources` | `POST /signals/listSources` | `iam:signals:read` | The organization's sources with health fields, oldest first. |
+| `iam.api.signals.getSource` | `POST /signals/getSource` | `iam:signals:read` | One source. |
+| `iam.api.signals.updateSource` | `POST /signals/updateSource` | `iam:signals:manage` | Changes any field except `issuer` and `delivery`. |
+| `iam.api.signals.deleteSource` | `POST /signals/deleteSource` | `iam:signals:manage` | Removes a source; its events stay until they expire. |
+| `iam.api.signals.rotatePushToken` | `POST /signals/rotatePushToken` | `iam:signals:manage` | Returns a new push token once; the old one stops at once. |
+| `iam.api.signals.listEvents` | `POST /signals/listEvents` | `iam:signals:read` | Received events, newest first, filterable by source, status, identity, and type. |
+| `iam.api.signals.getEvent` | `POST /signals/getEvent` | `iam:signals:read` | One received event. |
+| `iam.api.signals.reprocess` | `POST /signals/reprocess` | `iam:signals:manage` | Maps an unmatched or failed event again and runs its action. |
+| `iam.api.signals.poll` | `POST /signals/poll` | `iam:signals:manage` | Polls one poll source now. |
+
+```ts title="admin/signals.ts"
+import { iam } from '../iam';
+
+export async function unmatchedEvents(admin: { headers: Headers }, tenantId: string) {
+  return iam.api.signals.listEvents(admin, { tenantId, status: 'unmatched' });
+}
+```
+
+## Endpoints
+
+| Direction | Method and path | What it is |
+| --- | --- | --- |
+| Called by the provider | `POST {signals.pushPath}/{sourceId}` (default `/api/iam/signals/push/{sourceId}`) | Push delivery (RFC 8935) of one SET. See [Push delivery](#push-delivery). |
+| Called by Better IAM | `POST {poll.endpoint}` of each poll source | Poll delivery (RFC 8936), from `iam.signals.poll()`. |
+| Called by Better IAM | The source's `jwksUri`, or the `jwks_uri` found by discovery at `/.well-known/ssf-configuration{issuer path}` on the issuer's origin (then the legacy RISC document) | Verification keys, cached per source. |
+
+## Errors
+
+| Code | Status | When |
+| --- | --- | --- |
+| [`INVALID_INPUT`](/docs/reference/errors#invalid_input) | 400 | Source settings outside the rules in [Register a source](#register-a-source), or invalid list filters. |
+| [`CONFLICT`](/docs/reference/errors#conflict) | 409 | The organization already has a source for that issuer. |
+| [`LIMIT_EXCEEDED`](/docs/reference/errors#limit_exceeded) | 409 | More than 20 sources in one organization. |
+| [`NOT_FOUND`](/docs/reference/errors#not_found) | 404 | No such source or event in the organization, or `iam.signals.receive` for an unknown or disabled source. |
+| [`INVALID_TRANSITION`](/docs/reference/errors#invalid_transition) | 409 | `reprocess` on an event that is not unmatched or failed or whose source is disabled, or `poll` on a disabled source. (`poll` on a push source is `INVALID_INPUT`.) |
+| [`RECENT_AUTH_REQUIRED`](/docs/reference/errors#recent_auth_required) | 403 | A change without a recent sign-in. |
+| [`SIGNAL_REJECTED`](/docs/reference/errors#signal_rejected) | 400 | `iam.signals.receive` refused a SET. The error carries the RFC 8935 `err` and `temporary`. |
+
+The push endpoint does not throw these: it answers with the RFC 8935 statuses and `err` values listed under
+[Push delivery](#push-delivery).
+
 ## Audit events
 
 Besides the `signals` group's operation events (`iam:signals:read`, `iam:signals:manage`), the receiver records
@@ -608,7 +658,7 @@ the actor `signal:{sourceId}`, and changes to sources by the administrator who m
   <Card title="Shared Signals transmitter" href="/docs/federation/shared-signals">
     Send Better IAM's own session and account events to SIEMs and partner identity providers.
   </Card>
-  <Card title="Threat detection" href="/docs/guides/threat-detection">
+  <Card title="Threat detection" href="/docs/features/threat-detection">
     Detections, risk levels, incidents, and the playbooks that contain accounts.
   </Card>
 </Cards>

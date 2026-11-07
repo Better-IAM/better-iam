@@ -1,0 +1,168 @@
+---
+title: Features
+metaTitle: Feature modules catalog
+description: Every Better IAM feature module with one line on what it adds, the API group, server option, or package that turns it on, and a link to its page.
+icon: Puzzle
+packages: ['better-iam', '@better-iam/server', '@better-iam/oauth', '@better-iam/saml', '@better-iam/scim', '@better-iam/ldap', '@better-iam/mcp', '@better-iam/a2a']
+sources:
+  - packages/server/src/options.ts
+  - packages/server/src/index.ts
+  - packages/server/src/lifecycle.ts
+  - packages/server/src/api
+  - packages/better-iam/package.json
+  - apps/docs/generated/api.json
+  - apps/docs/generated/exports.json
+---
+
+import { UsersRound, LockKeyhole, KeyRound, Bot, Network, Puzzle } from '@/lib/icons';
+
+Better Auth adds capabilities through plugins you register one by one. Better IAM ships its feature modules inside
+`@better-iam/server` instead: most of them are API groups that exist on every instance (`iam.api.<group>.<method>`,
+and `POST /api/iam/<group>/<method>` over HTTP), a few are switched on with a server option, and the standard
+protocols (OAuth, SAML, SCIM, LDAP, MCP, A2A) live in their own packages that you import and mount. This page lists
+every module, says exactly what turns it on, and links to its page.
+
+## How a module is turned on
+
+| Mechanism | What you do | Examples |
+| --- | --- | --- |
+| Always-on API group | Nothing. The group exists on every instance, and its collections are created by `better-iam migrate` with the rest of the schema. Permissions decide who may call it. | `teams`, `guests`, `licenses`, `billing`, `quotas`, `features`, `keys`, `vault` |
+| Server option | Set the option in the object you pass to `betterIam()`. Without it the module reserves nothing and enforces nothing. | `ssh`, `inference`, `clearances`, `verifiableCredentials`, `accessUsage`, `a2a` |
+| Tuning option | The module is always on; the option only changes its defaults. | `billing`, `vault`, `signals` |
+| Protocol package | Import a factory from its package and mount its routes next to the IAM handler. | `createOAuthProvider` (`@better-iam/oauth`), `createSamlService` (`@better-iam/saml`), `createLdapServer` (`@better-iam/ldap`) |
+
+The umbrella package `better-iam` re-exports every protocol package as a subpath (`better-iam/oauth`,
+`better-iam/saml`, `better-iam/scim`, `better-iam/ldap`, `better-iam/mcp`, `better-iam/a2a`), so installing
+`better-iam` is enough for every module on this page.
+
+```ts title="iam.ts"
+import { betterIam } from 'better-iam';
+import { sqliteAdapter } from 'better-iam/adapter-sqlite';
+
+export const iam = betterIam({
+  database: sqliteAdapter({ filename: './iam.db' }),
+  secret: process.env.BETTER_IAM_SECRET!,
+  baseURL: process.env.BETTER_IAM_BASE_URL!,
+  // Modules that are off by default:
+  ssh: true, // SSH certificate authority
+  inference: true, // AI model access control and the inference gateway
+  verifiableCredentials: true, // SD-JWT verifiable credentials over OpenID4VCI
+  accessUsage: true, // record which actions people use, for right-sizing and role mining
+  clearances: {}, // security clearances and mandatory access control
+  // Tuning for always-on modules:
+  billing: { currency: 'EUR', timeZone: 'Europe/Berlin' },
+});
+```
+
+<Callout type="info">
+  There is no plugin to register for any built-in module, and no module has to be installed separately from
+  `@better-iam/server`. The `plugins` option is for your own extensions (actions, resource types, endpoints, hooks);
+  see [Adapters and plugins](/docs/concepts/extensions). `@better-iam/projects` (`createProjectsPlugin()`) is a
+  reference plugin built that way.
+</Callout>
+
+## Organizations
+
+Structures and commercial controls inside one organization (a <Term id="tenant">tenant</Term>). All are always on.
+
+| Feature | What it adds | Turned on by | Page |
+| --- | --- | --- | --- |
+| Teams and departments | Nested teams with maintainers, join requests, membership reviews and directory sync; a department tree whose heads become managers | Always on: `teams` and `departments` API groups | [Teams and departments](/docs/features/teams-and-departments) |
+| Onboarding | Checklists for new members and for new organizations and projects, inherited down the tenant tree, visible to policies | Always on: `onboarding` API group | [Onboarding](/docs/features/onboarding) |
+| Feature flags | Per-tenant boolean flags with targets, overrides, rollouts and a kill switch, readable in code, React, and policies | Always on: `features` API group, `iam.features`; hooks in `better-iam/react` | [Feature flags](/docs/features/feature-flags) |
+| Guests | Sponsored guest accounts for people from partner organizations, with expiry, renewal, and cross-tenant admission | Always on: `guests` API group, `iam.guests`; needs `authentication.sendEmail` | [Guests](/docs/features/guests) |
+| Licenses | Products, seat pools, assignments, waiting lists and reclaim, with seats visible to policies and birthright rules | Always on: `licenses` API group, `iam.licenses` | [Licenses](/docs/features/licenses) |
+| Billing and spend | Usage meters, rate cards, spend by person, team, department and project, budgets, invoices, plans and subscriptions | Always on: `billing` API group, `iam.billing`; the `billing` option tunes currency, time zone, and invoicing | [Billing and spend](/docs/features/billing) |
+| API quotas | Usage plans that throttle and cap a meter per API key, agent, person, group, or organization | Always on: `quotas` API group, `iam.quotas` | [API quotas](/docs/features/quotas) |
+
+## Privileged access
+
+Keeping standing privilege low and access time-bound. All are always on.
+
+| Feature | What it adds | Turned on by | Page |
+| --- | --- | --- | --- |
+| Just-in-time elevation | Eligible bindings people activate for a bounded time, with justification, MFA, and approval | Always on: `bindings` API group (`bindings.activate`) | [Just-in-time elevation](/docs/features/privileged-access/elevation) |
+| Access lifecycle | Expiring identities, temporary memberships, future-dated bindings, API key hygiene, one-call offboarding | Always on: `identities`, `groups`, `bindings`, `credentials` API groups | [Access lifecycle](/docs/features/privileged-access/lifecycle) |
+| Access packages | Bundles of roles and group memberships that administrators assign and members request | Always on: `packages` API group | [Access packages](/docs/features/privileged-access/access-packages) |
+| Automatic assignment | Birthright rules that grant a package to every matching identity and remove it when they stop matching | Always on: `packages` API group (`autoAssign`), `iam.reconcilePackages()` | [Automatic assignment](/docs/features/privileged-access/automatic-assignment) |
+| Access report | What ends soon, what is elevated now, and unused keys, plus owner digests | Always on: `reports` API group | [Access report](/docs/features/privileged-access/access-report) |
+| Configuration as code | Export, plan, and apply a tenant's access model as one reviewed document | Always on: `config` API group; CLI `config-export`, `config-plan`, `config-apply` | [Configuration as code](/docs/features/privileged-access/config-as-code) |
+
+## Governance
+
+The loop that keeps access correct over time.
+
+| Feature | What it adds | Turned on by | Page |
+| --- | --- | --- | --- |
+| Usage and role mining | Records which actions people use, right-sizes roles, mines redundant grants and outliers | `roleMining` API group is always on; usage tracking needs the `accessUsage` option | [Usage and role mining](/docs/features/governance/usage-and-mining) |
+| Certifications | Campaigns where reviewers or managers keep or revoke each binding | Always on: `certifications` API group | [Certifications](/docs/features/governance/certifications) |
+| Change safety | Impact previews before a change and access invariants no change may break | Always on: `impact` and `invariants` API groups | [Change safety](/docs/features/governance/change-safety) |
+| Terms of use | Versioned agreements members accept, enforced through policies | Always on: `agreements` API group | [Terms of use](/docs/features/governance/agreements) |
+| Privacy and consent | Purposes, consent receipts, data-subject requests, and legal holds | Always on: `privacy` API group | [Privacy and consent](/docs/features/governance/privacy) |
+| Lifecycle workflows | Joiner, mover, and leaver automation with the owner's rights checked at each step | Always on: `workflows` API group | [Lifecycle workflows](/docs/features/governance/workflows) |
+| Compliance center | Identity checks mapped to SOC 2, ISO 27001, NIST 800-53 and GDPR, with signed evidence | Always on: `compliance` API group; CLI `compliance-evaluate` | [Compliance center](/docs/features/governance/compliance) |
+| Application catalog | A My apps launcher with assignments, access requests, and launch audit | Always on: `applications` API group | [Application catalog](/docs/features/governance/applications) |
+| Access paths | Tells a denied person what they could do themselves to get access | Always on: `accessPaths` API group | [Access paths](/docs/features/governance/access-paths) |
+| Scheduling | The jobs and CLI commands that keep governance running | Your scheduler, calling `iam.*` jobs or the CLI | [Scheduling](/docs/features/governance/scheduling) |
+| Security clearances | Classification labels, clearances, and compartments enforced before any role or policy is read | The `clearances` option (`clearances` API group) | [Security clearances](/docs/features/security-clearances) |
+
+## Security services
+
+| Feature | What it adds | Turned on by | Page |
+| --- | --- | --- | --- |
+| Key management | Tenant keys that never leave the server, for encryption, signing, MACs and JWTs | Always on: `keys` API group | [Key management](/docs/features/secrets-and-keys/key-management) |
+| Secrets vault | Versioned secrets with rotation, check-outs, and dynamic credentials | Always on: `vault` API group; the `vault` option adds rotators and dynamic engines | [Secrets vault](/docs/features/secrets-and-keys/secrets-vault) |
+| Data protection | Tokenization of card numbers, SSNs and other values, read back per profile and purpose | Always on: `protection` API group | [Data protection](/docs/features/secrets-and-keys/data-protection) |
+| Private CA | Per-tenant X.509 authorities for mutual TLS, internal HTTPS, and SPIFFE | Always on: `pki` API group | [Private CA](/docs/features/secrets-and-keys/private-ca) |
+| SSH access | Short-lived OpenSSH user and host certificates decided by policy, with revocation | The `ssh` option (`ssh` API group, `iam.ssh`); CLI `ssh-cert`, `ssh-host-enroll` | [SSH access](/docs/features/ssh-access) |
+| Device posture | Policies that see which registered device a request comes from and whether it is managed and compliant | Always on: `devices` API group; prover in `better-iam/client/device` | [Device posture](/docs/features/device-posture) |
+| Threat detection | Detection rules over the audit trail, incidents, identity risk, and response playbooks | Always on: `threats` API group; CLI `detect-threats` | [Threat detection](/docs/features/threat-detection) |
+
+## AI agents
+
+| Feature | What it adds | Turned on by | Page |
+| --- | --- | --- | --- |
+| AI agents | Agent identities with a sponsor and a boundary, and delegated sessions when they act for a person | Always on: `agents` and `delegations` API groups | [AI agents](/docs/features/ai-agents) |
+| Model access and budgets | Who may call which models, token and cost caps, metering, and a gateway that keeps provider keys server-side | The `inference` option (`inference` API group, `iam.inference`) | [Model access and budgets](/docs/features/inference) |
+| MCP servers | Tool-level authorization for Model Context Protocol servers | `@better-iam/mcp` (`createMcpGate`) | [MCP servers](/docs/features/mcp-server) |
+| Agent-to-agent (A2A) | IAM-attested agent cards, card verification, and authorization for A2A calls | `@better-iam/a2a`; the `a2a` option signs agent cards | [Agent-to-agent (A2A)](/docs/features/a2a) |
+
+## Federation protocols
+
+| Feature | What it adds | Turned on by | Page |
+| --- | --- | --- | --- |
+| OAuth and OIDC sign-in | Sign-in with Google, GitHub, Entra ID, or any OIDC or OAuth2 provider | `createOAuthLogin` from `@better-iam/oauth` | [OAuth and OIDC sign-in](/docs/federation/oauth-sign-in) |
+| SAML | SAML 2.0 single sign-on with tenant-managed connections | `createSamlService` from `@better-iam/saml` | [SAML](/docs/federation/saml) |
+| OAuth/OIDC provider | A tenant-aware authorization server for your own apps, CLIs, and devices | `createOAuthProvider` from `@better-iam/oauth` | [OAuth/OIDC provider](/docs/federation/oauth-provider) |
+| Resource servers and tokens | Audience-restricted JWT access tokens verified offline, DPoP, token exchange | `createAccessTokenVerifier` and `createResourceGuard` from `@better-iam/oauth` | [Resource servers and tokens](/docs/federation/oauth-resource-servers) |
+| Dynamic registration and MCP | RFC 7591 client registration for MCP hosts and self-configuring clients | The `registration` setting of `createOAuthProvider` | [Dynamic registration and MCP](/docs/federation/mcp-authorization) |
+| Verifiable credentials | SD-JWT credentials for digital wallets with selective disclosure and status lists | The `verifiableCredentials` option (`verifiableCredentials` API group); CLI `vc-sweep` | [Verifiable credentials](/docs/federation/verifiable-credentials) |
+| Shared Signals transmitter | Signed CAEP and RISC events pushed to SIEMs and partner IdPs | `createSharedSignalsTransmitter` from `@better-iam/oauth` | [Shared Signals](/docs/federation/shared-signals) |
+| Shared Signals receiver | CAEP and RISC events received from an organization's identity providers | Always on: `signals` API group, `iam.signals`; the `signals` option tunes fetching and the push path | [Shared Signals receiver](/docs/federation/shared-signals-receiver) |
+| SCIM inbound | Connection-scoped SCIM 2.0 endpoints an organization's directory provisions into | `createScimService` from `@better-iam/scim` | [SCIM inbound](/docs/federation/scim) |
+| SCIM outbound | Push members and groups to downstream SaaS over SCIM 2.0 | `createScimProvisioner` from `@better-iam/scim` | [SCIM outbound](/docs/federation/scim-outbound) |
+| LDAP gateway | Read-only LDAPv3 directory with password and API key binds | `createLdapServer` from `@better-iam/ldap`; `ldap` API group for each organization's settings | [LDAP gateway](/docs/federation/ldap) |
+| Enterprise onboarding | One customer from "we use Okta" to SSO, provisioning, and offboarding | The `domains` API group plus the SAML, OAuth, and SCIM packages | [Enterprise onboarding](/docs/federation/enterprise-onboarding) |
+
+## Next steps
+
+<Cards>
+  <Card title="Teams and departments" href="/docs/features/teams-and-departments" icon={<UsersRound />}>
+    Start with the organization structure most other modules attribute to.
+  </Card>
+  <Card title="Privileged access" href="/docs/features/privileged-access" icon={<LockKeyhole />}>
+    Time-bound roles, packages, and configuration as code.
+  </Card>
+  <Card title="Secrets and keys" href="/docs/features/secrets-and-keys" icon={<KeyRound />}>
+    Keys, vault, tokenization, and a private CA under the same policies.
+  </Card>
+  <Card title="AI agents" href="/docs/features/ai-agents" icon={<Bot />}>
+    Agent identities, delegation, and model access.
+  </Card>
+  <Card title="Federation" href="/docs/federation" icon={<Network />}>
+    OAuth, OIDC, SAML, SCIM, LDAP, and Shared Signals.
+  </Card>
+  <Card title="Configuration reference" href="/docs/operations/deployment/configuration" icon={<Puzzle />}>
+    Every server option with its type and default.
+  </Card>
+</Cards>

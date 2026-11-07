@@ -1,0 +1,480 @@
+---
+title: Just-in-time admin access
+description: Replace standing administrator bindings with eligible bindings that members activate for a bounded time, with justification, MFA, approval by a named group, audit events, and revocation.
+icon: KeyRound
+packages: ['better-iam', '@better-iam/server', '@better-iam/client']
+sources:
+  - docs/privileged-access.md
+  - packages/server/src/api/bindings.ts
+  - packages/server/src/access-policy.ts
+  - packages/server/src/decisions.ts
+  - packages/server/src/api/analysis.ts
+  - packages/server/src/api/groups.ts
+  - packages/core/src/index.ts
+---
+
+A person who holds an administrator role all the time is an administrator whenever their session is stolen. In
+this guide you take a privileged role away from everyone's standing access and make it available on demand: engineers
+are **eligible** for it, activate it for at most an hour with a reason and MFA, and a member of the platform team
+approves each activation. When the hour ends the role stops applying by itself, and every step is in the audit log.
+
+You will:
+
+- create an engineers group (who may elevate) and a platform team group (who approves);
+- give both groups the permissions to activate and to approve;
+- turn the privileged role into an <Term id="eligible-binding">eligible binding</Term> with justification, MFA,
+  approval, and a maximum duration, and convert existing standing bindings;
+- set organization-wide floors with the <Term id="tenant-access-policy">tenant access policy</Term>;
+- build an Elevate screen and an approvals inbox with the typed client;
+- step down, revoke an activation during an incident, and alert on every elevation.
+
+## Prerequisites
+
+- A Better IAM instance exported as `iam` from `src/iam.ts`, served over HTTP, and an organization tenant. The
+  [Quickstart](/docs/quickstart) covers both.
+- An owner or administrator credential for the organization with `iam:groups:*`, `iam:roles:create`,
+  `iam:roles:read`, `iam:bindings:create`, `iam:bindings:read`, `iam:bindings:delete`, `iam:tenants:update`,
+  `iam:webhooks:create`, `iam:audit:read`, and `iam:analysis:read`, from a recently authenticated session
+  (`tenants.setAccessPolicy` requires recent authentication).
+- The privileged role you want to protect, here called _Production admin_. Any role works; the
+  [Roles and bindings](/docs/authorization/roles) page shows how to create one.
+- An email delivery callback (`authentication.sendEmail`) if approvers should be emailed each request. Without one,
+  requests still appear in the approvals inbox.
+- Members who will elevate have an authenticator or passkey enrolled, because the binding will require MFA.
+
+<Steps>
+<Step>
+
+### Create the requester and approver groups
+
+Bindings to groups follow people as they join and leave teams, so nobody edits bindings when the on-call rotation
+changes. Create one group for the people who may elevate and one for the people who approve.
+
+```ts title="scripts/jit-setup.ts"
+import { iam } from '../src/iam.js';
+
+const admin = { token: process.env.ADMIN_TOKEN! };
+const tenantId = process.env.TENANT_ID!;
+
+const engineers = await iam.api.groups.create(admin, { tenantId, name: 'Engineers' });
+const platformTeam = await iam.api.groups.create(admin, {
+  tenantId,
+  name: 'Platform team',
+  description: 'Approves production administrator access',
+});
+
+await iam.api.groups.addMembers(admin, {
+  tenantId,
+  groupId: engineers.id,
+  identityIds: [process.env.ALICE_ID!, process.env.BOB_ID!],
+});
+await iam.api.groups.addMember(admin, { tenantId, groupId: platformTeam.id, identityId: process.env.PRIYA_ID! });
+```
+
+**Routes:** `POST /groups/create`, `POST /groups/addMembers`, `POST /groups/addMember`
+
+</Step>
+<Step>
+
+### Grant the permissions to activate and to approve
+
+Activation and approval are ordinary permissions. `iam:bindings:activate` lets a member activate eligible bindings
+and list their own with `bindings.listMine`. `iam:bindings:approve` lets a person decide requests and list them with
+`bindings.listApprovals`.
+
+```ts title="scripts/jit-setup.ts (continued)"
+const elevator = await iam.api.roles.create(admin, {
+  tenantId,
+  name: 'Can elevate',
+  permissions: ['iam:bindings:activate'],
+});
+await iam.api.bindings.create(admin, {
+  tenantId,
+  roleId: elevator.id,
+  subjectType: 'group',
+  subjectId: engineers.id,
+});
+
+const approver = await iam.api.roles.create(admin, {
+  tenantId,
+  name: 'Elevation approver',
+  permissions: ['iam:bindings:approve'],
+});
+await iam.api.bindings.create(admin, {
+  tenantId,
+  roleId: approver.id,
+  subjectType: 'group',
+  subjectId: platformTeam.id,
+});
+```
+
+A permissions list applies to every resource of the tenant (`resources: ['*']`), which covers both the roles
+(`iam/{roleId}`) and the tenant-level list calls. To limit activation to one role, use a document with
+`resources: ['iam/ROLE_ID']` instead, and add a separate grant on the tenant for `bindings.listMine`.
+
+</Step>
+<Step>
+
+### Make the privileged role eligible
+
+Create the eligible binding with the rules every activation must satisfy. The binding grants nothing until a member
+activates it.
+
+```ts title="scripts/jit-setup.ts (continued)"
+const productionAdmin = await iam.api.roles.get(admin, { tenantId, roleId: process.env.PROD_ADMIN_ROLE_ID! });
+
+const eligible = await iam.api.bindings.create(admin, {
+  tenantId,
+  roleId: productionAdmin.id,
+  subjectType: 'group',
+  subjectId: engineers.id,
+  eligible: true,
+  maxActivationMs: 60 * 60_000, // one hour at most
+  requireJustification: true,
+  requireMfa: true,
+  requireApproval: true,
+  approverGroupId: platformTeam.id,
+});
+console.log('Eligible binding', eligible.id);
+```
+
+**Route:** `POST /bindings/create`
+
+Then remove standing access to the same role. `bindings.list` with `eligible: false` returns only standing
+bindings. Convert a person's binding in place with `bindings.update` (it accepts `eligible: true` and the same
+rules), or delete it now that the group binding covers them:
+
+```ts title="scripts/jit-setup.ts (continued)"
+const standing = await iam.api.bindings.list(admin, { tenantId, roleId: productionAdmin.id, eligible: false });
+for (const binding of standing) {
+  await iam.api.bindings.update(admin, {
+    tenantId,
+    bindingId: binding.id,
+    eligible: true,
+    maxActivationMs: 60 * 60_000,
+    requireJustification: true,
+    requireMfa: true,
+    requireApproval: true,
+    approverGroupId: platformTeam.id,
+  });
+}
+```
+
+**Routes:** `POST /bindings/list`, `POST /bindings/update`
+
+| Rule | Type | Default | Effect |
+| --- | --- | --- | --- |
+| `eligible` | `boolean` | `false` | The binding grants nothing until activated with `bindings.activate` |
+| `maxActivationMs` | `number` | `3600000` (one hour) | Longest activation, one minute to seven days; an approver can grant less, never more |
+| `requireJustification` | `boolean` | `false` | A reason (at most 2048 characters) is required and stored on the activation and in the audit trail |
+| `requireMfa` | `boolean` | `false` | Only MFA-verified sessions may activate (`MFA_REQUIRED` otherwise) |
+| `requireApproval` | `boolean` | `false` | Activation becomes a pending request that an approver grants or denies |
+| `approverGroupId` | `string \| null` | none | Only live members of this group (or a root administrator) may decide, and they are emailed each request |
+| `managerApproval` | `boolean` | `false` | The requester's manager (`Identity.managerId`) may decide as well |
+
+Activation rules on a binding that is not eligible fail with `INVALID_INPUT`. `bindings.update({ eligible: false })`
+turns an eligible binding back into a standing one, clears its rules, and ends its activations.
+
+</Step>
+<Step>
+
+### Set organization-wide floors
+
+A floor on the organization means one forgotten binding is not a gap. The effective rules for every eligible binding
+are its own rules tightened by the policy: a flag is on when either sets it, and the maximum duration is the smaller
+of the two.
+
+```ts title="scripts/jit-setup.ts (continued)"
+await iam.api.tenants.setAccessPolicy(admin, {
+  tenantId,
+  accessPolicy: {
+    maxActivationMs: 4 * 60 * 60_000, // no activation anywhere lasts longer than four hours
+    requireJustification: true,
+    requireMfa: true,
+    approvalLifetimeMs: 8 * 60 * 60_000, // pending requests lapse after eight hours
+  },
+});
+```
+
+**Route:** `POST /tenants/setAccessPolicy`
+
+`accessPolicy: null` clears it. Setting it needs `iam:tenants:update` and recent authentication, and is audited as
+`tenant:access-policy`. `approvalLifetimeMs` ranges from five minutes to thirty days and defaults to one day.
+
+</Step>
+<Step>
+
+### Build the Elevate screen
+
+Members see what they may elevate to with `bindings.listMine` and activate with `bindings.activate`. Both must be
+called from the member's own ordinary session of the tenant, which is what the browser client sends.
+
+<Tabs items={['Client', 'Server']}>
+<Tab value="Client">
+
+```ts title="src/elevate.ts"
+import { createIamClient } from 'better-iam/client';
+import type { iam } from './iam.js';
+
+const client = createIamClient<typeof iam>();
+
+export async function eligibleRoles(tenantId: string) {
+  const bindings = await client.bindings.listMine({ tenantId });
+  return bindings
+    .filter((binding) => binding.eligible)
+    .map((binding) => ({
+      bindingId: binding.id,
+      role: binding.role?.name,
+      maxActivationMs: binding.maxActivationMs,
+      active: binding.activation, // { id, activatedAt, expiresAt } while elevated
+      waiting: binding.pendingActivation, // { id, requestedAt, expiresAt } while awaiting approval
+    }));
+}
+
+export async function elevate(tenantId: string, bindingId: string, ticket: string) {
+  return client.bindings.activate({
+    tenantId,
+    bindingId,
+    justification: ticket,
+    durationMs: 30 * 60_000,
+  });
+}
+```
+
+</Tab>
+<Tab value="Server">
+
+```ts title="src/elevate-server.ts"
+import { iam } from './iam.js';
+
+export async function elevate(request: Request, tenantId: string, bindingId: string, ticket: string) {
+  return iam.api.bindings.activate(
+    { headers: request.headers },
+    { tenantId, bindingId, justification: ticket, durationMs: 30 * 60_000 },
+  );
+}
+```
+
+</Tab>
+</Tabs>
+
+**Routes:** `POST /bindings/listMine`, `POST /bindings/activate`
+
+With `requireApproval`, the result has `status: 'pending'` and grants nothing yet. Without it, the result has
+`status: 'active'`, `active: true`, `activatedAt`, and `expiresAt`, and the role applies from the next request.
+`durationMs` defaults to the effective maximum and must lie between one minute and that maximum; a value outside
+the range fails with `INVALID_INPUT` rather than being shortened.
+
+</Step>
+<Step>
+
+### Build the approvals inbox
+
+Approvers list the requests they may decide, never their own, and approve or deny each one with an optional note.
+`durationMs` defaults to the requested duration; an approver may grant less, and a longer value fails with
+`INVALID_INPUT`.
+
+<Tabs items={['Client', 'Server']}>
+<Tab value="Client">
+
+```ts title="src/approvals.ts"
+import { createIamClient } from 'better-iam/client';
+import type { iam } from './iam.js';
+
+const client = createIamClient<typeof iam>();
+
+export const pendingRequests = (tenantId: string) => client.bindings.listApprovals({ tenantId });
+
+export const approve = (tenantId: string, activationId: string) =>
+  client.bindings.approveActivation({
+    tenantId,
+    activationId,
+    durationMs: 20 * 60_000, // at most what was requested (30 minutes above)
+    note: 'Approved for the change window',
+  });
+
+export const deny = (tenantId: string, activationId: string, note: string) =>
+  client.bindings.denyActivation({ tenantId, activationId, note });
+```
+
+</Tab>
+<Tab value="Server">
+
+```ts title="src/approvals-server.ts"
+import { iam } from './iam.js';
+
+export async function approve(request: Request, tenantId: string, activationId: string) {
+  const approver = { headers: request.headers };
+  return iam.api.bindings.approveActivation(approver, {
+    tenantId,
+    activationId,
+    durationMs: 20 * 60_000,
+    note: 'Approved for the change window',
+  });
+}
+```
+
+</Tab>
+</Tabs>
+
+**Routes:** `POST /bindings/listApprovals`, `POST /bindings/approveActivation`, `POST /bindings/denyActivation`
+
+Safeguards that need no code:
+
+- Nobody decides on their own request (`INVALID_INPUT`), and nobody decides from an impersonation session
+  (`IMPERSONATION_RESTRICTED`).
+- Only a request that is still pending, on a binding that is still eligible, can be decided (`INVALID_TRANSITION`,
+  409).
+- When the binding names an approver group, a request must reach at least one active approver. If the group is
+  empty and the requester has no active manager, activation fails with `INVALID_TRANSITION` instead of creating a
+  request nobody can answer.
+- With email delivery configured, approvers receive an `activation-request` email and the requester an
+  `activation-decided` email.
+
+</Step>
+<Step>
+
+### Step down, and revoke during an incident
+
+Most activations simply expire. A member who finishes early steps down with `bindings.deactivate`, which also
+withdraws a pending request. An administrator ends someone else's activation immediately with
+`bindings.revokeActivation`, which needs `iam:bindings:delete` on the binding and its grant authority (or root).
+
+```ts title="scripts/incident.ts"
+import { iam } from '../src/iam.js';
+
+const admin = { token: process.env.ADMIN_TOKEN! };
+const tenantId = process.env.TENANT_ID!;
+
+// Who is elevated right now?
+const live = await iam.api.bindings.listActivations(admin, { tenantId, status: 'active' });
+for (const activation of live) {
+  console.log(activation.identityId, activation.roleId, activation.justification, new Date(activation.expiresAt));
+}
+
+// End one activation now.
+await iam.api.bindings.revokeActivation(admin, { tenantId, activationId: process.env.ACTIVATION_ID! });
+```
+
+**Routes:** `POST /bindings/deactivate`, `POST /bindings/listActivations`, `POST /bindings/revokeActivation`
+
+An activation also ends when the holder leaves the group, the binding or role is deleted, or eligibility is turned
+off. It stops granting at the next request in every case.
+
+</Step>
+<Step>
+
+### Alert on elevation and keep the record
+
+Subscribe a <Term id="webhook">webhook</Term> to every binding event, and query the audit log when someone asks
+"who was an administrator on Tuesday, and why?".
+
+```ts title="scripts/jit-alerts.ts"
+import { iam } from '../src/iam.js';
+
+const admin = { token: process.env.ADMIN_TOKEN! };
+const tenantId = process.env.TENANT_ID!;
+
+await iam.api.webhooks.create(admin, {
+  tenantId,
+  url: 'https://ops.example.com/hooks/iam',
+  events: ['binding:*'],
+  description: 'Production admin elevation',
+});
+
+const lastWeek = await iam.api.audit.list(admin, {
+  tenantId,
+  action: 'binding:activate',
+  from: Date.now() - 7 * 86_400_000,
+});
+for (const event of lastWeek) console.log(new Date(event.timestamp), event.actorId, event.metadata);
+```
+
+**Routes:** `POST /webhooks/create`, `POST /audit/list`
+
+| Event | Recorded when |
+| --- | --- |
+| `binding:activate` | A member activated a binding and now holds the role, with `activationId`, `roleId`, `expiresAt`, and the justification |
+| `binding:activation-requested` | Activation needs approval and a pending request was recorded |
+| `binding:activation-approved` | An approver granted a request: evidence of two-person control |
+| `binding:activation-denied` | An approver refused a request |
+| `binding:deactivate` | An activation ended early: `cancelled: true` for a withdrawn request, `revoked: true` when an administrator ended it |
+
+</Step>
+</Steps>
+
+## Verify it works
+
+1. Before activating, check the privileged action as Alice with `iam.authorize` (or `policies.simulate` as an
+   administrator). It is denied: the eligible binding grants nothing.
+2. Sign in as Alice with MFA and call `bindings.activate` with a justification. The result is `pending`.
+3. Sign in as Priya (platform team) and call `bindings.listApprovals`. Alice's request is listed; approve it.
+4. Check the action as Alice again. It is allowed, and `bindings.listMine` shows `activation` with its
+   `expiresAt`.
+5. Call `bindings.deactivate` as Alice with the activation ID. The action is denied again on the next request.
+6. Run `analysis.findings` for the tenant. No `standing-privileged-access` finding remains for the role's former
+   standing holders.
+
+```ts title="scripts/jit-verify.ts"
+import { iam } from '../src/iam.js';
+
+const admin = { token: process.env.ADMIN_TOKEN! };
+const { findings } = await iam.api.analysis.findings(admin, { tenantId: process.env.TENANT_ID! });
+console.log(findings.filter((finding) => finding.kind === 'standing-privileged-access'));
+// []
+```
+
+**Route:** `POST /analysis/findings`
+
+## Troubleshooting
+
+<Accordions>
+<Accordion title="MFA_REQUIRED when activating">
+The binding or the tenant access policy requires MFA, and the session did not complete it. Sign in again with
+the second factor, then activate. API keys are never MFA-verified and cannot satisfy
+`requireMfa`.
+</Accordion>
+<Accordion title="INVALID_INPUT when activating">
+The most common causes: a justification is required and missing (or longer than 2048 characters), `durationMs` is
+outside one minute to the effective maximum, or the call came from an assumed-role session. Activation must come
+from the person's own ordinary session of the tenant.
+</Accordion>
+<Accordion title="CONFLICT (409) when activating">
+There is one live activation per binding and person. Activating again while one is live, or while a request is
+still pending, is refused. Deactivate the current one first, or wait for the decision.
+</Accordion>
+<Accordion title="INVALID_TRANSITION when activating or deciding">
+For activation: the binding is no longer eligible (400), or it names an approver group with no active member and
+the requester has no active manager (409). Add an approver. For decisions: the request was already decided, withdrawn, or
+lapsed after `approvalLifetimeMs`.
+</Accordion>
+<Accordion title="ACCESS_DENIED when activating">
+The binding does not apply to the caller (they are not in the group), or the caller lacks `iam:bindings:activate`
+on the role. Check group membership with `identities.listGroups` and the caller's roles with
+`identities.listBindings`.
+</Accordion>
+<Accordion title="IMPERSONATION_RESTRICTED">
+An administrator using "view as" cannot activate for a member or approve in someone's name. Use their own session.
+</Accordion>
+<Accordion title="An approver does not see a request">
+`bindings.listApprovals` never shows the caller's own requests, and with `approverGroupId` it shows only requests
+the caller's group may decide. Check that the approver holds `iam:bindings:approve` on the tenant.
+</Accordion>
+</Accordions>
+
+## Next steps
+
+<Cards>
+  <Card title="Just-in-time elevation" href="/docs/features/privileged-access/elevation">
+    Every activation rule, view, and audit event in detail.
+  </Card>
+  <Card title="Temporary access" href="/docs/authorization/temporary-access">
+    Expiring bindings, access windows, access requests, and role sessions.
+  </Card>
+  <Card title="Access packages" href="/docs/features/privileged-access/access-packages">
+    Bundles of roles and groups granted together with an end date.
+  </Card>
+  <Card title="bindings API reference" href="/docs/reference/api/bindings">
+    Signatures and routes for activation and approval.
+  </Card>
+</Cards>

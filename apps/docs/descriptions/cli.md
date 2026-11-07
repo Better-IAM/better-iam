@@ -272,7 +272,7 @@ It reads every chained event of the tenant, recomputes each hash and link, compa
 prints `{ tenantId, valid, head }` with the position of the first failure. Because it needs no credential and writes
 nothing, it is safe to run against production at any time; it holds the whole chain in memory. The API equivalent,
 authorized and audited, is [`audit.verify`](/docs/reference/api/audit#verify). See
-[audit chain](/docs/guides/events/audit-chain).
+[audit chain](/docs/concepts/events/audit-chain).
 
 ```bash
 better-iam audit-verify --config better-iam.config.mjs --tenant "$TENANT_ID"
@@ -334,7 +334,7 @@ Flags:
 The document refers to everything by name instead of by ID: tenant-defined resource types, policies, roles, groups
 with their members' emails, group bindings, access packages with their automatic-assignment rules, the tenant access
 policy, and, when the tenant has any, invariants and agreements. Commit it, review changes as pull requests, and
-apply them with `config-apply`. See [configuration as code](/docs/guides/privileged-access/config-as-code).
+apply them with `config-apply`. See [configuration as code](/docs/features/privileged-access/config-as-code).
 
 ```bash
 BETTER_IAM_TOKEN="$CONFIG_READER_KEY" better-iam config-export --config better-iam.config.mjs --tenant "$TENANT_ID" --output tenant.json
@@ -428,7 +428,7 @@ Flags:
 - `--unused-days N` (0 to 3650, default 30) reports API keys unused for that many days.
 
 Unlike `digest`, it acts as a member and emails nobody, so use it when the report should go somewhere other than the
-owners' inboxes. See [access report](/docs/guides/privileged-access/access-report).
+owners' inboxes. See [access report](/docs/features/privileged-access/access-report).
 
 ```bash
 BETTER_IAM_TOKEN="$REPORTER_KEY" better-iam report --config better-iam.config.mjs --tenant "$TENANT_ID" --within-days 14 | jq '.identities.expiring'
@@ -502,7 +502,7 @@ SCIM provisioning, invitations, and attribute and group changes take effect in r
 command. It prints `assigned`, `refreshed`, `restored`, `ending`, `revoked`, `stale`, `failed`, `suspended`,
 `braked`, and `truncated`; `truncated: true` means run it again. Scheduled runs hold back unusually large changes
 (`braked`) until someone confirms them, so a rule edit or a directory glitch cannot revoke everyone at once. See
-[automatic assignment](/docs/guides/privileged-access/automatic-assignment).
+[automatic assignment](/docs/features/privileged-access/automatic-assignment).
 
 ```bash
 better-iam reconcile --config better-iam.config.mjs --tenant "$TENANT_ID" --package "$PACKAGE_ID" --confirm
@@ -524,7 +524,7 @@ Flags:
 Only campaigns created with `autoClose` are touched. Each one closes in its own transaction: revoked bindings are
 removed (each audited as `iam:bindings:delete`), and items nobody decided follow the campaign's `undecided` setting.
 It prints `{ closed, skipped }`, where `skipped` counts campaigns that are not due yet. See
-[certifications](/docs/guides/governance/certifications).
+[certifications](/docs/features/governance/certifications).
 
 ```bash
 better-iam close-certifications --config better-iam.config.mjs
@@ -550,7 +550,7 @@ Suggestions are role bundles to grant as access packages, roles every member of 
 the group instead), direct bindings a group already covers, and duplicate roles. Outliers are roles few peers hold
 (access that outlived a move) and roles most peers hold that a person lacks. The command only reads; apply a
 suggestion with [`roleMining.apply`](/docs/reference/api/role-mining#apply) or in the console. See
-[usage and role mining](/docs/guides/governance/usage-and-mining).
+[usage and role mining](/docs/features/governance/usage-and-mining).
 
 ```bash
 BETTER_IAM_TOKEN="$ANALYST_KEY" better-iam mine-roles --config better-iam.config.mjs --tenant "$TENANT_ID" --peer-by attribute:department
@@ -573,7 +573,7 @@ Flags:
 
 It prints `{ generatedAt, summary, results }`, with `passed`, `failed`, and `errors` counts and each invariant's
 violators. It records no `invariant:broken` events (that is `monitor-invariants`), so CI can run it as often as it
-likes. See [change safety](/docs/guides/governance/change-safety).
+likes. See [change safety](/docs/features/governance/change-safety).
 
 ```bash
 BETTER_IAM_TOKEN="$CI_AUDITOR_KEY" better-iam check-invariants --config better-iam.config.mjs --tenant "$TENANT_ID" --fail-on-broken
@@ -658,7 +658,7 @@ It applies the core schema to the target first (not plugin migrations), then ins
 transaction, so any failure leaves the database without records. Records keep their IDs, password hashes, encrypted secrets,
 and audit chains, so the target configuration must use the same `secret`. Afterwards run `migrate` with the same
 configuration for plugin migrations, and on PostgreSQL run `VACUUM ANALYZE iam_records` so lookups use the index
-immediately. See [storage](/docs/operations/storage).
+immediately. See [storage](/docs/databases/operations).
 
 ```bash
 better-iam store-import --config postgres.config.mjs --input /secure/backups/better-iam-snapshot.jsonl

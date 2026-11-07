@@ -1,0 +1,737 @@
+---
+title: "Migrate from Better Auth"
+description: "Move users, organizations, members, and roles from a Better Auth database to Better IAM with identities.createMany, re-establish passwords and social sign-in, and cut over a Next.js app."
+icon: ArrowLeftRight
+packages: ['better-iam', '@better-iam/server', '@better-iam/oauth', '@better-iam/next', '@better-iam/client']
+sources:
+  - packages/server/src/api/identities.ts
+  - packages/server/src/api/tenants.ts
+  - packages/server/src/federation.ts
+  - packages/auth/src/service/base.ts
+  - packages/auth/src/service/account.ts
+  - packages/oauth/src/client.ts
+  - packages/next/src/index.ts
+  - apps/docs/content/docs/guides/recipes/tenancy-and-limits.mdx
+  - apps/docs/content/docs/guides/b2b-saas.mdx
+---
+
+import { ArrowLeftRight, Building, Globe, Inbox, KeyRound, Users } from '@/lib/icons';
+
+This guide moves an application from [Better Auth](https://www.better-auth.com) to Better IAM. Both are libraries
+that run inside your Node.js server and store data in your database, so the move is a data import plus a code change,
+with no hosted service in between. What moves is who people are, which organization they belong to, and what role they
+hold there. Credentials do not move: Better IAM cannot read Better Auth's password hashes, two-factor secrets, or
+passkeys, so people prove who they are once more after the switch. You will:
+
+- map Better Auth's tables and plugins to Better IAM concepts;
+- recreate each Better Auth organization as a Better IAM tenant, with an Admin and a Member role;
+- import members 100 at a time with `identities.createMany`, keeping the Better Auth user ID as an attribute;
+- let password users in with magic links, and reconnect Google and GitHub sign-in;
+- replace the Better Auth handler, server calls, and client calls in a Next.js app, then cut over.
+
+## How the concepts map
+
+| Better Auth | Better IAM | Notes |
+| --- | --- | --- |
+| `betterAuth({ ... })` instance | `betterIam({ ... })` instance | Both are created once in your server code. |
+| `user` table | Identity (`kind: 'user'`) in a tenant | Every identity belongs to exactly one [tenant](/docs/concepts/tenants-and-identities). |
+| `account` row with `providerId: 'credential'` | Password on the identity | Hashes are not imported; see [Passwords](#passwords). |
+| `account` row for `google`, `github`, and others | An [OAuth connection](/docs/federation/oauth-sign-in) per provider and tenant | Links are made again at sign-in; see [Social sign-in](#social-sign-in). |
+| `session` table | Session | Not imported. Everyone signs in once after the switch. |
+| `verification` table | Short-lived challenges | Not imported; pending links and codes expire. |
+| Organization plugin: `organization` | Tenant with `type: 'organization'` | Created with `tenants.create`; the `slug` carries over. |
+| Organization plugin: `member` | Identity in that tenant, plus a role binding | A person in three organizations becomes three identities, one per tenant. |
+| `member.role` `owner` | The tenant's owner (`identities.setOwner`) | The built-in Owner role is protected and granted through ownership, not bindings. |
+| `member.role` `admin`, `member`, custom roles | Roles from `roles.create`, bound at import | You define each role's permissions. |
+| Organization plugin: `invitation` (pending) | `identities.invite` | Send new invitations; Better Auth invitation IDs do not carry over. |
+| Organization plugin: `team` | [Teams](/docs/features/teams-and-departments) (`teams.create`, `teams.addMembers`) or groups | Optional. |
+| Access control plugin statements | `permissions.actions` or `permissions.resourceTypes` in the configuration | Actions such as `projects:write`, used in roles and policies. |
+| Admin plugin: `user.banned` | `identities.setStatus` with `status: 'disabled'` | |
+| Two-factor plugin: `twoFactor` | [MFA](/docs/authentication/mfa) | Secrets are not imported; people enroll again. Enforce with the tenant policy's `requireMfa`. |
+| Passkey plugin: `passkey` | [Passkeys](/docs/authentication/passkeys) | Not imported; people register again. |
+| API key plugin | [Service accounts and API keys](/docs/authentication/api-keys) | Issue new keys with `credentials.create`. |
+| Magic link plugin | [Magic links and codes](/docs/authentication/passwordless) (`passwordlessEmail: true`) | Same idea; turn it on before you switch. |
+
+Better IAM has no equivalent of Better Auth's active organization on one session. A Better IAM session belongs to one
+tenant; a person who belongs to several organizations signs in to each, and can switch between them with
+[account linking](/docs/concepts/tenants-and-identities#account-linking).
+
+## What carries over
+
+| Data | Carries over | How people continue |
+| --- | --- | --- |
+| Name, email, organization memberships, roles | Yes, by this import | Nothing to do. |
+| Better Auth user ID | Yes, as the `legacyId` attribute and in a mapping table | Your own tables keep working through the mapping. |
+| Password | No | Sign in with a magic link, or set a password through a reset link. |
+| Google, GitHub, and other social links | No | Sign in once another way, then link the provider; or sign in through the provider if they were never imported. |
+| Email verification status | No | Imported identities start with an unverified email; the first magic link sign-in verifies it. |
+| Two-factor secrets, backup codes, passkeys | No | Enroll again after the first sign-in. |
+| Sessions | No | Everyone signs in once after the switch. |
+
+## Prerequisites
+
+- Read access to the Better Auth database. The examples use PostgreSQL through the `pg` package and Better Auth's
+  default table and column names (`user`, `account`, `organization`, `member`, `invitation`, with camelCase columns
+  such as `"userId"`). If you changed `modelName` or `fields` in your Better Auth configuration, adjust the SQL.
+- Better IAM installed, migrated, and bootstrapped, following [Installation](/docs/installation) and
+  [Quickstart](/docs/quickstart). You need the root tenant's ID from `bootstrap`.
+- An email transport in `authentication.sendEmail`. Creating an organization fails with `DELIVERY_REQUIRED`
+  without one, and magic links need it.
+- A TypeScript runner for the scripts, such as `npx tsx`.
+
+## Migrate
+
+<Steps>
+<Step>
+
+### Count what you are moving
+
+Run these queries against the Better Auth database and keep the numbers: you compare them with Better IAM at the end.
+
+```sql title="inventory.sql"
+SELECT count(*) AS users FROM "user";
+SELECT "providerId", count(*) AS accounts FROM "account" GROUP BY "providerId" ORDER BY 2 DESC;
+SELECT count(*) AS organizations FROM "organization";
+SELECT "role", count(*) AS members FROM "member" GROUP BY "role" ORDER BY 2 DESC;
+SELECT count(*) AS pending_invitations FROM "invitation" WHERE "status" = 'pending';
+```
+
+The `providerId` counts tell you how people sign in today: `credential` is email and password, and every other value
+is a social provider you will configure in Better IAM. The `role` values are the roles you will create; a member can
+hold several, stored comma-separated.
+
+</Step>
+<Step>
+
+### Configure Better IAM for the move
+
+Declare an identity attribute for the Better Auth user ID, turn on magic links, declare the actions your roles grant,
+and add one OAuth connection per social provider and organization.
+
+```ts title="iam.ts"
+import { betterIam } from 'better-iam';
+import { postgresAdapter } from 'better-iam/adapter-postgres';
+import { createOAuthLogin } from 'better-iam/oauth';
+import { sendMail } from './mail';
+
+export const iam = betterIam({
+  database: postgresAdapter({ connectionString: process.env.DATABASE_URL! }),
+  secret: process.env.BETTER_IAM_SECRET!,
+  baseURL: process.env.BETTER_IAM_BASE_URL!,
+  authentication: {
+    passwordlessEmail: true, // magic links and emailed codes, for people who used a password
+    sendEmail: async (message) => sendMail(message),
+  },
+  permissions: {
+    // Keeps the Better Auth user ID on each identity, readable in policies as principal.legacyId.
+    identityAttributes: { legacyId: 'string' },
+    resourceTypes: {
+      project: { actions: ['projects:read', 'projects:write', 'projects:delete'] },
+    },
+  },
+});
+
+// One connection per provider and organization: every connection belongs to one tenant. createOAuthLogin refuses a
+// connection without a tenant ID, so the connection is added only once the tenant exists (next step).
+const acmeTenantId = process.env.ACME_TENANT_ID;
+if (acmeTenantId)
+  iam.useProtocol(
+    createOAuthLogin({
+      ...iam.protocolHost,
+      basePath: '/api/iam/oauth/login',
+      trustedOrigins: ['https://app.example.com'],
+      connections: [
+        {
+          id: 'acme-google',
+          tenantId: acmeTenantId,
+          kind: 'google',
+          clientId: process.env.GOOGLE_CLIENT_ID!,
+          clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
+          redirectUri: 'https://app.example.com/api/iam/oauth/acme-google/callback',
+        },
+      ],
+    }),
+  );
+```
+
+You can reuse the Google and GitHub OAuth apps you registered for Better Auth: add the new callback URLs to their
+allowed redirect URIs. Connections need a tenant ID, so set `ACME_TENANT_ID` (and add the other connections) after
+the next step has created the tenants.
+
+</Step>
+<Step>
+
+### Recreate the organizations
+
+Sign in to the CLI as the root administrator and hand its token to the scripts. `tenants.create` needs a sign-in from
+the last five minutes, so run this script right after `login`.
+
+```bash
+npx better-iam login --config better-iam.config.mjs --tenant <root-tenant-id> --email root@example.com
+export BETTER_IAM_TOKEN=$(npx better-iam token --config better-iam.config.mjs)
+export ROOT_TENANT_ID=<root-tenant-id>
+export BETTER_AUTH_DATABASE_URL=postgres://...
+```
+
+The script creates one tenant per Better Auth organization, invites its first owner, and records which tenant
+replaced which organization in a table it creates in the Better Auth database.
+
+```ts title="scripts/migration/01-organizations.ts"
+import pg from 'pg';
+import { iam } from '../../iam';
+
+const source = new pg.Pool({ connectionString: process.env.BETTER_AUTH_DATABASE_URL });
+const admin = { token: process.env.BETTER_IAM_TOKEN! };
+const rootTenantId = process.env.ROOT_TENANT_ID!;
+
+await source.query(`
+  CREATE TABLE IF NOT EXISTS iam_migration_tenants (
+    organization_id text PRIMARY KEY,
+    tenant_id text NOT NULL,
+    owner_email text NOT NULL
+  )`);
+
+const { rows: organizations } = await source.query<{
+  id: string;
+  name: string;
+  slug: string | null;
+  ownerEmail: string;
+}>(`
+  SELECT o.id, o.name, o.slug,
+    (SELECT u.email FROM "member" m JOIN "user" u ON u.id = m."userId"
+      WHERE m."organizationId" = o.id AND 'owner' = ANY(string_to_array(m.role, ','))
+      ORDER BY m."createdAt" LIMIT 1) AS "ownerEmail"
+  FROM "organization" o
+  WHERE NOT EXISTS (SELECT 1 FROM iam_migration_tenants t WHERE t.organization_id = o.id)
+  ORDER BY o."createdAt"`);
+
+for (const organization of organizations) {
+  if (!organization.ownerEmail) {
+    console.warn(`Skipped ${organization.name}: no owner`);
+    continue;
+  }
+  const { tenant } = await iam.api.tenants.create(admin, {
+    parentId: rootTenantId,
+    type: 'organization',
+    name: organization.name,
+    // Better IAM slugs are 1-63 lowercase letters, digits, or hyphens, and unique (SLUG_TAKEN otherwise).
+    ...(organization.slug ? { slug: organization.slug.toLowerCase() } : {}),
+    ownerEmail: organization.ownerEmail,
+  });
+  await source.query(
+    'INSERT INTO iam_migration_tenants (organization_id, tenant_id, owner_email) VALUES ($1, $2, $3)',
+    [organization.id, tenant.id, organization.ownerEmail],
+  );
+  console.log(`${organization.name} -> ${tenant.id}`);
+}
+
+// Hand the queued owner invitations to sendEmail.
+await iam.auth.dispatchOutbox();
+await source.end();
+```
+
+**Route:** `POST /tenants/create`
+
+Each new tenant is `pending` until its owner accepts the invitation (`tenants.acceptInvitation`, usually on your
+invitation page), and members cannot be created in a pending tenant (`TENANT_INACTIVE`). Tell owners the invitation
+is coming. The owner identity is created when they accept, with the password they choose there.
+
+If your app does not use the organization plugin, create one tenant for the whole app the same way, with yourself or
+a product administrator as its owner, and import every user into it.
+
+</Step>
+<Step>
+
+### Import members
+
+Once owners have accepted, import everyone else. For each active tenant, the script creates the Admin and Member
+roles (skipping ones that exist), then creates the organization's members in batches of 100 with their role, their
+Better Auth user ID as `legacyId`, and no password.
+
+```ts title="scripts/migration/02-members.ts"
+import pg from 'pg';
+import { iam } from '../../iam';
+
+type CredentialInput = Parameters<typeof iam.api.roles.list>[0];
+
+const source = new pg.Pool({ connectionString: process.env.BETTER_AUTH_DATABASE_URL });
+const admin: CredentialInput = { token: process.env.BETTER_IAM_TOKEN! };
+
+const roleDefinitions = [
+  {
+    name: 'Admin',
+    description: 'Manages projects and members',
+    permissions: [
+      'projects:read',
+      'projects:write',
+      'projects:delete',
+      'iam:identities:create',
+      'iam:identities:read',
+      'iam:bindings:create',
+      'iam:bindings:read',
+      'iam:bindings:delete',
+      'iam:roles:read',
+    ],
+  },
+  { name: 'Member', description: 'Reads and edits projects', permissions: ['projects:read', 'projects:write'] },
+];
+
+/** Better Auth role name -> Better IAM role name. `owner` is handled by ownership, not a role binding. */
+const roleNames: Record<string, string> = { admin: 'Admin', member: 'Member' };
+
+async function ensureRoles(tenantId: string): Promise<Map<string, string>> {
+  const existing = await iam.api.roles.list(admin, { tenantId });
+  const ids = new Map(existing.map((role) => [role.name, role.id]));
+  for (const definition of roleDefinitions)
+    if (!ids.has(definition.name)) {
+      const role = await iam.api.roles.create(admin, { tenantId, ...definition });
+      ids.set(role.name, role.id);
+    }
+  return ids;
+}
+
+await source.query(`
+  CREATE TABLE IF NOT EXISTS iam_migration_users (
+    legacy_user_id text NOT NULL,
+    tenant_id text NOT NULL,
+    identity_id text NOT NULL,
+    PRIMARY KEY (legacy_user_id, tenant_id)
+  )`);
+
+const { rows: tenants } = await source.query<{
+  organization_id: string;
+  tenant_id: string;
+  owner_email: string;
+}>('SELECT organization_id, tenant_id, owner_email FROM iam_migration_tenants');
+
+for (const { organization_id, tenant_id: tenantId, owner_email } of tenants) {
+  const tenant = await iam.api.tenants.get(admin, { tenantId });
+  if (tenant.status !== 'active') {
+    console.warn(`${tenant.name}: owner has not accepted yet, skipped`);
+    continue;
+  }
+  const roles = await ensureRoles(tenantId);
+
+  const { rows: members } = await source.query<{
+    id: string;
+    email: string;
+    name: string | null;
+    role: string;
+  }>(
+    `SELECT u.id, u.email, u.name, m.role
+       FROM "member" m JOIN "user" u ON u.id = m."userId"
+      WHERE m."organizationId" = $1
+        AND NOT EXISTS (SELECT 1 FROM iam_migration_users x
+                         WHERE x.legacy_user_id = u.id AND x.tenant_id = $2)
+      ORDER BY u.id`,
+    [organization_id, tenantId],
+  );
+
+  // The owner already exists: acceptance created them. Record their mapping and skip them.
+  const owner = members.find((member) => member.email.toLowerCase() === owner_email.toLowerCase());
+  if (owner) {
+    const [identity] = await iam.api.identities.list(admin, { tenantId, query: owner_email, limit: 1 });
+    if (identity) {
+      await iam.api.identities.update(admin, { tenantId, identityId: identity.id, attributes: { legacyId: owner.id } });
+      await source.query(
+        'INSERT INTO iam_migration_users (legacy_user_id, tenant_id, identity_id) VALUES ($1, $2, $3)',
+        [owner.id, tenantId, identity.id],
+      );
+    }
+  }
+  const pending = members.filter((member) => member !== owner);
+
+  for (let start = 0; start < pending.length; start += 100) {
+    const batch = pending.slice(start, start + 100);
+    const { identities } = await iam.api.identities.createMany(admin, {
+      tenantId,
+      identities: batch.map((member) => ({
+        email: member.email,
+        name: member.name?.trim() || member.email.split('@')[0]!,
+        attributes: { legacyId: member.id },
+        roleIds: member.role
+          .split(',')
+          .map((name) => roles.get(roleNames[name.trim()] ?? ''))
+          .filter((id): id is string => id !== undefined),
+      })),
+    });
+    // identities[i] replaces batch[i].
+    for (const [i, identity] of identities.entries())
+      await source.query(
+        'INSERT INTO iam_migration_users (legacy_user_id, tenant_id, identity_id) VALUES ($1, $2, $3)',
+        [batch[i]!.id, tenantId, identity.id],
+      );
+    console.log(`${tenant.name}: ${start + batch.length}/${pending.length}`);
+  }
+}
+
+await source.end();
+```
+
+**Route:** `POST /identities/createMany`
+
+- `createMany` creates up to 100 identities in one transaction. If any entry fails, nobody in that batch is created,
+  so the script can stop and run again: it skips people already in `iam_migration_users`.
+- An address already present in the tenant fails the batch with `IDENTITY_EXISTS`. A tenant at its member limit
+  fails with `LIMIT_EXCEEDED`.
+- A member whose role is only `owner` gets no role binding here; make them an owner in the next step.
+- Members with custom Better Auth roles: add an entry to `roleDefinitions` and `roleNames` for each.
+
+</Step>
+<Step>
+
+### Restore owners and disabled accounts
+
+Better Auth organizations can have several owners. `identities.setOwner` makes an identity an owner and needs a
+sign-in from the last five minutes, so sign in again before running this script. It also disables people the admin
+plugin banned, if you use it.
+
+```ts title="scripts/migration/03-owners.ts"
+import pg from 'pg';
+import { iam } from '../../iam';
+
+const source = new pg.Pool({ connectionString: process.env.BETTER_AUTH_DATABASE_URL });
+const admin = { token: process.env.BETTER_IAM_TOKEN! };
+
+const { rows: owners } = await source.query<{ tenant_id: string; identity_id: string }>(`
+  SELECT x.tenant_id, x.identity_id
+    FROM iam_migration_users x
+    JOIN iam_migration_tenants t ON t.tenant_id = x.tenant_id
+    JOIN "member" m ON m."userId" = x.legacy_user_id AND m."organizationId" = t.organization_id
+    JOIN "user" u ON u.id = x.legacy_user_id
+   WHERE 'owner' = ANY(string_to_array(m.role, ',')) AND lower(u.email) <> lower(t.owner_email)`);
+
+for (const owner of owners)
+  await iam.api.identities.setOwner(admin, {
+    tenantId: owner.tenant_id,
+    identityId: owner.identity_id,
+    owner: true,
+  });
+
+// Admin plugin only: remove this query if your "user" table has no "banned" column.
+const { rows: banned } = await source.query<{ tenant_id: string; identity_id: string }>(`
+  SELECT x.tenant_id, x.identity_id
+    FROM iam_migration_users x JOIN "user" u ON u.id = x.legacy_user_id
+   WHERE u.banned = true`);
+
+for (const person of banned)
+  await iam.api.identities.setStatus(admin, {
+    tenantId: person.tenant_id,
+    identityId: person.identity_id,
+    status: 'disabled',
+  });
+
+await source.end();
+```
+
+**Route:** `POST /identities/setOwner`, `POST /identities/setStatus`
+
+</Step>
+<Step>
+
+### Re-send pending invitations
+
+Pending Better Auth invitations cannot be redeemed in Better IAM. Send a new one for each, with the matching role.
+
+```ts title="scripts/migration/04-invitations.ts"
+import pg from 'pg';
+import { iam } from '../../iam';
+
+const source = new pg.Pool({ connectionString: process.env.BETTER_AUTH_DATABASE_URL });
+const admin = { token: process.env.BETTER_IAM_TOKEN! };
+const roleNames: Record<string, string> = { admin: 'Admin', member: 'Member' };
+
+const { rows: invitations } = await source.query<{ tenant_id: string; email: string; role: string | null }>(`
+  SELECT t.tenant_id, i.email, i.role
+    FROM "invitation" i JOIN iam_migration_tenants t ON t.organization_id = i."organizationId"
+   WHERE i.status = 'pending' AND i."expiresAt" > now()`);
+
+for (const invitation of invitations) {
+  const roles = await iam.api.roles.list(admin, { tenantId: invitation.tenant_id });
+  const role = roles.find((candidate) => candidate.name === roleNames[invitation.role ?? 'member']);
+  await iam.api.identities.invite(admin, {
+    tenantId: invitation.tenant_id,
+    email: invitation.email,
+    roleIds: role ? [role.id] : [],
+  });
+}
+
+await iam.auth.dispatchOutbox();
+await source.end();
+```
+
+**Route:** `POST /identities/invite`
+
+</Step>
+<Step>
+
+### Let people in
+
+Imported identities are active, have no password, and have an unverified email.
+
+#### Passwords
+
+Better IAM does not import password hashes. Better Auth hashes passwords with its own algorithm and format, Better IAM
+only stores Argon2id hashes it computed itself, and no API accepts a precomputed hash. See
+[Importing passwords from another provider](/docs/authentication/email-and-password#importing-passwords-from-another-provider).
+People who used a password continue in one of two ways:
+
+- **Magic link (recommended).** With `passwordlessEmail: true`, the sign-in page asks for the email address and sends a
+  link. The first emailed sign-in verifies the address. Someone who wants a password again then requests a reset
+  link with the public `auth.requestPasswordReset`, which works once the address is verified (`auth.changePassword`
+  needs a current password, which imported people do not have).
+- **Reset link from an administrator.** `identities.requestPasswordReset` emails a reset link to one person. It needs
+  a sign-in from the last five minutes, so send these in short runs right after `login`.
+
+```ts title="scripts/migration/05-reset-links.ts"
+import pg from 'pg';
+import { iam } from '../../iam';
+
+const source = new pg.Pool({ connectionString: process.env.BETTER_AUTH_DATABASE_URL });
+const admin = { token: process.env.BETTER_IAM_TOKEN! };
+
+// People who signed in with a password in Better Auth.
+const { rows } = await source.query<{ tenant_id: string; identity_id: string }>(`
+  SELECT x.tenant_id, x.identity_id
+    FROM iam_migration_users x
+   WHERE EXISTS (SELECT 1 FROM "account" a
+                  WHERE a."userId" = x.legacy_user_id AND a."providerId" = 'credential')
+   LIMIT 200`);
+
+for (const row of rows)
+  await iam.api.identities.requestPasswordReset(admin, { tenantId: row.tenant_id, identityId: row.identity_id });
+
+await iam.auth.dispatchOutbox();
+await source.end();
+```
+
+**Route:** `POST /identities/requestPasswordReset`
+
+The public "forgot password" form (`auth.requestPasswordReset`) sends nothing to an unverified address, so an
+imported person cannot reset a password on their own until they have signed in once with a magic link or an
+administrator's reset link.
+
+#### Social sign-in
+
+Social accounts do not carry over. Better IAM keys an external account by tenant, provider, issuer, and subject, and
+it never matches accounts by email, so an imported person who signs in with Google for the first time is refused
+with `ACCOUNT_LINK_REQUIRED`. They sign in once with a magic link, then link Google from their account settings:
+
+```ts title="components/link-google.ts"
+export async function linkGoogle(): Promise<void> {
+  const response = await fetch('/api/iam/oauth/login/acme-google', {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'content-type': 'application/json', 'x-better-iam': '1' },
+    body: '{}',
+  });
+  const { url } = (await response.json()) as { url: string };
+  location.assign(url);
+}
+```
+
+Linking needs a session authenticated in the last five minutes, which a fresh magic-link sign-in is. See
+[Link an existing account](/docs/federation/oauth-sign-in#link-an-existing-account).
+
+If your app has no organizations and most people sign in with Google or GitHub, you can instead skip those people in
+the import: their first sign-in through the provider creates the identity with a verified email and links it, with
+no magic link. They then hold no role until you grant one, for example with an
+[automatic assignment rule](/docs/features/privileged-access/automatic-assignment), and your app maps their data by
+the verified email instead of `legacyId`.
+
+</Step>
+<Step>
+
+### Replace Better Auth in the app
+
+Swap the route handler, the server session reads, and the client calls. The examples use Next.js; see
+[Integrations](/docs/integrations) for other frameworks.
+
+| Better Auth | Better IAM |
+| --- | --- |
+| `app/api/auth/[...all]/route.ts` with `toNextJsHandler(auth)` | `app/api/iam/[...path]/route.ts` with `iamNext.handlers()` |
+| `auth.api.getSession({ headers })` | `iamNext.getSession()` in Next.js, or `iam.api.auth.getSession({ headers })` |
+| `createAuthClient()` | `createIamClient<typeof iam>()` from `better-iam/client` |
+| `authClient.signIn.email({ email, password })` | `client.auth.signIn({ tenantId, email, password })` |
+| `authClient.signIn.magicLink({ email })` | `client.auth.startPasswordless({ tenantId, destination, channel: 'email', kind: 'magic-link' })` |
+| `authClient.signIn.social({ provider: 'google' })` | Navigate to `/api/iam/oauth/login/{connectionId}` |
+| `authClient.signOut()` | `client.auth.signOut()` |
+| `authClient.useSession()` | `useSession()` from `better-iam/react` |
+| `authClient.organization.setActive(...)` | Sign in to the organization's tenant; switch with [`links.switch`](/docs/concepts/tenants-and-identities#account-linking) |
+| Access control `hasPermission` | `iam.require({ headers, tenantId, action, resource })`, or `can()` in Next.js |
+
+Every Better IAM sign-in names a tenant. Resolve it from the organization slug in the URL with `tenants.lookup`.
+
+<Tabs items={['Server', 'Client']}>
+<Tab value="Server">
+
+```ts title="lib/iam-next.ts"
+import { createIamNext } from 'better-iam/next';
+import { iam } from '../iam';
+
+export const iamNext = createIamNext(iam, { loginPath: '/login' });
+```
+
+See [Next.js](/docs/integrations/nextjs) for the other options.
+
+```ts title="app/api/iam/[...path]/route.ts"
+import { iamNext } from '@/lib/iam-next';
+
+export const runtime = 'nodejs';
+
+const handlers = iamNext.handlers();
+export const POST = handlers.POST;
+export const OPTIONS = handlers.OPTIONS;
+
+// The OAuth callback answers with JSON and sets the session cookie; send the browser on to the app instead.
+const callbackPath = /^\/api\/iam\/oauth\/[^/]+\/callback$/;
+
+export async function GET(request: Request): Promise<Response> {
+  const response = await handlers.GET(request);
+  const cookies = response.headers.getSetCookie();
+  const signedIn = cookies.some((cookie) => cookie.includes('better-iam.session='));
+  if (!callbackPath.test(new URL(request.url).pathname) || !response.ok || !signedIn) return response;
+  const headers = new Headers({ location: '/', 'cache-control': 'no-store' });
+  for (const cookie of cookies) headers.append('set-cookie', cookie);
+  return new Response(null, { status: 303, headers });
+}
+```
+
+```tsx title="app/[org]/page.tsx"
+import { iamNext } from '@/lib/iam-next';
+
+export default async function OrganizationHome() {
+  const session = await iamNext.requireSession();
+  return <h1>Signed in as {session.identity.name}</h1>;
+}
+```
+
+</Tab>
+<Tab value="Client">
+
+```ts title="lib/sign-in.ts"
+import { createIamClient } from 'better-iam/client';
+import type { iam } from '../iam';
+
+export const client = createIamClient<typeof iam>();
+
+export async function sendMagicLink(slug: string, email: string): Promise<void> {
+  const { tenantId } = await client.tenants.lookup({ slug });
+  await client.auth.startPasswordless({ tenantId, destination: email, channel: 'email', kind: 'magic-link' });
+}
+
+export async function signInWithPassword(slug: string, email: string, password: string) {
+  const { tenantId } = await client.tenants.lookup({ slug });
+  return client.auth.signIn({ tenantId, email, password }); // a session, or { mfaRequired: true, ... }
+}
+
+export function signInWithGoogle(): void {
+  location.assign('/api/iam/oauth/login/acme-google');
+}
+```
+
+</Tab>
+</Tabs>
+
+**Route:** `POST /tenants/lookup`, `POST /auth/startPasswordless`, `POST /auth/signIn`
+
+Your magic-link page redeems the link with `auth.finishPasswordless({ tenantId, destination, token })`; see
+[Magic links and codes](/docs/authentication/passwordless). Your own tables that reference Better Auth user IDs
+join through `iam_migration_users` (or read `principal.legacyId` in policies) until you rewrite those foreign keys
+to Better IAM identity IDs.
+
+</Step>
+<Step>
+
+### Cut over
+
+1. Stop new sign-ups and organization changes in the Better Auth app (for example, put the sign-up and
+   organization settings pages in maintenance).
+2. Run `02-members.ts` and `04-invitations.ts` again. They skip everything already imported, so this run picks up
+   people who joined since the first run.
+3. Deploy the app with Better IAM and remove the Better Auth handler. Better Auth sessions stop working, so
+   everyone signs in once.
+4. Announce the change: password users sign in with a magic link, social users sign in with a magic link and link
+   their provider (or sign in through the provider directly if you skipped them).
+5. Keep the Better Auth database read-only until you have rewritten every foreign key that points at its user IDs.
+
+</Step>
+</Steps>
+
+## Verify it works
+
+1. Compare counts: `iam.api.tenants.usage(admin, { tenantId })` returns `identities` for each tenant. It should equal
+   the organization's Better Auth member count.
+2. Spot-check a few people's access with `policies.effectiveActions`:
+
+   ```ts title="scripts/migration/check.ts"
+   import { iam } from '../../iam';
+
+   const admin = { token: process.env.BETTER_IAM_TOKEN! };
+   const result = await iam.api.policies.effectiveActions(admin, {
+     tenantId: process.env.ACME_TENANT_ID!,
+     identityId: process.argv[2]!,
+     resource: { type: 'project', id: 'any' },
+   });
+   console.log(result);
+   ```
+
+3. Sign in as a test member with a magic link and confirm they land in the right organization with the right role.
+4. Link Google for that member, sign out, and sign in through Google.
+
+## Troubleshooting
+
+<Accordions>
+<Accordion title="createMany fails with TENANT_INACTIVE">
+  The organization's owner has not accepted the invitation yet, so the tenant is still `pending`. The import script
+  skips such tenants; run it again after the owner accepts, or resend the owner invitation with
+  `tenants.resendInvitation`.
+</Accordion>
+<Accordion title="createMany fails with IDENTITY_EXISTS">
+  The batch contains an address already in the tenant, usually the owner or someone imported by an earlier run that
+  was not recorded. Add the identity to `iam_migration_users` by hand (find it with `identities.list` and `query`),
+  then run the script again.
+</Accordion>
+<Accordion title="createMany fails with ACCESS_DENIED: Cannot grant this role">
+  The caller cannot grant one of the roles. Run the import as the root administrator or as the organization's owner.
+</Accordion>
+<Accordion title="tenants.create or setOwner fails with RECENT_AUTH_REQUIRED">
+  These calls need a sign-in from the last five minutes. Run `npx better-iam login` again, export the new token, and
+  rerun the script.
+</Accordion>
+<Accordion title="tenants.create fails with SLUG_TAKEN or INVALID_INPUT">
+  Two organizations map to the same slug, or the slug has characters Better IAM does not accept. Slugs are 1 to 63
+  lowercase letters, digits, or hyphens, and unique across the deployment. Choose a new slug for that organization.
+</Accordion>
+<Accordion title="Sign-in through Google fails with ACCOUNT_LINK_REQUIRED">
+  The person was imported, and accounts are never matched by email. Sign in with a magic link, then link Google with
+  the `POST` shown in [Social sign-in](#social-sign-in).
+</Accordion>
+<Accordion title="The public forgot-password form sends nothing">
+  The address is still unverified. Send a reset link with `identities.requestPasswordReset`, or have the person sign
+  in with a magic link first.
+</Accordion>
+</Accordions>
+
+## Next steps
+
+<Cards>
+  <Card icon={<Inbox />} title="Magic links and codes" href="/docs/authentication/passwordless">
+    Passwordless sign-in pages and their options.
+  </Card>
+  <Card icon={<Globe />} title="OAuth and OIDC sign-in" href="/docs/federation/oauth-sign-in">
+    Connections, first sign-in, and account linking.
+  </Card>
+  <Card icon={<Building />} title="Build a multi-tenant B2B SaaS" href="/docs/guides/b2b-saas">
+    Organizations, roles, and invitations in a Next.js app.
+  </Card>
+  <Card icon={<Users />} title="Tenants and identities" href="/docs/concepts/tenants-and-identities">
+    Why every identity belongs to one tenant.
+  </Card>
+  <Card icon={<KeyRound />} title="Email and password" href="/docs/authentication/email-and-password">
+    Password policy, hashing, and resets.
+  </Card>
+  <Card icon={<ArrowLeftRight />} title="Migration guides" href="/docs/guides/migration">
+    Moving from other identity providers.
+  </Card>
+</Cards>

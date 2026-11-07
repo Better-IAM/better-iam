@@ -1,0 +1,516 @@
+---
+title: MCP servers
+metaTitle: Protect MCP servers with tool-level authorization
+description: Put @better-iam/mcp in front of a Streamable HTTP MCP server to authenticate callers, decide each tools/call with Better IAM policies or OAuth scopes, and hide the tools a caller may not use.
+icon: Plug
+packages: ['@better-iam/mcp', '@better-iam/oauth', '@better-iam/server']
+sources:
+  - packages/mcp/src/index.ts
+  - packages/mcp/README.md
+  - packages/oauth/src/resource-server.ts
+  - docs/AGENTS.md
+  - tests/mcp.test.ts
+---
+
+The Model Context Protocol (MCP) is how AI assistants and agents reach tools: an MCP server lists its tools
+(`tools/list`) and runs them (`tools/call`) over JSON-RPC. Once those tools touch customer data, every call needs the
+same answer an API route needs: who is calling, and may they do this to that record? `@better-iam/mcp` answers it per
+tool. Its gate sits in front of any MCP server that speaks the Streamable HTTP transport and:
+
+- authenticates the caller, and answers a request without a credential with `401` and a `WWW-Authenticate` challenge
+  that points at the server's protected resource metadata (RFC 9728), which the gate serves;
+- decides every `tools/call` before it reaches your server, and answers a refusal as an MCP tool error the model can
+  read;
+- removes the tools the caller may not use from `tools/list` answers, in plain JSON and in event streams;
+- asks the person to confirm a call when an [AI agent acting for them](/docs/features/ai-agents) reaches an action
+  their delegation holds back.
+
+Use it when an MCP server should serve more than one kind of caller (people, service accounts, AI agents with their
+own keys, and agents acting for a person) and when different callers may use different tools. If the server only
+needs to accept OAuth access tokens with a fixed scope, `createResourceGuard` from `@better-iam/oauth` is enough; see
+[Dynamic registration and MCP](/docs/federation/mcp-authorization).
+
+## Who can call
+
+The gate accepts two kinds of credential and decides them differently:
+
+| Caller | How it authenticates | How a tool call is decided |
+| --- | --- | --- |
+| A person's session | `Authorization: Bearer <session token>` | Policy engine: the tool's `action` on its `resource`, in `tenantId` |
+| A service account or AI agent API key | `Authorization: Bearer biam_key_…` or `x-api-key` | Policy engine, as above |
+| An agent acting for a person (delegated session) | `Authorization: Bearer biam_dlg_…` | Policy engine as the person, within the delegation, the agent's ceiling, and the key's limits |
+| An OAuth client (MCP host that signed a person in) | `Authorization: Bearer <access token>` or `DPoP <access token>` | The tool's `scopes`, checked against the token's scopes |
+
+A Bearer value is tried as a Better IAM credential first; when that fails and the gate has an `oauth` verifier, it is
+verified as an OAuth access token. A `DPoP` value goes to the OAuth verifier only.
+
+## Setup
+
+<Steps>
+<Step>
+
+### Install the package
+
+```npm
+npm i @better-iam/mcp
+```
+
+The umbrella package exposes the same code as `better-iam/mcp`, so with `better-iam` installed no extra package is
+needed. Accepting OAuth access tokens also uses `@better-iam/oauth` (`better-iam/oauth`).
+
+</Step>
+<Step>
+
+### Declare the actions your tools need
+
+Tool rules name ordinary Better IAM actions and resources, so declare them in the
+[permission catalog](/docs/authorization/catalog): an action missing from the catalog is always refused, and policies
+may name only declared resource types. A tool without a `resource` is decided on
+`{ type: 'mcp-tool', id: <tool name> }`, so declare that type too when you use the default.
+
+```ts title="iam.ts"
+import { betterIam } from 'better-iam';
+import { sqliteAdapter } from 'better-iam/adapter-sqlite';
+
+export const iam = betterIam({
+  database: sqliteAdapter({ filename: './iam.db' }),
+  secret: process.env.BETTER_IAM_SECRET!,
+  baseURL: 'https://iam.example.com',
+  permissions: {
+    resourceTypes: {
+      ticket: { actions: ['tickets:read', 'tickets:update'] },
+      'mcp-tool': { actions: ['mcp:call'] },
+    },
+  },
+});
+```
+
+Both are application resource types, so the instance also needs a `resolveResource` callback that loads each
+resource's tenant from your storage (see [Application-owned types](/docs/authorization/catalog#application-owned-types)),
+including `mcp-tool/<name>`, which it can answer with the gate's `tenantId`. Without one, every tool decision fails
+with `RESOURCE_RESOLVER_REQUIRED`, and the gate lets that error propagate.
+
+</Step>
+<Step>
+
+### Create the gate
+
+`tenantId` is required: it is the organization that runs this MCP server, and every decision is made there. Deciding
+in each caller's own tenant would let any organization write itself a policy that opens your tools.
+
+```ts title="mcp/gate.ts"
+import { createMcpGate } from 'better-iam/mcp';
+import { iam } from '../iam';
+
+export const gate = createMcpGate({
+  iam,
+  tenantId: process.env.MCP_TENANT_ID!,
+  tools: {
+    search_tickets: { action: 'tickets:read', resource: { type: 'ticket', id: 'index' } },
+    close_ticket: {
+      action: 'tickets:update',
+      resource: (args) => ({ type: 'ticket', id: String(args.id) }),
+      listAs: { type: 'ticket', id: 'any' },
+    },
+    run_report: { action: 'mcp:call' }, // decided on mcp-tool/run_report
+    ping: { public: true },
+  },
+  unlisted: 'deny', // tools without a rule are hidden and refused (the default)
+});
+```
+
+</Step>
+<Step>
+
+### Put it in front of the MCP endpoint
+
+The gate is a function `gate(request, next)`. It answers the request itself (metadata, challenges, refusals) or
+calls `next(request, caller)`, your MCP server's Streamable HTTP handler, with the authenticated caller. Route every
+method of the MCP endpoint through it: Streamable HTTP uses `POST` for messages, `GET` for the server's event stream,
+and `DELETE` to end a session.
+
+```ts title="mcp/server.ts"
+import { Hono } from 'hono';
+import type { McpCaller } from 'better-iam/mcp';
+import { gate } from './gate';
+
+// Your MCP server's Streamable HTTP handler: a Fetch Request in, a Response (JSON or an event stream) out.
+declare function handleMcp(request: Request, caller: McpCaller): Promise<Response>;
+
+const app = new Hono();
+app.all('/mcp', (c) => gate(c.req.raw, handleMcp));
+
+export default app;
+```
+
+The gate reads the JSON-RPC body once and forwards a new `Request` with exactly the JSON it decided on, so the server
+and the gate can never parse different messages from the same bytes.
+
+</Step>
+</Steps>
+
+## Usage
+
+### Decide a tool on a fixed resource
+
+A rule with `action` and a fixed `resource` is one policy decision, the same for every call of the tool. The caller
+needs `action` on `resource` in `tenantId`, through any role, group, or policy.
+
+```ts title="mcp/gate.ts"
+import { createMcpGate } from 'better-iam/mcp';
+import { iam } from '../iam';
+
+export const gate = createMcpGate({
+  iam,
+  tenantId: process.env.MCP_TENANT_ID!,
+  tools: {
+    search_tickets: { action: 'tickets:read', resource: { type: 'ticket', id: 'index' } },
+  },
+});
+```
+
+A rule with `action` and no `resource` is decided on `{ type: toolResourceType, id: toolName }`, `mcp-tool/<name>` by
+default, so one policy can open a set of tools by name pattern:
+
+```json title="Analysts may run every reporting tool"
+{
+  "version": 1,
+  "statements": [
+    { "effect": "allow", "actions": ["mcp:call"], "resources": ["mcp-tool/report_*"] }
+  ]
+}
+```
+
+### Decide a tool on the record it touches
+
+Pass a function as `resource` to decide on the record named in the call's arguments. The function receives
+`params.arguments` of the `tools/call` request (an empty object when there are none). If it throws, the call is
+refused as `ACCESS_DENIED`.
+
+```ts title="mcp/gate.ts"
+import { createMcpGate } from 'better-iam/mcp';
+import { iam } from '../iam';
+
+export const gate = createMcpGate({
+  iam,
+  tenantId: process.env.MCP_TENANT_ID!,
+  tools: {
+    close_ticket: {
+      action: 'tickets:update',
+      resource: (args) => {
+        if (typeof args.id !== 'string') throw new Error('id is required');
+        return { type: 'ticket', id: args.id };
+      },
+      listAs: { type: 'ticket', id: 'any' },
+    },
+  },
+});
+```
+
+A `tools/list` request carries no arguments, so the gate cannot evaluate the function there. With `listAs`, the tool
+is listed when the caller is allowed `action` on that resource; without `listAs`, the tool is always listed and every
+call is still decided on its own record.
+
+### Accept OAuth access tokens
+
+MCP hosts such as desktop assistants sign a person in with OAuth and then call the server with an access token. Pass
+the access-token verifier of `@better-iam/oauth` as `oauth`, give each tool the `scopes` a token needs, and add
+`metadata` so a host that receives a `401` can discover your authorization server.
+
+```ts title="mcp/gate.ts"
+import { createMcpGate } from 'better-iam/mcp';
+import { createAccessTokenVerifier } from 'better-iam/oauth';
+import { iam } from '../iam';
+
+const tenantId = process.env.MCP_TENANT_ID!;
+
+export const gate = createMcpGate({
+  iam,
+  tenantId,
+  tools: {
+    search_tickets: {
+      action: 'tickets:read',
+      resource: { type: 'ticket', id: 'index' },
+      scopes: ['tickets.read'],
+    },
+    close_ticket: {
+      action: 'tickets:update',
+      resource: (args) => ({ type: 'ticket', id: String(args.id) }),
+      listAs: { type: 'ticket', id: 'any' },
+      scopes: ['tickets.write'],
+    },
+  },
+  oauth: createAccessTokenVerifier({
+    issuer: 'https://iam.example.com/oidc',
+    audience: 'https://mcp.example.com/mcp',
+    tenantId,
+  }),
+  metadata: {
+    resource: 'https://mcp.example.com/mcp',
+    authorizationServers: ['https://iam.example.com/oidc'],
+    scopes: ['tickets.read', 'tickets.write'],
+    resourceName: 'Acme tickets',
+  },
+});
+```
+
+With `metadata`, the gate serves the RFC 9728 document at the URL `protectedResourceMetadataUrl(resource)` returns
+(`https://mcp.example.com/.well-known/oauth-protected-resource/mcp` above), readable from any origin and cached for an
+hour, and every `401` names it in `resource_metadata`. Route that path through the gate as well:
+
+```ts title="mcp/server.ts"
+import { Hono } from 'hono';
+import type { McpCaller } from 'better-iam/mcp';
+import { gate } from './gate';
+
+declare function handleMcp(request: Request, caller: McpCaller): Promise<Response>;
+
+const app = new Hono();
+app.all('/mcp', (c) => gate(c.req.raw, handleMcp));
+app.all('/.well-known/oauth-protected-resource/mcp', (c) => gate(c.req.raw, handleMcp));
+
+export default app;
+```
+
+OAuth callers are decided only by `scopes`. A tool without `scopes` is refused to them (`NO_RULE_FOR_CALLER`) unless
+it is `public`, and a tool without `action` is refused to Better IAM credentials the same way. When `tenantId` is a
+fixed string, a token issued for another tenant is refused. Issuing the tokens (the OAuth provider, dynamic client
+registration, consent) is covered in [Dynamic registration and MCP](/docs/federation/mcp-authorization).
+
+### Let agents call tools for a person
+
+An [AI agent](/docs/features/ai-agents) that a person delegated to opens a short delegated session and calls the MCP
+server with it. The gate decides as the person, inside every ceiling of the delegation, so the agent never uses a tool
+the person could not.
+
+```ts title="agent/call-tool.ts"
+import { iam } from '../iam';
+
+const tenantId = process.env.TENANT_ID!;
+
+const { token } = await iam.api.delegations.assume(
+  { token: process.env.AGENT_KEY! },
+  { tenantId, delegationId: process.env.DELEGATION_ID!, durationSeconds: 600 },
+);
+
+const response = await fetch('https://mcp.example.com/mcp', {
+  method: 'POST',
+  headers: {
+    authorization: `Bearer ${token}`,
+    'content-type': 'application/json',
+    accept: 'application/json, text/event-stream',
+  },
+  body: JSON.stringify({
+    jsonrpc: '2.0',
+    id: 1,
+    method: 'tools/call',
+    params: { name: 'close_ticket', arguments: { id: 'T-1' } },
+  }),
+});
+```
+
+**Route:** `POST /delegations/assume`
+
+### Hold sensitive tools for the person's confirmation
+
+When a delegation lists an action in `confirm`, a delegated session is refused that action until the person approves
+it for that exact resource. The gate handles this for the agent: on such a refusal it reads the delegation
+(`delegations.get`), files the confirmation request on the agent's behalf (`delegations.requestConfirmation`), and
+answers the `tools/call` with a tool error telling the model to call again once the person approves. Agents built on
+any MCP client get the human-in-the-loop flow without extra code.
+
+```json title="tools/call answer while the person decides"
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "content": [
+      {
+        "type": "text",
+        "text": "The person you act for must confirm this call first. A confirmation request was sent to them (it expires at 2026-11-07T12:30:00.000Z). Call close_ticket again once they approve it."
+      }
+    ],
+    "isError": true,
+    "_meta": {
+      "better-iam/confirmationId": "<confirmation id>",
+      "better-iam/confirmationExpiresAt": 1794054600000
+    }
+  }
+}
+```
+
+Word the request the person sees with `confirmationReason(tool, args)`; the default is "Your agent wants to run the
+tool \{tool\} (\{action\} on \{type\}/\{id\})." Set `confirmations: false` to refuse such calls without asking. The
+person answers with `delegations.decideConfirmation`; see
+[Confirming sensitive actions one at a time](/docs/features/ai-agents#confirming-sensitive-actions-one-at-a-time).
+
+**Route:** `POST /delegations/requestConfirmation` (filed by the gate), `POST /delegations/decideConfirmation` (the
+person's answer)
+
+### Know who called inside a tool
+
+`next` receives the caller as its second argument, so a tool can record or filter by it:
+
+```ts title="mcp/handler.ts"
+import type { McpCaller } from 'better-iam/mcp';
+
+export function describeCaller(caller: McpCaller): string {
+  if (caller.kind === 'oauth') return `OAuth client ${caller.clientId} for ${caller.subject ?? 'no subject'}`;
+  if (caller.sessionKind === 'delegated')
+    return `Agent ${caller.agentId} acting for ${caller.identityId} (delegation ${caller.delegationId})`;
+  return `${caller.identityKind} ${caller.identityId}`;
+}
+```
+
+| Field (`kind: 'iam'`) | Meaning |
+| --- | --- |
+| `credential` | The credential the caller presented, for further calls as them (`iam.authorize({ ...caller.credential, ... })`). |
+| `tenantId` | The tenant decisions were made in. |
+| `identityId`, `identityKind` | The identity behind the credential: in a delegated session, the person. |
+| `sessionKind` | The session kind, such as `api-key` or `delegated`. |
+| `agentId` | The agent: its own key, or the agent of a delegated session. Absent when no agent is involved. |
+| `delegationId` | The delegation of a delegated session. |
+
+| Field (`kind: 'oauth'`) | Meaning |
+| --- | --- |
+| `clientId` | The OAuth client that holds the token. |
+| `subject` | The person the token was issued for, when there is one. |
+| `tenantId` | The tenant named in the token, when there is one. |
+| `scopes` | The token's scopes. |
+
+### Use the decisions without the gate
+
+When your tool handlers are written directly against an MCP SDK and you would rather authorize inside them,
+`createMcpAuthorizer` takes the same options (without `metadata` and `maxBodyBytes`) and returns the gate's decisions:
+
+```ts title="mcp/authorizer.ts"
+import { createMcpAuthorizer } from 'better-iam/mcp';
+import { iam } from '../iam';
+
+const authorizer = createMcpAuthorizer({
+  iam,
+  tenantId: process.env.MCP_TENANT_ID!,
+  tools: {
+    close_ticket: {
+      action: 'tickets:update',
+      resource: (args) => ({ type: 'ticket', id: String(args.id) }),
+    },
+  },
+});
+
+export async function guardToolCall(request: Request, name: string, args: Record<string, unknown>) {
+  const caller = await authorizer.authenticate(request); // undefined: no valid credential
+  if (!caller) return { allowed: false, reason: 'UNAUTHENTICATED' };
+  return authorizer.canCall(caller, name, args); // { allowed, reason, confirmation? }
+}
+```
+
+| Method | Returns |
+| --- | --- |
+| `authenticate(request)` | The `McpCaller`, or `undefined` when the request carries no valid credential. |
+| `canCall(caller, name, args?)` | `{ allowed, reason }`, plus `confirmation: { id, expiresAt }` when a confirmation was requested. |
+| `visibleTools(caller, tools)` | The tools the caller may see, in their original order, checked with `authorizeMany` 50 at a time. |
+
+## How the gate answers
+
+| Request | Answer |
+| --- | --- |
+| `GET` or `OPTIONS` on the metadata URL (with `metadata`) | The RFC 9728 document, or the CORS preflight. |
+| No `Authorization` or `x-api-key` header | `401` with `WWW-Authenticate: Bearer resource_metadata="…"` (when `metadata` is set) and no error code. |
+| A credential that does not verify | `401` with `error="invalid_token"`. |
+| `GET` or `DELETE` with a valid credential | Passed to `next` (authenticated only). |
+| A body larger than `maxBodyBytes` | `413`. |
+| A body that is not JSON | `400`, JSON-RPC error `-32700`. |
+| A JSON-RPC batch containing `tools/call` or `tools/list` | `400`, JSON-RPC error `-32600`. Batches without tool traffic pass. |
+| `tools/call` whose `params.name` is not a string | `400`, JSON-RPC error `-32602`. |
+| `tools/call` the caller may not make | `200` with an MCP tool result, `isError: true`, and a text naming the refusal. |
+| `tools/call` the caller may make | Passed to `next`. |
+| `tools/list` | Passed to `next`; the answer's `tools` are filtered for the caller. |
+| Any other JSON-RPC method | Passed to `next`. |
+
+Decisions for Better IAM credentials are recorded by the IAM server like any other decision, so refused tool calls
+appear in the audit log as denials of the tool's action.
+
+### Decision reasons
+
+| `reason` | Meaning |
+| --- | --- |
+| `ALLOWED` | The policy engine allowed `action` on the resource, or the token holds every scope. |
+| `PUBLIC` | The rule is `public: true`; any authenticated caller may use the tool. |
+| `ACCESS_DENIED` | The policy engine refused, or the `resource` function threw. |
+| `UNKNOWN_TOOL` | No rule for the tool and `unlisted` is `deny`. |
+| `NO_RULE_FOR_CALLER` | The rule has no `scopes` for an OAuth caller, or no `action` for a Better IAM credential. |
+| `INSUFFICIENT_SCOPE` | The OAuth token lacks one of the rule's `scopes`. |
+| `CONFIRMATION_REQUESTED` | An agent acting for a person needs the person's confirmation; a request was filed. |
+
+## Options
+
+`createMcpGate(options)` and `createMcpAuthorizer(options)` accept:
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `iam` | `McpIam` | required | The `betterIam()` instance (or a client with `authenticate`, `authorize`, and `authorizeMany`). Confirmations also need `iam.api.delegations`. |
+| `tenantId` | `string \| ((caller: { identityId, sessionTenantId }) => string \| undefined)` | required | The organization decisions are made in. A function picks it per caller; `undefined` refuses the caller. |
+| `tools` | `Record<string, McpToolRule>` | required | Rules by tool name. |
+| `unlisted` | `'deny' \| 'allow'` | `'deny'` | Tools without a rule: hidden and refused, or open to any authenticated caller. |
+| `toolResourceType` | `string` | `'mcp-tool'` | The resource type of the default per-tool resource. |
+| `oauth` | `McpOAuthVerifier` | none | An access-token verifier (`createAccessTokenVerifier`, or a resource guard's `verifier`). Without it, only Better IAM credentials are accepted. |
+| `confirmations` | `boolean` | on when `iam.api.delegations` exists | File a confirmation request when a delegated agent reaches an action its delegation holds back. |
+| `confirmationReason` | `(tool: string, args: Record<string, unknown>) => string` | which tool, action, and resource | The reason shown to the person. |
+| `metadata` | `McpResourceMetadata` | none | Gate only. Serve RFC 9728 metadata and name it in `401` challenges. |
+| `maxBodyBytes` | `number` | `4194304` (4 MiB) | Gate only. The largest JSON-RPC body accepted. |
+
+Each tool rule (`McpToolRule`):
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `action` | `string` | The Better IAM action a call needs (Better IAM credentials). |
+| `resource` | `{ type, id } \| ((args) => { type, id })` | The resource the call acts on. Default: `{ type: toolResourceType, id: toolName }`. |
+| `listAs` | `{ type, id }` | For a function `resource`: the resource that decides whether the tool appears in `tools/list`. |
+| `scopes` | `string[]` | Scopes an OAuth access token needs (OAuth callers). |
+| `public` | `boolean` | Any authenticated caller may use the tool. |
+
+`metadata` (`McpResourceMetadata`):
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `resource` | `string` | The MCP endpoint's canonical URL, also the audience of OAuth tokens for it. Required. |
+| `authorizationServers` | `string[]` | Issuer URLs of the authorization servers that issue tokens for it. Required. |
+| `scopes` | `string[]` | Published as `scopes_supported`. |
+| `resourceName` | `string` | Published as `resource_name`. |
+| `documentation` | `string` | Published as `resource_documentation`. |
+
+## Schema
+
+The gate stores nothing. Confirmation requests it files on an agent's behalf are stored by the server in
+`delegationConfirmations`, like those an agent files itself; see [AI agents](/docs/features/ai-agents#schema).
+
+## Errors
+
+The gate answers callers with HTTP statuses, JSON-RPC errors, and MCP tool errors (listed under
+[How the gate answers](#how-the-gate-answers)), never with an `IamError` body. Refused calls are not errors: the
+decision's `reason` (see [Decision reasons](#decision-reasons)) becomes a tool error with `isError: true`.
+
+| Code | Where | Effect |
+| --- | --- | --- |
+| [`UNAUTHENTICATED`](/docs/reference/errors#unauthenticated) | Thrown while deciding a `tools/call`, for example when the session ended after it was authenticated | Answered as `401` with `error="invalid_token"`. |
+
+Any other error thrown while deciding a call propagates out of `gate()`, so let your framework turn it into a `500`.
+If filing a confirmation request fails, the call is refused as `ACCESS_DENIED` instead.
+
+## Next steps
+
+<Cards>
+  <Card title="Secure an MCP server" href="/docs/guides/secure-an-mcp-server">
+    A step-by-step guide from an unprotected MCP server to per-tool authorization.
+  </Card>
+  <Card title="AI agents" href="/docs/features/ai-agents">
+    Agents with sponsors, ceilings, delegated sessions, and confirmations.
+  </Card>
+  <Card title="Dynamic registration and MCP" href="/docs/federation/mcp-authorization">
+    Let MCP hosts register with your OAuth provider and obtain access tokens.
+  </Card>
+  <Card title="Agent-to-agent (A2A)" href="/docs/features/a2a">
+    The same kind of gate for Agent2Agent servers, plus attested agent cards.
+  </Card>
+</Cards>

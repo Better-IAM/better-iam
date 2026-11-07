@@ -53,7 +53,7 @@ export async function Pipeline() {
         </SectionHeading>
         <div className="flex flex-col gap-5 lg:col-span-5 lg:col-start-8 lg:pt-10">
           <Points points={points} />
-          <TextLink href="/docs/guides/concepts" trailingIcon={RiArrowRightLine}>
+          <TextLink href="/docs/concepts" trailingIcon={RiArrowRightLine}>
             Read the architecture overview
           </TextLink>
         </div>

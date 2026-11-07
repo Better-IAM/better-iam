@@ -10,8 +10,8 @@ Webhooks push a tenant's audit events to an HTTPS endpoint you run, signed so th
 Better IAM. Every change, sign-in, and denial already produces an audit event; a subscription picks the ones you care
 about by event name, outcome, and resource, and delivers them through the transactional outbox with retries. Use them
 to feed a SIEM, alert on privilege elevation (`binding:*`), or keep another system in sync without polling
-[`audit.list`](/docs/reference/api/audit#list). The [webhooks guide](/docs/guides/events/webhooks) walks through a
-full setup, and [lifecycle events](/docs/guides/events/lifecycle-events) lists the event names beyond `iam:*`.
+[`audit.list`](/docs/reference/api/audit#list). The [webhooks guide](/docs/concepts/events/webhooks) walks through a
+full setup, and [lifecycle events](/docs/concepts/events/lifecycle-events) lists the event names beyond `iam:*`.
 
 ## Delivery and signing
 
@@ -24,7 +24,7 @@ HMAC-SHA256 of `${timestamp}.${body}` under the subscription's secret).
 
 The body carries `id` (the audit event id), `type`, `tenantId`, `actorId`, `resourceId`, `outcome`, and `timestamp`,
 plus optional fields such as `metadata`, `impersonatorId`, and the event's `sequence` and `hash` in the
-[audit chain](/docs/guides/events/audit-chain). It never contains tokens, secrets, or passwords. Verify every request
+[audit chain](/docs/concepts/events/audit-chain). It never contains tokens, secrets, or passwords. Verify every request
 before trusting it:
 
 ```ts

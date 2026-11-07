@@ -1,0 +1,241 @@
+---
+title: Storage operations
+description: Move a Better IAM deployment between databases with JSON Lines snapshots or store-copy, and check storage, schema, durability, and scheduled jobs with doctor.
+icon: HardDrive
+packages: ['@better-iam/adapter-postgres', '@better-iam/adapter-sqlite', '@better-iam/adapter-libsql', '@better-iam/core', '@better-iam/cli']
+sources: ['docs/deployment.md', 'docs/extensions.md', 'docs/recipes.md', 'packages/adapter-postgres/src/index.ts', 'packages/adapter-sqlite/src/index.ts', 'packages/adapter-libsql/src/index.ts', 'packages/core/src/snapshot.ts', 'packages/server/src/self-check.ts', 'packages/cli/src/index.ts', 'packages/cli/src/commands/storage.ts', 'packages/cli/src/commands/setup.ts']
+---
+
+Once a database is connected and migrated, two jobs remain for the people who run it: moving the data when the
+deployment outgrows its database, and noticing silent problems before they cause an outage. This page covers both.
+Snapshots and `store-copy` move a whole deployment between databases and adapters, for example from SQLite to
+PostgreSQL. `doctor` checks the database, schema, secrets, transports, and scheduled jobs in one read-only pass.
+
+Because all three <Term id="adapter">storage adapters</Term> share the `RecordStore` base and the same schema, a
+deployment can move between them at any time without changing application code:
+
+| Adapter | Use it for | Driver (bundled) | Settings |
+| --- | --- | --- | --- |
+| PostgreSQL | Production deployments with sustained concurrent writes or large datasets; several application instances. | `pg` | [`connectionString`, `poolSize`, `lockTimeoutMs`](/docs/databases/postgresql#options) |
+| SQLite | Single-host deployments, development, and tests. | `better-sqlite3` (native) | [`filename`, `busyTimeoutMs`, `journalMode`, `durability`](/docs/databases/sqlite#options) |
+| libSQL | Local files, encrypted files, embedded replicas, and remote Turso or sqld databases. | `@libsql/client` | [`url`, `authToken`, `encryptionKey`, `syncUrl`, `syncInterval`, `busyTimeoutMs`](/docs/databases/libsql#options) |
+
+Every adapter is available from the umbrella package (`better-iam/adapter-postgres`, `better-iam/adapter-sqlite`,
+`better-iam/adapter-libsql`) and as its own package (`@better-iam/adapter-postgres`, `@better-iam/adapter-sqlite`,
+`@better-iam/adapter-libsql`). Durability, indexes, and upgrade windows are covered in
+[Database operations](/docs/operations/deployment/database). To write your own adapter, see
+[Adapters and plugins](/docs/concepts/extensions#adapter-contract).
+
+## Snapshots and moving between databases
+
+Deployments often start on SQLite and outgrow it, or need a portable backup that does not depend on one database's
+tooling. `store-export`, `store-import`, and `store-copy` move a whole deployment between databases and adapters,
+for example from SQLite to PostgreSQL. They are deployment operations that work on storage directly and need no
+credential.
+
+<Tabs items={['Copy directly', 'Through a file']}>
+<Tab value="Copy directly">
+
+```sh
+better-iam store-copy --config better-iam.config.mjs --target-config target.config.mjs
+better-iam migrate --config target.config.mjs
+```
+
+`store-copy` copies the configured database into the empty database of `--target-config` (which must be a
+different configuration file) in one step: one read transaction on the source and one write transaction on the
+target, so the copy is consistent and all-or-nothing.
+
+</Tab>
+<Tab value="Through a file">
+
+```sh
+better-iam store-export --config better-iam.config.mjs --output snapshot.jsonl
+better-iam store-import --config target.config.mjs --input snapshot.jsonl
+better-iam migrate --config target.config.mjs
+```
+
+`store-export` writes every record to a new file (it never overwrites one, and creates it readable only by its
+owner): a header line, one line per record, and a trailer with counts. `store-import` migrates the schema of the
+configured database, which must hold no records yet, and loads the snapshot in one transaction.
+
+</Tab>
+</Tabs>
+
+- **Consistency.** The export reads in one transaction, so the snapshot is consistent, but that also holds the
+  write lock until it finishes. Schedule large exports accordingly.
+- **All or nothing.** A truncated or corrupt snapshot, a count that disagrees with the trailer, or a record the
+  database refuses rolls the whole import back.
+- **Verbatim records.** Password hashes, sessions, encrypted secrets, and audit chains stay valid as long as the
+  target configuration uses the same `secret`.
+- **After loading,** run `migrate` with the target configuration to apply plugin migrations. On PostgreSQL, follow
+  a bulk import with `VACUUM ANALYZE iam_records`.
+
+<Callout type="warn" title="Protect snapshots like the database">
+A snapshot holds credential hashes and encrypted secrets. Store and transfer it with the same care as the database
+and its secret.
+</Callout>
+
+### Snapshots in code
+
+The same operations are available in code as `exportStore`, `importStore`, and `copyStore` from
+`better-iam/core`. Each returns a summary `{ records, collections: { [name]: count } }`. Migrate the target's
+schema with `store.migrate()` first; `initialize()` would write records, and the target must be empty.
+
+```ts title="scripts/copy-to-postgres.ts"
+import { copyStore } from 'better-iam/core';
+import { postgresAdapter } from 'better-iam/adapter-postgres';
+import { sqliteAdapter } from 'better-iam/adapter-sqlite';
+
+const source = sqliteAdapter({ filename: './iam.db' });
+const target = postgresAdapter({ connectionString: process.env.DATABASE_URL! });
+try {
+  await target.migrate();
+  const summary = await copyStore(source, target);
+  console.log(summary.records, summary.collections);
+} finally {
+  await source.close();
+  await target.close();
+}
+```
+
+`exportStore(store, write, options?)` calls `write` once per line, without newlines. `importStore(store, lines)`
+accepts any iterable or async iterable of lines, such as a `readline` interface:
+
+```ts title="scripts/snapshot.ts"
+import { createReadStream, createWriteStream } from 'node:fs';
+import { createInterface } from 'node:readline';
+import { exportStore, importStore } from 'better-iam/core';
+import { sqliteAdapter } from 'better-iam/adapter-sqlite';
+
+const source = sqliteAdapter({ filename: './iam.db' });
+const file = createWriteStream('snapshot.jsonl', { flags: 'wx', mode: 0o600 });
+await exportStore(source, (line) => {
+  file.write(`${line}\n`);
+});
+await new Promise((resolve) => file.end(resolve));
+await source.close();
+
+const target = sqliteAdapter({ filename: './restored.db' });
+await target.migrate();
+await importStore(target, createInterface({ input: createReadStream('snapshot.jsonl') }));
+await target.close();
+```
+
+| Option (`exportStore`, `copyStore`) | Type | Default | Description |
+| --- | --- | --- | --- |
+| `collections` | `string[]` | every collection the store lists | Collections to include. Required for a custom store without `collections()`, which otherwise fails with `UNSUPPORTED`. |
+| `pageSize` | `number` | `1000` | Records read per query, 1 to 100000. Pages follow an id cursor, so deep pages cost the same as early ones. |
+
+### Snapshot format
+
+A snapshot is JSON Lines, independent of the adapter (`SNAPSHOT_FORMAT` is `better-iam-store`, version `1`):
+
+```json
+{"format":"better-iam-store","version":1,"createdAt":"2026-11-07T10:00:00.000Z","collections":["identities","tenants"]}
+{"c":"identities","r":{"id":"usr_…","tenantId":"3f2c9a4e-…","email":"root@example.com"}}
+{"c":"tenants","r":{"id":"3f2c9a4e-…","tenantId":"3f2c9a4e-…","type":"root","status":"active"}}
+{"end":true,"records":2,"collections":{"identities":1,"tenants":1}}
+```
+
+The header names the collections, each record line holds its collection (`c`) and record (`r`), and the trailer
+holds the counts. An import without a trailer fails with `SNAPSHOT_TRUNCATED`, and so does one whose counts do not
+match, before anything is committed. The target must hold no records (`STORE_NOT_EMPTY`), and copying a SQLite or
+libSQL database onto itself fails with `SAME_DATABASE`.
+
+## Doctor
+
+Many deployment mistakes are silent: a schema one migration behind, a placeholder secret, a scheduler that stopped
+weeks ago. `doctor` looks for them in one read-only pass, so you can run it after every deploy and on a schedule.
+`better-iam doctor` connects to the configured database and prints a JSON report with:
+
+- the Node version, whether the root is initialized, and the number of chained tenants and audit events;
+- the adapter's own view under `storage` (`IamStore.describe()`): schema version, applied migrations with their
+  times, record counts per collection, and settings such as SQLite's journal mode, synchronous level, and file
+  size, or PostgreSQL's server version and `synchronous_commit`;
+- `findings` from `iam.selfCheck()`, the same check your application can run in code.
+
+```sh
+better-iam doctor --config better-iam.config.mjs --strict --retention-days 30
+```
+
+- `doctor` exits 0 whenever it can connect, including to a database without the IAM schema. `--strict` exits
+  non-zero (`DOCTOR_FINDINGS`) on any error or warning, for example as a deployment gate.
+- Pass the `--retention-days` your sweep uses (default 30), or `deliveryRetentionMs` and `graceMs` to `selfCheck`,
+  so the backlog is judged the same way the sweep would.
+- The checks only read. `selfCheck({ cap })` bounds how many records each backlog check counts (default 1000).
+- Each finding has a stable `check` name, a `severity`, a `message`, and a `fix`. `ok` is false when any finding
+  is an error.
+
+| Check | Severity | What it means |
+| --- | --- | --- |
+| `schema-behind` | error | The database lacks a migration of this release. Run `migrate`. |
+| `not-bootstrapped` | error | No root tenant exists yet. |
+| `sqlite-durability` | error | SQLite runs a rollback journal at `durability: 'normal'`, which a power failure can corrupt. |
+| `unreadable-secrets` | error | Stored values open with no configured secret. See [Secrets and keys](/docs/operations/deployment/secrets). |
+| `in-memory-database` | warning | Everything is lost when the process exits. |
+| `postgres-async-commit` | warning | PostgreSQL runs with `synchronous_commit = off`. |
+| `weak-secret` | warning | The secret looks like a placeholder or has little variety. |
+| `weak-metrics-token` | warning | The metrics bearer token is shorter than 24 characters. |
+| `no-email-transport` | warning | No `sendEmail` transport is configured. |
+| `secret-rotation-pending`, `secret-rotation-unverified` | warning | A secret rotation is not finished. |
+| `sweep-backlog` | warning | Records have been due for the retention sweep for more than two days. |
+| `purge-not-running` | warning | Expired bindings, memberships, or challenges are more than a day old. |
+| `outbox-stalled` | warning | Outbox messages have waited more than 15 minutes. |
+| `outbox-abandoned` | warning | Messages were abandoned in the last day after repeated failures. |
+| `audit-hooks-stalled` | warning | Audit events have waited more than 15 minutes for plugins, subscribers, or `onEvent`. Dispatch them in the process that registers subscribers. |
+| `audit-archive-behind` | warning | A tenant has unarchived audit events older than a day. |
+| `previous-secrets-configured` | info | `previousSecrets` can be removed. |
+| `storage-undescribed` | info | The adapter cannot describe itself, so migrations were not checked. |
+
+The job-related warnings are the fastest way to notice a scheduler that stopped; see
+[Scheduled jobs](/docs/operations/jobs).
+
+### Doctor in code
+
+`iam.selfCheck()` runs the same checks inside your application, for example behind a health endpoint that only
+operators can reach. It returns `{ ok, findings, storage }`:
+
+```ts title="scripts/health.ts"
+import { iam } from '../iam';
+
+const check = await iam.selfCheck({ deliveryRetentionMs: 30 * 86_400_000 });
+for (const finding of check.findings)
+  console.log(`${finding.severity} ${finding.check}: ${finding.message} (fix: ${finding.fix})`);
+if (!check.ok) process.exitCode = 1;
+await iam.store.close();
+```
+
+Print only part of the CLI report with `--query`, for example the failing checks in a CI log:
+
+```bash
+npx better-iam doctor --config better-iam.config.mjs --query 'findings[].check'
+```
+
+## Errors
+
+| Code | When |
+| --- | --- |
+| [`STORE_NOT_EMPTY`](/docs/reference/errors#store_not_empty) | `store-import`, `store-copy`, `importStore`, or `copyStore` found records in the target. Use an empty, migrated database. |
+| [`SNAPSHOT_INVALID`](/docs/reference/errors#snapshot_invalid) | A line is not JSON or not a record entry, the header is not a `better-iam-store` version 1 snapshot, or content follows the trailer. |
+| [`SNAPSHOT_TRUNCATED`](/docs/reference/errors#snapshot_truncated) | The snapshot has no trailer, or its record counts do not match the trailer. Nothing was imported. |
+| [`SAME_DATABASE`](/docs/reference/errors#same_database) | The source and target of a copy are the same SQLite or libSQL database. |
+| [`UNSUPPORTED`](/docs/reference/errors#unsupported) | A custom store cannot list its collections; pass `collections` explicitly. |
+| [`CONFLICT`](/docs/reference/errors#conflict) | A snapshot record duplicates an id or natural key; the import rolls back. |
+| [`DOCTOR_FINDINGS`](/docs/reference/errors#doctor_findings) | `doctor --strict` found an error or warning. |
+
+## Next steps
+
+<Cards>
+  <Card title="Migrations" href="/docs/databases/migrations">
+    Schema steps, the iam_migrations ledger, and running migrate in CI.
+  </Card>
+  <Card title="Database operations" href="/docs/operations/deployment/database">
+    Migrations, durability, indexes, and backups.
+  </Card>
+  <Card title="Adapters and plugins" href="/docs/concepts/extensions#adapter-contract">
+    Write an adapter for another database and prove it with the conformance suite.
+  </Card>
+  <Card title="Scheduled jobs" href="/docs/operations/jobs">
+    The workers behind the job-related doctor findings.
+  </Card>
+</Cards>

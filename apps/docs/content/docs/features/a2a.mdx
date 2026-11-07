@@ -1,0 +1,634 @@
+---
+title: Agent-to-agent (A2A)
+metaTitle: Agent-to-agent (A2A) cards, discovery, and authorization
+description: Have Better IAM sign your agents' Agent2Agent cards, find and verify other agents before handing them work, and authorize every request to your own A2A server with @better-iam/a2a.
+icon: Network
+packages: ['@better-iam/a2a', '@better-iam/server']
+sources:
+  - packages/a2a/src/cards.ts
+  - packages/a2a/src/gate.ts
+  - packages/a2a/src/delegation-tokens.ts
+  - packages/a2a/README.md
+  - packages/server/src/a2a.ts
+  - packages/server/src/api/agents.ts
+  - docs/AGENTS.md
+---
+
+In the [Agent2Agent protocol](https://a2a-protocol.org) (A2A), agents find each other through an **agent card**: a JSON
+document at `/.well-known/agent-card.json` that names the agent, its skills, and the URL to send it messages. Anyone can
+publish a card that claims anything, so an agent about to hand work to another needs to know two things: is this card
+really from the organization it names, and is there an accountable person behind the agent? Better IAM answers both,
+and protects your own A2A servers:
+
+- **Attested cards.** With the `a2a` server option, Better IAM signs an agent's card (`agents.signCard`) and vouches
+  for it: the organization that runs it, that an active person sponsors it, whether people can delegate to it, its
+  model, and when the attestation expires.
+- **Directory and verification.** `agents.directory` lists the attested cards of an organization's agents.
+  `discoverAgent` and `verifyAgentCard` check another agent's card against the Better IAM deployments you trust.
+- **A gate for A2A servers.** `createA2aGate` authenticates every request, decides each message by the skill it names,
+  keeps each task private to the caller who started it, and asks a person to confirm when an agent acting for them
+  reaches an action they hold back.
+- **Hand-offs over A2A.** `withHandoff` and `handoffOf` carry a [hand-off](/docs/features/ai-agents#handing-work-on-to-other-agents)
+  from one agent to the next in the message metadata, so the called agent acts for the same person.
+
+Agents here are Better IAM identities of kind `agent`, with a sponsor and a ceiling; see
+[AI agents](/docs/features/ai-agents) for registering them and for delegation.
+
+## Setup
+
+<Steps>
+<Step>
+
+### Install the package
+
+```npm
+npm i @better-iam/a2a
+```
+
+The umbrella package exposes the same code as `better-iam/a2a`. Code that only verifies cards or delegation tokens
+(another organization's agent, a partner service) needs just this package, not a Better IAM server.
+
+</Step>
+<Step>
+
+### Create a card-signing key
+
+Cards are signed with keys of their own, never the `sts.jwt` session keys. A key is a private JWK: Ed25519 with
+`alg: 'EdDSA'`, or P-256 with `alg: 'ES256'`, with a `kid` matching `/^[A-Za-z0-9._-]{1,64}$/`. Node can generate
+one:
+
+```bash
+node -e "const { generateKeyPairSync } = require('node:crypto'); const jwk = generateKeyPairSync('ed25519').privateKey.export({ format: 'jwk' }); console.log(JSON.stringify({ ...jwk, kid: 'cards-1', alg: 'EdDSA', use: 'sig' }))"
+```
+
+Store the printed JSON as a secret, for example in `A2A_CARD_KEY`.
+
+</Step>
+<Step>
+
+### Turn on card signing
+
+```ts title="iam.ts"
+import { betterIam } from 'better-iam';
+import { sqliteAdapter } from 'better-iam/adapter-sqlite';
+
+export const iam = betterIam({
+  database: sqliteAdapter({ filename: './iam.db' }),
+  secret: process.env.BETTER_IAM_SECRET!,
+  baseURL: 'https://iam.example.com',
+  a2a: {
+    signingKeys: [JSON.parse(process.env.A2A_CARD_KEY!)],
+    jwksUrl: 'https://iam.example.com/a2a/jwks.json', // carried as jku in every card signature
+    cardLifetimeSeconds: 3600, // 300 to 604800
+  },
+});
+```
+
+Invalid keys or settings fail at construction with `INVALID_CONFIG`.
+
+</Step>
+<Step>
+
+### Publish the public keys
+
+Verifiers fetch the public half of the card keys from `jwksUrl`. `iam.a2a.jwksResponse()` is a ready `GET` response
+(`application/jwk-set+json`, cacheable for five minutes, readable from any origin); `iam.a2a.jwks()` returns the same
+set as an object.
+
+```ts title="app/a2a/jwks.json/route.ts"
+import { iam } from '@/lib/iam';
+
+export const GET = () => iam.a2a.jwksResponse();
+```
+
+</Step>
+<Step>
+
+### Register the agent with its URL
+
+`agents.signCard` signs cards only for an agent with a registered `url`, and every endpoint in the card must be on that
+URL's origin. Register it (or `agents.update` an existing agent) with the URL its A2A server answers on:
+
+```ts title="scripts/register-agent.ts"
+import { iam } from '../iam';
+
+const admin = { token: process.env.ADMIN_TOKEN! };
+const tenantId = process.env.TENANT_ID!;
+
+const agent = await iam.api.agents.create(admin, {
+  tenantId,
+  name: 'Triage',
+  purpose: 'Labels and routes incoming support tickets',
+  sponsorId: process.env.SPONSOR_ID!,
+  url: 'https://triage.example.com',
+  protocols: ['a2a'],
+});
+
+const { token } = await iam.api.credentials.create(admin, {
+  tenantId,
+  identityId: agent.id,
+  name: 'a2a-server',
+});
+console.log(agent.id, token); // store the key as the agent server's AGENT_KEY
+```
+
+**Route:** `POST /agents/create`
+
+Give the agent server an **unscoped** key (no `scopes`): `signCard` refuses the agent's own key when it carries
+scopes.
+
+</Step>
+</Steps>
+
+## Usage
+
+### Sign an agent card
+
+`agents.signCard` checks the card and signs it:
+
+- `url`, every `additionalInterfaces[].url`, and every `supportedInterfaces[].url` must be http(s) URLs on the origin of
+  the agent's registered `url` (at most 16 interfaces per list);
+- `provider` is replaced with `{ organization: <tenant name>, url: <agent origin> }`, whatever the card said;
+- any attestation already in the card is dropped, and Better IAM adds its own extension,
+  `urn:better-iam:a2a:attestation:v1` (exported as `agentAttestationUri`);
+- top-level token claims (`iss`, `sub`, `aud`, `exp`, `act`, `scope`, `tenant_id`, and similar) are refused, so a
+  signed card can never read as a token;
+- the canonical card (RFC 8785, without `signatures`) is signed as a detached JWS with `alg`, `kid`, `typ: 'JOSE'`,
+  and (when `jwksUrl` is set) `jku`, and must be at most 64 KiB.
+
+The agent may sign its own card with its own unscoped API key. Its sponsor (in their own session) and administrators
+with `iam:agents:update` may sign it too. The agent must be in good standing.
+
+```ts title="agent/sign.ts"
+import { iam } from '../iam';
+
+const signed = await iam.api.agents.signCard(
+  { token: process.env.AGENT_KEY! },
+  {
+    tenantId: process.env.TENANT_ID!,
+    agentId: process.env.AGENT_ID!,
+    card: {
+      name: 'Triage',
+      url: 'https://triage.example.com/a2a',
+      skills: [{ id: 'summarize', name: 'Summarize a ticket', tags: ['support'] }],
+    },
+  },
+);
+// signed.card: the card with provider, attestation extension, and signatures
+// signed.attestation: what Better IAM vouches for; signed.expiresAt: epoch milliseconds, re-sign before then
+```
+
+**Route:** `POST /agents/signCard`
+
+The attestation's params (`AgentAttestation`):
+
+| Field | Meaning |
+| --- | --- |
+| `issuer` | The deployment that attested the card: `a2a.issuer`, or the base URL plus `basePath` (`https://iam.example.com/api/iam`). |
+| `tenantId`, `organization` | The organization that runs the agent, by ID and name. |
+| `agentId`, `agentName` | The agent. |
+| `sponsored` | Always `true`: cards are signed only for agents with an active sponsor. |
+| `delegable` | Whether people may delegate to the agent. |
+| `model`, `provider`, `protocols` | From the agent's profile, when set. |
+| `issuedAt`, `expiresAt` | ISO 8601 times. Verifiers refuse the card after `expiresAt`. |
+
+Each signature is audited as `agent:card-sign`, and the signed card becomes the agent's entry in the
+[directory](#find-agents-in-the-directory). Suspending the agent, losing its sponsor, or deleting it stops new
+signatures at once, and cards already signed expire within `cardLifetimeSeconds`.
+
+### Keep a served card signed
+
+`createCardAttestor` returns a function that yields a current signed card: it signs on first use, signs again once
+less than a fifth of the attestation's lifetime is left (`refreshShare`), shares one signing request between
+concurrent calls, and keeps returning the previous card if signing fails while that card is still valid.
+
+```ts title="agent/card.ts"
+import { createCardAttestor } from 'better-iam/a2a';
+import { iam } from '../iam';
+
+export const card = createCardAttestor({
+  card: {
+    name: 'Triage',
+    url: 'https://triage.example.com/a2a',
+    skills: [{ id: 'summarize', name: 'Summarize a ticket', tags: ['support'] }],
+  },
+  sign: (card) =>
+    iam.api.agents.signCard(
+      { token: process.env.AGENT_KEY! },
+      { tenantId: process.env.TENANT_ID!, agentId: process.env.AGENT_ID!, card },
+    ),
+});
+```
+
+Pass `card` to `createA2aGate` (below) and the gate serves it at `/.well-known/agent-card.json`.
+
+### Protect an A2A server
+
+`createA2aGate` sits in front of an A2A server that speaks JSON-RPC over HTTP. Like the [MCP gate](/docs/features/mcp-server),
+it is a function `gate(request, next)` that answers the request itself or calls your handler with the authenticated
+caller.
+
+```ts title="agent/server.ts"
+import { Hono } from 'hono';
+import { createA2aGate, type A2aCaller } from 'better-iam/a2a';
+import { iam } from '../iam';
+import { card } from './card';
+
+// Your A2A server's JSON-RPC handler: a Fetch Request in, a JSON or event-stream Response out.
+declare function handleA2a(request: Request, caller: A2aCaller): Promise<Response>;
+
+const gate = createA2aGate({
+  iam,
+  tenantId: process.env.TENANT_ID!, // the organization that runs this agent; decisions are made there
+  card, // served at /.well-known/agent-card.json without authentication
+  message: { action: 'triage:use', resource: { type: 'agent', id: 'triage' } },
+  skills: {
+    summarize: { action: 'triage:use', scopes: ['triage'] },
+    escalate: { action: 'tickets:escalate', resource: { type: 'queue', id: 'support' } },
+  },
+  taskAdminAction: 'triage:operate',
+});
+
+const app = new Hono();
+app.all('/a2a', (c) => gate(c.req.raw, handleA2a));
+app.all('/.well-known/agent-card.json', (c) => gate(c.req.raw, handleA2a));
+
+export default app;
+```
+
+The rules name ordinary actions and resources, so declare `triage:use`, `tickets:escalate`, and `triage:operate` in
+the [permission catalog](/docs/authorization/catalog) (an undeclared action is always refused), and have your
+`resolveResource` answer for the resources the gate decides on: here `agent/triage`, `queue/support`, and the default
+`a2a-skill/summarize`.
+
+What the gate does with each JSON-RPC method:
+
+| Method | Handling |
+| --- | --- |
+| `message/send`, `message/stream` | Decided by the rule of the skill the message names (`params.message.metadata.skillId`, then `params.metadata.skillId`), or by `message` when it names none. |
+| `tasks/get`, `tasks/cancel`, `tasks/resubscribe`, `tasks/pushNotificationConfig/*` | Only the caller who started the task, or a caller allowed `taskAdminAction`; anyone else gets `-32001` "Task not found". |
+| `agent/getAuthenticatedExtendedCard` | Answered with `extendedCard` (or the server's answer), listing only the skills the caller may use. |
+| Any other method | Refused with `-32601` unless `otherMethods: 'allow'`. |
+
+Tasks and conversations stay private to whoever started them:
+
+- the owner of a task is the same person through the same agent (`iam:{tenantId}:{identityId}:{agentId}`), or the
+  same OAuth client and subject; `taskOwnerOf(caller)` computes it;
+- a message that continues a task (`taskId`) or names earlier tasks (`referenceTaskIds`, at most 100) is refused with
+  `-32001` unless the caller owns them;
+- a message with a `contextId` the server's answers have not yet named for this caller is refused with `-32602`;
+- owners are recorded from the server's answers, in JSON bodies and event streams, before the event reaches the
+  caller.
+
+By default owners live in this process's memory (`memoryTaskOwners()`: up to 100000 entries, each kept seven days), so
+a restart ends access to earlier tasks. Pass a shared `tasks` store when several instances serve the agent:
+
+```ts title="agent/task-owners.ts"
+import type { A2aTaskOwners } from 'better-iam/a2a';
+import { redis } from './redis';
+
+export const tasks: A2aTaskOwners = {
+  get: (key) => redis.get(`a2a-owner:${key}`).then((value) => value ?? undefined),
+  set: async (key, owner) => {
+    await redis.set(`a2a-owner:${key}`, owner, { EX: 7 * 24 * 3600 });
+  },
+};
+```
+
+Here `redis` stands for your own client; the gate needs only `get(key)` and `set(key, owner)`.
+
+### Require a person's confirmation for a skill
+
+When an agent acting for a person sends a message whose rule `action` that person's delegation lists in `confirm`, the
+gate reads the delegation, files a confirmation request on the agent's behalf, and answers JSON-RPC error `-32051`
+(`A2A_CONFIRMATION_REQUESTED`, HTTP 403):
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 7,
+  "error": {
+    "code": -32051,
+    "message": "The person you act for must confirm this request first. Retry after they approve it.",
+    "data": {
+      "reason": "CONFIRMATION_REQUESTED",
+      "confirmationId": "<confirmation id>",
+      "expiresAt": 1794054600000
+    }
+  }
+}
+```
+
+The calling agent retries after the person approves with `delegations.decideConfirmation`. Set `confirmations: false`
+to refuse without asking, and `confirmationReason(skill, params)` to word the request.
+
+**Route:** `POST /delegations/requestConfirmation` (filed by the gate)
+
+### Find agents in the directory
+
+`agents.directory` lists the current attested cards of the tenant's agents in good standing, sorted by name, optionally
+only those offering a `skill` (matched against skill `id` or `tags`) or speaking a `protocol`. Any credential of the
+tenant may read it and no permission is needed: a person, an agent's key, or an agent acting for someone and looking
+for a helper. Entries leave the directory when their attestation expires or the agent is suspended or deleted.
+
+<Tabs items={['Server', 'Client']}>
+<Tab value="Server">
+
+```ts title="agent/find-helper.ts"
+import { iam } from '../iam';
+
+const [translator] = await iam.api.agents.directory(
+  { token: process.env.DELEGATED_TOKEN! },
+  { tenantId: process.env.TENANT_ID!, skill: 'translate', protocol: 'a2a' },
+);
+// { agentId, name, card, attestation, expiresAt }
+```
+
+</Tab>
+<Tab value="Client">
+
+```ts title="lib/agents.ts"
+import { createIamClient } from 'better-iam/client';
+import type { iam } from './iam';
+
+const client = createIamClient<typeof iam>();
+
+export const translators = await client.agents.directory({ tenantId: 'acme', skill: 'translate' });
+```
+
+</Tab>
+</Tabs>
+
+**Route:** `POST /agents/directory`
+
+Each entry's `card` is the signed card itself, so it can be passed straight to `verifyAgentCard`.
+
+### Verify another agent before handing it work
+
+`discoverAgent(url, options)` fetches a remote agent's card (`url` itself when it ends in `.json`, otherwise
+`/.well-known/agent-card.json` on its origin) and verifies it. Call it only with addresses you chose: it makes an
+outbound request, without following redirects, with a 256 KiB limit and a 5 second timeout.
+
+```ts title="agent/discover.ts"
+import { AgentCardError, discoverAgent } from 'better-iam/a2a';
+
+try {
+  const { card, attestation } = await discoverAgent('https://triage.example.com', {
+    trustedIssuers: {
+      'https://iam.example.com/api/iam': 'https://iam.example.com/a2a/jwks.json',
+    },
+    tenantId: 'acme', // optional: only agents of this organization
+  });
+  console.log(`${attestation.agentName} of ${attestation.organization} at ${card.url}`);
+} catch (error) {
+  if (error instanceof AgentCardError) console.error(`Refused card: ${error.reason}`);
+  else throw error;
+}
+```
+
+`verifyAgentCard(card, options)` does the same checks on a card you already hold, such as a directory entry. A card is
+accepted only when:
+
+1. one of its signatures (the first 8 are tried) verifies with a trusted key over the canonical card, with `typ: 'JOSE'`
+   and no `crit` or `b64` header;
+2. it carries exactly one Better IAM attestation stating a sponsor;
+3. the attestation is neither expired nor issued in the future (60 seconds of tolerance by default);
+4. it matches `issuers`, `tenantId`, and `origin` when you pass them (`discoverAgent` passes the origin it fetched from).
+
+Choose how keys are trusted:
+
+| Option | Use it when |
+| --- | --- |
+| `trustedIssuers` | You trust one or more deployments. Maps each attestation issuer to its JWKS URL or JWKS, and checks a card only with the keys of the issuer it names, so one deployment can never vouch in another's name. |
+| `keys` | You trust one deployment and hold its JWKS (`iam.a2a.jwks()`), or want a function of `kid` and `jku` that returns one. |
+| `trustedJwksUrls` | You trust one deployment by JWKS URL; a signature is checked only when its `jku` is exactly one of them. |
+
+Fetched key sets are cached for `jwksCacheSeconds` (300 by default) and fetched again, at most every 30 seconds, when a
+signature names a key the cached set lacks, so key rotations need no restart.
+
+### Hand work on to another agent
+
+An agent acting for a person can [hand part of its delegation on](/docs/features/ai-agents#handing-work-on-to-other-agents)
+to another agent, when the person allows it. Over A2A, the calling agent puts the hand-off ID in the message metadata
+under `better-iam/handoff` (`handoffMetadataKey`), and the called agent reads it back and opens its own delegated
+session for the same person.
+
+```ts title="assistant/delegate.ts"
+import { withHandoff } from 'better-iam/a2a';
+import { iam } from '../iam';
+
+const tenantId = process.env.TENANT_ID!;
+const delegated = { token: process.env.DELEGATED_TOKEN! }; // the assistant's delegated session
+
+const handoff = await iam.api.delegations.handoff(delegated, {
+  tenantId,
+  agentId: process.env.RESEARCHER_ID!,
+  scopes: ['documents:read'],
+  reason: 'Find sources for the report',
+});
+
+const message = withHandoff(
+  {
+    role: 'user',
+    messageId: crypto.randomUUID(),
+    parts: [{ kind: 'text', text: 'Find sources for the Q3 report' }],
+    metadata: { skillId: 'research' },
+  },
+  handoff.id,
+);
+await fetch('https://research.example.com/a2a', {
+  method: 'POST',
+  headers: { authorization: `Bearer ${delegated.token}`, 'content-type': 'application/json' },
+  body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'message/send', params: { message } }),
+});
+```
+
+```ts title="researcher/handler.ts"
+import { handoffOf } from 'better-iam/a2a';
+import { iam } from '../iam';
+
+export async function sessionFor(params: Record<string, unknown>) {
+  const delegationId = handoffOf(params); // message metadata first, then request metadata
+  if (!delegationId) return undefined;
+  const { token } = await iam.api.delegations.assume(
+    { token: process.env.AGENT_KEY! }, // the researcher's own key
+    { tenantId: process.env.TENANT_ID!, delegationId },
+  );
+  return token; // acts for the same person, attributed to the researcher
+}
+```
+
+**Route:** `POST /delegations/handoff`, `POST /delegations/assume`
+
+`delegations.assume` refuses a hand-off made out to a different agent, so a leaked hand-off ID is useless to anyone
+but its intended agent.
+
+### Call services outside Better IAM as the person
+
+A delegated session works wherever Better IAM decides. A service that does not call Better IAM (a partner API, a
+separate microservice) can instead accept a **delegation token**: a short-lived JWT signed with the same card keys,
+naming the person as `sub` and the agent as `act` (RFC 8693). The agent gets one with `delegations.issueToken`, and the
+service checks it offline with `verifyDelegationToken`:
+
+```ts title="calendar-service/auth.ts"
+import { DelegationTokenError, verifyDelegationToken } from 'better-iam/a2a';
+
+export async function personFor(request: Request) {
+  const bearer = request.headers.get('authorization')?.replace(/^Bearer /, '') ?? '';
+  try {
+    return await verifyDelegationToken(bearer, {
+      audience: 'https://api.calendar.example',
+      trustedIssuers: {
+        'https://iam.example.com/api/iam': 'https://iam.example.com/a2a/jwks.json',
+      },
+    }); // { personId, agentId, chain, scopes, delegationId, tenantId, tokenId, expiresAt, ... }
+  } catch (error) {
+    if (error instanceof DelegationTokenError) return undefined; // error.reason says why
+    throw error;
+  }
+}
+```
+
+**Route:** `POST /delegations/issueToken`
+
+Issuing needs the `a2a` option and an agent whose profile lists the audience in `tokenAudiences`. The claims, the
+limits on scopes, live verification with `iam.a2a.verifyDelegationToken`, and the agent-side cache
+`createDelegationTokenCache` are covered in
+[Calling other services as the person](/docs/features/ai-agents#calling-other-services-as-the-person).
+
+### Use the decisions without the gate
+
+`createA2aAuthorizer(options)` takes the gate's options and returns its decisions for servers written directly with an
+A2A SDK:
+
+| Method | Returns |
+| --- | --- |
+| `authenticate(request)` | The `A2aCaller`, or `undefined` when the request carries no valid credential. |
+| `skillOf(params)` | The skill a `message/send` or `message/stream` request names, if any. |
+| `canSend(caller, params)` | `{ allowed, reason }`, plus `confirmation: { id, expiresAt }` when a confirmation was requested. |
+| `isTaskAdmin(caller)` | Whether the caller is allowed `taskAdminAction`. |
+| `visibleSkills(caller, skills)` | The skills the caller may use, in order, checked 50 at a time. |
+
+`canSend` reasons: `ALLOWED`, `PUBLIC`, `ACCESS_DENIED`, `UNKNOWN_SKILL`, `AMBIGUOUS_SKILL` (with the default `skillOf`:
+two different skills named, or a skill ID that is not a string), `NO_RULE_FOR_CALLER`, `INSUFFICIENT_SCOPE`, and `CONFIRMATION_REQUESTED`.
+
+## Options
+
+The `a2a` server option (`A2aOptions`):
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `signingKeys` | `JWK[]` | required | 1 to 10 private JWKs (Ed25519/`EdDSA` or P-256/`ES256`), each with a unique `kid`. |
+| `activeKeyId` | `string` | the first signing key | The `kid` new cards and delegation tokens are signed with. |
+| `verificationKeys` | `JWK[]` | `[]` | 0 to 10 public-only retired keys, still published so what they signed keeps verifying. |
+| `jwksUrl` | `string` | none | Where `iam.a2a.jwks()` is published; carried as `jku` in every signature. |
+| `cardLifetimeSeconds` | `number` | `3600` | How long an attestation is valid, 300 to 604800 seconds. |
+| `issuer` | `string` | base URL plus `basePath` | The attestation's `issuer`, and the `iss` of delegation tokens. |
+
+`createA2aGate(options)` and `createA2aAuthorizer(options)` (`A2aGateOptions`):
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `iam` | `A2aIam` | required | The `betterIam()` instance (or a client with `authenticate`, `authorize`, and `authorizeMany`). Confirmations also need `iam.api.delegations`. |
+| `tenantId` | `string \| ((caller: { identityId, sessionTenantId }) => string \| undefined)` | required | The organization that runs the agent. A function picks it per caller; `undefined` refuses the caller. |
+| `message` | `A2aRule` | required | The rule for messages that name no skill. |
+| `skills` | `Record<string, A2aRule>` | none | Rules by skill ID. |
+| `unlistedSkills` | `'deny' \| 'message'` | `'deny'` | Messages naming a skill without a rule: refused, or decided by `message`. |
+| `skillOf` | `(params) => string \| undefined` | message metadata, then request metadata | How a request names its skill. |
+| `card` | `AgentCard \| (() => AgentCard \| Promise<AgentCard>)` | none | Served at `/.well-known/agent-card.json` (and `/.well-known/agent.json`) without authentication. |
+| `extendedCard` | `AgentCard \| (() => …)` | none | Answered to `agent/getAuthenticatedExtendedCard`, with only the skills the caller may use. |
+| `tasks` | `A2aTaskOwners` | `memoryTaskOwners()` | Who started each task and conversation; share it between instances. |
+| `taskAdminAction` | `string` | none | Callers allowed this action on the `message` rule's resource may read and cancel every task. |
+| `otherMethods` | `'deny' \| 'allow'` | `'deny'` | JSON-RPC methods A2A does not define. |
+| `otherHttpMethods` | `'deny' \| 'allow'` | `'deny'` | HTTP methods other than `POST` (besides the card): `405`, or passed on after authentication. |
+| `oauth` | `A2aOAuthVerifier` | none | Also accept OAuth access tokens, decided by each rule's `scopes`. |
+| `confirmations` | `boolean` | on when `iam.api.delegations` exists | File a confirmation request for delegated agents that reach a held-back action. |
+| `confirmationReason` | `(skill, params) => string` | which skill or message | The reason shown to the person. |
+| `onError` | `(error: unknown) => void` | none | Called with unexpected errors before the gate answers `-32603`. |
+| `maxBodyBytes` | `number` | `4194304` (4 MiB) | The largest JSON-RPC body accepted. |
+
+Each rule (`A2aRule`) has `action`, `resource` (a fixed `{ type, id }` or a function of the request params; default
+`a2a-skill/<skill id>` for a skill rule and `a2a-agent/agent` for `message`), `scopes` for OAuth callers, and
+`public: true` for any authenticated caller.
+
+`verifyAgentCard` and `discoverAgent` options (`VerifyAgentCardOptions`, `DiscoverAgentOptions`):
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `trustedIssuers` | `Record<string, string \| CardJwks>` | none | Issuer to JWKS URL or JWKS. One of `trustedIssuers`, `keys`, or `trustedJwksUrls` is required. |
+| `keys` | `CardJwks \| ((kid, jku) => CardJwks \| Promise<CardJwks>)` | none | The trusted card keys. |
+| `trustedJwksUrls` | `string[]` | none | Trusted JWKS URLs, matched against each signature's `jku`. |
+| `issuers` | `string[]` | any whose key verifies | Accepted attestation issuers. |
+| `tenantId` | `string` | any | Accept only agents of this organization. |
+| `origin` | `string` | the fetched origin (`discoverAgent`) | Require the card's `url` on this origin. |
+| `clockToleranceSeconds` | `number` | `60` | 0 to 300. |
+| `jwksCacheSeconds` | `number` | `300` | How long fetched key sets are kept. |
+| `fetch` | `typeof fetch` | `globalThis.fetch` | Transport for key sets and cards. |
+| `maxBytes` | `number` | `262144` (256 KiB) | `discoverAgent` only: the largest card accepted. |
+| `timeoutMs` | `number` | `5000` | `discoverAgent` only: the card request timeout. |
+
+`createCardAttestor(options)` takes `card` (an object or a function building one), `sign(card)` (returning
+`{ card, expiresAt }`), and `refreshShare` (default `0.2`).
+
+## Schema
+
+| Collection | Key fields | Written by |
+| --- | --- | --- |
+| `agentCards` | `id` (the agent ID), `tenantId`, `agentId`, `card` (the signed card), `attestation`, `signedAt`, `expiresAt` | `agents.signCard`: the agent's latest card, its directory entry. Removed when the agent is deleted. |
+| `delegationTokens` | `id` (the token's `jti`), `delegationId`, `personId`, `agentId`, `keyId`, `audience`, `scopes`, `expiresAt` | `delegations.issueToken`, kept until the token expires for live verification. |
+
+The card-signing keys live in configuration, never in the database. The gate's task owners live in the `tasks` store
+you give it (memory by default).
+
+## Errors
+
+Server API errors:
+
+| Code | When |
+| --- | --- |
+| [`FEATURE_DISABLED`](/docs/reference/errors#feature_disabled) | `agents.signCard` or `delegations.issueToken` without the `a2a` option. |
+| [`INVALID_INPUT`](/docs/reference/errors#invalid_input) | No registered agent `url`, an endpoint on another origin, a malformed card, token claims at the card's top level, or a card over 64 KiB. |
+| [`INVALID_IDENTITY`](/docs/reference/errors#invalid_identity) | The agent is not in good standing (suspended, expired, or without an active sponsor). |
+| [`ACCESS_DENIED`](/docs/reference/errors#access_denied) | `agents.directory` from outside the tenant, or `signCard` by a caller who is neither the agent, its sponsor, nor allowed `iam:agents:update`. |
+| [`INVALID_CONFIG`](/docs/reference/errors#invalid_config) | An `a2a` option is invalid (key type, `kid`, `activeKeyId`, lifetime, or URL). |
+| [`DELEGATION_TOKEN_INVALID`](/docs/reference/errors#delegation_token_invalid) | `iam.a2a.verifyDelegationToken` refused a token. |
+
+Package errors:
+
+| Error | `reason` values |
+| --- | --- |
+| `AgentCardError` (`verifyAgentCard`, `discoverAgent`) | `malformed`, `unsigned`, `untrusted-key`, `signature`, `attestation`, `expired`, `issuer`, `tenant`, `endpoint`, `fetch` |
+| `DelegationTokenError` (`verifyDelegationToken`) | `malformed`, `type`, `issuer`, `untrusted-key`, `signature`, `audience`, `tenant`, `expired`, `not-yet-valid`, `lifetime`, `replay`, `fetch` |
+
+Gate answers (JSON-RPC errors):
+
+| Code | HTTP | Meaning |
+| --- | --- | --- |
+| `-32050` (`A2A_ACCESS_DENIED`) | 403 | The message was refused; `error.data.reason` is `ACCESS_DENIED`, `UNKNOWN_SKILL`, `AMBIGUOUS_SKILL`, `NO_RULE_FOR_CALLER`, or `INSUFFICIENT_SCOPE`. |
+| `-32051` (`A2A_CONFIRMATION_REQUESTED`) | 403 | The person must confirm first; `error.data.confirmationId` and `expiresAt`. |
+| `-32001` | 200 | Task not found: the task belongs to another caller or is unknown. |
+| `-32602` | 200 | An unknown `contextId`, or invalid `referenceTaskIds`. |
+| `-32601` | 200 | A method A2A does not define (with `otherMethods: 'deny'`). |
+| `-32600` | 200 | Not a single JSON-RPC request (batches are refused). |
+| `-32700` | 200 | The body is not JSON. |
+| `-32603` | 500 | An unexpected error, after `onError`. |
+
+Outside JSON-RPC, the gate answers `401` (no credential, or `error="invalid_token"`), `405` for HTTP methods other than
+`POST`, `413` for a body over `maxBodyBytes`, and `503` with `Retry-After: 30` when the card cannot be built.
+
+## Next steps
+
+<Cards>
+  <Card title="AI agents" href="/docs/features/ai-agents">
+    Sponsors, ceilings, delegation, confirmations, hand-offs, and delegation tokens.
+  </Card>
+  <Card title="MCP servers" href="/docs/features/mcp-server">
+    Tool-level authorization for Model Context Protocol servers.
+  </Card>
+  <Card title="Agents API" href="/docs/reference/api/agents">
+    signCard, directory, and every other agents method.
+  </Card>
+  <Card title="Agents acting for users" href="/docs/guides/ai-agents-on-behalf-of-users">
+    A walkthrough from registering an agent to a delegated call.
+  </Card>
+</Cards>

@@ -158,7 +158,7 @@ await iam.api.tenants.setAuthPolicy(credential, {
 `tenants.setAuthPolicy` sets the organization's sign-in rules. Password and email-link sign-in are then refused for
 the organization before any credential is checked. `requireMfa` adds the product's own second factor on top of the
 IdP's. `allowedIpRanges` limits where sessions may be used from, for example the company's office or VPN ranges.
-See [Tenant sign-in policy](/docs/guides/authentication/tenant-policy) for every policy field and
+See [Tenant sign-in policy](/docs/authentication/tenant-policy) for every policy field and
 [`tenants.setAuthPolicy`](/docs/reference/api/tenants#setauthpolicy) for the signature.
 
 </Step>
@@ -278,7 +278,7 @@ organization's audit log and connection status.
 Every step above is audited: `iam:saml:*Connection`, `iam:scim:*` (inbound users and groups, outbound targets and
 syncs), `iam:oauth:*`, `tenant:auth-policy`, and the domain operations. Three tools help you watch them:
 
-- [webhooks](/docs/guides/events/webhooks) route the events to a security monitoring system (SIEM);
+- [webhooks](/docs/concepts/events/webhooks) route the events to a security monitoring system (SIEM);
 - [`audit.verify`](/docs/reference/api/audit#verify) checks that the tamper-evident
   <Term id="audit-chain">audit chain</Term> is intact;
 - [`analysis.findings`](/docs/reference/api/analysis#findings) reports risky configuration such as administrators
@@ -299,10 +299,10 @@ still running.
   <Card title="SCIM inbound" href="/docs/federation/scim">
     Filters, PATCH, Bulk, manager mapping, and connection administration.
   </Card>
-  <Card title="Tenant sign-in policy" href="/docs/guides/authentication/tenant-policy">
+  <Card title="Tenant sign-in policy" href="/docs/authentication/tenant-policy">
     Allowed methods, MFA, IP ranges, and session limits per organization.
   </Card>
-  <Card title="Webhooks" href="/docs/guides/events/webhooks">
+  <Card title="Webhooks" href="/docs/concepts/events/webhooks">
     Deliver audit events to a SIEM or your own services.
   </Card>
   <Card title="Protocol jobs" href="/docs/operations/jobs#protocol-jobs">

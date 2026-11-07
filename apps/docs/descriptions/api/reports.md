@@ -3,7 +3,7 @@
 The access report gathers a tenant's access-lifecycle state in one document: what is about to end, who is elevated
 right now, and which API keys nobody uses. Temporary access only stays safe if someone notices what is expiring,
 what is pending, and what was forgotten, and checking each list by hand does not scale. Run the report nightly and
-route it to a channel or ticketing system. See [the access report](/docs/guides/privileged-access/access-report).
+route it to a channel or ticketing system. See [the access report](/docs/features/privileged-access/access-report).
 
 ## access
 

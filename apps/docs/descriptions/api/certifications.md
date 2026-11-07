@@ -3,7 +3,7 @@
 Certification campaigns turn periodic access reviews into recorded decisions. A campaign snapshots the role bindings
 under review, reviewers keep or revoke each one, and closing the campaign removes the revoked bindings and records
 what happened to every item, which is the evidence auditors ask for. See the
-[certifications guide](/docs/guides/governance/certifications) for the full workflow.
+[certifications guide](/docs/features/governance/certifications) for the full workflow.
 
 Campaign permissions are checked on the internal resource `iam/certifications/*` for tenant-wide calls (`create`,
 `list`) and on `iam/certifications/{campaignId}` for one campaign, so you can scope who manages or reviews which
@@ -30,7 +30,7 @@ suggests keep or revoke for every item from recorded usage and sign-in activity.
 
 Closing applies the campaign in one transaction. Items decided `revoke`, and undecided items when the campaign's
 `undecided` is `revoke`, have their binding deleted under the closer's
-[grant authority](/docs/guides/authorization/roles#grant-authorities); everything else is kept. Each item records an
+[grant authority](/docs/authorization/roles#grant-authorities); everything else is kept. Each item records an
 `outcome`:
 
 - `kept`: the binding stays.
@@ -40,7 +40,7 @@ Closing applies the campaign in one transaction. Items decided `revoke`, and und
   authority issued it or by a root administrator, so a binding someone else granted is left for them, with the
   reason in `outcomeDetail`.
 
-A binding an [access package](/docs/guides/privileged-access/access-packages) created is removed like any other: a
+A binding an [access package](/docs/features/privileged-access/access-packages) created is removed like any other: a
 manual assignment then reports `broken`, and an automatic assignment gets the binding back at the next reconcile
 while the person still matches the rule. To remove birthright access for good, change the rule.
 
@@ -53,12 +53,12 @@ once due, under the creator's authority, audited as `certification:auto-close` b
 Closes an open campaign and applies it, removing the bindings reviewers revoked.
 
 - **Permission:** `iam:certifications:manage` on the campaign, with
-  [recent authentication](/docs/guides/authentication/sessions#recent-authentication).
+  [recent authentication](/docs/authentication/sessions#recent-authentication).
 - **Audited as:** `iam:certifications:manage`, plus one `iam:bindings:delete` per removed binding.
 - **Errors:** `RECENT_AUTH_REQUIRED` when your sign-in is not recent or the credential is temporary;
   `IMPERSONATION_RESTRICTED` from an impersonation session; `CONFLICT` when the campaign is already closed;
   `NOT_FOUND` when it is not in this tenant; `INVARIANT_VIOLATION` when the removals would break an enforced
-  [invariant](/docs/guides/governance/change-safety).
+  [invariant](/docs/features/governance/change-safety).
 
 The result is the closed campaign with `outcomes`, the number of items per outcome. Close as the administrator who
 granted the bindings, or as root, to avoid `revocation-failed` items. The closed campaign keeps every decision and

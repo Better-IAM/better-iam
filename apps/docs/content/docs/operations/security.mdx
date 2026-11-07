@@ -101,7 +101,7 @@ breach corpus: `pwnedPasswords()` from `@better-iam/auth` is a Have I Been Pwned
 five-character SHA-1 prefix (k-anonymity), times out after three seconds, and fails open unless `failClosed`.
 `passwordPolicy.check` adds a custom rule.
 
-Tenants tighten further through their [authentication policy](/docs/guides/authentication/tenant-policy):
+Tenants tighten further through their [authentication policy](/docs/authentication/tenant-policy):
 
 - `minPasswordLength`;
 - `passwordMinClasses`: 2 to 4 character classes;
@@ -312,7 +312,7 @@ Keep lifetimes short, and treat the derived key as a shared secret between IAM a
 
 Audit records form a per-tenant hash chain, the <Term id="audit-chain">audit chain</Term> (`sequence`,
 `previousHash`, `hash`), that `audit.verify`,
-`audit.export`, and the portable `verifyAuditChain` check; see [Audit chain](/docs/guides/events/audit-chain). The
+`audit.export`, and the portable `verifyAuditChain` check; see [Audit chain](/docs/concepts/events/audit-chain). The
 chain detects alteration, reordering, or removal by anyone who cannot rewrite both the events and the chain head.
 Export chains to independent storage and treat the exported heads as the reference;
 [continuous audit archiving](/docs/operations/jobs#continuous-audit-archiving) does this on a schedule.
@@ -385,7 +385,7 @@ vulnerabilities privately to the repository owner, and do not include live secre
   <Card title="Secrets and keys" href="/docs/operations/deployment/secrets">
     What the deployment secret protects and how to rotate it.
   </Card>
-  <Card title="Tenant sign-in policy" href="/docs/guides/authentication/tenant-policy">
+  <Card title="Tenant sign-in policy" href="/docs/authentication/tenant-policy">
     MFA, allowed methods, IP ranges, and password rules per organization.
   </Card>
   <Card title="Federation" href="/docs/federation">

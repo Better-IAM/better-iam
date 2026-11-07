@@ -7,7 +7,7 @@ do with them (`iam.listAccessible`), which is what makes filtered list pages pos
 
 ## Managed and application-owned resources
 
-Every resource type is one of two kinds (see [managed types](/docs/guides/authorization/catalog#managed-types)):
+Every resource type is one of two kinds (see [managed types](/docs/authorization/catalog#managed-types)):
 
 - **Application-owned** types are resolved by your application at decision time through the `resolveResource` option.
   Your database stays the source of truth and nothing is registered here.
@@ -43,9 +43,9 @@ Removes a registered resource and every relationship tuple on it.
 - **Permission:** `iam:resources:delete` on `iam/{type}/{id}`.
 - **Audited as:** `iam:resources:delete`, on `{type}/{id}`.
 - **Errors:** `NOT_FOUND` when the resource is not registered; `RESOURCE_IN_USE` when registered child resources
-  still point at it, or (with [security clearances](/docs/guides/security-clearances)) while the classification label
+  still point at it, or (with [security clearances](/docs/features/security-clearances)) while the classification label
   it inherits cannot be read under the scheme in force; `INVARIANT_VIOLATION` when an enforced
-  [access invariant](/docs/guides/governance/change-safety) would newly fail.
+  [access invariant](/docs/features/governance/change-safety) would newly fail.
 
 Delete children first: a parent cannot be removed while resources registered under it exist. Once deleted, any
 decision about the resource sees no attributes, owner, or relations. Classification labels stay: a label the resource

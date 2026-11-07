@@ -1,0 +1,327 @@
+---
+title: PostgreSQL
+description: Run Better IAM on PostgreSQL with postgresAdapter, including its options, the serializing advisory lock, pool sizing, poolers, serverless hosts, and testing.
+icon: Database
+packages: ['@better-iam/adapter-postgres', '@better-iam/core']
+sources:
+  - packages/adapter-postgres/src/index.ts
+  - packages/core/src/sql.ts
+  - packages/core/src/storage.ts
+  - packages/cli/src/config.ts
+  - packages/server/src/self-check.ts
+  - tests/adapter-conformance.test.ts
+  - .github/workflows/ci.yml
+  - docs/deployment.md
+---
+
+The PostgreSQL adapter is the recommended production store. Use it when several application instances share one
+database, when writes are sustained, or when the data grows large. It connects through node-postgres (`pg`) and
+Kysely, both installed with the adapter, and keeps every IAM record in one `iam_records` table with a GIN index over
+the JSON documents. Better IAM's CI runs the adapter against PostgreSQL 17.
+
+## Installation
+
+<Steps>
+<Step>
+
+### Install the package
+
+```npm
+npm i better-iam
+```
+
+The umbrella package includes the adapter as `better-iam/adapter-postgres`. To install only what you use, add
+`@better-iam/server` and `@better-iam/adapter-postgres` and import from `@better-iam/adapter-postgres` instead.
+
+</Step>
+<Step>
+
+### Configure the adapter
+
+```ts title="iam.ts"
+import { betterIam } from 'better-iam';
+import { postgresAdapter } from 'better-iam/adapter-postgres';
+
+export const iam = betterIam({
+  database: postgresAdapter({
+    connectionString: process.env.DATABASE_URL!, // postgres://user:password@host:5432/db
+    poolSize: 10,
+    lockTimeoutMs: 5000,
+  }),
+  secret: process.env.BETTER_IAM_SECRET!,
+  baseURL: process.env.BETTER_IAM_BASE_URL!,
+});
+```
+
+The connection string must start with `postgres://` or `postgresql://`; anything else throws `INVALID_CONFIG`
+when the adapter is created. Put TLS and other driver settings in the connection string (for example
+`?sslmode=require`), which node-postgres parses. The adapter has no separate `ssl` option and does not accept an
+existing `pg.Pool` or client.
+
+</Step>
+<Step>
+
+### Create the schema
+
+```bash
+npx better-iam migrate --config better-iam.config.mjs
+```
+
+`migrate` creates the tables and indexes and records each step in `iam_migrations`. Run it on every deploy before
+the new release starts. See [Migrations](/docs/databases/migrations).
+
+</Step>
+<Step>
+
+### Check the database
+
+```bash
+npx better-iam doctor --config better-iam.config.mjs
+```
+
+Under `storage.settings`, the PostgreSQL adapter reports `serverVersion`, `synchronousCommit`, `sizeBytes` (the
+total size of `iam_records` with its indexes), and `lockTimeoutMs`. `doctor` warns with `postgres-async-commit`
+when `synchronous_commit` is off.
+
+</Step>
+</Steps>
+
+## Usage
+
+### Connect with environment variables only
+
+Without a configuration file, the CLI and `configFromEnv()` from `better-iam/cli` create
+`postgresAdapter({ connectionString })` from `BETTER_IAM_DATABASE_URL` when it starts with `postgres://` or
+`postgresql://`. `poolSize` and `lockTimeoutMs` keep their defaults in this mode.
+
+```bash
+export BETTER_IAM_DATABASE_URL=postgres://iam:secret@db.internal:5432/iam
+export BETTER_IAM_SECRET=paste-a-generated-secret
+npx better-iam migrate
+```
+
+### Create one adapter per process
+
+Each `postgresAdapter()` call opens its own connection pool. Create the adapter once, at module scope, and share the
+`iam` instance. In development servers that reload modules, keep the instance on `globalThis` so reloads do not
+open a new pool each time:
+
+```ts title="iam.ts"
+import { betterIam, type BetterIam } from 'better-iam';
+import { postgresAdapter } from 'better-iam/adapter-postgres';
+
+const globalForIam = globalThis as typeof globalThis & { iam?: BetterIam };
+
+export const iam = (globalForIam.iam ??= betterIam({
+  database: postgresAdapter({ connectionString: process.env.DATABASE_URL! }),
+  secret: process.env.BETTER_IAM_SECRET!,
+  baseURL: process.env.BETTER_IAM_BASE_URL!,
+}));
+```
+
+### Close the pool
+
+`iam.store.close()` destroys the pool. Call it on shutdown and at the end of scripts, or the process stays alive
+waiting on idle connections.
+
+```ts title="scripts/report.ts"
+import { iam } from '../iam';
+
+try {
+  const description = await iam.store.describe?.();
+  console.log(description?.collections);
+} finally {
+  await iam.store.close();
+}
+```
+
+### Measure storage calls
+
+`instrumentStore` from `better-iam/core` wraps the adapter and reports every call with its collection, filter keys
+(never values), record count, and duration:
+
+```ts title="iam.ts"
+import { betterIam } from 'better-iam';
+import { instrumentStore } from 'better-iam/core';
+import { postgresAdapter } from 'better-iam/adapter-postgres';
+
+export const iam = betterIam({
+  database: instrumentStore(postgresAdapter({ connectionString: process.env.DATABASE_URL! }), (call) => {
+    if (call.durationMs > 50) console.warn('slow IAM storage call', call);
+  }),
+  secret: process.env.BETTER_IAM_SECRET!,
+  baseURL: process.env.BETTER_IAM_BASE_URL!,
+});
+```
+
+## Options
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `connectionString` | `string` | required | A `postgres://` or `postgresql://` URL. Driver settings such as `sslmode` go in its query string. |
+| `poolSize` | `number` | `10` | Maximum connections this adapter's pool opens, 1 to 100. |
+| `lockTimeoutMs` | `number` | `5000` | 1 to 60000. How long a transaction waits for the serializing lock (PostgreSQL `lock_timeout`, set per transaction), and how long the pool waits to open a connection. |
+
+Values outside these ranges throw `INVALID_CONFIG` with the message "Invalid PostgreSQL pool size or lock timeout".
+
+## How transactions work
+
+Access control is full of check-then-write decisions, such as "is this one-time token still unused" or "is another
+owner left". The adapter makes them safe by running IAM write transactions one at a time:
+
+1. Each transaction starts at `READ COMMITTED` isolation.
+2. It sets `lock_timeout` to `lockTimeoutMs` for this transaction only (`set_config(..., true)`).
+3. It takes the transaction-scoped advisory lock `pg_advisory_xact_lock(1647206759, 1)`. Every adapter instance on
+   the database takes the same lock, so transactions from all your application instances, workers, and CLI
+   commands serialize against each other.
+4. Only then does it read, so its snapshot includes everything committed before it got the lock.
+5. The lock is released at commit or rollback.
+
+Nested `transaction()` calls join the outer transaction. If a nested operation fails and the outer callback
+swallows the error, the commit is refused with `TRANSACTION_ABORTED`. Reads outside a transaction use a pool
+connection directly and do not take the lock.
+
+A transaction that cannot get the lock within `lockTimeoutMs` fails with `STORAGE_BUSY` (HTTP 503). So do
+serialization failures, deadlocks, and canceled statements (SQLSTATE `40001`, `40P01`, `55P03`, `57014`). The whole
+operation can be retried. A unique violation (`23505`) becomes `CONFLICT`; every other driver error becomes
+`STORAGE_ERROR` without SQL text.
+
+<Callout title="Throughput follows transaction latency">
+Because all IAM write transactions share one lock, their throughput is bounded by how long each one holds it,
+including network round trips between your application and the database. Keep the database close to the
+application, keep `synchronous_commit` on, and avoid network calls inside your own transactional code. Long
+operations such as large imports may need a higher `lockTimeoutMs`.
+</Callout>
+
+## Connection pooling
+
+Each adapter instance keeps a pool of at most `poolSize` connections. Size it to the request concurrency of one
+instance, and keep `poolSize` multiplied by the number of instances (plus workers and CLI runs) below the server's
+`max_connections`. Since write transactions serialize anyway, a large pool mostly helps concurrent reads.
+
+External poolers such as PgBouncer sit between the adapter and the server:
+
+- **Transaction-mode pooling.** The adapter keeps only transaction-scoped state: the advisory lock is
+  `pg_advisory_xact_lock` and `lock_timeout` is set with `set_config(..., true)`, both released at the end of the
+  transaction, and queries are sent without named prepared statements. Better IAM's test suite does not run behind
+  a pooler, so verify your setup with `doctor` and your own load test.
+- **Statement-mode pooling** cannot work, because every IAM write is a multi-statement transaction.
+- **Migrations** run in one transaction that waits up to ten minutes for the serializing lock and then holds it
+  while the indexes build. Run `better-iam migrate` with a direct connection string rather than through a pooler
+  that limits transaction length.
+
+## Serverless hosts
+
+Better IAM runs on serverless Node.js functions (for example Vercel's Node runtime), not on edge runtimes. Each
+warm function instance creates its own pool, so:
+
+- Set a small `poolSize` (for example `1` to `3`) and put a pooler in front of the database when many instances can
+  run at once.
+- Create the adapter at module scope so a warm instance reuses its pool between invocations.
+- Run migrations as a deploy step, never from a request handler.
+- Deliver the outbox and events after each response or from a scheduler; see
+  [Scheduled jobs](/docs/operations/jobs).
+
+## Schema
+
+The adapter creates the shared schema with PostgreSQL types: `iam_records` columns are `TEXT COLLATE "C"`, so `id`
+ordering is byte order, which equals code-point order. Documents are stored as JSON text in `data` and cast to
+`jsonb` in queries.
+
+| Index | Definition |
+| --- | --- |
+| `iam_records_document` | GIN over `(data::jsonb) jsonb_path_ops`; serves every equality lookup on a document field. |
+| `iam_records_tenant`, `iam_records_tenant_id` | B-tree on `(collection, tenant_id)` and `(collection, tenant_id, id)`. |
+| `iam_records_unique_key` | B-tree on `(collection, unique_key, id)` where `unique_key` is set. |
+| `iam_records_order_timestamp`, `iam_records_order_sequence` | Tenant-scoped ordered audit reads. |
+| `iam_records_expiry_expiresAt`, `iam_records_expiry_deliveredAt`, `iam_records_expiry_failedAt` | Collection-wide ordered reads for the retention sweep. |
+
+PostgreSQL needs no per-field lookup indexes: the GIN index covers `INDEXED_FIELDS`. See
+[Schema](/docs/databases/schema) for the full layout.
+
+### Value encoding
+
+`jsonb` cannot hold U+0000 or unpaired UTF-16 surrogates, but record values may contain them. The adapter stores
+such strings, and object keys, in a reversible encoding (`encodeJsonbDocument` in `better-iam/core`, under the
+reserved key `"\u0001better-iam"`) and decodes them on every read, so your code always sees the original value.
+Filters on such values are evaluated in memory. The `0002_query_indexes` migration rewrites rows written before
+the encoding existed so the GIN index can be built.
+
+## Maintenance
+
+- **Keep `synchronous_commit` on.** With it off, a crash can lose recently committed transactions, including
+  revocations.
+- **Vacuum after bulk imports.** New rows go to the GIN index's pending list, which PostgreSQL merges during vacuum
+  or when the list fills up. Autovacuum handles normal traffic; after `store-import` or `store-copy`, run
+  `VACUUM ANALYZE iam_records` so the pending list is merged and planner statistics are current.
+- **Back up the secret with the database.** A restored database cannot open authenticator secrets or queued
+  deliveries without the deployment `secret`. See [Database operations](/docs/operations/deployment/database#backups).
+
+## Testing
+
+There is no in-process PostgreSQL option: `postgresAdapter` needs a `postgres://` URL and opens real network
+connections, and Better IAM does not support PGlite as a driver. Use one of these instead:
+
+- **Unit tests:** the SQLite adapter with `filename: ':memory:'`. It passes the same conformance suite, so behavior
+  matches PostgreSQL. See [SQLite testing](/docs/databases/sqlite#testing).
+- **PostgreSQL-specific tests:** a disposable PostgreSQL server, for example a CI service container. Give each test
+  run its own database and call `iam.store.close()` when done.
+
+```yaml title=".github/workflows/test.yml"
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: ci-password
+          POSTGRES_DB: iam_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgres://postgres:ci-password@localhost:5432/iam_test
+      BETTER_IAM_SECRET: ci-only-secret-with-at-least-32-characters
+      BETTER_IAM_BASE_URL: http://localhost:3000
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: npx better-iam migrate --config better-iam.config.mjs
+      - run: npm test
+```
+
+If you write your own adapter or fork this one, run the conformance suite from `@better-iam/core/conformance`
+against it; see [Write a database adapter](/docs/guides/custom-database-adapter).
+
+## Errors
+
+| Code | When |
+| --- | --- |
+| [`INVALID_CONFIG`](/docs/reference/errors#invalid_config) | The connection string is missing or not `postgres://`/`postgresql://`, or `poolSize` or `lockTimeoutMs` is out of range. |
+| [`STORAGE_BUSY`](/docs/reference/errors#storage_busy) | The serializing lock was not acquired within `lockTimeoutMs`, or the server reported a serialization failure, deadlock, or canceled statement. Retry the operation. |
+| [`CONFLICT`](/docs/reference/errors#conflict) | A record with the same id, or the same natural key in its tenant, already exists. |
+| [`STORAGE_ERROR`](/docs/reference/errors#storage_error) | Any other database failure, for example an unreachable server. The message never includes SQL. |
+| [`TRANSACTION_REQUIRED`](/docs/reference/errors#transaction_required) | A write was attempted outside `transaction()`. |
+| [`TRANSACTION_ABORTED`](/docs/reference/errors#transaction_aborted) | A nested operation failed inside a transaction whose callback then returned normally; everything rolled back. |
+| [`TRANSACTION_CLOSED`](/docs/reference/errors#transaction_closed) | A transaction handle was used after its transaction ended. |
+| [`TRANSACTION_ACTIVE`](/docs/reference/errors#transaction_active) | `close()` was called inside a transaction. |
+| [`STORE_CLOSED`](/docs/reference/errors#store_closed) | The adapter was used after `close()`. |
+| [`SCHEMA_VERSION`](/docs/reference/errors#schema_version) | `iam_schema_version` holds a version this release does not support. |
+
+## Next steps
+
+<Cards>
+  <Card title="Migrations" href="/docs/databases/migrations">
+    Schema steps, upgrades, and running migrate in CI.
+  </Card>
+  <Card title="Moving from SQLite" href="/docs/databases/operations#snapshots-and-moving-between-databases">
+    Copy a whole deployment into PostgreSQL with store-copy.
+  </Card>
+  <Card title="Database operations" href="/docs/operations/deployment/database">
+    Durability, indexes, backups, and measuring.
+  </Card>
+</Cards>

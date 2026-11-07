@@ -1,0 +1,248 @@
+---
+title: TypeScript
+metaTitle: TypeScript support, inference, and exported types
+description: How Better IAM infers API and client types from your betterIam() instance, how defineConfig types the configuration, which types each package exports, and what is checked only at runtime.
+icon: FileType
+packages: ['better-iam', '@better-iam/server', '@better-iam/client', '@better-iam/cli']
+sources:
+  - packages/better-iam/src/index.ts
+  - packages/server/src/index.ts
+  - packages/server/src/define.ts
+  - packages/client/src/index.ts
+  - packages/client/src/session.ts
+  - packages/core/src/index.ts
+  - packages/core/src/policy.ts
+  - packages/react/src/index.tsx
+---
+
+Better IAM is written in TypeScript and ships declarations with every package. You do not maintain a separate API
+schema or generate code: the types of every API method, input, and result come from your own `betterIam()`
+instance, and the browser client infers them from that instance with a type-only import. When you rename a method
+or pass a wrong input, the compiler tells you before a request is ever sent.
+
+TypeScript is optional. Every package works from plain JavaScript; the types only add checking and autocompletion.
+
+## Setup
+
+<Steps>
+<Step>
+
+### Configure the compiler
+
+Better IAM packages are ES modules that publish subpath exports (`better-iam/client`, `better-iam/server`, and so
+on). TypeScript resolves those only with a modern module resolution.
+
+```json title="tsconfig.json"
+{
+  "compilerOptions": {
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "target": "ES2023",
+    "strict": true,
+    "skipLibCheck": true
+  }
+}
+```
+
+| Setting | Requirement |
+| --- | --- |
+| `moduleResolution` | `bundler`, `node16`, or `nodenext`. With `node` (`node10`), subpath imports such as `better-iam/client` do not resolve. |
+| `"type": "module"` in `package.json` | Required for Node.js, unless a bundler compiles your code. |
+| Relative imports | With `node16` or `nodenext`, write the `.js` extension (`./iam.js`), as the examples on this page do; `bundler` accepts it too. |
+| `strict` | Recommended. Optional fields and nullable values, such as the session store's `session`, are only checked with strict null checks. |
+
+</Step>
+<Step>
+
+### Type the configuration
+
+`defineConfig` from `better-iam/server` types a configuration module for both your server and the CLI. It returns
+its argument unchanged; its only job is checking and autocompletion. It accepts the options object or a factory
+that receives `{ command, env, cwd }`.
+
+```ts title="better-iam.config.ts"
+import { defineConfig } from 'better-iam/server';
+import { sqliteAdapter } from 'better-iam/adapter-sqlite';
+
+export default defineConfig(({ env = process.env } = {}) => ({
+  database: sqliteAdapter({ filename: env.BETTER_IAM_DATABASE ?? './iam.db' }),
+  secret: env.BETTER_IAM_SECRET ?? '',
+  baseURL: env.BETTER_IAM_BASE_URL ?? 'http://localhost:3000',
+}));
+```
+
+The CLI loads a `.ts` configuration directly on Node.js 22.18 or later; see [CLI](/docs/concepts/cli#configuration-discovery).
+
+</Step>
+<Step>
+
+### Export the instance
+
+Create the instance once and export it as a value. Everything else infers from `typeof iam`.
+
+```ts title="iam.ts"
+import { betterIam, configOptions } from 'better-iam/server';
+import config from './better-iam.config.js';
+
+// configOptions calls a factory with this process's environment; plain options pass through.
+export const iam = betterIam(await configOptions(config));
+```
+
+</Step>
+</Steps>
+
+## Inference from the instance
+
+`betterIam()` has no hand-written return type: its type is whatever the instance contains, exported as
+`BetterIam` (`ReturnType<typeof betterIam>`). Every method under `iam.api` is a plain async function, so the usual
+TypeScript utilities give you its input and result types without any Better IAM helper:
+
+```ts title="types.ts"
+import type { iam } from './iam.js';
+
+// The input of roles.create (its second parameter, after the credential).
+export type RoleInput = Parameters<typeof iam.api.roles.create>[1];
+// What roles.create resolves to.
+export type CreatedRole = Awaited<ReturnType<typeof iam.api.roles.create>>;
+// The caller as auth.getSession returns it.
+export type CurrentSession = Awaited<ReturnType<typeof iam.api.auth.getSession>>;
+```
+
+Results that can take more than one form are unions, so narrow them before use:
+
+```ts title="sign-in.ts"
+import { iam } from './iam.js';
+
+const result = await iam.api.auth.signIn({ tenantId, email, password });
+if ('mfaRequired' in result) {
+  // result is the MFA challenge: { mfaRequired: true, challenge, enrollmentRequired, ... }
+} else {
+  // result has the session token and session
+}
+```
+
+`Api` from `better-iam/server` is the type of `iam.api` itself, for code that receives the API object rather than
+the whole instance.
+
+## The typed client
+
+`createIamClient<typeof iam>()` infers the client from the server instance. Import the instance with
+`import type`, so no server code (database drivers, password hashing) reaches the browser bundle.
+
+```ts title="lib/iam-client.ts"
+import { createIamClient } from 'better-iam/client';
+import type { iam } from './iam.js';
+
+export const client = createIamClient<typeof iam>();
+
+const role = await client.roles.create({ tenantId, name: 'Editor', permissions: ['documents:read'] });
+//    ^? the same result type as iam.api.roles.create
+```
+
+The client's type, `IamClient<typeof iam>`, maps each server method to a client method:
+
+| Server method | Client method |
+| --- | --- |
+| `(credential, input) => Promise<R>` | `(input, options?) => Promise<R>` |
+| `(credential) => Promise<R>` | `(options?) => Promise<R>` |
+| `(input) => Promise<R>` (public) | `(input, options?) => Promise<R>` |
+| `iam.authorize(request)`, `authorizeMany`, `listAccessible` | The same input without the credential fields (`headers`, `token`) |
+| `auth.beginMfa` | `(input?: { tenantId, challenge }, options?)` |
+| `auth.confirmMfa` | `({ credential?: { tenantId, challenge }, code, rememberDevice? }, options?)` |
+
+`options` is `ClientCallOptions`: `{ signal?: AbortSignal; headers?: HeadersInit }`. Plugin endpoints are not part
+of the instance's type, so `client.$request<Result>(path, input)` takes the result type as a type argument.
+
+To pass the client through props or context, type it with `IamClient`:
+
+```tsx title="components/members.tsx"
+import type { IamClient } from 'better-iam/client';
+import type { iam } from '../lib/iam.js';
+
+export function Members({ client, tenantId }: { client: IamClient<typeof iam>; tenantId: string }) {
+  // client.identities.list({ tenantId }) is fully typed here.
+  return null;
+}
+```
+
+The UI bindings take the client's type as a type argument. In React, `useIamClient<typeof client>()` returns the
+typed client and `useSession<typeof client>()` types the session as `getSession` returns it. `SessionOf<typeof client>`
+from `better-iam/client/session` names that session type directly.
+
+```tsx title="components/profile.tsx"
+import { useSession } from '@better-iam/react';
+import type { client } from '../lib/iam-client.js';
+
+export function Profile() {
+  const { status, session } = useSession<typeof client>();
+  return status === 'authenticated' ? <p>{session?.identity.name}</p> : null;
+}
+```
+
+## Typed builders
+
+| Builder | From | What it types |
+| --- | --- | --- |
+| `defineConfig(options \| factory)` | `better-iam/server` | A deployment configuration for `betterIam()` and the CLI. |
+| `configOptions(config, context?)` | `better-iam/server` | Resolves a `defineConfig` value to options, calling a factory with `{ env, cwd }` (default: this process). |
+| `defineTenantConfig(config \| factory)` | `better-iam/server` | A tenant's configuration as code (`TenantConfig`) for `config-plan`, `config-apply`, and `iam.api.config.apply`. |
+| `definePolicy(document)` | `better-iam` | A policy document. It validates the document at runtime and returns a detached copy, keeping literal types with a `const` type parameter. |
+| `defineCommand(spec)` | `better-iam/cli` | A project CLI command with typed flags. |
+
+```ts title="policies.ts"
+import { definePolicy } from 'better-iam';
+
+export const readDocuments = definePolicy({
+  version: 1,
+  statements: [{ effect: 'allow', actions: ['documents:read'], resources: ['document/*'] }],
+});
+```
+
+## Exported types
+
+The umbrella package re-exports each package's types under the matching subpath. These are the ones you reach for
+most; [Types](/docs/reference/types) documents their fields and [Exports](/docs/reference/exports) lists everything.
+
+| Import from | Types |
+| --- | --- |
+| `better-iam` | `BetterIam`, `BetterIamOptions`, `AuthorizationRequest`, `CredentialInput`, `PolicyDocument`, `PolicyStatement`, `Decision`, `ResourceRef`, `Identity`, `Tenant`, `Session`, `AuditEvent`, `IamPlugin`, `IamStore` |
+| `better-iam/server` | Everything in `@better-iam/server`: `Api`, `IamConfigContext`, `IamConfigFactory`, `TenantConfig`, `PublicIdentity`, record types such as `Role`, `Policy`, `Binding`, and `Group`, and the input and result types of individual features |
+| `better-iam/client` | `ClientOptions`, `ClientCallOptions`, `IamClient`, `ClientApi`, `ClientTransport` |
+| `better-iam/client/session` | `SessionClient`, `SessionOf`, `SessionSnapshot`, `SessionStatus`, `SessionStore` |
+| `better-iam/cli` | `CommandSpec`, `CommandContext`, `FlagSpec`, `CliSettings`, `ConfigModule`, `ConfigContext`, `CliIO` |
+
+Individual packages export the same names: `@better-iam/server`, `@better-iam/client`, `@better-iam/client/session`,
+and `@better-iam/cli`.
+
+## What is checked only at runtime
+
+Some values are plain strings in the types because their valid set lives in your configuration or database, not in
+the code:
+
+| Value | Type | Checked |
+| --- | --- | --- |
+| Action names (`documents:read`) | `string` | When a role or policy is saved, against the [permission catalog](/docs/authorization/catalog) (`INVALID_ACTION`, `INVALID_POLICY`). |
+| Resource types (`document`) | `string` | When a policy, registration, or authorization check uses them (for example `INVALID_RESOURCE_TYPE`, or `RESOURCE_RESOLVER_REQUIRED` for an application type without `resolveResource`). |
+| Tenant, identity, and role IDs | `string` | On every call (`NOT_FOUND`, `ACCESS_DENIED`). |
+| Error codes | `string` on `IamError.code` and `IamClientError.code` | Compare against the codes in the [error reference](/docs/reference/errors). |
+| Plugin endpoint inputs and results | `unknown` unless you pass a type argument to `$request` | By the plugin. |
+
+The instance also validates its own options at construction and throws `INVALID_CONFIG`, so options that type-check
+but break a rule (a `basePath` with a trailing slash, an `http:` `baseURL` outside localhost) still fail at startup.
+
+## Next steps
+
+<Cards>
+  <Card title="Typed client" href="/docs/concepts/client">
+    The client that `typeof iam` types.
+  </Card>
+  <Card title="Server API" href="/docs/concepts/api">
+    Method shapes, credentials, and routes.
+  </Card>
+  <Card title="Types reference" href="/docs/reference/types">
+    The fields of every core type.
+  </Card>
+  <Card title="Error handling" href="/docs/concepts/error-handling">
+    Narrowing `IamError` and `IamClientError`.
+  </Card>
+</Cards>

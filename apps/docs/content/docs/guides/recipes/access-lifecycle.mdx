@@ -97,7 +97,7 @@ await iam.api.webhooks.create(credential, {
 - An organization can set floors for every eligible binding at once with `tenants.setAccessPolicy`, such as a
   shorter maximum or a required justification.
 
-See [Just-in-time elevation](/docs/guides/privileged-access/elevation).
+See [Just-in-time elevation](/docs/features/privileged-access/elevation).
 
 ## Contractors: schedule deactivation
 
@@ -133,7 +133,7 @@ await iam.purgeDeleted();
 - Service accounts accept `expiresAt` too, and [`remind`](/docs/operations/jobs#digest-and-reminders) emails people
   a week before their account ends.
 
-See [Access lifecycle](/docs/guides/privileged-access/lifecycle).
+See [Access lifecycle](/docs/features/privileged-access/lifecycle).
 
 ## API key hygiene
 
@@ -169,7 +169,7 @@ for (const item of unused)
 - The nightly [`report`](/docs/operations/jobs#nightly-checks-with-a-credential) and the owners' digest list unused
   and expiring keys.
 
-See [Access lifecycle](/docs/guides/privileged-access/lifecycle#api-key-hygiene).
+See [Access lifecycle](/docs/features/privileged-access/lifecycle#api-key-hygiene).
 
 ## Configuration as code
 
@@ -217,7 +217,7 @@ BETTER_IAM_TOKEN=... better-iam config-plan --config better-iam.config.mjs --ten
 - The commands act as `BETTER_IAM_TOKEN` (`iam:config:read`, and `iam:config:apply` plus the permission for each
   change). Treat that token as an administrator credential.
 
-See [Configuration as code](/docs/guides/privileged-access/config-as-code).
+See [Configuration as code](/docs/features/privileged-access/config-as-code).
 
 ## Offboard a person
 
@@ -248,7 +248,7 @@ await iam.api.identities.delete(credential, { tenantId, identityId: leaver.id })
 - It is audited as `identity:offboard` with the reason and the counts of everything removed.
 - The identity stays as a disabled record for retention; `identities.delete` tombstones it later.
 
-See [Access lifecycle](/docs/guides/privileged-access/lifecycle).
+See [Access lifecycle](/docs/features/privileged-access/lifecycle).
 
 ## Next steps
 
@@ -256,7 +256,7 @@ See [Access lifecycle](/docs/guides/privileged-access/lifecycle).
   <Card title="Operations recipes" href="/docs/guides/recipes/operations">
     Audit chain, assertions, observability, and webhooks.
   </Card>
-  <Card title="Privileged access" href="/docs/guides/privileged-access">
+  <Card title="Privileged access" href="/docs/features/privileged-access">
     Elevation, packages, expiry, and configuration as code in depth.
   </Card>
 </Cards>

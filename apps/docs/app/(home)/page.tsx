@@ -80,7 +80,7 @@ export default function HomePage() {
                 body: 'Guards for Next.js, Nuxt, SvelteKit, React Router, and NestJS; middleware for Express, Hono, and Fastify.',
               },
             ]}
-            href="/docs/guides/quickstart"
+            href="/docs/quickstart"
             linkLabel="Start the quickstart"
             visual={<CodeTour />}
           />
@@ -105,7 +105,7 @@ export default function HomePage() {
                 body: 'How someone signed in reaches every decision as principal.authMethod and principal.mfa.',
               },
             ]}
-            href="/docs/guides/authentication"
+            href="/docs/authentication"
             linkLabel="Read the authentication guide"
             visual={<SignInFlow />}
           />
@@ -132,7 +132,7 @@ export default function HomePage() {
                 body: 'With variables such as ${principal.id} and request context such as the source IP.',
               },
             ]}
-            href="/docs/guides/authorization"
+            href="/docs/authorization"
             linkLabel="How a decision is made"
             visual={<DecisionDemo />}
           />
@@ -162,7 +162,7 @@ export default function HomePage() {
                 body: 'Verified domains route people to their organization; plan limits cap usage.',
               },
             ]}
-            href="/docs/guides/concepts/tenants-and-identities"
+            href="/docs/concepts/tenants-and-identities"
             linkLabel="Tenants and identities"
             visual={<TenantTree />}
           />
@@ -188,7 +188,7 @@ export default function HomePage() {
                 body: 'Export, plan, and apply roles, policies, and bindings, with drift detection in CI.',
               },
             ]}
-            href="/docs/guides/privileged-access/elevation"
+            href="/docs/features/privileged-access/elevation"
             linkLabel="Just-in-time elevation"
             visual={<ElevationTimeline />}
           />
@@ -213,7 +213,7 @@ export default function HomePage() {
                 body: 'After commit, events fan out to signed webhooks and in-process subscribers.',
               },
             ]}
-            href="/docs/guides/events/audit-chain"
+            href="/docs/concepts/events/audit-chain"
             linkLabel="How the audit chain works"
             visual={<AuditChain />}
           />
@@ -258,7 +258,7 @@ function MoreSection() {
     {
       icon: RiScales3Line,
       title: 'Governance',
-      href: '/docs/guides/governance',
+      href: '/docs/features/governance',
       items: [
         'Certification campaigns with reviewer suggestions',
         'Separation-of-duties rules, enforced on every grant',
@@ -281,7 +281,7 @@ function MoreSection() {
     {
       icon: RiPlugLine,
       title: 'Integrations',
-      href: '/docs/frameworks',
+      href: '/docs/integrations',
       items: [
         'Next.js, Nuxt, SvelteKit, and React Router',
         'React and Vue hooks with batched checks',
@@ -425,13 +425,13 @@ function FinalCta() {
       icon: RiBookOpenLine,
       title: 'Read the guides',
       body: 'Concepts first, then sign-in, decisions, and the access lifecycle.',
-      href: '/docs/guides',
+      href: '/docs/introduction',
     },
     {
       icon: RiLayoutGridLine,
       title: 'Pick your framework',
       body: 'Full-stack, client, and server integrations.',
-      href: '/docs/frameworks',
+      href: '/docs/integrations',
     },
     {
       icon: RiBracesLine,
@@ -470,7 +470,7 @@ function FinalCta() {
             </p>
             <CreatorCredit label="Built and maintained by" />
             <div className="mt-2 flex flex-wrap gap-2.5">
-              <ActionLink href="/docs/guides/quickstart" trailingIcon={RiArrowRightLine}>
+              <ActionLink href="/docs/quickstart" trailingIcon={RiArrowRightLine}>
                 Start the quickstart
               </ActionLink>
               <ActionLink
@@ -511,7 +511,7 @@ function FinalCta() {
       >
         New to identity and access management?{' '}
         <TextLink
-          href="/docs/guides/concepts"
+          href="/docs/concepts"
           trailingIcon={RiArrowRightLine}
           className="inline-flex"
         >

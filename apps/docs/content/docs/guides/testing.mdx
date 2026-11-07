@@ -1,0 +1,693 @@
+---
+title: Test your integration
+description: Test code that uses Better IAM with an in-memory SQLite instance, a reusable fixture, real sessions in route handlers, the NestJS testing stand-in, and Playwright end-to-end sign-in.
+icon: ClipboardCheck
+packages: ['better-iam', '@better-iam/adapter-sqlite', '@better-iam/nestjs']
+sources:
+  - tests/support/organization.ts
+  - tests/projects.test.ts
+  - packages/adapter-sqlite/src/index.ts
+  - packages/server/src/http.ts
+  - packages/server/src/principals.ts
+  - packages/server/src/lifecycle.ts
+  - packages/nestjs/src/testing.ts
+  - packages/server/src/define.ts
+  - packages/auth/src/types.ts
+---
+
+In this guide you set up tests for an application that uses Better IAM. Authorization tests run against a real
+instance on an in-memory SQLite database, so they exercise the same policy engine, roles, and bindings as
+production, with no mocks and no external services. You will build:
+
+- a fixture that creates a migrated in-memory instance, a root administrator, an organization, and signed-in
+  members with the roles you choose;
+- unit tests for `iam.require`, `iam.authorize`, and `iam.authorizeMany`;
+- tests for your own route handlers with real session tokens;
+- tests against the IAM HTTP API through `iam.handler`;
+- controller tests for NestJS with `createTestingIam`, which needs no database;
+- a Playwright suite that seeds a database, signs in once, and reuses the session cookie.
+
+Better IAM has no in-memory store of its own: the test database is `sqliteAdapter({ filename: ':memory:' })`, the
+same SQLite adapter you use in development, holding its data in memory until it is closed.
+
+## Prerequisites
+
+- An application with Better IAM installed, as in the [Quickstart](/docs/quickstart), on Node.js 22.12 or newer.
+- [Vitest](https://vitest.dev) for unit and integration tests. Jest works as well; the code below uses only
+  `describe`, `it`, `expect`, and lifecycle hooks.
+- [Playwright](https://playwright.dev) for the end-to-end steps.
+
+## Set up the tests
+
+<Steps>
+<Step>
+
+### Install the test dependencies
+
+```npm
+npm i -D vitest otplib@12 @playwright/test tsx
+```
+
+- `otplib` generates the six-digit codes of the root administrator's authenticator. Root authority always
+  requires an MFA-verified session, so a fixture that creates organizations has to complete that enrollment.
+  Better IAM uses otplib 12 itself.
+- `tsx` runs the TypeScript seed script before the Playwright suite.
+
+</Step>
+<Step>
+
+### Create a test fixture
+
+The fixture builds everything a test needs in one call. It is the same sequence as the Quickstart, done in code:
+migrate, bootstrap the root, enroll its authenticator, create an organization, and accept the owner's invitation
+from the captured email.
+
+```ts title="test/iam-fixture.ts"
+import { authenticator } from 'otplib';
+import { betterIam, type BetterIamOptions } from 'better-iam';
+import { sqliteAdapter } from 'better-iam/adapter-sqlite';
+import type { DeliveryMessage } from 'better-iam/auth';
+
+const ROOT_EMAIL = 'root@example.test';
+const ROOT_PASSWORD = 'a long root test password';
+const OWNER_PASSWORD = 'a long owner test password';
+export const passwordOf = (name: string) => `a long ${name} test password`;
+
+/**
+ * A migrated in-memory instance with a signed-in root administrator and one organization ("Acme") whose owner
+ * accepted the invitation. Every email the instance sends lands in `inbox` instead of a mail provider.
+ */
+export async function createIamFixture(overrides: Partial<BetterIamOptions> = {}) {
+  const database = overrides.database ?? sqliteAdapter({ filename: ':memory:' });
+  const inbox: DeliveryMessage[] = [];
+  const iam = betterIam({
+    secret: 'test-secret-with-at-least-32-characters',
+    baseURL: 'http://localhost:3000',
+    ...overrides,
+    database,
+    authentication: {
+      ...overrides.authentication,
+      sendEmail: async (message) => {
+        inbox.push(message);
+      },
+    },
+  });
+  await iam.initialize();
+
+  // The root administrator must enroll an authenticator before it can act; otplib plays the authenticator app.
+  const root = await iam.bootstrap({ email: ROOT_EMAIL, name: 'Root', password: ROOT_PASSWORD });
+  const rootTenantId = root.tenant.id;
+  const challenge = await iam.api.auth.signIn({
+    tenantId: rootTenantId,
+    email: ROOT_EMAIL,
+    password: ROOT_PASSWORD,
+  });
+  if (!('mfaRequired' in challenge)) throw new Error('Expected the root sign-in to require MFA');
+  const { secret } = await iam.api.auth.beginMfa({ tenantId: rootTenantId, challenge: challenge.challenge });
+  const rootSession = await iam.api.auth.confirmMfa({
+    credential: { tenantId: rootTenantId, challenge: challenge.challenge },
+    code: authenticator.generate(secret),
+  });
+  const rootCredential = { token: rootSession.token };
+
+  // One organization, with its owner signed in.
+  const { tenant } = await iam.api.tenants.create(rootCredential, {
+    parentId: rootTenantId,
+    type: 'organization',
+    name: 'Acme',
+    ownerEmail: 'owner@acme.test',
+  });
+  await iam.auth.dispatchOutbox();
+  const invitation = inbox.find(
+    (message) => message.tenantId === tenant.id && message.template === 'owner-invitation',
+  );
+  if (!invitation?.payload.token) throw new Error('No owner invitation was sent');
+  const owner = await iam.api.tenants.acceptInvitation({
+    tenantId: tenant.id,
+    token: invitation.payload.token,
+    name: 'Owner',
+    password: OWNER_PASSWORD,
+  });
+  if (!('token' in owner)) throw new Error('Unexpected MFA challenge for the owner');
+  const ownerCredential = { token: owner.token };
+
+  /** Signs a person in with their password and returns a credential for `iam.api` and `iam.require`. */
+  async function signIn(email: string, password: string) {
+    const result = await iam.api.auth.signIn({ tenantId: tenant.id, email, password });
+    if (!('token' in result)) throw new Error(`Unexpected MFA challenge for ${email}`);
+    return { token: result.token };
+  }
+
+  /** Creates `{name}@acme.test`, binds a role with `permissions` when given, and signs the person in. */
+  async function member(name: string, permissions: string[] = []) {
+    const email = `${name}@acme.test`;
+    const identity = await iam.api.identities.create(ownerCredential, {
+      tenantId: tenant.id,
+      email,
+      name,
+      password: passwordOf(name),
+    });
+    if (permissions.length) {
+      const role = await iam.api.roles.create(ownerCredential, {
+        tenantId: tenant.id,
+        name: `${name} role`,
+        permissions,
+      });
+      await iam.api.bindings.create(ownerCredential, {
+        tenantId: tenant.id,
+        roleId: role.id,
+        subjectType: 'identity',
+        subjectId: identity.id,
+      });
+    }
+    return { identity, email, credential: await signIn(email, passwordOf(name)) };
+  }
+
+  return {
+    iam,
+    inbox,
+    rootTenantId,
+    rootCredential,
+    tenantId: tenant.id,
+    ownerCredential,
+    signIn,
+    member,
+    close: () => database.close(),
+  };
+}
+
+export type IamFixture = Awaited<ReturnType<typeof createIamFixture>>;
+```
+
+How the pieces fit:
+
+| Call | Why the fixture needs it |
+| --- | --- |
+| `iam.initialize()` | Creates the schema and runs plugin migrations, as `better-iam migrate` does. |
+| `iam.bootstrap({ email, name, password })` | Creates the root tenant and its administrator once per database. |
+| `auth.signIn`, `auth.beginMfa`, `auth.confirmMfa` | The root's first sign-in returns an MFA challenge; confirming the first code issues an MFA-verified session. |
+| `tenants.create` and `iam.auth.dispatchOutbox()` | Creates the organization and hands the queued owner invitation to `sendEmail`, which stores it in `inbox`. |
+| `tenants.acceptInvitation` | Activates the organization and signs the owner in. |
+| `identities.create`, `roles.create`, `bindings.create`, `auth.signIn` | Creates a member with a password and a role, then signs them in. |
+
+`overrides` takes any `BetterIamOptions`, so each test file passes the permissions, `resolveResource`, plugins,
+or other options it needs. The fixture always replaces `authentication.sendEmail` so no test sends real email,
+and keeps the rest of `authentication`. Pass `authentication: { now: () => clock }` to control time in tests of
+expiry; `now` exists for deterministic integration tests.
+
+</Step>
+<Step>
+
+### Unit-test authorization decisions
+
+Create the fixture once per file in `beforeAll` (password hashing makes each fixture take a moment) and close it
+in `afterAll`. `resolveResource` is where your application tells IAM which tenant owns a resource; in tests it reads
+from a `Map` that stands in for your database.
+
+```ts title="test/documents.test.ts"
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { IamError } from 'better-iam';
+import { createIamFixture, type IamFixture } from './iam-fixture';
+
+/** Stands in for your application's documents table. */
+const documents = new Map<string, { tenantId: string; ownerId: string }>();
+
+let f: IamFixture;
+let editor: Awaited<ReturnType<IamFixture['member']>>;
+let viewer: Awaited<ReturnType<IamFixture['member']>>;
+
+beforeAll(async () => {
+  f = await createIamFixture({
+    permissions: {
+      resourceTypes: {
+        document: { actions: ['documents:read', 'documents:write'], attributes: { ownerId: 'string' } },
+      },
+    },
+    resolveResource: async ({ type, id }) => {
+      const document = documents.get(id);
+      if (!document) throw new IamError('NOT_FOUND', 'Document not found', 404);
+      return { type, id, tenantId: document.tenantId, attributes: { ownerId: document.ownerId } };
+    },
+  });
+  editor = await f.member('erin', ['documents:read', 'documents:write']);
+  viewer = await f.member('victor', ['documents:read']);
+  documents.set('doc-1', { tenantId: f.tenantId, ownerId: editor.identity.id });
+});
+afterAll(() => f.close());
+
+describe('document access', () => {
+  const write = { action: 'documents:write', resource: { type: 'document', id: 'doc-1' } };
+
+  it('lets an editor write', async () => {
+    await expect(
+      f.iam.require({ ...editor.credential, tenantId: f.tenantId, ...write }),
+    ).resolves.toBeUndefined();
+  });
+
+  it('refuses a viewer with ACCESS_DENIED', async () => {
+    await expect(
+      f.iam.require({ ...viewer.credential, tenantId: f.tenantId, ...write }),
+    ).rejects.toMatchObject({ code: 'ACCESS_DENIED', status: 403 });
+  });
+
+  it('returns the decision instead of throwing', async () => {
+    const decision = await f.iam.authorize({ ...viewer.credential, tenantId: f.tenantId, ...write });
+    expect(decision).toMatchObject({ allowed: false, reason: 'ACCESS_DENIED' });
+  });
+
+  it('checks several actions at once', async () => {
+    const { results } = await f.iam.authorizeMany({
+      ...viewer.credential,
+      tenantId: f.tenantId,
+      checks: [
+        { action: 'documents:read', resource: { type: 'document', id: 'doc-1' } },
+        { action: 'documents:write', resource: { type: 'document', id: 'doc-1' } },
+      ],
+    });
+    expect(results.map((result) => result.allowed)).toEqual([true, false]);
+  });
+});
+```
+
+- `iam.require(request)` resolves to `undefined` when the caller may act and throws an `IamError` otherwise:
+  `ACCESS_DENIED` (403) for a refusal, `UNAUTHENTICATED` (401) for a missing, expired, or revoked credential.
+- `iam.authorize(request)` returns a `Decision` (`{ allowed, reason, matched }`) and never throws for a refusal.
+- `iam.authorizeMany({ ...credential, tenantId, checks })` returns `{ results }` in the order of `checks`, each
+  with `allowed` and `reason`.
+- The credential is spread into the request: `{ token }` here, `{ headers }` in a request handler.
+
+Assert on `code` and `allowed`, not on messages. Messages may change between releases; codes do not.
+
+</Step>
+<Step>
+
+### Test your route handlers with a real session
+
+To test a handler that calls `iam.require`, give it the fixture's instance and send a request that carries a real
+session token as `Authorization: Bearer <token>`. IAM reads the same header from `request.headers` that a
+production request carries, so nothing is mocked.
+
+Write the handler so the instance can be passed in:
+
+```ts title="src/documents-route.ts"
+import { IamError, type BetterIam } from 'better-iam';
+
+/** PATCH /documents/:id for any framework that hands you a Web Request. */
+export function createDocumentRoutes(iam: BetterIam, tenantOf: (id: string) => Promise<string>) {
+  return {
+    async update(request: Request, id: string): Promise<Response> {
+      try {
+        await iam.require({
+          headers: request.headers,
+          tenantId: await tenantOf(id),
+          action: 'documents:write',
+          resource: { type: 'document', id },
+        });
+      } catch (error) {
+        if (error instanceof IamError)
+          return Response.json({ code: error.code }, { status: error.status });
+        throw error;
+      }
+      return Response.json({ updated: id });
+    },
+  };
+}
+```
+
+Then call it with requests built in the test:
+
+```ts title="test/documents-route.test.ts"
+import { afterAll, beforeAll, expect, it } from 'vitest';
+import { createDocumentRoutes } from '../src/documents-route';
+import { createIamFixture, type IamFixture } from './iam-fixture';
+
+let f: IamFixture;
+let routes: ReturnType<typeof createDocumentRoutes>;
+let editorToken: string;
+let viewerToken: string;
+
+beforeAll(async () => {
+  f = await createIamFixture({
+    permissions: { resourceTypes: { document: { actions: ['documents:read', 'documents:write'] } } },
+    // Test-only: every document belongs to the fixture's organization.
+    resolveResource: async ({ type, id }) => ({ type, id, tenantId: f.tenantId }),
+  });
+  editorToken = (await f.member('erin', ['documents:write'])).credential.token;
+  viewerToken = (await f.member('victor', ['documents:read'])).credential.token;
+  routes = createDocumentRoutes(f.iam, async () => f.tenantId);
+});
+afterAll(() => f.close());
+
+const patch = (token?: string) =>
+  new Request('http://localhost:3000/documents/doc-1', {
+    method: 'PATCH',
+    headers: token ? { authorization: `Bearer ${token}` } : {},
+  });
+
+it('allows an editor', async () => {
+  expect((await routes.update(patch(editorToken), 'doc-1')).status).toBe(200);
+});
+
+it('refuses a viewer', async () => {
+  const response = await routes.update(patch(viewerToken), 'doc-1');
+  expect(response.status).toBe(403);
+  expect(await response.json()).toEqual({ code: 'ACCESS_DENIED' });
+});
+
+it('refuses an anonymous request', async () => {
+  expect((await routes.update(patch(), 'doc-1')).status).toBe(401);
+});
+```
+
+The same approach works in every framework integration, because each one resolves the caller from the request's
+cookie or `Authorization` header. If your handler imports a module-level `iam` instead of receiving one, point that
+module at a test database (for example through `BETTER_IAM_DATABASE`) rather than mocking `iam.require`: a mocked
+check cannot catch a wrong action name or a missing role.
+
+</Step>
+<Step>
+
+### Test against the IAM HTTP API
+
+`iam.handler` is the Web-standard handler you mount in production. Calling it directly tests the HTTP contract
+(status codes, the `{ data }` and `{ error }` envelopes, cookies) without starting a server. Every `POST` needs
+`content-type: application/json` and `x-better-iam: 1`.
+
+```ts title="test/http.test.ts"
+import { afterAll, beforeAll, expect, it } from 'vitest';
+import { createIamFixture, passwordOf, type IamFixture } from './iam-fixture';
+
+let f: IamFixture;
+beforeAll(async () => {
+  f = await createIamFixture();
+});
+afterAll(() => f.close());
+
+const post = (path: string, body: unknown, headers: Record<string, string> = {}) =>
+  f.iam.handler(
+    new Request(`http://localhost:3000/api/iam/${path}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-better-iam': '1', ...headers },
+      body: JSON.stringify(body),
+    }),
+  );
+
+it('answers getSession for a bearer token', async () => {
+  const erin = await f.member('erin');
+  const response = await post('auth/getSession', {}, { authorization: `Bearer ${erin.credential.token}` });
+  expect(response.status).toBe(200);
+  expect((await response.json()).data.identity.email).toBe('erin@acme.test');
+});
+
+it('sets the session cookie on sign-in and requires Origin with it', async () => {
+  await f.member('victor');
+  const origin = 'http://localhost:3000';
+  const signIn = await post(
+    'auth/signIn',
+    { tenantId: f.tenantId, email: 'victor@acme.test', password: passwordOf('victor') },
+    { origin },
+  );
+  const cookie = signIn.headers.get('set-cookie')!.split(';')[0]!;
+  expect(cookie.startsWith('better-iam.session=')).toBe(true);
+
+  const withoutOrigin = await post('auth/getSession', {}, { cookie });
+  expect(withoutOrigin.status).toBe(403);
+  expect((await withoutOrigin.json()).error.code).toBe('CSRF_REJECTED');
+
+  const withOrigin = await post('auth/getSession', {}, { cookie, origin });
+  expect(withOrigin.status).toBe(200);
+});
+```
+
+**Routes:** `POST /api/iam/auth/getSession`, `POST /api/iam/auth/signIn`
+
+Over plain `http://` the session cookie is named `better-iam.session`. When `baseURL` is `https://`, it is
+`__Host-better-iam.session` and is marked `Secure`.
+
+</Step>
+<Step>
+
+### Mock the instance in NestJS controller tests
+
+For NestJS, `createTestingIam` from `better-iam/nestjs/testing` (or `@better-iam/nestjs/testing`) is an in-memory
+stand-in for the instance: no database, no password hashing, principals chosen by bearer token, and every decision
+made by your callback. Use it to test guards, decorators, and controller wiring; use the fixture when the test must
+prove real policy behavior.
+
+```ts title="test/projects.e2e-spec.ts"
+import { Test } from '@nestjs/testing';
+import { IamModule } from 'better-iam/nestjs';
+import { createTestingIam } from 'better-iam/nestjs/testing';
+import { ProjectsController } from '../src/projects.controller';
+
+const iam = createTestingIam({
+  principals: {
+    alice: { identity: { email: 'alice@example.test', tenantId: 't1' } },
+    admin: { identity: { tenantId: 't1' }, session: { mfa: true } },
+  },
+  decide: ({ principal, action, resource }) =>
+    principal.session.mfa || (action === 'projects:read' && resource.id === 'apollo'),
+  resources: { project: ['apollo', 'gemini'] }, // for listAccessible and @FilterAccessible
+});
+
+const moduleRef = await Test.createTestingModule({
+  imports: [IamModule.forRoot({ iam, guard: true })],
+  controllers: [ProjectsController],
+}).compile();
+// Requests with `authorization: Bearer alice` now run as Alice.
+```
+
+| Member | What it gives a test |
+| --- | --- |
+| `principals` | Principals by bearer token; unknown tokens fail with `UNAUTHENTICATED`. |
+| `decide(check)` | Decides every check; without it, everything is denied. |
+| `resources` | Registered ids per managed type, for `listAccessible` and `@FilterAccessible`. |
+| `iam.decisions` | Every check with its outcome, in order, for assertions. |
+| `iam.principal(token)` | The principal a token resolves to. |
+| `iam.emit(event)` | Delivers an audit event to `@OnIamEvent` handlers. |
+
+The stand-in serves no HTTP API and does not issue assertions. Other frameworks have no equivalent stand-in; use
+the fixture and real sessions as in the previous steps. More NestJS test levels are in the
+[NestJS integration](/docs/integrations/nestjs#testing).
+
+</Step>
+<Step>
+
+### Seed a database for end-to-end tests
+
+End-to-end tests run your real server, so they need a database file that both the seed script and the server
+open. Read the filename from the environment in your configuration module:
+
+```js title="better-iam.config.mjs"
+import { sqliteAdapter } from 'better-iam/adapter-sqlite';
+
+export default {
+  database: sqliteAdapter({ filename: process.env.BETTER_IAM_DATABASE ?? './iam.db' }),
+  secret: process.env.BETTER_IAM_SECRET,
+  baseURL: process.env.BETTER_IAM_BASE_URL ?? 'http://localhost:3000',
+  // ...the rest of your options
+};
+```
+
+The seed script deletes the previous end-to-end database, loads your configuration against the new file, and
+reuses the fixture to create the organization and a member. It writes what the tests need to a JSON file.
+
+```ts title="e2e/seed.ts"
+import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { configOptions } from 'better-iam/server';
+import { createIamFixture, passwordOf } from '../test/iam-fixture';
+
+const database = 'e2e.db';
+for (const file of [database, `${database}-wal`, `${database}-shm`]) await rm(file, { force: true });
+
+// Load the configuration only after pointing it at the end-to-end database.
+process.env.BETTER_IAM_DATABASE = database;
+const { default: config } = await import('../better-iam.config.mjs');
+
+const f = await createIamFixture(await configOptions(config));
+// Grant actions your configuration declares (here in permissions.resourceTypes or permissions.actions).
+const erin = await f.member('erin', ['documents:read', 'documents:write']);
+
+await mkdir('e2e/.auth', { recursive: true });
+await writeFile(
+  'e2e/.auth/seed.json',
+  JSON.stringify({ tenantId: f.tenantId, email: erin.email, password: passwordOf('erin') }, null, 2),
+);
+await f.close();
+```
+
+`configOptions(config)` returns your options whether the module exports an object or a `defineConfig` factory.
+Because the fixture keeps your configuration's `secret`, the server and the seed agree on it as long as both run
+with the same `BETTER_IAM_SECRET`. Add `e2e.db*` and `e2e/.auth/` to `.gitignore`.
+
+</Step>
+<Step>
+
+### Sign in from Playwright
+
+Start the server against the seeded database and sign in once in a setup project. The setup signs in through the
+real HTTP API with Playwright's `request` fixture, which stores the `Set-Cookie` session cookie, and saves it as
+storage state that every other test starts with.
+
+```ts title="playwright.config.ts"
+import { defineConfig, devices } from '@playwright/test';
+
+export default defineConfig({
+  testDir: './e2e',
+  use: { baseURL: 'http://localhost:3000' },
+  projects: [
+    { name: 'setup', testMatch: /.*\.setup\.ts/ },
+    {
+      name: 'chromium',
+      use: { ...devices['Desktop Chrome'], storageState: 'e2e/.auth/member.json' },
+      dependencies: ['setup'],
+    },
+  ],
+  webServer: {
+    command: 'npm run dev',
+    url: 'http://localhost:3000',
+    // A running dev server would use your development database instead of e2e.db.
+    reuseExistingServer: false,
+    env: { BETTER_IAM_DATABASE: 'e2e.db' },
+  },
+});
+```
+
+```ts title="e2e/auth.setup.ts"
+import { readFile } from 'node:fs/promises';
+import { expect, test as setup } from '@playwright/test';
+
+setup('sign in as the seeded member', async ({ request, baseURL }) => {
+  const seed = JSON.parse(await readFile('e2e/.auth/seed.json', 'utf8'));
+  const response = await request.post('/api/iam/auth/signIn', {
+    headers: { 'x-better-iam': '1', origin: baseURL! },
+    data: { tenantId: seed.tenantId, email: seed.email, password: seed.password },
+  });
+  expect(response.ok()).toBe(true);
+  await request.storageState({ path: 'e2e/.auth/member.json' });
+});
+```
+
+```ts title="e2e/session.spec.ts"
+import { readFile } from 'node:fs/promises';
+import { expect, test } from '@playwright/test';
+
+test('the stored session cookie signs requests in', async ({ page, baseURL }) => {
+  const seed = JSON.parse(await readFile('e2e/.auth/seed.json', 'utf8'));
+  const response = await page.request.post('/api/iam/auth/getSession', {
+    headers: { 'x-better-iam': '1', origin: baseURL! },
+    data: {},
+  });
+  expect(response.ok()).toBe(true);
+  expect((await response.json()).data.identity.email).toBe(seed.email);
+});
+
+test.describe('signing in through the form', () => {
+  // Start without the stored session.
+  test.use({ storageState: { cookies: [], origins: [] } });
+
+  test('a member signs in', async ({ page }) => {
+    const seed = JSON.parse(await readFile('e2e/.auth/seed.json', 'utf8'));
+    await page.goto('/sign-in'); // your sign-in page
+    // Adjust the labels and button name to your form.
+    await page.getByLabel('Email').fill(seed.email);
+    await page.getByLabel('Password').fill(seed.password);
+    await page.getByRole('button', { name: 'Sign in' }).click();
+    await expect(page).not.toHaveURL(/sign-in/);
+  });
+});
+```
+
+`page.request` shares cookies with the page, so API calls and page navigation in a test use the same session.
+The `Origin` header is required because those requests carry the cookie; `x-better-iam: 1` and the JSON body are
+required on every `POST`. The form test exercises your own sign-in page, so its URL, labels, and redirect are
+yours to adjust.
+
+Add a script that seeds before Playwright starts:
+
+```json title="package.json"
+{
+  "scripts": {
+    "test": "vitest run",
+    "test:e2e": "tsx e2e/seed.ts && playwright test"
+  }
+}
+```
+
+</Step>
+</Steps>
+
+## Verify it works
+
+Run the unit and integration tests, then the end-to-end suite, with the deployment secret in the environment for
+the second command:
+
+```bash
+npx vitest run
+BETTER_IAM_SECRET=a-test-secret-with-at-least-32-characters npm run test:e2e
+```
+
+The Vitest run passes when an editor may write, a viewer is refused with `ACCESS_DENIED`, an anonymous request gets
+401, and the HTTP handler sets `better-iam.session` on sign-in. The Playwright run passes when the setup project
+signs in and the spec reads the member's email back from `auth/getSession` with the stored cookie.
+
+## Troubleshooting
+
+<Accordions>
+<Accordion title="bootstrap fails with ALREADY_INITIALIZED, or confirmMfa fails">
+The fixture expects a fresh database. `bootstrap` runs once per database, and a second fixture on the same file
+fails with `ALREADY_INITIALIZED` because the root already exists. Use `:memory:` for unit tests and delete the
+end-to-end file before seeding. If
+codes are refused, check that the test clock matches the real one: a custom `authentication.now` far from the
+system time makes TOTP codes from `authenticator.generate` invalid.
+</Accordion>
+<Accordion title="tenants.create fails with DELIVERY_REQUIRED">
+Creating an organization sends the owner an invitation, which needs `authentication.sendEmail`. The fixture always
+sets it; if you build an instance by hand, give it a `sendEmail` that stores messages in an array.
+</Accordion>
+<Accordion title="Checks fail with RESOURCE_RESOLVER_REQUIRED">
+A resource type of your application needs `resolveResource` to tell IAM which tenant owns each resource. Pass one
+in the fixture overrides; in tests it can read from a `Map`.
+</Accordion>
+<Accordion title="HTTP calls fail with CSRF_REJECTED or UNTRUSTED_ORIGIN">
+Every `POST` to the IAM handler needs `content-type: application/json` and `x-better-iam: 1`. A request that
+carries a cookie also needs an `Origin` header, and the origin must be trusted: the `baseURL` origin always is.
+</Accordion>
+<Accordion title="The Playwright setup gets a challenge instead of a cookie">
+When the organization requires MFA, `auth/signIn` answers with an MFA challenge and sets no cookie. Seed a member
+in an organization without that requirement, or complete the challenge with `auth/verifyMfa` in the setup.
+</Accordion>
+<Accordion title="Tests are slow">
+Each fixture hashes several passwords and migrates a database. Create one fixture per file in `beforeAll` when the
+tests do not depend on each other's changes, and create members once rather than per test.
+</Accordion>
+<Accordion title="Repeated sign-ins fail with RATE_LIMITED">
+Every password sign-in counts against the account's limit, successful or not: 10 attempts per 15-minute window by
+default (`authentication.rateLimits.attempts` and `windowMs`). Sign in once per member and reuse the token or
+storage state. A suite that must sign the same person in many times can pass
+`authentication: { rateLimits: { attempts: 1000 } }` in the fixture overrides.
+</Accordion>
+<Accordion title="Seeded members get EMAIL_UNVERIFIED">
+Members created with `identities.create` start with `emailVerified: false`. If your configuration sets
+`authentication.requireEmailVerification: true` (it also defaults to on when `authentication.signUpEnabled` is on),
+they cannot sign in until they verify their address. Leave the option off in the test configuration, or pass `authentication: { requireEmailVerification: false }` in the fixture
+overrides.
+</Accordion>
+</Accordions>
+
+## Next steps
+
+<Cards>
+  <Card title="Create your first extension" href="/docs/guides/create-an-extension">
+    Build a plugin and test it with this fixture.
+  </Card>
+  <Card title="Error codes" href="/docs/reference/errors">
+    The codes to assert on, with their HTTP statuses.
+  </Card>
+  <Card title="NestJS integration" href="/docs/integrations/nestjs#testing">
+    Guard-level tests and the createTestingIam stand-in.
+  </Card>
+  <Card title="SQLite" href="/docs/databases/sqlite">
+    The adapter behind the in-memory test database.
+  </Card>
+</Cards>

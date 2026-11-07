@@ -1,0 +1,577 @@
+---
+title: Usage-based billing
+description: Meter API usage per organization, price it with a graduated rate card and a subscription plan, enforce budgets, close the month into invoices, and record payments from a payment processor webhook.
+icon: Receipt
+packages: ['better-iam', '@better-iam/server', '@better-iam/client', '@better-iam/cli']
+sources:
+  - docs/billing.md
+  - packages/server/src/billing.ts
+  - packages/server/src/billing-service.ts
+  - packages/server/src/api/billing.ts
+  - packages/cli/src/index.ts
+---
+
+In this guide you charge customer organizations for what they use. Your API records one usage event per request,
+Better IAM attributes each event to the organization, the person or service account behind it, their teams and
+department, prices the month with your rate card, and issues an invoice that follows Stripe's lifecycle (draft,
+finalized, paid). Payments arrive from your payment processor's webhook.
+
+You will:
+
+- configure currency, billing time zone, invoice issuer, and payment terms;
+- define a platform meter with a graduated rate card and a negotiated price for one customer;
+- sell a plan with a monthly fee and seats, and subscribe an organization to it;
+- record usage from your request path, idempotently, and refuse it once an enforced budget is spent;
+- show customers their spend and the invoice so far;
+- close the month into invoices, collect payment through a processor webhook, and correct an invoice with a credit
+  note.
+
+<Callout type="info" title="Billing is built in, payment collection is not">
+  Better IAM meters, prices, and invoices. It does not charge cards or move money, and it has no Stripe integration.
+  You collect payment with your processor and report it back with `iam.billing.recordPayment`, as step 8 shows.
+</Callout>
+
+## Prerequisites
+
+- A Better IAM instance exported as `iam` from `src/iam.ts`, the CLI configuration `better-iam.config.mjs`, and at
+  least one customer organization. See the [Quickstart](/docs/quickstart).
+- The root tenant's ID (`rootTenantId`) and a root administrator credential from an MFA-verified session. Platform
+  meters, prices, and plans live on the root tenant.
+- An organization administrator credential with `iam:billing:manage` for subscribing and creating budgets.
+- A scheduler for the monthly close and the alert jobs ([Scheduled jobs](/docs/operations/jobs)).
+- Email delivery (`authentication.sendEmail`) if invoices, budget alerts, and payment reminders should be emailed.
+
+<Steps>
+<Step>
+
+### Configure billing
+
+Billing is always available; the `billing` option only tunes it. Choose the currency and time zone before the first
+invoice, because billing months follow the time zone.
+
+```ts title="src/iam.ts"
+import { betterIam } from 'better-iam';
+import { postgresAdapter } from 'better-iam/adapter-postgres';
+
+export const iam = betterIam({
+  database: postgresAdapter({ connectionString: process.env.DATABASE_URL! }),
+  secret: process.env.BETTER_IAM_SECRET,
+  baseURL: process.env.BETTER_IAM_BASE_URL,
+  billing: {
+    currency: 'EUR',
+    timeZone: 'Europe/Berlin',
+    paymentTermsDays: 30,
+    statementPrefix: 'INV', // invoice numbers read INV-202611-0001
+    issuer: {
+      name: 'Acme Cloud Ltd',
+      address: '1 Main Street, London',
+      taxId: 'GB123456789',
+      paymentInstructions: 'Pay by card from the link in the invoice email, or by bank transfer to IBAN ...',
+    },
+    autoFinalize: true,
+  },
+});
+```
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `billing.currency` | `string` | `'USD'` | ISO 4217 code every amount is stated in |
+| `billing.timeZone` | `string` | `'UTC'` | IANA time zone that billing months and days follow |
+| `billing.usageRetentionDays` | `number` | `400` | Days raw usage events are kept after their month; daily roll-ups and invoices stay |
+| `billing.teamAttribution` | `'split' \| 'primary' \| 'full'` | `'split'` | How a person's cost counts toward their teams |
+| `billing.paymentTermsDays` | `number` | `30` | Days after issue an invoice is due when the billing profile sets no terms |
+| `billing.statementPrefix` | `string` | `'INV'` | Invoice number prefix: `{prefix}-{YYYYMM}-{sequence}` |
+| `billing.issuer` | `InvoiceIssuer` | product name only | Who issues the invoices: `name`, `address`, `taxId`, `email`, `url`, `paymentInstructions` |
+| `billing.paymentReminderDays` | `number[]` | `[-3, 0, 7, 14]` | When reminders go out, in days relative to the due date; `[]` sends none |
+| `billing.autoFinalize` | `boolean` | `true` | `false` keeps monthly invoices as drafts for review |
+
+</Step>
+<Step>
+
+### Define a meter and its rate card
+
+A **platform meter**, defined on the root tenant, is billed to every organization. The rate card prices it; here
+the first 10,000 calls a month are free, then two graduated tiers apply.
+
+```ts title="scripts/billing-setup.ts"
+import { iam } from '../src/iam.js';
+
+const root = { token: process.env.ROOT_TOKEN! };
+const rootTenantId = process.env.ROOT_TENANT_ID!;
+
+await iam.api.billing.createMeter(root, {
+  tenantId: rootTenantId,
+  key: 'api-calls',
+  name: 'API calls',
+  unit: 'request',
+  aggregation: 'sum',
+});
+
+await iam.api.billing.setPrice(root, {
+  tenantId: rootTenantId,
+  meter: 'api-calls',
+  price: {
+    model: 'graduated',
+    includedQuantity: 10_000,
+    tiers: [
+      { upTo: 1_000_000, unitAmount: 0.0004 },
+      { upTo: null, unitAmount: 0.0002 },
+    ],
+  },
+});
+
+// A negotiated price for one organization and its projects, from December.
+await iam.api.billing.setPrice(root, {
+  tenantId: rootTenantId,
+  meter: 'api-calls',
+  targetTenantId: process.env.ACME_TENANT_ID!,
+  effectiveFrom: '2026-12',
+  price: { model: 'per-unit', unitAmount: 0.0003 },
+  note: 'Enterprise agreement',
+});
+
+// What would 2.5 million calls cost Acme this month?
+const quote = await iam.api.billing.quote(root, {
+  tenantId: process.env.ACME_TENANT_ID!,
+  meter: 'api-calls',
+  quantity: 2_500_000,
+});
+console.log(quote);
+```
+
+**Routes:** `POST /billing/createMeter`, `POST /billing/setPrice`, `POST /billing/quote`
+
+| Price model | Fields | How the month's quantity is priced |
+| --- | --- | --- |
+| `per-unit` | `unitAmount` | Every unit at one price |
+| `graduated` | `tiers: [{ upTo, unitAmount }]` | Each tier prices its own units; `upTo: null` is the last tier |
+| `volume` | `tiers: [{ upTo, unitAmount }]` | The tier the total reaches prices every unit |
+| `package` | `packageSize`, `packageAmount` | Per started package; partial packages round up |
+
+Every model takes an optional `includedQuantity` of free units per month. Amounts are in currency units. A price
+applies from `effectiveFrom` (a month) until a later entry, and the entry nearest the billing account wins.
+`aggregation: 'unique'` counts distinct people and agents with usage in the month instead of summing quantities,
+which prices monthly active users.
+
+</Step>
+<Step>
+
+### Sell a plan and subscribe an organization
+
+Plans bundle what an account pays every month besides usage: fixed fees and seats. With `selfServe: true`,
+organization billing managers subscribe themselves.
+
+```ts title="scripts/billing-setup.ts (continued)"
+await iam.api.billing.createPlan(root, {
+  tenantId: rootTenantId,
+  key: 'pro',
+  name: 'Pro',
+  selfServe: true,
+  trialDays: 14,
+  items: [
+    { id: 'platform', kind: 'fee', name: 'Platform fee', amount: 99 },
+    { id: 'seats', kind: 'seat', name: 'Seats', unitAmount: 12, includedSeats: 3 },
+  ],
+});
+
+const orgAdmin = { token: process.env.ACME_ADMIN_TOKEN! };
+const { subscription } = await iam.api.billing.subscribe(orgAdmin, {
+  tenantId: process.env.ACME_TENANT_ID!,
+  plan: 'pro',
+  seats: 8,
+});
+console.log(subscription.id);
+```
+
+**Routes:** `POST /billing/createPlan`, `POST /billing/subscribe`
+
+Fees and seats bill a month ahead by default (`billing: 'arrears'` on an item bills the month itself). A trial bills
+nothing until it ends; outside a trial the first month is invoiced at once. `updateSubscription({ seats })`,
+`changePlan`, and `cancelSubscription` prorate what was already billed as invoice items on the next invoice. A plan
+item with `kind: 'usage'` and its own `price` replaces the rate card for that meter while the subscription runs.
+
+</Step>
+<Step>
+
+### Record usage on every request
+
+Server code records usage with `iam.billing.record`: no credential, no audit event per call, which keeps it cheap
+on the hot path. Attribute each event to the caller so spend can be broken down by person, team, and department,
+and pass the request ID as `idempotencyKey` so a retried request is not billed twice.
+
+```ts title="src/metering.ts"
+import { IamError } from 'better-iam';
+import { iam } from './iam.js';
+
+type Handler = (request: Request) => Promise<Response>;
+
+/** Wraps an API handler: authenticates the caller, refuses spent budgets, and records one api-calls event. */
+export function metered(endpoint: string, handler: Handler): Handler {
+  return async (request) => {
+    const { identity, session } = await iam.authenticate({ headers: request.headers });
+    const requestId = request.headers.get('x-request-id') ?? crypto.randomUUID();
+    try {
+      await iam.billing.record({
+        tenantId: session.tenantId,
+        meter: 'api-calls',
+        quantity: 1,
+        identityId: identity.id,
+        tags: { endpoint },
+        idempotencyKey: requestId,
+        enforceBudgets: true,
+      });
+    } catch (error) {
+      if (error instanceof IamError && error.code === 'SPEND_LIMIT_REACHED')
+        return Response.json({ error: 'Monthly budget reached' }, { status: 402 });
+      throw error;
+    }
+    return handler(request);
+  };
+}
+```
+
+```ts title="src/routes/search.ts"
+import { metered } from '../metering.js';
+
+export const POST = metered('search', async (request) => {
+  const { query } = await request.json();
+  return Response.json({ results: await runSearch(query) });
+});
+
+async function runSearch(query: string) {
+  return [{ id: 'doc-1', title: `Result for ${query}` }];
+}
+```
+
+| `record` field | Description |
+| --- | --- |
+| `tenantId` | The organization or project the usage belongs to |
+| `meter` | The meter key |
+| `quantity` | Default 1 |
+| `identityId` | The person, service account, or agent; an agent's usage counts toward its sponsor's teams and department |
+| `teamId` | Attribute to this team instead of the person's own teams |
+| `tags` | Up to 10 labels that spend reports can group by (`tag:{name}`) |
+| `occurredAt` | When it happened (default now), at most five minutes ahead and never in an invoiced month |
+| `idempotencyKey` | A repeated key returns the first receipt and records nothing |
+| `cost` | Reported meters only: the event's own cost in currency units |
+| `enforceBudgets` | Refuse with `SPEND_LIMIT_REACHED` (402) when an enforced budget covering the usage is spent |
+
+Backends that cannot import the instance call `billing.record`, or `billing.recordMany` for up to 100 events,
+over HTTP with a service account that holds `iam:billing:record` (**Routes:** `POST /billing/record`,
+`POST /billing/recordMany`). Unlike `iam.billing.record`, the HTTP calls are authorized and audited. For high
+request rates, batch events in memory and flush them with `iam.billing.recordMany` (up to 1000 events per call).
+
+</Step>
+<Step>
+
+### Set budgets
+
+Customers want to know before the invoice arrives. A budget covers a tenant subtree, a team, a department, or one
+person per month, quarter, or year. It alerts at thresholds and when the projection passes the amount, and with
+`enforce: true` it refuses covered usage once spent.
+
+```ts title="scripts/budgets.ts"
+import { iam } from '../src/iam.js';
+
+const orgAdmin = { token: process.env.ACME_ADMIN_TOKEN! };
+const tenantId = process.env.ACME_TENANT_ID!;
+
+await iam.api.billing.createBudget(orgAdmin, {
+  tenantId,
+  name: 'Acme monthly API spend',
+  amount: 2_000,
+  period: 'month',
+  meters: ['api-calls'],
+  thresholds: [50, 80, 100],
+  forecastAlerts: true,
+  notify: { owners: true, emails: ['finance@acme.test'] },
+  enforce: true,
+});
+
+for (const budget of await iam.api.billing.listBudgets(orgAdmin, { tenantId })) {
+  console.log(budget.name, `${budget.percent}%`, budget.exceeded ? 'exceeded' : 'within budget');
+}
+```
+
+**Routes:** `POST /billing/createBudget`, `POST /billing/listBudgets`
+
+`iam.billing.checkBudgets()` (CLI `billing-alerts`, hourly) alerts once per threshold and window: a
+`billing:budget-alert` audit event that webhooks can forward, and a `spend-alert` email. Enforcement reads spend
+cached for up to 30 seconds, so usage can overshoot an enforced budget slightly under heavy load.
+
+To warn before a request is refused, call `billing.check`:
+
+<Tabs items={['Server', 'Client']}>
+<Tab value="Server">
+
+```ts
+import { iam } from './iam.js';
+
+const { allowed, blockedBy } = await iam.billing.check({ tenantId, identityId, meter: 'api-calls' });
+if (!allowed) console.warn(`Budget ${blockedBy?.name} is spent`);
+```
+
+</Tab>
+<Tab value="Client">
+
+```ts
+import { createIamClient } from 'better-iam/client';
+import type { iam } from './iam.js';
+
+const client = createIamClient<typeof iam>();
+const { allowed, blockedBy } = await client.billing.check({ tenantId, meter: 'api-calls' });
+```
+
+</Tab>
+</Tabs>
+
+**Route:** `POST /billing/check`
+
+</Step>
+<Step>
+
+### Show customers their spend
+
+Every person sees their own spend with `billing.mySpend`; billing managers (`iam:billing:read`) see the
+organization's by meter, person, team, department, project, day, or tag, and the invoice so far.
+
+<Tabs items={['Client', 'Server']}>
+<Tab value="Client">
+
+```ts title="src/billing-page.ts"
+import { createIamClient } from 'better-iam/client';
+import type { iam } from './iam.js';
+
+const client = createIamClient<typeof iam>();
+
+export async function billingPage(tenantId: string) {
+  const mine = await client.billing.mySpend({ tenantId });
+  const byTeam = await client.billing.spend({ tenantId, groupBy: 'team' });
+  const byEndpoint = await client.billing.spend({ tenantId, groupBy: 'tag:endpoint' });
+  const soFar = await client.billing.previewStatement({ tenantId });
+  return {
+    myTotal: mine.total.amount,
+    teams: byTeam.rows.map((row) => ({ team: row.label ?? row.key, amount: row.amount, share: row.share })),
+    endpoints: byEndpoint.rows,
+    forecast: byTeam.forecast?.amount,
+    invoiceSoFar: soFar.totalMicros / 1_000_000,
+  };
+}
+```
+
+</Tab>
+<Tab value="Server">
+
+```ts title="scripts/spend-report.ts"
+import { iam } from '../src/iam.js';
+
+const orgAdmin = { token: process.env.ACME_ADMIN_TOKEN! };
+const tenantId = process.env.ACME_TENANT_ID!;
+
+const report = await iam.api.billing.spend(orgAdmin, { tenantId, period: '2026-10', groupBy: 'identity' });
+console.log(report.total.amount, report.currency, report.rows.slice(0, 5));
+
+const csv = await iam.api.billing.exportSpend(orgAdmin, { tenantId, period: '2026-10', groupBy: 'team' });
+console.log(csv.filename, csv.body.length);
+```
+
+</Tab>
+</Tabs>
+
+**Routes:** `POST /billing/mySpend`, `POST /billing/spend`, `POST /billing/previewStatement`,
+`POST /billing/exportSpend`
+
+Amounts in reports are currency units rounded to the cent (`amount`), with exact values in micros (`costMicros`,
+millionths of a currency unit). Each meter's month total is priced once per billing account and shared out by
+quantity, so breakdowns always add up to the account's charges. The current month includes a linear `forecast`.
+
+</Step>
+<Step>
+
+### Close the month into invoices
+
+`iam.billing.closePeriod()` issues last month's invoice for every billing account with something to bill: one line
+per platform meter with the tiers it used, plan fees and seats, pending invoice items, coupons, credit, tax, and a
+breakdown by project, team, department, and person. Schedule it daily; accounts already invoiced are skipped.
+
+```bash
+# Daily
+better-iam billing-close --config better-iam.config.mjs
+better-iam billing-reminders --config better-iam.config.mjs
+better-iam billing-anomalies --config better-iam.config.mjs
+# Hourly
+better-iam billing-alerts --config better-iam.config.mjs
+```
+
+| Job | CLI | Schedule |
+| --- | --- | --- |
+| `iam.billing.closePeriod()` | `billing-close` | Daily |
+| `iam.billing.sendPaymentReminders()` | `billing-reminders` | Daily |
+| `iam.billing.detectAnomalies()` | `billing-anomalies` | Daily |
+| `iam.billing.checkBudgets()` | `billing-alerts` | Hourly |
+| `iam.billing.recordSeats()` | `billing-seats` | Daily, only if you bill a seat meter |
+
+To review invoices before they go out, set `billing.autoFinalize: false` (or run `billing-close --draft`). Drafts are
+recomputed on every run and still take late usage; a root administrator adds one-off charges or credits with
+`billing.createInvoiceItem` and seals each draft with `billing.finalizeInvoice` (**Routes:**
+`POST /billing/createInvoiceItem`, `POST /billing/finalizeInvoice`).
+
+| Status | Meaning |
+| --- | --- |
+| `draft` | Recomputed until finalized; no number yet; its month still takes late usage |
+| `finalized` | Numbered, sealed with a content hash, emailed, open for payment; late usage for the month is refused |
+| `paid` | Payments and credit notes cover it |
+| `uncollectible` | Written off with `markUncollectible`; a later payment still settles it |
+| `void` | Cancelled with `voidStatement`; the month reopens. Only invoices without payments or credit notes can be voided |
+
+</Step>
+<Step>
+
+### Collect payment and record it
+
+Charge finalized invoices with your processor and report each payment back. `iam.billing.recordPayment` takes the
+invoice `number` and the amount in currency units; the processor's payment ID as `idempotencyKey` makes webhook
+redelivery safe. This example uses Stripe's Node SDK: a PaymentIntent per invoice, with the invoice number in its
+metadata.
+
+```ts title="src/payments/charge-invoices.ts"
+import Stripe from 'stripe';
+import { iam } from '../iam.js';
+
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);
+const root = { token: process.env.ROOT_TOKEN! };
+
+export async function createPaymentIntents(tenantId: string) {
+  const invoices = await iam.api.billing.listStatements(root, { tenantId, status: 'finalized' });
+  for (const invoice of invoices) {
+    if (invoice.amountDueMicros <= 0) continue;
+    await stripe.paymentIntents.create(
+      {
+        amount: Math.round(invoice.amountDueMicros / 10_000), // micros to cents
+        currency: invoice.currency.toLowerCase(),
+        metadata: { invoiceNumber: invoice.number },
+      },
+      { idempotencyKey: `invoice-${invoice.number}` },
+    );
+  }
+}
+```
+
+```ts title="src/payments/stripe-webhook.ts"
+import Stripe from 'stripe';
+import { iam } from '../iam.js';
+
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);
+
+export async function POST(request: Request): Promise<Response> {
+  const event = stripe.webhooks.constructEvent(
+    await request.text(),
+    request.headers.get('stripe-signature') ?? '',
+    process.env.STRIPE_WEBHOOK_SECRET!,
+  );
+  if (event.type === 'payment_intent.succeeded') {
+    const intent = event.data.object;
+    const number = intent.metadata.invoiceNumber;
+    if (number) {
+      await iam.billing.recordPayment({
+        number,
+        amount: intent.amount_received / 100, // cents to currency units
+        method: 'card',
+        idempotencyKey: intent.id,
+      });
+    }
+  }
+  return new Response(null, { status: 200 });
+}
+```
+
+**Routes:** `POST /billing/listStatements`; `iam.billing.recordPayment` is in-process only. Over HTTP, a root
+administrator records payments with `billing.recordPayment` by `statementId` (`POST /billing/recordPayment`).
+
+Payments may be partial; the rest stays due and an overpayment becomes account credit. `iam.billing.recordPayment`
+is audited as `billing:payment` by `deployment-operator`. Divide by 100 only for two-decimal currencies.
+
+To correct a finalized invoice, issue a credit note instead of voiding it. It reduces the amount due first, and a
+part already paid becomes account credit or, with `refund: true`, is recorded as refunded:
+
+```ts title="scripts/credit-note.ts"
+import { iam } from '../src/iam.js';
+
+const root = { token: process.env.ROOT_TOKEN! };
+
+await iam.api.billing.createCreditNote(root, {
+  tenantId: process.env.ACME_TENANT_ID!,
+  statementId: process.env.STATEMENT_ID!,
+  amount: 25,
+  reason: 'product_unsatisfactory',
+  memo: 'Latency incident on 3 November',
+});
+```
+
+**Route:** `POST /billing/createCreditNote`
+
+</Step>
+</Steps>
+
+## Verify it works
+
+1. Call a metered route twice with the same `x-request-id`. `billing.listUsage` for the organization shows one
+   event, not two.
+2. `billing.spend` with `groupBy: 'tag:endpoint'` shows the calls under `search`, attributed to the caller in
+   `groupBy: 'identity'`.
+3. Create an enforced budget with a tiny `amount` on a test organization, record usage until it is spent, and call
+   the route again: it answers 402.
+4. `billing.previewStatement` for the organization lists an `api-calls` line whose quantity matches the recorded
+   usage.
+5. After `billing-close` runs for a past month, `billing.listStatements` shows a `finalized` invoice with a number,
+   and `billing.getStatement` returns `verified: true`.
+6. Send a Stripe test-mode `payment_intent.succeeded` event for that invoice. The invoice becomes `paid`, and
+   redelivering the event records nothing new.
+7. `billing.renderInvoice` returns a self-contained HTML invoice to print or save as PDF.
+
+## Troubleshooting
+
+<Accordions>
+<Accordion title="BILLING_PERIOD_CLOSED (409) when recording usage or setting a price">
+The month has already been invoiced for that account. Record late usage in the current month, or void the invoice
+with `billing.voidStatement` (only possible without payments or credit notes) to reopen the month. Keep invoices as
+drafts (`autoFinalize: false`) if late usage is common.
+</Accordion>
+<Accordion title="METER_ARCHIVED (409)">
+The meter was archived with `billing.updateMeter({ archived: true })`. Unarchive it, or record on its replacement.
+</Accordion>
+<Accordion title="SPEND_LIMIT_REACHED (402)">
+An enforced budget covering the usage is spent. Raise the budget with `billing.updateBudget`, turn enforcement off,
+or wait for the next window. Without `enforceBudgets: true`, `record` never refuses for budgets.
+</Accordion>
+<Accordion title="No invoice for an organization after billing-close">
+Only accounts with something to bill get an invoice: platform meter usage, subscription fees or seats, or pending
+invoice items. Chargeback meters an organization defines for itself never appear on platform invoices.
+`closePeriod` also refuses the current month (`INVALID_INPUT`): only months that have ended can be closed.
+</Accordion>
+<Accordion title="Invoice totals differ slightly from spend reports">
+Invoices bill whole cents, so their lines add up to the total shown. Spend reports keep fractions of a cent, and
+stay at rate-card prices even when contract terms (`billing.setTerms`) apply a discount on the invoice.
+</Accordion>
+<Accordion title="recordPayment fails with INVALID_TRANSITION">
+Payments are accepted only on `finalized` or `uncollectible` invoices. A draft must be finalized first, and a void
+or paid invoice takes no payments.
+</Accordion>
+</Accordions>
+
+## Next steps
+
+<Cards>
+  <Card title="Billing and spend" href="/docs/features/billing">
+    Spend attribution, showback, profiles, credit, coupons, and contract terms.
+  </Card>
+  <Card title="billing API reference" href="/docs/reference/api/billing">
+    Every method with its permission, route, and errors.
+  </Card>
+  <Card title="Teams and departments" href="/docs/features/teams-and-departments">
+    The teams and departments spend is attributed to.
+  </Card>
+  <Card title="Scheduled jobs" href="/docs/operations/jobs">
+    Running billing-close, billing-alerts, and the other jobs.
+  </Card>
+</Cards>

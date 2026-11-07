@@ -1,0 +1,170 @@
+---
+title: "Upgrade guides"
+description: "How to upgrade a Better IAM deployment between releases: the version policy, the release list, the standard upgrade procedure, rolling back, and the changes from 0.1 to 0.2."
+icon: RefreshCw
+packages: ['better-iam', '@better-iam/server', '@better-iam/cli']
+sources:
+  - CHANGELOG.md
+  - packages/core/src/sql.ts
+  - packages/server/src/catalog.ts
+  - packages/server/src/context-keys.ts
+  - scripts/release-version.mjs
+---
+
+import { Database, History, RefreshCw, ScrollText } from '@/lib/icons';
+
+Better IAM is released as one set of packages at one version: `better-iam` and every `@better-iam/*` package always
+share a version number, and an application upgrades them together. Each release lists its changes in the
+[changelog](/docs/reference/changelog); the pages in this section turn the breaking ones into upgrade steps with
+before and after code.
+
+## Version policy
+
+Better IAM is before 1.0. Until then:
+
+- **Minor releases** (0.2 to 0.3) may change APIs, reserve new names, or tighten checks. Each one has an upgrade
+  guide in this section.
+- **Patch releases** (0.3.0 to 0.3.1) fix bugs and security issues. They can refuse something the previous patch
+  wrongly allowed, and the guide for their minor release lists those refusals.
+- Every package of a release has the same version. Mixing versions (for example `@better-iam/server@0.3.1` with
+  `@better-iam/next@0.2.0`) is not supported.
+
+## Releases
+
+| Version | Date | Summary | Upgrade guide |
+| --- | --- | --- | --- |
+| 0.3.1 | 2026-10-07 | Security fixes for security clearances only | [Upgrade to 0.3](/docs/guides/upgrade/v0-3#from-030-to-031) |
+| 0.3.0 | 2026-10-07 | Guests, licenses, security clearances; framework peers optional | [Upgrade to 0.3](/docs/guides/upgrade/v0-3) |
+| 0.2.0 | 2026-09-24 | Key management, vault, private CA, SSH and verifiable credentials, LDAP gateway, threat detection, device posture; Apache-2.0 | [From 0.1 to 0.2](#from-01-to-02) |
+| 0.1.0 | 2026-09-23 | First release | None |
+
+Skipping a release is fine as long as you apply the steps of every guide in between, oldest first, before you
+deploy. Migrations are cumulative: one `migrate` run applies every schema step the database lacks.
+
+## How to upgrade
+
+<Steps>
+<Step>
+
+### Read the guide for each release you cross
+
+Open the upgrade guide for every minor release between your version and the target, and note the changes that apply
+to your configuration: reserved names, changed errors, and options that became required.
+
+</Step>
+<Step>
+
+### Back up the database
+
+Migrations only add tables and indexes, and there are no down migrations, so a backup is how you return to the old
+schema. Use your database's own backup, or a snapshot:
+
+```bash
+npx better-iam store-export --config better-iam.config.mjs --output backup.jsonl
+```
+
+</Step>
+<Step>
+
+### Update every package to the same version
+
+```npm
+npm i better-iam@0.3.1
+```
+
+With individual packages, upgrade each `@better-iam/*` package you use to the same version in one command. Upgrade
+`@better-iam/nuxt` too if you use it; the umbrella package does not include it.
+
+</Step>
+<Step>
+
+### Apply the configuration changes
+
+Make the changes the guides list (renamed attributes, new dependencies, handled errors) and run your type check and
+tests. A configuration that uses a newly reserved name fails at construction with `INVALID_CONFIG`, so a test that
+creates the instance catches it.
+
+</Step>
+<Step>
+
+### Run the migration before the new release serves traffic
+
+```bash
+npx better-iam migrate --config better-iam.config.mjs
+```
+
+Run it as a release step (a pre-deploy job or an init container), never from a request handler. It is idempotent,
+and concurrent runs serialize on the adapter's lock. From code, `iam.initialize()` does the same work. See
+[Migrations](/docs/databases/migrations).
+
+</Step>
+<Step>
+
+### Check and deploy
+
+```bash
+npx better-iam doctor --config better-iam.config.mjs --strict
+```
+
+`doctor --strict` exits non-zero on any error or warning, including `schema-behind` when a schema step is missing.
+Deploy once it passes, then schedule any new jobs the guide lists in your [job runner](/docs/operations/jobs).
+
+</Step>
+</Steps>
+
+## Rolling upgrades and rollback
+
+- **Rolling upgrades work.** Schema steps only add indexes and tables, and a release ignores ledger rows it does not
+  know, so instances of the previous release keep serving while the new one migrates and starts.
+- **Rolling back the application works** for the same reason: the older release runs against the newer schema.
+- **Rolling back the schema** means restoring a backup. There is no command that undoes a step.
+- **Sessions should survive upgrades.** Sessions, API keys, and other tokens are stored records, and the changelog
+  of the releases in this list names no change that invalidates them on upgrade. Confirm it after deploying (see
+  each guide's verification steps).
+
+## Schema steps by release
+
+| Release | Built-in schema steps |
+| --- | --- |
+| 0.1.0 | `0001_records`, `0002_query_indexes`, `0003_ordered_indexes`, `0004_expiry_indexes`, `0005_lookup_indexes` |
+| 0.2.0 | Adds `0006_protection_indexes` (a `fingerprint` lookup index on SQLite and libSQL; no statements on PostgreSQL) |
+| 0.3.0, 0.3.1 | No new steps |
+
+Features added in a release (for example guests in 0.3.0) store their records as new collections in the existing
+`iam_records` table, so they never need a step of their own. See [Schema](/docs/databases/schema).
+
+## From 0.1 to 0.2
+
+Version 0.2.0 added many features without changing how existing calls behave for most deployments. These changes can
+affect an existing 0.1 configuration:
+
+| Change | What to do |
+| --- | --- |
+| `riskLevel` and `riskScore` are reserved identity attribute names, and `principal.riskLevel` / `principal.riskScore` from `resolveContext` or a plugin are removed | Rename such attributes and keys; declaring one fails with `INVALID_CONFIG`. The server sets these keys from [threat detection](/docs/features/threat-detection). |
+| `request.deviceAssurance`, `request.deviceManaged`, `request.deviceCompliant`, `request.deviceId`, and `request.devicePlatform` are server-owned | Rename device signals your `resolveContext` supplied under these names. See [Device posture](/docs/features/device-posture). |
+| NestJS: `@Public()` no longer turns `@Authorize`, `@RequireMfa`, `@Credentials`, or `@RequireClaims` into no-ops | Anonymous or invalid credentials on such handlers now get 401. Remove `@Public()` where the handler needs a caller. |
+| A password alone can no longer enroll an authenticator over an existing factor | When a passkey is registered, the login challenge answers `enrollmentRequired: false` and `beginMfa` / `confirmMfa` are refused with `MFA_REQUIRED`. |
+| Web-identity trusts: a `StringLike` pin on `token.sub` needs two complete segments before a wildcard | `repo:acme/*` is accepted; `repo:*` and `repo:acme*` are refused with `WEAK_TRUST_CONDITIONS`. Existing trusts are not re-validated: review them with `trust.list`. |
+| A principal of another tenant is refused before the resource is looked up | `authorize` returns a denial instead of `NOT_FOUND` or `RESOURCE_MISMATCH` for such callers. |
+| Denies outlive their author | When the authority behind a binding, role, or policy is revoked, its grants lapse and its denies still apply. Editing a deny another authority relies on fails with `PROTECTED_RESOURCE`. |
+| Outbound requests to administrator-chosen addresses go through an SSRF guard | Webhooks, outbound SCIM, Shared Signals streams, and organization inference base URLs refuse private and loopback addresses unless the deployment allows them (for webhooks, `events.allowPrivateNetworks`). |
+| Licensed under Apache-2.0 | 0.1.0 on npm remains MIT; 0.2.0 and later are Apache-2.0. |
+
+The full list is in the [changelog](/docs/reference/changelog).
+
+## Next steps
+
+<Cards>
+  <Card icon={<RefreshCw />} title="Upgrade to 0.3" href="/docs/guides/upgrade/v0-3">
+    Every breaking change from 0.2 to 0.3.x, with before and after code.
+  </Card>
+  <Card icon={<ScrollText />} title="Changelog" href="/docs/reference/changelog">
+    The complete release notes.
+  </Card>
+  <Card icon={<Database />} title="Migrations" href="/docs/databases/migrations">
+    How schema steps are applied, recorded, and run in CI.
+  </Card>
+  <Card icon={<History />} title="Scheduled jobs" href="/docs/operations/jobs">
+    The jobs each feature needs and how often to run them.
+  </Card>
+</Cards>

@@ -1,22 +1,57 @@
 ---
 title: Reference
-description: Generated reference for the server API, package exports, the CLI, error codes, packages, and the changelog, extracted from the repository.
+description: Lookup reference for Better IAM - every betterIam() option, API method, export, type, CLI command, error code, package, and term - plus the FAQ, contributing guide, and changelog.
 icon: Code
 ---
 
-import { Braces, History, OctagonAlert, Package, PackageOpen, SquareTerminal } from '@/lib/icons';
+import {
+  BookA,
+  Braces,
+  FileType,
+  History,
+  MessageCircleQuestionMark,
+  OctagonAlert,
+  Package,
+  PackageOpen,
+  SlidersHorizontal,
+  SquareTerminal,
+  Wrench,
+} from '@/lib/icons';
 
-Everything in this section is generated from the repository by `apps/docs/scripts/generate.mjs`, so it matches the
-code it documents: method names and signatures come from the built TypeScript declarations and a live
-`betterIam()` instance, error codes from every `IamError` thrown in `packages/*/src`, CLI usage from the CLI's own
-help text, and packages from the workspace manifests.
+The Reference section is for looking things up: exact names, signatures, routes, defaults, and codes. Most of it
+is generated from the repository by `apps/docs/scripts/generate.mjs`, so it matches the code it documents: method
+names and signatures come from the built TypeScript declarations and a live `betterIam()` instance, error codes from
+every `IamError` thrown in `packages/*/src`, CLI usage from the CLI's own help text, and packages from the workspace
+manifests. The Options page is written from `packages/server/src/options.ts` and the option types it imports.
+
+## Pages in this section
+
+| Page | What it contains | Source |
+| --- | --- | --- |
+| [Options](/docs/reference/options) | Every option `betterIam()` accepts, with type, default, range, and example | `packages/server/src/options.ts` |
+| [Server API](/docs/reference/api) | Every `iam.api` group and method with its HTTP route, credential, and signature | generated |
+| [Package exports](/docs/reference/exports) | Every function, hook, component, class, and constant the packages export | generated |
+| [Types](/docs/reference/types) | The core TypeScript types and their fields | generated |
+| [CLI](/docs/reference/cli) | Every `better-iam` command and its flags | generated |
+| [Error codes](/docs/reference/errors) | Every stable `IamError` code, grouped by HTTP status | generated |
+| [Glossary](/docs/reference/glossary) | Plain-language definitions of identity and access terms | `descriptions/glossary.json` |
+| [Packages](/docs/reference/packages) | The publishable packages, subpath exports, and dependencies | generated |
+| [FAQ](/docs/reference/faq) | Short answers about adopting, running, migrating, databases, and AI | hand-written |
+| [Contributing](/docs/reference/contributing) | Repository layout, build and test commands, docs generation, CI | hand-written |
+| [Changelog](/docs/reference/changelog) | Every notable change, newest first | `CHANGELOG.md` |
 
 <Cards>
+  <Card icon={<SlidersHorizontal />} title="Options" href="/docs/reference/options">
+    Every `betterIam()` option, grouped by area, with its type, default, allowed range, and an example.
+  </Card>
   <Card icon={<Braces />} title="Server API" href="/docs/reference/api">
     Every `iam.api` group and method with its HTTP route, credential requirement, and TypeScript signature.
   </Card>
   <Card icon={<PackageOpen />} title="Package exports" href="/docs/reference/exports">
     Every function, hook, component, and class the packages export, what it does, and the guide that uses it.
+  </Card>
+  <Card icon={<FileType />} title="Types" href="/docs/reference/types">
+    The core TypeScript types of Better IAM and their exact fields.
   </Card>
   <Card icon={<SquareTerminal />} title="CLI" href="/docs/reference/cli">
     The `better-iam` command line: migrations, bootstrap, audits, configuration as code, and scheduled jobs.
@@ -24,8 +59,17 @@ help text, and packages from the workspace manifests.
   <Card icon={<OctagonAlert />} title="Error codes" href="/docs/reference/errors">
     Every stable `IamError` code grouped by HTTP status, with example messages.
   </Card>
+  <Card icon={<BookA />} title="Glossary" href="/docs/reference/glossary">
+    Definitions of the identity and access terms used throughout the docs.
+  </Card>
   <Card icon={<Package />} title="Packages" href="/docs/reference/packages">
     The publishable packages, their subpath exports, and dependencies.
+  </Card>
+  <Card icon={<MessageCircleQuestionMark />} title="FAQ" href="/docs/reference/faq">
+    Short answers about adopting, running, migrating to, and upgrading Better IAM.
+  </Card>
+  <Card icon={<Wrench />} title="Contributing" href="/docs/reference/contributing">
+    Set up the repository, run the tests and conformance checks, and regenerate the docs.
   </Card>
   <Card icon={<History />} title="Changelog" href="/docs/reference/changelog">
     Every notable change, newest first.
@@ -40,9 +84,10 @@ The site serves its content for tools and language models as well as for people:
 | --- | --- |
 | `/llms.txt` | An index of every page with its description |
 | `/llms-full.txt` | Every page as Markdown in one file |
+| `/skills/better-iam/SKILL.md` | An agent skill for coding agents ([Agent skills](/docs/ai/agent-skills)) |
 | `/docs/<page>.md` | One page as Markdown (also served for `Accept: text/markdown`) |
 | `/api/search?query=…` | The search index behind the search dialog, as JSON |
-| `/api/mcp` | An MCP server with search, page, API-method, export, and error-code tools; see [Use the docs with AI](/docs/reference/ai) |
+| `/api/mcp` | An MCP server with search, page, API-method, export, and error-code tools; see [Use the docs with AI](/docs/ai) |
 | `/openapi.json` | The OpenAPI 3.1 description of the HTTP API |
 
 ## Regenerating
@@ -52,3 +97,5 @@ pnpm build                                  # declarations the API catalog is re
 pnpm --filter @better-iam/docs generate     # data + generated pages (API, exports, errors, CLI, glossary)
 node apps/docs/scripts/check-content.mjs    # validate every page and link
 ```
+
+See [Contributing](/docs/reference/contributing#documentation-site) for every generator step.

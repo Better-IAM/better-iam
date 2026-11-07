@@ -1,0 +1,540 @@
+---
+title: "Migrate from Clerk"
+description: "Move users, organizations, memberships, organization roles and permissions, and metadata from Clerk to Better IAM with identities.createMany and configuration documents, recreate social and enterprise SSO, replace Clerk in a Next.js app, and cut over."
+icon: ArrowLeftRight
+packages: ['better-iam', '@better-iam/server', '@better-iam/next', '@better-iam/react', '@better-iam/oauth', '@better-iam/saml']
+sources:
+  - packages/server/src/api/identities.ts
+  - packages/server/src/api/tenants.ts
+  - packages/server/src/catalog.ts
+  - packages/server/src/federation.ts
+  - packages/core/src/index.ts
+  - packages/next/src/index.ts
+  - apps/docs/generated/api.json
+---
+
+import { ArrowLeftRight, KeyRound, LogIn, Users } from '@/lib/icons';
+
+This guide moves an application from Clerk to Better IAM. Clerk keeps signing people in while you import, and you
+switch one organization (or the whole application, if it has no organizations) at a time. You will:
+
+- export users, organizations, memberships, and organization roles from Clerk;
+- declare Clerk's custom permissions as actions and recreate organization roles in every tenant;
+- create one Better IAM tenant per Clerk organization, plus one for people without an organization, and import
+  members with their roles and selected metadata;
+- recreate social and enterprise SSO connections;
+- replace Clerk's middleware, `auth()` calls, and components in a Next.js app;
+- cut over and know how to roll back.
+
+The general plan behind these steps is in [Migration guides](/docs/guides/migration).
+
+## How Clerk concepts map
+
+| Clerk | Better IAM | Notes |
+| --- | --- | --- |
+| Application and its instances (development, production) | One deployment per environment | Each has its own database and secret. |
+| User | <Term id="identity">Identity</Term> | Keep the Clerk user ID as an attribute (`clerkId` below). |
+| Primary email address | The identity's `email` | One address per identity. Secondary addresses are not kept. |
+| First and last name | `name` | One display name. |
+| Username | An attribute, if you display it | Sign-in is by email; usernames are not a sign-in identifier. |
+| Phone number | Not imported | A phone number is set only when the person verifies it with `auth.startPhoneVerification`. Users with only a phone number cannot be imported: every identity needs an email. |
+| `publicMetadata`, `unsafeMetadata` | Identity attributes | Flat `string`, `number`, or `boolean` values declared in `permissions.identityAttributes`. |
+| `privateMetadata` | Your own database | Attributes are returned to the person in their session, so they are not private. |
+| Organization | <Term id="tenant">Tenant</Term> (type `organization`) | Each tenant has its own people, roles, sign-in policy, and connections. |
+| Organization membership | An identity in that tenant | A person in two organizations gets two identities with the same email. |
+| Active organization | The tenant of the current session | A session belongs to one identity in one tenant. Switching organizations means switching accounts ([account linking](/docs/concepts/tenants-and-identities#account-linking)). |
+| Personal account (no organization) | An identity in one tenant you create for these people | |
+| Organization role (`org:admin`, `org:member`, custom) | <Term id="role">Role</Term>, per tenant | Apply the same role document to every tenant. |
+| Custom permission (`org:invoices:create`) | <Term id="action">Action</Term> declared in `permissions.resourceTypes` | Rename to your resource types' style (`invoices:create`). |
+| Organization invitation | `identities.invite` | |
+| Verified organization domain | `domains.add` and `domains.verify` | `domains.discover` routes sign-in by email domain. |
+| Session token and JWT templates | [Session tokens](/docs/authentication/tokens) | Database sessions by default; JWT sessions for services that verify locally. |
+| Social connection | `createOAuthLogin` connection | Fixed in the deployment configuration; each connection serves one tenant. |
+| Enterprise connection (SAML, OIDC) | SAML connection or OIDC connection | |
+| Webhooks | [Webhooks](/docs/concepts/events/webhooks) | Audit events, signed and retried. |
+| Banned or locked user | `identities.setStatus` (`disabled`), `identities.unlock` | |
+| User impersonation | [Impersonation](/docs/authentication/impersonation) | Off by default per tenant. |
+| MFA (authenticator app, SMS, backup codes), passkeys | [MFA](/docs/authentication/mfa), [passkeys](/docs/authentication/passkeys) | People enroll again. |
+| Prebuilt components (`<SignIn />`, `<UserButton />`) | Your own components | Better IAM has no hosted or prebuilt sign-in UI. |
+
+<Callout type="warn" title="What does not move">
+  Passwords (no Better IAM API accepts a password digest, whatever your Clerk export contains), MFA enrollments,
+  passkeys, phone numbers, active sessions, and the links between users and their social or enterprise accounts.
+  People sign in once with a magic link, a reset link, or their identity provider.
+</Callout>
+
+## Prerequisites
+
+- A Better IAM deployment with a migrated database and a bootstrapped root administrator
+  ([Quickstart](/docs/quickstart)), configured with `authentication.sendEmail`.
+- A Clerk secret key for the Backend API of the instance you are leaving.
+- For a Next.js app, the [Next.js integration](/docs/integrations/nextjs) installed next to Clerk, so both can run
+  during the dual run.
+- A root administrator session for the scripts:
+
+```bash
+npx better-iam login --config better-iam.config.mjs --tenant "$ROOT_TENANT_ID" --email root@example.com
+export BETTER_IAM_TOKEN=$(npx better-iam token --config better-iam.config.mjs)
+```
+
+<Steps>
+<Step>
+
+### Export from Clerk
+
+Use Clerk's Backend API to list everything page by page and save it as files. Write user objects exactly as the API
+returns them; the import script reads the fields named here.
+
+| File | Contents |
+| --- | --- |
+| `clerk/users.ndjson` | One Clerk user object per line. The script reads `id`, `first_name`, `last_name`, `primary_email_address_id`, `email_addresses` (`id`, `email_address`), `public_metadata`, and `banned`. |
+| `clerk/organizations.json` | `[{ id, name, ownerUserId }]`. Pick one owner per organization: an admin who should control it in Better IAM. |
+| `clerk/memberships-<org_id>.json` | `[{ userId, role }]`: each membership's user ID and role key, such as `org:admin`. |
+| `clerk/roles.json` | `[{ key, name, permissions: [permission_key] }]` for every organization role. |
+| `clerk/sso.json` | Which organizations use enterprise SSO, with their email domains and connection type. |
+
+People who sign in through a customer's enterprise SSO should not be imported; list their email domains in
+`ENTERPRISE_DOMAINS` in the import script.
+
+</Step>
+<Step>
+
+### Configure Better IAM
+
+Declare attributes for the Clerk user ID and any public metadata you keep, and turn custom permissions into
+actions. Turn on magic links so imported people can sign in without a password.
+
+```ts title="iam.ts"
+import { betterIam } from 'better-iam';
+import { postgresAdapter } from 'better-iam/adapter-postgres';
+import { sendEmail } from './mail';
+
+export const iam = betterIam({
+  database: postgresAdapter({ connectionString: process.env.DATABASE_URL! }),
+  secret: process.env.BETTER_IAM_SECRET!,
+  baseURL: process.env.BETTER_IAM_BASE_URL!,
+  authentication: {
+    sendEmail,
+    passwordlessEmail: true,
+  },
+  onboarding: { mode: 'linked' }, // people in several organizations can switch between their accounts
+  permissions: {
+    identityAttributes: { clerkId: 'string', plan: 'string' },
+    resourceTypes: {
+      invoice: { actions: ['invoices:read', 'invoices:create'] },
+    },
+  },
+});
+```
+
+`plan` stands for a flat value you keep from `publicMetadata`. Nested metadata stays in your own database, keyed by
+the new identity ID from the import's ID map.
+
+```bash
+npx better-iam migrate --config better-iam.config.mjs
+npx better-iam store-export --config better-iam.config.mjs --output before-clerk-import.jsonl
+```
+
+</Step>
+<Step>
+
+### Create tenants
+
+Create one tenant per Clerk organization, and one more for people who do not belong to any organization, owned by
+someone on your team (`PERSONAL_OWNER_USER_ID` is their Clerk user ID). Each tenant stays `pending` until its owner accepts the emailed
+invitation, and members can be imported only after that.
+
+```ts title="scripts/clerk-create-tenants.ts"
+import { createReadStream } from 'node:fs';
+import { readFile, writeFile } from 'node:fs/promises';
+import { createInterface } from 'node:readline';
+import { iam } from '../iam';
+
+type ClerkOrganization = { id: string; name: string; ownerUserId: string };
+type ClerkUser = {
+  id: string;
+  primary_email_address_id: string | null;
+  email_addresses: Array<{ id: string; email_address: string }>;
+};
+
+const credential = { token: process.env.BETTER_IAM_TOKEN! };
+const rootTenantId = process.env.ROOT_TENANT_ID!;
+
+const emails = new Map<string, string>();
+for await (const line of createInterface({ input: createReadStream('clerk/users.ndjson'), crlfDelay: Infinity })) {
+  if (!line.trim()) continue;
+  const user = JSON.parse(line) as ClerkUser;
+  const primary = user.email_addresses.find((address) => address.id === user.primary_email_address_id);
+  if (primary) emails.set(user.id, primary.email_address);
+}
+
+const organizations = JSON.parse(await readFile('clerk/organizations.json', 'utf8')) as ClerkOrganization[];
+organizations.push({ id: 'personal', name: 'Personal accounts', ownerUserId: process.env.PERSONAL_OWNER_USER_ID! });
+
+const tenantMap: Record<string, string> = {};
+for (const organization of organizations) {
+  const ownerEmail = emails.get(organization.ownerUserId);
+  if (!ownerEmail) throw new Error(`No email for the owner of ${organization.name}`);
+  const { tenant } = await iam.api.tenants.create(credential, {
+    parentId: rootTenantId,
+    type: 'organization',
+    name: organization.name,
+    ownerEmail,
+  });
+  tenantMap[organization.id] = tenant.id;
+}
+await writeFile('clerk/tenant-map.json', JSON.stringify(tenantMap, null, 2));
+```
+
+```bash
+npx tsx scripts/clerk-create-tenants.ts
+```
+
+`tenants.create` needs recent authentication, so run it within five minutes of `better-iam login`. An owner who
+already has an account in another tenant can link it while accepting, by passing `linkCredential` to
+`tenants.acceptInvitation`.
+
+</Step>
+<Step>
+
+### Recreate organization roles
+
+Build one configuration document from `clerk/roles.json` and apply it to each active tenant. Role names in Better
+IAM are display names, so `org:admin` becomes `Admin`; keep the mapping for the import.
+
+```ts title="scripts/clerk-roles.ts"
+import { readFile } from 'node:fs/promises';
+import { iam } from '../iam';
+
+type ClerkRole = { key: string; name: string; permissions: string[] };
+
+// Clerk permission key -> Better IAM action.
+const actionFor: Record<string, string> = {
+  'org:invoices:read': 'invoices:read',
+  'org:invoices:create': 'invoices:create',
+};
+
+const credential = { token: process.env.BETTER_IAM_TOKEN! };
+
+export async function applyClerkRoles(tenantId: string): Promise<Map<string, string>> {
+  const roles = JSON.parse(await readFile('clerk/roles.json', 'utf8')) as ClerkRole[];
+  await iam.api.config.apply(credential, {
+    tenantId,
+    config: {
+      version: 1,
+      roles: roles.map((role) => {
+        // Clerk's system permissions (org:sys_*) correspond to Better IAM's own iam:* actions (see below).
+        const permissions = role.permissions
+          .filter((key) => !key.startsWith('org:sys_'))
+          .map((key) => {
+            const action = actionFor[key];
+            if (!action) throw new Error(`No action mapped for Clerk permission ${key}`);
+            return action;
+          });
+        // A permissions list must name at least one action; a role without any grants nothing yet.
+        return permissions.length ? { name: role.name, permissions } : { name: role.name };
+      }),
+    },
+  });
+  const byName = new Map((await iam.api.roles.list(credential, { tenantId })).map((role) => [role.name, role.id]));
+  // Clerk role key -> Better IAM role ID.
+  return new Map(roles.flatMap((role) => (byName.has(role.name) ? [[role.key, byName.get(role.name)!]] : [])));
+}
+```
+
+Clerk's administrative abilities (managing members, domains, and settings) correspond to Better IAM's own `iam:*`
+actions. The tenant's owner holds all of them through the protected Owner role. To let other admins manage members,
+create a role whose `document` allows the `iam:*` actions they need, as in
+[Roles and bindings](/docs/authorization/roles).
+
+</Step>
+<Step>
+
+### Import members
+
+```ts title="scripts/clerk-import-members.ts"
+import { createReadStream } from 'node:fs';
+import { readFile, writeFile } from 'node:fs/promises';
+import { createInterface } from 'node:readline';
+import { iam } from '../iam';
+import { applyClerkRoles } from './clerk-roles';
+
+type ClerkUser = {
+  id: string;
+  first_name: string | null;
+  last_name: string | null;
+  primary_email_address_id: string | null;
+  email_addresses: Array<{ id: string; email_address: string }>;
+  public_metadata: Record<string, unknown>;
+  banned: boolean;
+};
+type Membership = { userId: string; role: string };
+
+// Email domains of customers who sign in through their own SSO: never imported.
+const ENTERPRISE_DOMAINS = new Set(['acme.com']);
+
+const credential = { token: process.env.BETTER_IAM_TOKEN! };
+
+const users = new Map<string, ClerkUser>();
+for await (const line of createInterface({ input: createReadStream('clerk/users.ndjson'), crlfDelay: Infinity })) {
+  if (line.trim()) {
+    const user = JSON.parse(line) as ClerkUser;
+    users.set(user.id, user);
+  }
+}
+
+function primaryEmail(user: ClerkUser): string | undefined {
+  return user.email_addresses
+    .find((address) => address.id === user.primary_email_address_id)
+    ?.email_address.trim()
+    .toLowerCase();
+}
+
+async function existingEmails(tenantId: string): Promise<Set<string>> {
+  const emails = new Set<string>();
+  for (let offset = 0; ; offset += 1000) {
+    const page = await iam.api.identities.list(credential, { tenantId, kind: 'user', limit: 1000, offset });
+    for (const identity of page) if (identity.email) emails.add(identity.email);
+    if (page.length < 1000) return emails;
+  }
+}
+
+async function importTenant(clerkOrgId: string, tenantId: string, memberships: Membership[]): Promise<void> {
+  const tenant = await iam.api.tenants.get(credential, { tenantId });
+  if (tenant.status !== 'active') return console.log(`${clerkOrgId}: waiting for its owner`);
+  const roleIds = await applyClerkRoles(tenantId);
+  const seen = await existingEmails(tenantId);
+
+  const rows = memberships.flatMap(({ userId, role }) => {
+    const user = users.get(userId);
+    const email = user && primaryEmail(user);
+    if (!user || !email || user.banned) return []; // no email, or banned: not imported
+    if (ENTERPRISE_DOMAINS.has(email.split('@')[1]!)) return []; // arrives through SSO
+    if (seen.has(email)) return []; // already imported, or the owner
+    seen.add(email);
+    const name = [user.first_name, user.last_name].filter(Boolean).join(' ') || email;
+    const plan = user.public_metadata.plan;
+    return [{
+      user,
+      entry: {
+        email,
+        name,
+        attributes: { clerkId: user.id, ...(typeof plan === 'string' ? { plan } : {}) },
+        roleIds: roleIds.has(role) ? [roleIds.get(role)!] : [],
+      },
+    }];
+  });
+
+  const idMap: Record<string, string> = {};
+  for (let start = 0; start < rows.length; start += 100) {
+    const batch = rows.slice(start, start + 100);
+    const { identities } = await iam.api.identities.createMany(credential, {
+      tenantId,
+      identities: batch.map((row) => row.entry),
+    });
+    batch.forEach((row, i) => (idMap[row.user.id] = identities[i]!.id));
+  }
+  await writeFile(`clerk/id-map-${clerkOrgId}.json`, JSON.stringify(idMap, null, 2));
+  console.log(`${clerkOrgId}: imported ${rows.length}`);
+}
+
+const tenantMap = JSON.parse(await readFile('clerk/tenant-map.json', 'utf8')) as Record<string, string>;
+const inAnOrganization = new Set<string>();
+for (const [clerkOrgId, tenantId] of Object.entries(tenantMap)) {
+  if (clerkOrgId === 'personal') continue;
+  const memberships = JSON.parse(await readFile(`clerk/memberships-${clerkOrgId}.json`, 'utf8')) as Membership[];
+  memberships.forEach((membership) => inAnOrganization.add(membership.userId));
+  await importTenant(clerkOrgId, tenantId, memberships);
+}
+
+// Everyone without an organization goes into the personal tenant, with no role.
+const personal = [...users.keys()].filter((id) => !inAnOrganization.has(id)).map((userId) => ({ userId, role: '' }));
+await importTenant('personal', tenantMap.personal!, personal);
+```
+
+```bash
+npx tsx scripts/clerk-import-members.ts
+```
+
+- Run it again after more owners accept, and during the dual run to pick up new Clerk sign-ups: existing addresses
+  are skipped.
+- Each batch of 100 is one transaction; a failed batch creates nobody, so fix the cause and run the script again.
+- The `id-map-*.json` files map each Clerk user ID to the new identity ID. Use them to rewrite user IDs stored in
+  your own tables, and to move nested or private metadata into your database.
+- Banned users are skipped. If you need them for history, import them and call `identities.setStatus` with
+  `status: 'disabled'`.
+
+</Step>
+<Step>
+
+### Recreate social and enterprise sign-in
+
+Social sign-in becomes a `createOAuthLogin` connection per provider and tenant. If Clerk used your own OAuth
+credentials, reuse the client ID and secret and add the new `redirectUri` at the provider; Clerk's shared
+development credentials cannot be reused.
+
+```ts title="sso.ts"
+import { createOAuthLogin } from 'better-iam/oauth';
+import { iam } from './iam';
+
+export const login = createOAuthLogin({
+  ...iam.protocolHost,
+  trustedOrigins: ['https://app.example.com'],
+  connections: [
+    {
+      id: 'personal-google',
+      tenantId: process.env.PERSONAL_TENANT_ID!,
+      kind: 'google',
+      clientId: process.env.GOOGLE_CLIENT_ID!,
+      clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
+      redirectUri: 'https://app.example.com/oauth/personal-google/callback',
+    },
+    {
+      id: 'acme-entra',
+      tenantId: process.env.ACME_TENANT_ID!,
+      kind: 'microsoft',
+      microsoftTenant: process.env.ACME_ENTRA_TENANT_ID!,
+      clientId: process.env.ACME_ENTRA_CLIENT_ID!,
+      clientSecret: process.env.ACME_ENTRA_CLIENT_SECRET!,
+      redirectUri: 'https://app.example.com/oauth/acme-entra/callback',
+    },
+  ],
+});
+iam.useProtocol(login);
+```
+
+People who signed in to Clerk with Google and were imported (they were not excluded by domain) first sign in with a
+magic link, then [link Google](/docs/federation/oauth-sign-in#link-an-existing-account). An imported account blocks
+the first Google sign-in for the same address with `ACCOUNT_LINK_REQUIRED`.
+
+For a customer on Clerk's enterprise SAML, create a SAML connection in their tenant from their IdP's metadata with
+`saml.createConnection`, including `trustedEmailDomains`, and have their IT team add a second application in their
+IdP with the returned `entityId` and `acsUrl`. The steps are in [SAML](/docs/federation/saml#tenant-managed-connections)
+and [SAML single sign-on with Okta](/docs/guides/enterprise-sso-okta). Their people's first SSO sign-in creates
+their accounts, because the import skipped their domains.
+
+</Step>
+<Step>
+
+### Replace Clerk in a Next.js app
+
+| Clerk | Better IAM |
+| --- | --- |
+| `clerkMiddleware()` in `middleware.ts` | `createIamMiddleware` from `@better-iam/next/edge` |
+| `auth()` and `currentUser()` in server components | `iamNext.getSession()`, which returns `{ identity, session }` or `null` |
+| `auth().protect()`, `has({ permission })` | `iamNext.page(render, spec)` and `iamNext.route(handler, spec)` guards ([Guards](/docs/integrations/nextjs/guards)) |
+| `useUser()`, `useAuth()` in client components | `useSession()` from `@better-iam/react` |
+| `<SignIn />`, `<SignUp />` | Your own forms, with `iamNext.authActions()` server actions |
+| `<OrganizationSwitcher />` | `links.list` and `links.switch` between a person's linked accounts |
+| `clerkClient.users.*` | `iam.api.identities.*` with an administrator credential |
+
+```ts title="middleware.ts"
+import { NextResponse } from 'next/server';
+import { createIamMiddleware } from '@better-iam/next/edge';
+
+export const middleware = createIamMiddleware({
+  loginPath: '/login',
+  publicPaths: ['/', '/pricing', '/login'],
+  next: (init) => NextResponse.next(init),
+});
+export const config = { matcher: ['/((?!_next|favicon.ico).*)'] };
+```
+
+```tsx title="app/dashboard/page.tsx"
+import { iamNext } from '@/lib/iam-next';
+
+export default async function Dashboard() {
+  const current = await iamNext.getSession();
+  if (!current) return <a href="/login">Sign in</a>;
+  return <h1>Welcome, {current.identity.name}</h1>;
+}
+```
+
+`lib/iam-next.ts` creates `iamNext` with `createIamNext(iam, { loginPath: '/login' })`; see
+[Next.js](/docs/integrations/nextjs#create-the-nextjs-helpers). Wherever your tables store Clerk user IDs, rewrite
+them with the ID maps, or look people up by the `clerkId` attribute during the transition.
+
+</Step>
+<Step>
+
+### Cut over
+
+Switch one tenant at a time (or the whole application at once, if it has only the personal tenant):
+
+1. Check counts and sample people ([Verify it works](#verify-it-works)).
+2. Route that organization's sign-in to Better IAM. Clerk sessions already open keep working until they end.
+3. Tell people how to sign in the first time: a magic link, their company's SSO, or Google.
+4. For SSO customers, once everyone has signed in, restrict the tenant with `tenants.setAuthPolicy` and
+   `allowedMethods: ['federated']`.
+
+Keep the Clerk instance unchanged until the rollback window ends. To roll a tenant back, route it to Clerk again;
+accounts created and passwords set in Better IAM after the switch do not exist in Clerk. See
+[Roll back](/docs/guides/migration#roll-back).
+
+</Step>
+</Steps>
+
+## Verify it works
+
+```ts title="scripts/clerk-verify.ts"
+import { readFile } from 'node:fs/promises';
+import { iam } from '../iam';
+
+const credential = { token: process.env.BETTER_IAM_TOKEN! };
+const tenantMap = JSON.parse(await readFile('clerk/tenant-map.json', 'utf8')) as Record<string, string>;
+
+for (const [clerkOrgId, tenantId] of Object.entries(tenantMap)) {
+  const usage = await iam.api.tenants.usage(credential, { tenantId });
+  const idMap = JSON.parse(await readFile(`clerk/id-map-${clerkOrgId}.json`, 'utf8').catch(() => '{}'));
+  console.log(clerkOrgId, 'identities', usage.identities, 'imported', Object.keys(idMap).length, 'roles', usage.roles);
+}
+```
+
+- Each tenant's `identities` equals the imported members plus its owner and anyone who already arrived through SSO.
+- An imported person requests a magic link (`auth.startPasswordless`), signs in, and sees their organization's data.
+- `policies.effectiveActions` for a sampled admin and member lists the actions their Clerk role allowed
+  ([What can a person do](/docs/authorization/reviews#what-can-a-person-do)).
+
+## Troubleshooting
+
+<Accordions>
+<Accordion title="createMany fails with INVALID_INPUT for an attribute">
+  An attribute is not declared in `permissions.identityAttributes`, or its value has the wrong type (attributes are
+  flat strings, numbers, or booleans). Declare it, or keep that metadata in your own database. See
+  [INVALID_INPUT](/docs/reference/errors#invalid_input).
+</Accordion>
+<Accordion title="createMany fails with TENANT_INACTIVE">
+  The tenant's owner has not accepted the invitation yet. Resend it with `tenants.resendInvitation`. See
+  [TENANT_INACTIVE](/docs/reference/errors#tenant_inactive).
+</Accordion>
+<Accordion title="config.apply fails with INVALID_ACTION">
+  A role names an action not declared in `permissions.resourceTypes`. Add it, or fix `actionFor`. See
+  [INVALID_ACTION](/docs/reference/errors#invalid_action).
+</Accordion>
+<Accordion title="A person in two organizations sees only one">
+  In Better IAM they have one account per organization. Turn on `onboarding: { mode: 'linked' }` and let them link
+  the accounts with `links.create`; then `links.switch` moves between them. See
+  [Account linking](/docs/concepts/tenants-and-identities#account-linking).
+</Accordion>
+<Accordion title="Google sign-in fails with ACCOUNT_LINK_REQUIRED">
+  The person was imported, so an account with that email already exists. They sign in with a magic link and link
+  Google. See [ACCOUNT_LINK_REQUIRED](/docs/reference/errors#account_link_required).
+</Accordion>
+</Accordions>
+
+## Next steps
+
+<Cards>
+  <Card icon={<ArrowLeftRight />} title="Migration guides" href="/docs/guides/migration">
+    The general plan: what carries over, dual run, and rollback.
+  </Card>
+  <Card icon={<LogIn />} title="Next.js" href="/docs/integrations/nextjs">
+    Sessions, guards, middleware, and server actions.
+  </Card>
+  <Card icon={<Users />} title="Tenants and identities" href="/docs/concepts/tenants-and-identities">
+    Why an identity belongs to one tenant, and how linking works.
+  </Card>
+  <Card icon={<KeyRound />} title="Magic links and codes" href="/docs/authentication/passwordless">
+    The first sign-in for every imported person.
+  </Card>
+</Cards>

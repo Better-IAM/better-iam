@@ -1,0 +1,282 @@
+---
+title: Frequently asked questions
+metaTitle: Better IAM FAQ
+description: Short, plain answers to common questions about adopting, running, migrating to, and upgrading Better IAM, its databases, AI support, and these docs.
+icon: MessageCircleQuestionMark
+sources:
+  - README.md
+  - packages/better-iam/package.json
+  - packages/next/src/edge.ts
+  - packages/server/src/options.ts
+  - packages/server/src/api/identities.ts
+  - apps/docs/content/docs/databases/index.mdx
+  - apps/docs/content/docs/databases/migrations.mdx
+  - apps/docs/content/docs/ai/index.mdx
+---
+
+## What it is
+
+<Accordions type="multiple">
+<Accordion title="Who created Better IAM?">
+
+Better IAM is created and maintained by Sean Filimon.
+
+</Accordion>
+<Accordion title="Is Better IAM a hosted service?">
+
+No. It is a set of TypeScript packages that run inside your own application process and store their data in your
+own database. There is no Better IAM server to sign up for, and no identity data leaves your infrastructure unless
+you configure an integration (webhooks, SCIM, Shared Signals) that sends it somewhere.
+
+</Accordion>
+<Accordion title="Is Better IAM part of Better Auth?">
+
+No. Better IAM is an independent project and does not depend on Better Auth. Its documentation follows a similar
+layout (Get Started, Concepts, Authentication, Authorization, Databases, Integrations, Features, Guides,
+Reference), so the sections will feel familiar if you know Better Auth's docs. For a feature-by-feature comparison
+with other identity products, see [Comparison](/docs/comparison); to move an existing Better Auth application over,
+see [Migrate from Better Auth](/docs/guides/migration/from-better-auth).
+
+</Accordion>
+<Accordion title="How is it different from an authentication library?">
+
+Authentication libraries sign people in. Better IAM also decides what they may do once signed in, and it manages
+that access over time: organizations with their own directories and roles, JSON policies with conditions,
+just-in-time elevation, access reviews, an audit log that detects tampering, and enterprise federation (SSO, SCIM).
+If your application only needs sign-in for individual users, a smaller library is enough; see
+[Why it exists](/docs/introduction#why-it-exists).
+
+</Accordion>
+<Accordion title="Is there an admin console?">
+
+The repository includes a reference console (`apps/console`, a Next.js application) with an administration panel
+and a multi-tenant cloud console built on the same public API. You can run it as is, or read it as a large example
+of building your own management screens with the [browser client](/docs/concepts/client).
+
+</Accordion>
+<Accordion title="What license is it under?">
+
+Every package is licensed under the Apache License 2.0 and published to npm as `better-iam` and the `@better-iam/*`
+packages. See [Packages](/docs/reference/packages) for the full list.
+
+</Accordion>
+</Accordions>
+
+## Using these docs
+
+<Accordions type="multiple">
+<Accordion title="Where do I start?">
+
+Read [Introduction](/docs/introduction), then follow [Installation](/docs/installation) to add Better IAM to an
+existing app, or [Quickstart](/docs/quickstart) to build a working instance on SQLite in a few minutes. After that,
+[Concepts](/docs/concepts) explains the model (tenants, identities, resources, the API, events) that every other
+page builds on.
+
+</Accordion>
+<Accordion title="How are the docs organized?">
+
+| Section | What you find there |
+| --- | --- |
+| [Concepts](/docs/concepts) | The model: tenants and identities, resources and the catalog, the API, the client, events, errors. |
+| [Authentication](/docs/authentication) | Sign-in methods, sessions, MFA, passkeys, API keys, tokens, tenant policies. |
+| [Authorization](/docs/authorization) | Roles, policies, conditions, relationships, temporary access, queries, reviews. |
+| [Databases](/docs/databases) | The PostgreSQL, SQLite, and libSQL adapters, migrations, schema, and storage operations. |
+| [Integrations](/docs/integrations) | Next.js, React, Vue, Nuxt, SvelteKit, React Router, NestJS, Express, Hono, Fastify, and plain Node. |
+| [Features](/docs/features) | Optional modules: governance, privileged access, secrets and keys, billing, AI agents, and more. |
+| [Federation](/docs/federation) | OAuth and OIDC, SAML, SCIM, LDAP, Shared Signals, and verifiable credentials. |
+| [Guides](/docs/guides) | Task-oriented walkthroughs, migration and upgrade guides, and a cookbook of short recipes. |
+| [Operations](/docs/operations) | Deployment, configuration, scheduled jobs, observability, and security. |
+| [Reference](/docs/reference) | Generated reference for the API, exports, types, CLI, error codes, and every `betterIam()` option. |
+
+</Accordion>
+<Accordion title="Where is the full list of configuration options?">
+
+[Options](/docs/reference/options) lists every option `betterIam()` accepts, with its type, default, range, and
+an example, read from `packages/server/src/options.ts`. For which options a production deployment usually changes,
+see the [Configuration reference](/docs/operations/deployment/configuration).
+
+</Accordion>
+<Accordion title="Where did the old Frameworks pages go?">
+
+Framework pages now live under [Integrations](/docs/integrations), for example
+[Next.js](/docs/integrations/nextjs) and [NestJS](/docs/integrations/nestjs). Old URLs redirect to the new ones,
+so existing bookmarks keep working.
+
+</Accordion>
+</Accordions>
+
+## Running it
+
+<Accordions type="multiple">
+<Accordion title="Which databases does it support?">
+
+PostgreSQL, SQLite, and libSQL/Turso, through the bundled adapters: `better-iam/adapter-postgres`,
+`better-iam/adapter-sqlite`, and `better-iam/adapter-libsql`. Anything else can be added by implementing the
+storage adapter contract, which comes with a conformance test suite. See [Databases](/docs/databases) and
+[Adapters and plugins](/docs/concepts/extensions).
+
+</Accordion>
+<Accordion title="Can I use MySQL, MongoDB, Prisma, or Drizzle?">
+
+Not with a bundled adapter. There are no MySQL, SQL Server, MongoDB, DynamoDB, or Cloudflare D1 adapters, and no
+Prisma or Drizzle adapters. Better IAM does not generate ORM models: its schema is three fixed tables that its own
+migrations manage. To use another database, write an adapter against the `IamStore` contract and pass the
+conformance suite; see [Write a database adapter](/docs/guides/custom-database-adapter).
+
+</Accordion>
+<Accordion title="Can Better IAM share a database with my application?">
+
+Yes. Its tables can live in the same database as your own, and your application keeps its own data in its own
+tables. Every write to Better IAM's tables must go through Better IAM, and a write to your tables is not atomic with
+an authorization check. See [Share a database with your application](/docs/databases#share-a-database-with-your-application).
+
+</Accordion>
+<Accordion title="How do I create and upgrade the database schema?">
+
+Run `npx better-iam migrate` (or call `iam.initialize()` from a deploy script) once per deploy, before the new
+release serves traffic. It applies the schema steps your database has not seen yet, records each in the
+`iam_migrations` table, and runs plugin migrations. You never write migration files for Better IAM. See
+[Migrations](/docs/databases/migrations).
+
+</Accordion>
+<Accordion title="Which runtimes does it support? Does it run on the edge?">
+
+The server (`betterIam()`) needs Node.js 22.12 or newer: password hashing and the SQLite adapter use native modules.
+For edge runtimes, `better-iam/next/edge` provides what is safe to run there with Web Crypto alone: the Next.js
+middleware that redirects signed-out visitors, verification of service assertions, and verification of webhook
+signatures. `better-iam/session-tokens` verifies session JWTs without a database. The browser client and the React,
+Vue, and Svelte bindings run in any browser. See [Next.js middleware](/docs/integrations/nextjs/middleware).
+
+</Accordion>
+<Accordion title="Do I need to run background jobs?">
+
+Yes, a few, on a schedule: delivering the email outbox, removing expired sessions and records, and optional
+governance jobs such as expiry reminders and certification deadlines. Each job is both an instance function and a
+CLI command, so you can run them from a worker or from cron. See [Scheduled jobs](/docs/operations/jobs).
+
+</Accordion>
+<Accordion title="Does every permission check hit the database?">
+
+Yes. Decisions are made from the current state in your database, not from a cache, so a revoked role or session
+stops working on the very next request. To keep pages fast, check many things at once with `authorizeMany` (up to
+50 checks in one call) and list what someone may access with `listAccessible` instead of checking items one by one.
+See [Reverse queries and batches](/docs/authorization/queries).
+
+</Accordion>
+</Accordions>
+
+## Migrating and upgrading
+
+<Accordions type="multiple">
+<Accordion title="Can I import my existing users?">
+
+Yes. [`identities.createMany`](/docs/reference/api/identities#createmany) creates many people at once with their
+names, directory attributes, roles, and groups. It accepts a password only in plain text (it is hashed on the way
+in), so existing password hashes from another system are not imported: people can set a password through the reset
+flow, or sign in with a magic link, a passkey, or your enterprise identity provider. Directories that support SCIM
+can provision people automatically; see [SCIM](/docs/federation/scim). The
+[migration recipe](/docs/guides/recipes/tenancy-and-limits#move-people-over-from-another-system) walks through a
+complete move, including two traps with unverified addresses and federated sign-in.
+
+</Accordion>
+<Accordion title="Is there a guide for moving from my current provider?">
+
+Yes. [Migration guides](/docs/guides/migration) cover moving from
+[Auth0](/docs/guides/migration/from-auth0), [Auth.js](/docs/guides/migration/from-authjs),
+[Better Auth](/docs/guides/migration/from-better-auth), [Clerk](/docs/guides/migration/from-clerk),
+[Keycloak](/docs/guides/migration/from-keycloak), and [WorkOS](/docs/guides/migration/from-workos). Whichever
+provider you leave, its password hashes are not imported: people set a new password through the reset flow or
+sign in with a magic link, a passkey, or single sign-on.
+
+</Accordion>
+<Accordion title="How do I upgrade to a new version?">
+
+Read the [Changelog](/docs/reference/changelog) and the [upgrade guides](/docs/guides/upgrade) for the versions
+between yours and the new one, update every `better-iam` and `@better-iam/*` package to the same version (they are
+released together), then run `better-iam migrate` before the new release serves traffic. See
+[Migrations](/docs/databases/migrations).
+
+</Accordion>
+</Accordions>
+
+## Adopting it
+
+<Accordions type="multiple">
+<Accordion title="Can people sign in with Google, GitHub, Microsoft, or our company's identity provider?">
+
+Yes. OAuth and OpenID Connect sign-in include presets for Google, GitHub, and Microsoft Entra ID, and any standard
+OIDC provider works. Organizations can also connect their own SAML identity provider. See
+[OAuth and OIDC sign-in](/docs/federation/oauth-sign-in) and [SAML](/docs/federation/saml).
+
+</Accordion>
+<Accordion title="Can Better IAM be the identity provider for my other applications?">
+
+Yes. The OAuth/OIDC provider in `better-iam/oauth` issues tokens to your other applications and to MCP servers, with
+consent screens, refresh tokens, and token verification helpers for your APIs. See
+[OAuth/OIDC provider](/docs/federation/oauth-provider).
+
+</Accordion>
+<Accordion title="Can I trust permission checks made in the browser?">
+
+No, and the API is designed around that. Browser checks (`Can`, `useAuthorize`, `authorizeMany`) are advisory: they
+decide what to show. Your server must enforce the decision with `iam.require` immediately before doing the protected
+work, using resource details loaded from your own storage.
+
+</Accordion>
+<Accordion title="How do I try policies without writing code?">
+
+Open the [policy playground](/playground). It runs the same policy engine as the server, in your browser, and shows
+which statement and condition made each decision.
+
+</Accordion>
+</Accordions>
+
+## AI
+
+<Accordions type="multiple">
+<Accordion title="Can my AI coding assistant read these docs?">
+
+Yes. The site serves an MCP server at `/api/mcp` with tools to search the docs and look up pages, API methods,
+exports, and error codes. For tools without MCP, `/llms.txt` indexes every page, `/llms-full.txt` contains every
+page as Markdown, and any page is available as Markdown at `/docs/<page>.md` or with `Accept: text/markdown`. See
+[Use the docs with AI](/docs/ai).
+
+</Accordion>
+<Accordion title="How do I keep an assistant from inventing APIs?">
+
+Point it at the generated reference: [Server API](/docs/reference/api), [Package exports](/docs/reference/exports),
+[Options](/docs/reference/options), [Error codes](/docs/reference/errors), and [CLI](/docs/reference/cli) are read
+from the code, so names and signatures match the version the docs were built from. When an answer disagrees with
+your installed version, trust the TypeScript types: every server method is typed end to end from the `betterIam()`
+instance.
+
+</Accordion>
+<Accordion title="Can AI agents have their own accounts and permissions?">
+
+Yes. An agent is an identity of kind `agent` with a sponsor (an accountable person), its own roles and API keys,
+and an optional `boundary` policy that caps everything it does. People can delegate their access to an agent for a
+limited scope and time. See [AI agents](/docs/features/ai-agents).
+
+</Accordion>
+<Accordion title="Can Better IAM authorize MCP tools and model calls?">
+
+Yes. `@better-iam/mcp` authorizes Model Context Protocol tools with Better IAM credentials, agents, and OAuth
+tokens; see [MCP server authorization](/docs/features/mcp-server) and
+[Secure an MCP server](/docs/guides/secure-an-mcp-server). The optional `inference` module controls which models
+people and agents may call, with provider keys, budgets, and metering; see
+[Model access and budgets](/docs/features/inference).
+
+</Accordion>
+</Accordions>
+
+## Contributing
+
+<Accordions type="multiple">
+<Accordion title="How do I build and test Better IAM from source?">
+
+Clone the repository, then run `pnpm install`, `pnpm build`, and `pnpm test`; `pnpm check` runs the full set of
+checks CI runs. See [Contributing](/docs/reference/contributing) for the repository layout, the PostgreSQL tests,
+the adapter conformance suite, and how the docs are generated.
+
+</Accordion>
+</Accordions>

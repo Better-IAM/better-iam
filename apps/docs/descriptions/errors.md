@@ -8,7 +8,7 @@ never parse them: branch on `code`, never on `message`.
 Over HTTP a refused call answers with that status and the body
 `{ "error": { "code": "ACCESS_DENIED", "message": "Access denied" } }`. A `RATE_LIMITED` answer also carries
 `retryAfterMs` in the body and a `Retry-After` header in seconds. An exception that is not an `IamError` becomes
-`500 INTERNAL_ERROR` with a generic message, so internals never leak. The [browser client](/docs/frameworks/client#errors)
+`500 INTERNAL_ERROR` with a generic message, so internals never leak. The [browser client](/docs/concepts/client#errors)
 rethrows the envelope as `IamClientError` with the same `code` and `status`, plus `retryAfterMs` and, when you create
 the client with `requestId`, the `requestId` it sent as `X-Request-Id`, which you can quote in support tickets and find
 on the server's `http` spans. The [CLI](/docs/reference/cli) prints `CODE: message` to standard error and exits with
@@ -115,7 +115,7 @@ first root administrator exactly once.
 
 **How to fix:** nothing needs creating. Sign in with an existing root administrator, or run
 [`recover-root`](/docs/reference/cli#recover-root) if you lost access to all of them
-([recovering root access](/docs/guides/authentication/recovery#recovering-root-access)).
+([recovering root access](/docs/authentication/recovery#recovering-root-access)).
 
 ## ARCHIVE_CONFLICT
 
@@ -148,7 +148,7 @@ recomputed, and links must be intact. It also fails when two archived copies of 
 the result, including the failure reason and sequence, before it exits.
 
 **How to fix:** treat it as a possible tampering or data-loss incident, and compare the failing range with the
-database (`audit-verify`) and your backups ([audit chain](/docs/guides/events/audit-chain)).
+database (`audit-verify`) and your backups ([audit chain](/docs/concepts/events/audit-chain)).
 
 ## AUDIT_CHAIN_BROKEN
 
@@ -159,7 +159,7 @@ command prints the verification result, including where it failed, before it exi
 
 **How to fix:** treat it as a possible tampering or data-loss incident: find the failing sequence in the output,
 compare it with your archive or backups, and review who can write to the database
-([audit chain](/docs/guides/events/audit-chain)).
+([audit chain](/docs/concepts/events/audit-chain)).
 
 ## AUTHORITY_UNAVAILABLE
 
@@ -190,7 +190,7 @@ the deployment screens passwords with `authentication.passwordPolicy.isBreached`
 `pwnedPasswords()` client.
 
 **How to fix:** ask the person to choose a different password, and show the message next to the password field
-([password screening](/docs/guides/authentication/sign-in-methods#password-screening)).
+([password screening](/docs/authentication/sign-in-methods#password-screening)).
 
 ## CATALOG_LOCKED
 
@@ -200,7 +200,7 @@ Organizations cannot register their own resource types or actions on this deploy
 catalog mode only your configuration defines the catalog.
 
 **How to fix:** declare the types and actions under `permissions` in your configuration, or switch to tenant-defined
-mode if organizations should define their own ([catalog](/docs/guides/authorization/catalog)).
+mode if organizations should define their own ([catalog](/docs/authorization/catalog)).
 
 ## CHECKOUT_REQUIRED
 
@@ -261,7 +261,7 @@ The command prints the full plan first; the count covers the items it would crea
 so a CI job fails when someone changed production outside the reviewed file.
 
 **How to fix:** review the plan, then apply the file with `config-apply` or update the file to the intended state
-([configuration as code](/docs/guides/privileged-access/config-as-code)).
+([configuration as code](/docs/features/privileged-access/config-as-code)).
 
 ## CONFIG_EXISTS
 
@@ -289,7 +289,7 @@ same answer, so the call reveals nothing about which requests exist. Attempts ar
 
 **How to fix:** open the latest confirmation email and use its link. If the request lapsed or was already confirmed,
 file a new one with [`privacy.submitPublic`](/docs/reference/api/privacy#submitpublic)
-([privacy guide](/docs/guides/governance/privacy)).
+([privacy guide](/docs/features/governance/privacy)).
 
 ## CONFLICT
 
@@ -323,7 +323,7 @@ the `X-Better-IAM: 1` header, and a JSON content type, and the OAuth provider's 
 trusted `Origin` on its consent `POST`. This stops other sites from starting these flows with the person's cookies.
 
 **How to fix:** send the request with `fetch` from your own origin (the browser sets `Origin`), include the header,
-and list the origin in `trustedOrigins` ([CSRF and Origin checks](/docs/guides/authentication/http#csrf-and-origin-checks)).
+and list the origin in `trustedOrigins` ([CSRF and Origin checks](/docs/authentication/http#csrf-and-origin-checks)).
 
 ## CSRF_REJECTED
 
@@ -334,7 +334,7 @@ carries cookies must also send an `Origin` header. The SCIM administration handl
 requests, and the Next.js, NestJS, and middleware integrations apply the same cookie rule to your own routes.
 
 **How to fix:** call the API through the browser client, which sets both headers, or add them yourself
-([CSRF and Origin checks](/docs/guides/authentication/http#csrf-and-origin-checks)).
+([CSRF and Origin checks](/docs/authentication/http#csrf-and-origin-checks)).
 
 ## DATABASE_IN_USE
 
@@ -431,7 +431,7 @@ reminders (`certifications.remind`), the access digest, and expiry reminders enq
 finding; with `--strict`, any finding above `info` severity fails the run.
 
 **How to fix:** fix each check named in the output, or run without `--strict` while you work through them
-([doctor](/docs/operations/storage#doctor)).
+([doctor](/docs/databases/operations#doctor)).
 
 ## DOMAIN_NOT_ALLOWED
 
@@ -460,7 +460,7 @@ With `authentication.requireEmailVerification` (on by default when self-registra
 issue, and every later use of a session refuse unverified identities.
 
 **How to fix:** have the person open the verification link from their email (`auth.verifyEmail`), or send a new one
-with `auth.requestEmailVerification` ([email verification](/docs/guides/authentication/recovery#email-verification)).
+with `auth.requestEmailVerification` ([email verification](/docs/authentication/recovery#email-verification)).
 
 ## ENGINE_FAILED
 
@@ -487,7 +487,7 @@ API group and `iam.inference` without the `inference` option, and the `clearance
 `iam.clearances.sendReminders` without the `clearances` option.
 
 **How to fix:** enable the option in your [configuration](/docs/operations/deployment/configuration) or the tenant's
-[authentication policy](/docs/guides/authentication/tenant-policy), or hide the feature in your UI while it is off.
+[authentication policy](/docs/authentication/tenant-policy), or hide the feature in your UI while it is off.
 
 ## FEATURE_LOCKED
 
@@ -509,7 +509,7 @@ The command prints the report first; the count covers unsuppressed findings at t
 CI job fails when new risk appears.
 
 **How to fix:** fix the findings, or record accepted ones with `analysis.suppress` so they stop failing the run
-([scan for risky configuration](/docs/guides/authorization/reviews#scan-for-risky-configuration)).
+([scan for risky configuration](/docs/authorization/reviews#scan-for-risky-configuration)).
 
 ## FORBIDDEN
 
@@ -526,7 +526,7 @@ operates the whole platform.
 The caller has permission for the action but holds no active grant authority to issue access under.
 
 Operations that grant access or create grantable records (bindings, roles, policies, group memberships, invitations,
-organizations, API keys) record the [grant authority](/docs/guides/authorization/roles#grant-authorities) they were
+organizations, API keys) record the [grant authority](/docs/authorization/roles#grant-authorities) they were
 issued under. A non-root administrator needs one that is not revoked and whose delegation chain is intact.
 
 **How to fix:** ask a root administrator, or someone holding a broader authority, to delegate one with
@@ -645,12 +645,12 @@ this organization.
 The operation is not available while an administrator is impersonating a member.
 
 An impersonation ("view as") session never counts as recently authenticated, so every operation that needs
-[recent authentication](/docs/guides/authentication/sessions#recent-authentication) refuses it. Decisions made in the
+[recent authentication](/docs/authentication/sessions#recent-authentication) refuses it. Decisions made in the
 member's name are refused too: approving requests or activations, reviewing access, accepting agreements, granting
 OAuth consent, requesting packages, assuming roles, change previews, and starting another impersonation.
 
 **How to fix:** end the impersonation and act from your own session
-([impersonation](/docs/guides/authentication/impersonation)).
+([impersonation](/docs/authentication/impersonation)).
 
 ## INSUFFICIENT_SCOPE
 
@@ -684,7 +684,7 @@ actions the catalog knows (wildcards excepted). `actions.register` needs the `{r
 tenant-defined resource type that is registered first.
 
 **How to fix:** check the spelling, then declare the action in `permissions.actions` or register it
-([catalog](/docs/guides/authorization/catalog)).
+([catalog](/docs/authorization/catalog)).
 
 ## INVALID_ARGUMENT
 
@@ -785,7 +785,7 @@ It comes from `IamStore.find` and `findOrdered`: the filter must be a plain JSON
 nonnegative safe integers, the `after` cursor an id, and ordering needs a top-level field, `asc` or `desc`, and
 finite bounds. You meet it when a plugin or adapter works with the store directly.
 
-**How to fix:** correct the query arguments ([adapter contract](/docs/operations/extensions#adapter-contract)).
+**How to fix:** correct the query arguments ([adapter contract](/docs/concepts/extensions#adapter-contract)).
 
 ## INVALID_HIERARCHY
 
@@ -796,7 +796,7 @@ The tenant hierarchy does not allow this parent and child, or the stored hierarc
 or exceeds the maximum depth, which points to data changed outside Better IAM.
 
 **How to fix:** choose a permitted parent or adjust `hierarchy` in your configuration; for the 500 case, repair the
-tenants' `parentId` values ([tenants and identities](/docs/guides/concepts/tenants-and-identities)).
+tenants' `parentId` values ([tenants and identities](/docs/concepts/tenants-and-identities)).
 
 ## INVALID_IDENTITY
 
@@ -840,7 +840,7 @@ Authenticator (TOTP) codes must be six digits and each time step is accepted onc
 codes expire, and each recovery code works once. Failures count toward the sign-in rate limit.
 
 **How to fix:** enter a fresh code from the authenticator app or email, or an unused recovery code
-([MFA](/docs/guides/authentication/mfa)).
+([MFA](/docs/authentication/mfa)).
 
 ## INVALID_NONCE
 
@@ -860,7 +860,7 @@ Registration and sign-in responses are checked against the stored challenge, the
 and the registered credential; a passkey registered for another identity or organization is refused.
 
 **How to fix:** start the ceremony again and use a passkey registered for this account in this organization
-([passkeys](/docs/guides/authentication/passkeys)).
+([passkeys](/docs/authentication/passkeys)).
 
 ## INVALID_POLICY
 
@@ -870,7 +870,7 @@ Policies, boundaries, ceilings, API key session policies, and package rules are 
 says what is wrong, and for package rules it starts with the path of the failing clause.
 
 **How to fix:** correct the document; [`analysis.lintPolicy`](/docs/reference/api/analysis#lintpolicy) checks one
-before you save it ([policies](/docs/guides/authorization/policies)).
+before you save it ([policies](/docs/authorization/policies)).
 
 ## INVALID_PROOF
 
@@ -890,7 +890,7 @@ at most 512 UTF-8 bytes, nested at most 64 levels, without symbols, cycles, or u
 million characters. You meet it when a plugin or your own code writes to `iam.store`.
 
 **How to fix:** store only plain JSON values within these limits
-([adapter contract](/docs/operations/extensions#rules-every-adapter-must-keep)).
+([adapter contract](/docs/concepts/extensions#rules-every-adapter-must-keep)).
 
 ## INVALID_REQUEST
 
@@ -910,7 +910,7 @@ type. Registering resources, creating relationships, and policy documents need a
 hold registered resources; other types are resolved by your `resolveResource` callback.
 
 **How to fix:** declare or register the type first, and check whether it is managed
-([resources and catalog](/docs/guides/concepts/resources-and-catalog)).
+([resources and catalog](/docs/concepts/resources-and-catalog)).
 
 ## INVALID_SEALED_VALUE
 
@@ -1001,7 +1001,7 @@ allow; pinging or redelivering through a paused webhook; and ending a rule-based
 The command prints the full run first, then fails so a CI job or scheduler notices.
 
 **How to fix:** review the violations and errors in the output, then correct the access or the invariant
-([access invariants](/docs/guides/governance/change-safety#access-invariants)).
+([access invariants](/docs/features/governance/change-safety#access-invariants)).
 
 ## INVARIANT_VIOLATION
 
@@ -1013,7 +1013,7 @@ creates a new violation or makes an invariant impossible to evaluate (for exampl
 message names the invariant and the person affected.
 
 **How to fix:** preview the change with [`impact.preview`](/docs/reference/api/impact#preview), then adjust the
-change or the invariant ([access invariants](/docs/guides/governance/change-safety#access-invariants)).
+change or the invariant ([access invariants](/docs/features/governance/change-safety#access-invariants)).
 
 ## INVITATION_INVALID
 
@@ -1037,7 +1037,7 @@ Administrators block networks with `security.blockNetwork`. A blocked address is
 checked (so no rate-limit counter moves), and existing sessions from it stop working at their next use.
 
 **How to fix:** connect from another network, or ask an administrator to lift the block with
-`security.unblockNetwork` or wait for it to expire ([network blocks](/docs/guides/authentication/tenant-policy#network-blocks)).
+`security.unblockNetwork` or wait for it to expire ([network blocks](/docs/authentication/tenant-policy#network-blocks)).
 
 ## IP_NOT_ALLOWED
 
@@ -1047,7 +1047,7 @@ A tenant's `authPolicy.allowedIpRanges` is checked when a session is issued and 
 sessions derived from it; requests without a known client address are not judged.
 
 **How to fix:** connect from an allowed network (for example the company VPN), or ask an administrator to add the
-range ([IP allowlist](/docs/guides/authentication/tenant-policy#ip-allowlist)).
+range ([IP allowlist](/docs/authentication/tenant-policy#ip-allowlist)).
 
 ## KEY_MANAGED
 
@@ -1134,7 +1134,7 @@ here. Offboarding and SCIM deprovisioning only disable an account, so they still
 
 **How to fix:** release the hold with [`privacy.releaseHold`](/docs/reference/api/privacy#releasehold) once it is no
 longer needed, or wait for its `expiresAt`. To refuse an erasure request because the data must be kept, reject it with
-reason `exempt` ([privacy guide](/docs/guides/governance/privacy#legal-holds)).
+reason `exempt` ([privacy guide](/docs/features/governance/privacy#legal-holds)).
 
 ## LIMIT_EXCEEDED
 
@@ -1198,7 +1198,7 @@ sign-in refusing a password. With status 405 an API, SCIM, or webhook route was 
 method; API calls are `POST`.
 
 **How to fix:** offer the person a method the organization allows
-([restricting sign-in methods](/docs/guides/authentication/tenant-policy#restricting-sign-in-methods)), or send the
+([restricting sign-in methods](/docs/authentication/tenant-policy#restricting-sign-in-methods)), or send the
 request as `POST`.
 
 ## MFA_ALREADY_ENABLED
@@ -1208,7 +1208,7 @@ The person already has an authenticator app enrolled.
 `auth.beginMfa` starts a new authenticator enrollment only when none is active.
 
 **How to fix:** to replace the authenticator, disable MFA with `auth.disableMfa` where the tenant allows it, then
-enroll again ([managing factors](/docs/guides/authentication/mfa#managing-factors)).
+enroll again ([managing factors](/docs/authentication/mfa#managing-factors)).
 
 ## MFA_NOT_ENROLLED
 
@@ -1219,7 +1219,7 @@ this sign-in. Regenerating recovery codes, and an MFA step-up on an existing cre
 credential requested with an MFA code), need an enrolled authenticator app.
 
 **How to fix:** enroll a factor first with `auth.beginMfa` and `auth.confirmMfa`
-([MFA](/docs/guides/authentication/mfa)).
+([MFA](/docs/authentication/mfa)).
 
 ## MFA_REQUIRED
 
@@ -1231,7 +1231,7 @@ session, when disabling MFA or regenerating recovery codes, when impersonating a
 framework step-up guards.
 
 **How to fix:** send the person through the second-factor step and retry; framework integrations treat it as a
-signed-out request ([step-up](/docs/guides/authentication/mfa#step-up)).
+signed-out request ([step-up](/docs/authentication/mfa#step-up)).
 
 ## MISSING_ENV
 
@@ -1260,7 +1260,7 @@ Root recovery was attempted before the platform was bootstrapped.
 [`recoverRoot`](/docs/reference/api#recoverroot) and `better-iam recover-root` add a root administrator to the
 existing root tenant, so one must exist.
 
-**How to fix:** run `bootstrap` first ([recovering root access](/docs/guides/authentication/recovery#recovering-root-access)).
+**How to fix:** run `bootstrap` first ([recovering root access](/docs/authentication/recovery#recovering-root-access)).
 
 ## NAME_NOT_PERMITTED
 
@@ -1352,7 +1352,7 @@ offboarded, deleted, or passed their `expiresAt` fails its run with this code (r
 **How to fix:** an administrator who holds the steps' permissions retries the failed runs with
 [`workflows.retryRun`](/docs/reference/api/workflows#retryrun), which makes them the runs' owner, or cancels them,
 and saves the workflow with [`workflows.update`](/docs/reference/api/workflows#update) so new runs start with an
-active owner ([lifecycle workflows](/docs/guides/governance/workflows#authority)).
+active owner ([lifecycle workflows](/docs/features/governance/workflows#authority)).
 
 ## PASSKEY_EXISTS
 
@@ -1370,7 +1370,7 @@ The breached-password service could not be reached, and the deployment refuses p
 `failClosed`, the password is accepted instead.
 
 **How to fix:** retry shortly; if it persists, check the server's outbound network access
-([password screening](/docs/guides/authentication/sign-in-methods#password-screening)).
+([password screening](/docs/authentication/sign-in-methods#password-screening)).
 
 ## PASSWORD_EXPIRED
 
@@ -1380,7 +1380,7 @@ A tenant's `authPolicy.passwordMaxAgeDays` makes sign-in refuse a password that 
 days.
 
 **How to fix:** send the person through password reset (`auth.requestPasswordReset`, then `auth.resetPassword`)
-([password reset](/docs/guides/authentication/recovery#password-reset)).
+([password reset](/docs/authentication/recovery#password-reset)).
 
 ## PASSWORD_REUSED
 
@@ -1389,7 +1389,7 @@ The new password matches one of the person's recent passwords.
 A tenant's `authPolicy.passwordHistory` refuses the last that many passwords when a password is changed or reset.
 
 **How to fix:** ask the person to choose a password they have not used recently
-([password rules](/docs/guides/authentication/tenant-policy#password-rules)).
+([password rules](/docs/authentication/tenant-policy#password-rules)).
 
 ## PAYLOAD_TOO_LARGE
 
@@ -1468,7 +1468,7 @@ need to wait, and the HTTP response a `Retry-After` header.
 
 **How to fix:** wait and tell the person when to try again; an administrator can clear a locked-out person's
 counters with `identities.unlock`
-([failed attempts and lockouts](/docs/guides/authentication/sign-in-methods#failed-attempts-and-lockouts)).
+([failed attempts and lockouts](/docs/authentication/sign-in-methods#failed-attempts-and-lockouts)).
 
 ## RECENT_AUTH_REQUIRED
 
@@ -1480,7 +1480,7 @@ credentials such as assumed-role sessions and session tokens never qualify, and 
 sign-in within the last five minutes.
 
 **How to fix:** reauthenticate (for example `auth.reauthenticate` with the password, completing MFA if asked) and
-retry ([recent authentication](/docs/guides/authentication/sessions#recent-authentication)).
+retry ([recent authentication](/docs/authentication/sessions#recent-authentication)).
 
 ## RECONCILE_ATTENTION
 
@@ -1491,7 +1491,7 @@ them, and tenants that could not be processed; the full result is printed first.
 
 **How to fix:** review the listed packages, fix their rules, and confirm braked changes with
 `reconcile --tenant ID --package ID --confirm`
-([automatic assignment](/docs/guides/privileged-access/automatic-assignment)).
+([automatic assignment](/docs/features/privileged-access/automatic-assignment)).
 
 ## RESOURCE_IN_USE
 
@@ -1517,7 +1517,7 @@ For application resource types, Better IAM asks your callback for the resource a
 tenant's record. The request is refused instead.
 
 **How to fix:** return exactly the requested resource from `resolveResource`
-([resources and catalog](/docs/guides/concepts/resources-and-catalog)).
+([resources and catalog](/docs/concepts/resources-and-catalog)).
 
 ## RESOURCE_RESOLVER_REQUIRED
 
@@ -1527,7 +1527,7 @@ Managed resource types are registered with IAM and read from its storage; for ev
 `resolveResource` option to load the resource and its attributes.
 
 **How to fix:** configure `resolveResource`, or declare the type as managed and register its resources with
-`resources.register` ([resources and catalog](/docs/guides/concepts/resources-and-catalog)).
+`resources.register` ([resources and catalog](/docs/concepts/resources-and-catalog)).
 
 ## ROLE_CHAINING_DISABLED
 
@@ -1538,7 +1538,7 @@ into another. A session token from `sts.getSessionToken` is accepted as a source
 the same or fewer grants.
 
 **How to fix:** assume the role from the original user session or API key
-([assumed roles](/docs/guides/authentication/sign-in-methods#assumed-roles)).
+([assumed roles](/docs/authentication/sign-in-methods#assumed-roles)).
 
 ## ROLLBACK
 
@@ -1547,7 +1547,7 @@ A deliberate signal inside the storage conformance suite that discards a test tr
 The suite throws it to prove that an adapter rolls back uncommitted writes; the API never returns it.
 
 **How to fix:** nothing, unless a conformance check around it fails, which means your adapter did not roll the
-transaction back as required ([conformance suite](/docs/operations/extensions#conformance-suite)).
+transaction back as required ([conformance suite](/docs/concepts/extensions#conformance-suite)).
 
 ## ROOT_SSH_RESTRICTED
 
@@ -1577,7 +1577,7 @@ The source and target of a store copy are the same database.
 `store-copy` and `copyStore` would otherwise read and overwrite one database in the same run.
 
 **How to fix:** point `--target-config` at the configuration of a different, empty database
-([snapshots](/docs/operations/storage#snapshots-and-moving-between-databases)).
+([snapshots](/docs/databases/operations#snapshots-and-moving-between-databases)).
 
 ## SAML_INVALID
 
@@ -1638,7 +1638,7 @@ Certification campaigns refuse a reviewer's decision on an item that grants the 
 one of their groups.
 
 **How to fix:** leave the item to another reviewer of the campaign
-([certifications](/docs/guides/governance/certifications)).
+([certifications](/docs/features/governance/certifications)).
 
 ## SESSION_EXPIRING
 
@@ -1657,7 +1657,7 @@ stolen session cookie or token does not work elsewhere; the refused attempt is r
 client IP are not judged.
 
 **How to fix:** sign in again from the current network; the browser client calls its `onUnauthenticated` hook for
-this code ([binding sessions to their network](/docs/guides/authentication/tenant-policy#binding-sessions-to-their-network)).
+this code ([binding sessions to their network](/docs/authentication/tenant-policy#binding-sessions-to-their-network)).
 
 ## SIGNAL_REJECTED
 
@@ -1692,7 +1692,7 @@ Every line must be a JSON object: a header naming the snapshot format and versio
 with counts. An unsupported version or content after the trailer is refused, and nothing is imported.
 
 **How to fix:** import a file written by `store-export`, unmodified
-([snapshots](/docs/operations/storage#snapshots-and-moving-between-databases)).
+([snapshots](/docs/databases/operations#snapshots-and-moving-between-databases)).
 
 ## SNAPSHOT_TRUNCATED
 
@@ -1702,7 +1702,7 @@ The snapshot ended early, or its record counts do not match its trailer.
 file was cut off or edited, so nothing is imported.
 
 **How to fix:** export the snapshot again and copy it completely
-([snapshots](/docs/operations/storage#snapshots-and-moving-between-databases)).
+([snapshots](/docs/databases/operations#snapshots-and-moving-between-databases)).
 
 ## SOD_CONFLICT
 
@@ -1713,7 +1713,7 @@ package assignments, and configuration apply) check the tenant's `prevent` rules
 back when they create a new conflict. Conflicts that already existed never block unrelated work.
 
 **How to fix:** remove one of the conflicting roles from the person first, or grant a different role
-([separation of duties](/docs/guides/authorization/separation-of-duties)).
+([separation of duties](/docs/authorization/separation-of-duties)).
 
 ## SOURCE_ADDRESS_UNKNOWN
 
@@ -1750,7 +1750,7 @@ with this code, and the whole transaction is rolled back.
 
 **How to fix:** retry the complete operation after a short pause; if it happens often, raise `lockTimeoutMs`
 (PostgreSQL) or `busyTimeoutMs` (SQLite, libSQL), or shorten long transactions such as large imports
-([storage adapters](/docs/operations/storage)).
+([storage adapters](/docs/databases/operations)).
 
 ## STORAGE_CORRUPT
 
@@ -1790,7 +1790,7 @@ The target database of an import or copy already holds records.
 so two deployments never mix.
 
 **How to fix:** point the target configuration at a new, empty database
-([snapshots](/docs/operations/storage#snapshots-and-moving-between-databases)).
+([snapshots](/docs/databases/operations#snapshots-and-moving-between-databases)).
 
 ## TEAM_MANAGED
 
@@ -1873,7 +1873,7 @@ it, and the transaction ends with this code instead of committing partial work. 
 that swallow storage errors inside a transaction.
 
 **How to fix:** let storage errors propagate, or check for the condition before writing
-([adapter contract](/docs/operations/extensions#rules-every-adapter-must-keep)).
+([adapter contract](/docs/concepts/extensions#rules-every-adapter-must-keep)).
 
 ## TRANSACTION_ACTIVE
 
@@ -1898,7 +1898,7 @@ Every `insert`, `put`, and `delete` must run inside `store.transaction()`, so wr
 commit together.
 
 **How to fix:** wrap the writes in `store.transaction(async (tx) => { ... })` and write through `tx`
-([adapter contract](/docs/operations/extensions#rules-every-adapter-must-keep)).
+([adapter contract](/docs/concepts/extensions#rules-every-adapter-must-keep)).
 
 ## TYPE_DISABLED
 
@@ -1918,7 +1918,7 @@ key, a disabled or expired identity, a role session or session token whose sourc
 session whose administrator's session ended.
 
 **How to fix:** send the person to sign in again; the browser client calls its `onUnauthenticated` hook for this
-code, and framework integrations treat the request as signed out ([sessions](/docs/guides/authentication/sessions)).
+code, and framework integrations treat the request as signed out ([sessions](/docs/authentication/sessions)).
 
 ## UNREADABLE_SECRETS
 
@@ -1938,7 +1938,7 @@ The storage adapter cannot list its collections, which a snapshot or copy needs.
 `collections()` method, which a custom adapter may not implement.
 
 **How to fix:** implement `collections()` in the adapter, or pass the collections to copy explicitly to `exportStore`
-or `copyStore` ([optional adapter methods](/docs/operations/extensions#optional-methods)).
+or `copyStore` ([optional adapter methods](/docs/concepts/extensions#optional-methods)).
 
 ## UNSUPPORTED_FILTER
 
@@ -2015,7 +2015,7 @@ ban on the person's name or email; the built-in screen refuses common and keyboa
 `passwordPolicy.check` can add its own rule and message.
 
 **How to fix:** show the message next to the password field and let the person choose a stronger password
-([password rules](/docs/guides/authentication/tenant-policy#password-rules)).
+([password rules](/docs/authentication/tenant-policy#password-rules)).
 
 ## WEAK_TRUST_CONDITIONS
 
@@ -2037,7 +2037,7 @@ Deliveries run from the outbox, so this code never reaches the call that caused 
 delivery's last error, and the delivery is retried with growing delays until its attempts run out.
 
 **How to fix:** make the endpoint return a 2xx status, read the recorded error with `webhooks.listDeliveries`, and
-use `webhooks.redeliver` once it is fixed ([retries](/docs/guides/events/webhooks#retries)).
+use `webhooks.redeliver` once it is fixed ([retries](/docs/concepts/events/webhooks#retries)).
 
 ## WEBHOOK_UNREACHABLE
 
@@ -2048,7 +2048,7 @@ connection failure gets the same message (refused, unresolvable, or a private or
 refuses), so the delivery history cannot be used to map networks or ports; only a timeout says so.
 
 **How to fix:** check that the URL resolves to a public address and the endpoint answers within the webhook timeout,
-then use `webhooks.redeliver` ([retries](/docs/guides/events/webhooks#retries)).
+then use `webhooks.redeliver` ([retries](/docs/concepts/events/webhooks#retries)).
 
 ## WEB_IDENTITY_REJECTED
 

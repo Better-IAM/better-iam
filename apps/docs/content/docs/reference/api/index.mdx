@@ -103,8 +103,8 @@ Both enforce the browser boundary: JSON bodies with `X-Better-IAM: 1`, an exact 
 carry cookies (`CSRF_REJECTED` or `UNTRUSTED_ORIGIN` otherwise), and API bodies of at most 64 KiB
 (`PAYLOAD_TOO_LARGE`). They set the session cookie on sign-in routes and clear it on sign-out, add CORS headers for
 trusted origins, echo a plain `X-Request-Id`, and return every error as `{ "error": { "code", "message" } }`. The
-framework packages ([Next.js](/docs/frameworks/nextjs), [NestJS](/docs/frameworks/nestjs),
-[Node middleware](/docs/frameworks/node)) wrap them for you.
+framework packages ([Next.js](/docs/integrations/nextjs), [NestJS](/docs/integrations/nestjs),
+[Node middleware](/docs/integrations/node)) wrap them for you.
 
 ```ts
 import { createServer } from 'node:http';
@@ -674,7 +674,7 @@ Each is backed by a stored session row, so revoking the row ends the credential 
 headers, the client address is derived from them as the HTTP handler would (`http.clientInfo`), so network
 allowlists and blocks apply. The result is `{ identity, session }`; `session.kind`, `session.mfa`, and
 `session.tenantId` describe the caller. It checks no permission, so follow it with `authorize` or `require` before
-acting on data. See [sessions](/docs/guides/authentication/sessions).
+acting on data. See [sessions](/docs/authentication/sessions).
 
 ```ts
 const { identity, session } = await iam.authenticate({ headers: request.headers });
@@ -704,16 +704,16 @@ Decides whether the caller may perform one action on one resource and returns th
 
 The result is `{ allowed, reason, matched }`. An allow carries the reason it was granted. Every denial reports
 `ACCESS_DENIED` with an empty `matched`, so a caller learns nothing about which rule refused it. The check reads
-current state in one transaction (bindings, groups, policies, [conditions](/docs/guides/authorization/conditions),
+current state in one transaction (bindings, groups, policies, [conditions](/docs/authorization/conditions),
 boundaries, relationships, and the tenant tree), and there is no permission cache to invalidate.
 
 - An action the catalog does not know is denied, not an error.
 - A root administrator signed in with MFA is allowed everything (`ROOT_OVERRIDE`), and each override is audited.
 - Any other credential only works in its own organization: asking about another `tenantId` is denied.
-- An [impersonation](/docs/guides/authentication/impersonation) session is allowed only what both the member and the
+- An [impersonation](/docs/authentication/impersonation) session is allowed only what both the member and the
   administrator behind it may do.
 - With the `accessUsage` option on, each allowed check counts as usage for
-  [role mining](/docs/guides/governance/usage-and-mining).
+  [role mining](/docs/features/governance/usage-and-mining).
 - With the `clearances` option on, a resource carrying a [classification label](/docs/reference/api/clearances) is
   refused first, before any role or policy is read, unless every party of the session (the person, an agent key's
   sponsor, each agent of a delegated session, the administrator behind "view as") holds a clearance that dominates it.
@@ -824,7 +824,7 @@ Runs a plugin endpoint from server code inside the same authorized, audited tran
   `input.tenantId` differs from `tenantId` or the endpoint's `validate` rejects the input; `ACCESS_DENIED` without the
   action; plus whatever the endpoint's handler throws.
 
-[Plugins](/docs/operations/extensions) add endpoints of their own. `callPlugin` finds the endpoint by `pluginId` and
+[Plugins](/docs/concepts/extensions) add endpoints of their own. `callPlugin` finds the endpoint by `pluginId` and
 `path`, runs its `validate` on `input` (with `tenantId` added), and then runs its handler in the operation envelope:
 the principal is re-validated, the action is authorized, plugin `beforeOperation` and `afterOperation` hooks run, and
 the handler's writes commit together with one audit event, or not at all. The handler's return value is returned
@@ -860,7 +860,7 @@ Enforced invariants already refuse changes that would break them. This job is ho
 violations that predate enforcement, reach you: a webhook subscribed to `invariant:*` alerts once per change instead
 of every hour. The result is `{ checked, broken, restored }`. For a CI gate that fails a build, use
 [`invariants.run`](/docs/reference/api/invariants#run) (CLI `check-invariants`). See
-[change safety](/docs/guides/governance/change-safety).
+[change safety](/docs/features/governance/change-safety).
 
 ```ts title="Signature"
 iam.checkInvariants(
@@ -881,7 +881,7 @@ Closes every auto-closing certification campaign whose due date has passed and a
 - **Safe to repeat:** yes. Each campaign is re-read and closed in its own transaction, so a campaign an administrator
   closed meanwhile is left alone and none is closed twice.
 
-Only [campaigns](/docs/guides/governance/certifications) created with `autoClose` and a `dueAt` are affected. Revoked
+Only [campaigns](/docs/features/governance/certifications) created with `autoClose` and a `dueAt` are affected. Revoked
 bindings are removed, and items nobody decided follow the campaign's `undecided` setting. When the creator no longer
 exists the campaign still closes, and every revocation is reported as `revocation-failed`. The result is
 `{ closed, skipped }`, where `skipped` counts open auto-closing campaigns that are not due yet.
@@ -982,7 +982,7 @@ but only when that process has an `iam.events.subscribe` handler, an `events.onE
 by every process. The CLI's `outbox` command dispatches too, but a CLI process only has the hooks in its
 configuration file, so events it dispatches never reach subscribers your application registered: dispatch in the
 application process instead. Webhooks are separate and travel through the outbox (`iam.auth.dispatchOutbox()`). The
-result is `{ dispatched }`. See [lifecycle events](/docs/guides/events/lifecycle-events).
+result is `{ dispatched }`. See [lifecycle events](/docs/concepts/events/lifecycle-events).
 
 ```ts
 iam.events.subscribe('iam:identities:*', async (event) => {
@@ -1010,7 +1010,7 @@ With the `accessUsage` option on, every allowed `authorize`, `authorizeMany`, `l
 operation is counted in memory per person and action (root overrides and impersonation excepted) and written in
 batches, so no request waits on storage. Without a final flush, the last interval of usage is lost when the process
 exits. The result is `{ written }`, the number of person and action pairs written; with tracking off it writes
-nothing. See [usage and role mining](/docs/guides/governance/usage-and-mining).
+nothing. See [usage and role mining](/docs/features/governance/usage-and-mining).
 
 ```ts
 process.on('SIGTERM', async () => {
@@ -1039,7 +1039,7 @@ starts the retention window of tenants deleted before `deletedAt` existed, and c
 the hash chain existed (once, in timestamp order per tenant). Some upgrades build indexes inside the migration
 transaction, which blocks IAM writes (not reads) on large tables while it runs, and the first run after upgrading to
 the chained audit log backfills it in one transaction. Plan those deploys for a maintenance window; see
-[storage](/docs/operations/storage).
+[storage](/docs/databases/operations).
 
 ```ts
 // In a release step, before the new version starts serving.
@@ -1063,7 +1063,7 @@ Lists the registered resources of one managed type that the caller may perform a
   1,000,000; `NOT_FOUND` for an unknown tenant; plus the credential errors of [`authorize`](#authorize).
 
 It is the reverse of `authorize`: instead of asking about one resource, it evaluates every
-[registered resource](/docs/guides/concepts/resources-and-catalog) of `type` against the caller's grants,
+[registered resource](/docs/concepts/resources-and-catalog) of `type` against the caller's grants,
 boundaries, and conditions, which are loaded once. `total` counts every accessible resource and `resources` holds
 the requested page (`limit` defaults to 100, `offset` to 0) in a stable order. A root administrator sees them all,
 an impersonation session sees only what the administrator behind it could reach, and a caller from another
@@ -1142,7 +1142,7 @@ Deletes one tenant's audit events older than a retention period while keeping th
 
 It deletes the longest run of oldest events, in chain order, whose timestamps are before now minus `retentionMs`,
 stopping at the first newer event, then appends the `audit:prune` checkpoint so
-[chain verification](/docs/guides/events/audit-chain) starts after the pruned prefix. Once a tenant has an archive
+[chain verification](/docs/concepts/events/audit-chain) starts after the pruned prefix. Once a tenant has an archive
 cursor, or wherever `auditArchive` is configured, it deletes only events the archive already holds, in every process,
 and returns `heldForArchive: true` when it stopped early for that reason. Pruned events are gone from the database,
 so archive or export them first.
@@ -1192,7 +1192,7 @@ In one run it:
 Expired access is refused at its next use even before the worker runs, so the schedule only decides how quickly
 statuses, lists, and reports catch up. The result counts `purgedTenants`, `deletedRecords`, `expiredBindings`,
 `expiredRequests`, `expiredIdentities`, `expiredActivations`, `expiredMemberships`, and `expiredAssignments`. See
-[access lifecycle](/docs/guides/privileged-access/lifecycle).
+[access lifecycle](/docs/features/privileged-access/lifecycle).
 
 ```ts
 const result = await iam.purgeDeleted({ retentionMs: 30 * 24 * 60 * 60 * 1000 });
@@ -1220,7 +1220,7 @@ Applies access-package rules: people who match a rule receive the package, and a
 - **Safe to repeat:** yes. It plans from plain reads and applies each change in its own transaction; a change whose
   inputs moved in between is counted as `stale` and retried on the next run.
 
-This is how [automatic assignment](/docs/guides/privileged-access/automatic-assignment) (birthright access) keeps up
+This is how [automatic assignment](/docs/features/privileged-access/automatic-assignment) (birthright access) keeps up
 with SCIM provisioning, invitations, attribute changes, and group changes. Removals run first and honor the rule's
 grace period (`ending`). A run makes at most `limit` changes per organization (default 1000); `truncated: true` means
 run it again. Scheduled runs hold back unusually large changes (listed under `braked`) until a person confirms them in
@@ -1378,7 +1378,7 @@ Emails each organization's owners its access report when the report has somethin
   reruns and overlapping schedules never email twice.
 
 For every active organization, or one `tenantId`, it builds the
-[access report](/docs/guides/privileged-access/access-report): identities and temporary bindings ending within
+[access report](/docs/features/privileged-access/access-report): identities and temporary bindings ending within
 `withinMs` (default 30 days), memberships ending soon, live just-in-time activations, pending activation requests,
 and API keys unused for `unusedForMs` (default 30 days) or ending soon. Each active owner with an email address of an
 organization with findings is sent one `access-digest` message with the counts and the full report as JSON. The

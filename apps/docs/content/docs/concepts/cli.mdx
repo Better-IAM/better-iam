@@ -1,0 +1,362 @@
+---
+title: CLI
+metaTitle: The better-iam command-line tool
+description: What the better-iam command does, how it finds your configuration, how it signs in and keeps profiles, the commands you will use most, and how to add project commands.
+icon: SquareTerminal
+packages: ['better-iam', '@better-iam/cli']
+sources:
+  - packages/cli/src/index.ts
+  - packages/cli/src/framework.ts
+  - packages/cli/src/config.ts
+  - packages/cli/src/errors.ts
+  - packages/cli/src/transport.ts
+  - packages/cli/src/commands/setup.ts
+  - packages/server/src/define.ts
+  - apps/docs/generated/cli.json
+---
+
+`better-iam` is the command-line tool for the work that does not belong in a web request: creating and upgrading
+the database schema, creating the first root administrator, running scheduled jobs, checking a deployment's health,
+verifying the audit chain, applying configuration as code, and calling any API method from a terminal or a CI job.
+It loads the same configuration module as your application, so the CLI and your server always agree on the
+database, the secret, and the options.
+
+This page explains how the CLI works and the commands you will use most. The [CLI reference](/docs/reference/cli)
+documents every command and flag.
+
+## Installation
+
+The CLI is the `bin` of `@better-iam/cli`, and the umbrella package `better-iam` ships the same binary. Install
+either one in your project and run it with your package manager:
+
+```npm
+npm i better-iam
+```
+
+```bash
+npx better-iam help            # every command, grouped
+npx better-iam help migrate    # one command's flags, defaults, and environment variables
+```
+
+`better-iam help --json` prints the machine-readable description of every command, the same data as
+`cliManifest()` from `better-iam/cli`. The CLI needs Node.js 22.12 or later, like every Better IAM package.
+
+## Three kinds of commands
+
+Every command belongs to one of three kinds. The kind decides what it needs to run and how it is authorized.
+
+| Kind | Examples | Needs | Authorized as |
+| --- | --- | --- | --- |
+| Deployment operation | `migrate`, `bootstrap`, `doctor`, `outbox`, `purge`, `sweep`, `audit-verify`, `store-export` | The configuration (database and secret) | The deployment itself; no token is checked |
+| Member command | `api`, `whoami`, `can`, `explain`, `who-can`, `config-plan`, `config-apply`, `analyze`, `report` | A session token or API key, and the configuration or a server URL | The token's identity, exactly like the same call from the console |
+| Offline command | `init`, `secret`, `config-validate`, `profiles`, `completion` | Nothing | Nothing; they touch no database |
+
+Whoever can run deployment operations with your configuration holds the database and the secret. Protect that
+configuration like a root credential, and give member commands the API key of a service account whose role holds
+only the permissions the command needs.
+
+## Configuration discovery
+
+Commands that load the configuration look for it in this order:
+
+1. `--config PATH`.
+2. The `BETTER_IAM_CONFIG` environment variable.
+3. The nearest `better-iam.config.mjs`, `better-iam.config.js`, `better-iam.config.ts`, `better-iam.config.mts`, or
+   `better-iam.config.cjs` in the working directory or a parent directory, stopping at the repository root or your
+   home directory.
+4. With no file at all: `BETTER_IAM_DATABASE_URL` (`postgres://…`, `sqlite:PATH`, or `libsql://…`) together with
+   `BETTER_IAM_SECRET`.
+
+Without any of them, a command that needs the configuration fails with `CONFIG_NOT_FOUND` and a hint naming the
+next step. Loading a `.ts` or `.mts` configuration needs Node.js 22.18 or later.
+
+### The configuration module
+
+The module's default export is one of three things: the options you pass to `betterIam()`, a function (sync or
+async) that returns them, or an instance you already created. A function receives `{ command, env, cwd }`, so one
+module can adapt to the command and environment it runs in, and importing the module opens no database.
+
+```ts title="better-iam.config.ts"
+import type { CliSettings } from 'better-iam/cli';
+import { defineConfig } from 'better-iam/server';
+import { postgresAdapter } from 'better-iam/adapter-postgres';
+
+export default defineConfig(({ env = process.env } = {}) => ({
+  database: postgresAdapter({ connectionString: env.DATABASE_URL ?? '' }),
+  baseURL: env.BETTER_IAM_BASE_URL ?? 'http://localhost:3000',
+  secret: env.BETTER_IAM_SECRET ?? '',
+  previousSecrets: env.BETTER_IAM_PREVIOUS_SECRETS?.split(',').filter(Boolean),
+}));
+
+// Flag defaults: per command, or '*' for every command that has the flag.
+export const cli: CliSettings = {
+  defaults: {
+    sweep: { 'retention-days': 30 },
+  },
+};
+```
+
+Your server creates its instance from the same module with `configOptions`, which calls the factory with this
+process's environment and working directory:
+
+```ts title="iam.ts"
+import { betterIam, configOptions } from 'better-iam/server';
+import config from './better-iam.config.js'; // .js finds the .ts file under NodeNext and in bundlers
+
+export const iam = betterIam(await configOptions(config));
+```
+
+`better-iam init` writes a starter module like this one for SQLite, PostgreSQL, or libSQL. The module is executable
+code with access to your database and secrets: point the CLI only at files you trust.
+
+## Usage
+
+### Create a configuration
+
+```bash
+npx better-iam init --database postgres --typescript
+npx better-iam secret   # prints a random value for BETTER_IAM_SECRET
+```
+
+`init` never overwrites an existing file; it fails with `CONFIG_EXISTS` instead.
+
+### Migrate and bootstrap
+
+```bash
+npx better-iam migrate
+
+export BETTER_IAM_ROOT_EMAIL=root@example.com
+export BETTER_IAM_ROOT_PASSWORD='a long root password'
+npx better-iam bootstrap
+```
+
+`migrate` creates or upgrades the schema and is safe to run on every deploy. `bootstrap` creates the root tenant and
+its first administrator exactly once. Passwords and other secrets are read from the environment, never from flags,
+so they stay out of shell history and process lists.
+
+### Sign in and save a session
+
+Member commands act as the token in `BETTER_IAM_TOKEN`. Instead of exporting a token, you can sign in once with
+`login`, which saves the session as a **profile**:
+
+```bash
+# Interactive: prompts for the password (and the MFA code when the account has one).
+npx better-iam login --url https://iam.example.com --org acme --email you@example.com
+
+# CI: save an API key read from standard input under its own profile.
+echo "$CI_API_KEY" | npx better-iam login --with-token --url https://iam.example.com --profile ci
+```
+
+- **Where profiles live.** In `~/.config/better-iam/credentials.json` (`%APPDATA%\better-iam\credentials.json` on
+  Windows, or the path in `BETTER_IAM_CREDENTIALS`), with owner-only permissions. The file stores the token, the
+  server or configuration it belongs to, and the tenant, so later commands need neither `--url` nor `--tenant`.
+- **Scoped to one deployment.** A profile is only ever used with the deployment that issued it. With `--url` or
+  `--config` naming another deployment, member commands refuse to send it and fail with `MISSING_ENV`, naming the
+  deployment the session belongs to. `login` refuses with `PROFILE_IN_USE` to overwrite a profile that holds a
+  session for another deployment.
+- **Precedence.** `BETTER_IAM_TOKEN` always wins and bypasses profiles. Otherwise `--profile NAME`, then
+  `BETTER_IAM_PROFILE`, then the current profile.
+- **No secrets in arguments.** The password comes from `BETTER_IAM_PASSWORD` or a hidden prompt, and the MFA code
+  from `BETTER_IAM_MFA_CODE` or a prompt.
+
+### Switch profiles
+
+```bash
+npx better-iam profiles               # names, deployments, tenants, identities, expiry; never tokens
+npx better-iam profiles use staging   # make one current
+npx better-iam whoami                 # who the current token acts as
+npx better-iam logout --profile ci    # sign out on the server and forget the profile
+```
+
+`logout` only forgets API keys saved with `--with-token`; it never revokes them. `better-iam token` prints the token
+member commands would use, for tools that read `BETTER_IAM_TOKEN`.
+
+### Call any API method
+
+`api` calls any method of the HTTP API as the current token, in process through the configuration or against a
+running server with `--url`.
+
+```bash
+npx better-iam api --list roles                          # routes of one group, and whether they need a credential
+npx better-iam api roles.create name=Reader permissions:='["documents:read"]' --tenant "$TENANT_ID" --query id
+npx better-iam api policies.create --data @policy.json --tenant "$TENANT_ID"
+```
+
+`key=value` adds a string field, `key:=JSON` a JSON value, `key:=@file.json` a JSON file, and `a.b=value` a nested
+field. `--tenant` fills `tenantId` when the input has none (it also reads `BETTER_IAM_TENANT` or the profile's
+tenant). The call takes the same route and checks as the [HTTP API](/docs/concepts/api#http-routes); locally it has
+no 64 KiB body limit.
+
+### Check access
+
+```bash
+npx better-iam can documents:write document/d1 --tenant "$TENANT_ID"
+npx better-iam explain documents:write document/d1 --identity alice@acme.test --tenant "$TENANT_ID"
+npx better-iam who-can documents:delete document/d1 --tenant "$TENANT_ID" --format table
+```
+
+`can` checks the current token and exits 0 only when allowed, so `if better-iam can …; then` works in scripts.
+`explain` and `who-can` evaluate other identities and need `iam:policies:simulate`.
+
+### Run scheduled jobs
+
+Better IAM starts no background work of its own. Run the job commands from cron, a scheduler, or a worker:
+
+```sh title="crontab"
+* * * * *   better-iam outbox --config /etc/better-iam/better-iam.config.mjs
+0 * * * *   better-iam purge --config /etc/better-iam/better-iam.config.mjs && better-iam sweep --config /etc/better-iam/better-iam.config.mjs
+```
+
+Every job is safe to rerun and to overlap with itself, and `doctor` reports the jobs that have stopped running. See
+[scheduled jobs](/docs/operations/jobs) for the full schedule.
+
+### Gate a deploy
+
+Several commands print their JSON result and then exit 1 on purpose when they find something, so they work as CI
+gates:
+
+```bash
+npx better-iam doctor --strict                                     # DOCTOR_FINDINGS on any warning
+npx better-iam config-plan --input tenant.config.ts --tenant "$TENANT_ID" --fail-on-drift   # CONFIG_DRIFT
+npx better-iam check-invariants --tenant "$TENANT_ID" --fail-on-broken                     # INVARIANTS_BROKEN
+```
+
+See [configuration as code](/docs/features/privileged-access/config-as-code) for `config-export`, `config-plan`,
+and `config-apply`.
+
+## Output and exit status
+
+| Behaviour | Detail |
+| --- | --- |
+| Results | Indented JSON on standard output. `outbox`, `purge`, `audit-prune`, and `audit-export` print one line. |
+| `--format` | `json` (indented), `compact` (one line), or `table` (aligned columns). |
+| `--query PATH` | Prints only part of the result, such as `summary.create` or `findings[].kind`. Strings print raw. |
+| Failures | `CODE: message` on standard error, often followed by a `Hint:` line naming the next step. |
+| Exit status | `0` on success, `2` for a command-line mistake (`INVALID_ARGUMENT`, `INVALID_COMMAND`), `1` otherwise. |
+| Debugging | Errors that are not Better IAM or system errors print a generic message; `BETTER_IAM_DEBUG=1` shows them with stack traces. |
+
+Every flag also accepts the `--flag=value` form.
+
+## Flag defaults
+
+A flag's value comes from the first of these that sets it:
+
+1. The command line.
+2. The flag's environment variable, such as `BETTER_IAM_TENANT` for `--tenant`.
+3. `cli.defaults` in the configuration module: the entry for this command, then the `'*'` entry. Defaults never set
+   `--config`, `--url`, or `--profile`, and are not read when a member command runs against `--url`.
+4. The saved profile, for `--tenant`.
+5. The command's built-in default.
+
+`better-iam help <command>` shows each flag's default and environment variable.
+
+## Project commands
+
+Export `commands` from the configuration module to add your own commands. They get the same flag parsing, help,
+configuration loading, profiles, and output formatting as the built-in ones, and run as `better-iam <name>`.
+
+```ts title="better-iam.config.ts"
+import { defineCommand, type CommandSpec } from 'better-iam/cli';
+
+export const commands: CommandSpec<any>[] = [
+  defineCommand({
+    name: 'list-groups',
+    summary: 'List the groups of a tenant',
+    target: 'token', // acts as BETTER_IAM_TOKEN or the saved profile
+    flags: {
+      tenant: {
+        type: 'string',
+        value: 'TENANT_ID',
+        required: true,
+        env: 'BETTER_IAM_TENANT',
+        profile: 'tenantId',
+        description: 'The tenant to read',
+      },
+    },
+    async run({ api, flags }) {
+      const transport = await api();
+      return transport.call('groups/list', { tenantId: flags.tenant }); // printed with --format and --query
+    },
+  }),
+];
+```
+
+| `target` | The command receives |
+| --- | --- |
+| `'config'` | `iam()`: the instance of the configuration, created once and closed after the command. No credential. |
+| `'token'` | `api()`: a transport whose `call(path, input)` calls API routes as the token, locally or against `--url`. |
+| `'none'` | Neither. |
+
+`run` returns the result to print, or calls `print(value)` itself. Throw `usageError(message, hint)` from
+`better-iam/cli` for a command-line mistake, so the binary exits with status 2.
+
+## Running commands from code
+
+| Export (from `better-iam/cli`) | Use |
+| --- | --- |
+| `runCli(argv, io?)` | Runs one command line (without the program name). Failures reject with an `IamError` or `CliError` whose `code` says what went wrong. |
+| `main(argv?, cli?)` | Runs like the binary: prints failures and resolves with the exit status. |
+| `createCli({ commands?, builtins? })` | A program with the built-in commands plus yours, for shipping a project CLI or running commands in tests. |
+| `CliError` | The `IamError` subclass the CLI throws, with an optional `hint`. |
+
+`io` makes every input and output injectable: `out`, `err`, `env`, `prompt`, `stdin`, `cwd`, and `fetch`. The CLI
+never reads `process.env` implicitly when you pass your own `io`.
+
+## Options
+
+### Common flags
+
+| Flag | Value | Description |
+| --- | --- | --- |
+| `--config` | `PATH` | The configuration module (env `BETTER_IAM_CONFIG`). |
+| `--url` | `URL` | Call a running IAM server (`https://host` or `https://host/api/iam`) instead of loading the configuration (env `BETTER_IAM_URL`). `https://` is required except for `localhost`. |
+| `--profile` | `NAME` | The saved session to act as; ignored while `BETTER_IAM_TOKEN` is set (env `BETTER_IAM_PROFILE`). |
+| `--format` | `json`, `compact`, `table` | Output format. |
+| `--query` | `PATH` | Print only part of the result. |
+
+### Environment variables
+
+| Variable | Meaning |
+| --- | --- |
+| `BETTER_IAM_CONFIG` | The configuration module, like `--config`. |
+| `BETTER_IAM_TOKEN` | The session token or API key member commands act as. |
+| `BETTER_IAM_URL` | The IAM server member commands call, like `--url`. |
+| `BETTER_IAM_PROFILE` | The saved session to use, like `--profile`. |
+| `BETTER_IAM_TENANT` | The default `--tenant` for member commands. |
+| `BETTER_IAM_CREDENTIALS` | The file saved sessions live in. |
+| `BETTER_IAM_ROOT_EMAIL`, `BETTER_IAM_ROOT_NAME`, `BETTER_IAM_ROOT_PASSWORD` | The root administrator for `bootstrap` and `recover-root`. |
+| `BETTER_IAM_PASSWORD`, `BETTER_IAM_MFA_CODE` | The password and authenticator code for `login`, instead of prompts. |
+| `BETTER_IAM_DATABASE_URL`, `BETTER_IAM_SECRET` | The database and secret when there is no configuration file. |
+| `BETTER_IAM_DEBUG` | Print unexpected errors in full. |
+
+## Errors
+
+| Code | When |
+| --- | --- |
+| [`INVALID_COMMAND`](/docs/reference/errors#invalid_command) | The command does not exist. Exit status 2. |
+| [`INVALID_ARGUMENT`](/docs/reference/errors#invalid_argument) | A flag the command does not take, a missing value, or a value out of range. Exit status 2. |
+| [`MISSING_ENV`](/docs/reference/errors#missing_env) | A required environment variable is missing, such as a token for a member command or the root password for `bootstrap`. |
+| `CONFIG_NOT_FOUND` | No configuration file was given or found, and `BETTER_IAM_DATABASE_URL` is not set. |
+| [`CONFIG_EXISTS`](/docs/reference/errors#config_exists) | `init` found an existing file and left it untouched. |
+| `PROFILE_IN_USE` | `login` would replace a profile that holds a session for another deployment. Pass `--profile NAME`. |
+| `SESSION_EXPIRED` | The saved session has ended. Run `login` again. |
+| [`DOCTOR_FINDINGS`](/docs/reference/errors#doctor_findings) | `doctor --strict` found warnings or errors. |
+
+Member commands also fail with whatever the API method fails with, such as `ACCESS_DENIED` or `UNAUTHENTICATED`.
+
+## Next steps
+
+<Cards>
+  <Card title="CLI reference" href="/docs/reference/cli">
+    Every command, its flags, and when to run it.
+  </Card>
+  <Card title="Scheduled jobs" href="/docs/operations/jobs">
+    The jobs a deployment must run, and how often.
+  </Card>
+  <Card title="Configuration as code" href="/docs/features/privileged-access/config-as-code">
+    Export, plan, and apply a tenant's access model from files.
+  </Card>
+  <Card title="Server API" href="/docs/concepts/api">
+    The methods `better-iam api` calls.
+  </Card>
+</Cards>

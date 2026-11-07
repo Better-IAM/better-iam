@@ -1,0 +1,537 @@
+---
+title: Multi-factor authentication
+metaTitle: Multi-factor authentication (MFA)
+description: When a second factor is required, how people complete it with TOTP, recovery codes, emailed codes, or passkeys, and how remembered devices and step-up work.
+icon: ShieldCheck
+packages: ['@better-iam/auth', '@better-iam/client']
+sources:
+  - docs/authentication.md
+  - docs/security.md
+  - packages/auth/src/service/mfa.ts
+  - packages/auth/src/service/base.ts
+  - packages/auth/src/types.ts
+  - apps/docs/generated/api.json
+---
+
+import { FingerprintPattern, LifeBuoy, MonitorSmartphone, SlidersHorizontal } from '@/lib/icons';
+
+Passwords get phished, reused across sites, and guessed. Multi-factor authentication (MFA) asks for a second,
+independent proof, so a stolen password or a compromised mailbox alone is not enough to take over an account.
+Better IAM supports authenticator apps (TOTP) with recovery codes, [passkeys](/docs/authentication/passkeys),
+and, where an organization allows it, one-time codes sent to a verified email address. A browser that completed
+MFA can be remembered for a while so people are not asked on every sign-in.
+
+MFA is built in: there is no plugin to install and no migration of its own. You decide who must use it, and your
+login page handles the challenge.
+
+## Setup
+
+<Steps>
+<Step>
+
+### Decide who must use MFA
+
+Root administrators and anyone with an authenticator enrolled always need MFA. Add your own rule with
+`authentication.requireMfa`, and let each organization add theirs with its
+[tenant policy](/docs/authentication/tenant-policy#requiring-mfa):
+
+```ts title="iam.ts"
+import { betterIam } from 'better-iam';
+import { sqliteAdapter } from 'better-iam/adapter-sqlite';
+
+export const iam = betterIam({
+  database: sqliteAdapter({ filename: './iam.db' }),
+  secret: process.env.BETTER_IAM_SECRET,
+  baseURL: process.env.BETTER_IAM_BASE_URL,
+  authentication: {
+    appName: 'Acme Cloud', // the label authenticator apps show
+    // Adds to (never replaces) each tenant's own requirement.
+    requireMfa: (tenant, identity) => tenant.type === 'organization' && identity.owner,
+    trustedDeviceLifetimeMs: 14 * 24 * 60 * 60_000, // "remember this device" for 14 days; 0 turns it off
+    mfaEmailCodes: false, // true lets people without an authenticator use emailed codes
+    sendEmail: async (message) => {
+      /* deliver with your mail provider; needed for emailed codes */
+    },
+  },
+});
+```
+
+</Step>
+<Step>
+
+### Migrate
+
+MFA records live in the document store that `migrate` already created (see [Schema](#schema)):
+
+```bash
+npx better-iam migrate --config better-iam.config.mjs
+```
+
+</Step>
+<Step>
+
+### Handle the challenge in your login page
+
+Every first factor returns either a session or an `mfaRequired` challenge. Create one client and branch on the
+result; [Completing a challenge](#completing-a-challenge) shows each branch.
+
+```ts title="lib/iam-client.ts"
+import { createIamClient } from 'better-iam/client';
+import type { iam } from './iam';
+
+export const client = createIamClient<typeof iam>();
+```
+
+</Step>
+</Steps>
+
+## When MFA is required
+
+You rarely switch MFA on per person; rules make it required. MFA is required when any of these holds:
+
+- the person is a **root administrator** (always, and never through a remembered device or an emailed code);
+- the person has an **authenticator enrolled**;
+- the <Term id="tenant">tenant</Term> policy sets **`requireMfa`**, or **`requireMfaForOwners`** and the person
+  is an owner;
+- the deployment's **`authentication.requireMfa(tenant, identity)`** callback returns true.
+
+Use the tenant policy for rules an organization decides for itself. Use the callback for rules that depend on your
+own logic, such as a plan tier or a tenant type.
+
+The requirement applies to password, passwordless, and federated sign-in alike, and to sessions that already
+exist: they are re-validated on every use, so requiring MFA in a tenant locks out sessions that did not complete it
+(`MFA_REQUIRED`) on their next request. A person cannot disable MFA while their tenant or the root role requires it.
+Resetting a password does not remove MFA.
+
+## Usage
+
+### Completing a challenge
+
+After a correct password (or magic link, or federated sign-in), a person who needs MFA is not signed in yet. The
+first factor returns a **challenge**, a short-lived ticket that proves the first step succeeded, instead of a
+session. Your UI then asks for the second factor and sends it with the challenge:
+
+```ts title="MfaRequired"
+type MfaRequired = {
+  mfaRequired: true;
+  challenge: string;
+  enrollmentRequired: boolean; // no second factor is set up yet
+  authenticatorEnrolled?: boolean; // an authenticator app or recovery code can answer
+  emailCodeAvailable?: boolean; // requestMfaCode may email a code
+  passkeyAvailable?: boolean; // a registered passkey may answer
+};
+```
+
+The challenge is single-use and valid for five minutes. What the person does next depends on the flags:
+
+<Tabs items={['Authenticator', 'Enroll', 'Emailed code', 'Passkey', 'Recovery code']}>
+<Tab value="Authenticator">
+
+`authenticatorEnrolled: true`: the person has an authenticator app. They enter its current code, and
+`auth.verifyMfa` checks it against the challenge and issues the session.
+
+```ts
+import { client } from './lib/iam-client';
+
+const session = await client.auth.verifyMfa({
+  tenantId,
+  challenge: result.challenge,
+  code: '123456',
+  rememberDevice: true, // optional; see below
+});
+```
+
+**Route:** `POST /api/iam/auth/verifyMfa`
+
+</Tab>
+<Tab value="Enroll">
+
+`enrollmentRequired: true`: MFA is required but nothing is enrolled yet, so the person sets up an authenticator
+now. `auth.beginMfa` creates a new secret and returns it with an `otpauth://` URI to show as a QR code.
+`auth.confirmMfa` checks the first code from the app, enables the factor, returns ten single-use recovery codes, and
+issues the session.
+
+```ts
+import { client } from './lib/iam-client';
+
+const { secret, uri } = await client.auth.beginMfa({ tenantId, challenge: result.challenge });
+renderQrCode(uri);
+
+const { recoveryCodes, ...session } = await client.auth.confirmMfa({
+  credential: { tenantId, challenge: result.challenge },
+  code: '123456',
+});
+showRecoveryCodesOnce(recoveryCodes);
+```
+
+**Routes:** `POST /api/iam/auth/beginMfa`, `POST /api/iam/auth/confirmMfa`
+
+</Tab>
+<Tab value="Emailed code">
+
+`emailCodeAvailable: true`: the tenant (`mfaEmailCodes`) or the deployment (`authentication.mfaEmailCodes`) lets
+people without an authenticator use a code emailed to their verified address. `auth.requestMfaCode` sends the code,
+and `auth.verifyMfa` accepts it like an authenticator code.
+
+```ts
+import { client } from './lib/iam-client';
+
+const { expiresAt } = await client.auth.requestMfaCode({ tenantId, challenge: result.challenge });
+const session = await client.auth.verifyMfa({ tenantId, challenge: result.challenge, code: '123456' });
+```
+
+**Routes:** `POST /api/iam/auth/requestMfaCode`, `POST /api/iam/auth/verifyMfa`
+
+</Tab>
+<Tab value="Passkey">
+
+`passkeyAvailable: true`: the person has a registered passkey. `auth.beginPasskeyMfa` returns WebAuthn options
+bound to this challenge, the browser asks the authenticator to sign them, and `auth.finishPasskeyMfa` verifies the
+result and issues the session.
+
+```ts
+import { startAuthentication } from 'better-iam/client/passkeys';
+import { client } from './lib/iam-client';
+
+const { challengeId, options } = await client.auth.beginPasskeyMfa({ tenantId, challenge: result.challenge });
+const response = await startAuthentication({ optionsJSON: options });
+const session = await client.auth.finishPasskeyMfa({ tenantId, challengeId, response, rememberDevice: true });
+```
+
+**Routes:** `POST /api/iam/auth/beginPasskeyMfa`, `POST /api/iam/auth/finishPasskeyMfa`
+
+</Tab>
+<Tab value="Recovery code">
+
+The person lost their authenticator but kept a recovery code. `auth.recoverMfa` accepts one in place of the
+authenticator code and issues the session. Each code works once.
+
+```ts
+import { client } from './lib/iam-client';
+
+const session = await client.auth.recoverMfa({ tenantId, challenge: result.challenge, code: recoveryCode });
+```
+
+**Route:** `POST /api/iam/auth/recoverMfa`
+
+</Tab>
+</Tabs>
+
+On the server, the same calls take the same inputs. They are public (the challenge is the credential), and a direct
+call returns the session token instead of setting a cookie:
+
+```ts title="Server"
+import { iam } from './iam';
+
+const result = await iam.api.auth.signIn({ tenantId, email, password });
+if ('mfaRequired' in result) {
+  const { token, session, deviceToken } = await iam.api.auth.verifyMfa({
+    tenantId,
+    challenge: result.challenge,
+    code,
+    rememberDevice: true,
+  });
+}
+```
+
+A wrong authenticator code, emailed code, or recovery code for a real account fails with `INVALID_MFA` and is
+recorded as a failed attempt (`auth:signin:fail` with `reason: 'mfa'` or `'recovery-code'`). Second-factor attempts
+are rate limited on the sensitive tier both per challenge and per person, so a correct password does not buy a fresh
+budget of code guesses.
+
+### Authenticator apps (TOTP)
+
+An authenticator app on a phone or in a password manager generates a six-digit code that changes every 30
+seconds (TOTP, time-based one-time passwords). It works offline, costs nothing to send, and is the factor most
+people already know.
+
+- `auth.beginMfa` generates a secret and an `otpauth://` URI labeled with the person's email and your `appName`.
+  The secret is stored with authenticated encryption.
+- Enrollment must be confirmed within ten minutes, with the same credential that started it: the sign-in
+  challenge, or a recently authenticated session.
+- Codes are six digits on 30-second steps, and a code from the adjacent step is accepted to absorb clock drift.
+  Each time step is accepted **once**, so a captured code cannot be replayed (`INVALID_MFA`).
+- From a sign-in challenge, a person who already has an authenticator or a passkey cannot start an enrollment
+  (`MFA_REQUIRED`): they must use their existing factor first. From a signed-in session, a person who already has
+  an authenticator gets `MFA_ALREADY_ENABLED` from `beginMfa`.
+
+People who are not required to use MFA can still turn it on from their account page. They enroll from a signed-in
+session, which needs recent authentication:
+
+<Tabs items={['Client', 'Server']}>
+<Tab value="Client">
+
+```ts
+import { client } from './lib/iam-client';
+
+const { uri } = await client.auth.beginMfa(); // no challenge: the session is the credential
+const { recoveryCodes } = await client.auth.confirmMfa({ code: '123456' });
+```
+
+</Tab>
+<Tab value="Server">
+
+```ts
+import { iam } from './iam';
+
+const credential = { headers: request.headers };
+const { uri } = await iam.api.auth.beginMfa(credential);
+const { recoveryCodes, token } = await iam.api.auth.confirmMfa({ credential, code: '123456' });
+```
+
+</Tab>
+</Tabs>
+
+**Routes:** `POST /api/iam/auth/beginMfa`, `POST /api/iam/auth/confirmMfa`
+
+Confirming an enrollment ends every existing session of the person and returns a new, MFA-verified one. Through the
+HTTP handler the new session replaces the cookie. Enrollment is audited as `auth:mfa:enable`.
+
+### Recovery codes
+
+Phones get lost and reset. Recovery codes are the way back in without an administrator: enrollment returns ten
+single-use codes, which the person should store somewhere safe, such as a password manager. They are stored
+hashed and consumed on use.
+
+- `auth.recoverMfa({ tenantId, challenge, code })` completes a sign-in challenge with one (audited as
+  `auth:mfa:recover`).
+- `auth.regenerateRecoveryCodes()` replaces the whole set. It needs recent authentication and an MFA-verified
+  session (audited as `auth:mfa:recovery-codes`), and fails with `MFA_NOT_ENROLLED` when no authenticator is
+  enrolled.
+- `auth.mfaStatus()` reports `recoveryCodesRemaining`, so your account page can prompt people to regenerate before
+  they run out.
+
+<Tabs items={['Client', 'Server']}>
+<Tab value="Client">
+
+```ts
+import { client } from './lib/iam-client';
+
+const { recoveryCodesRemaining } = await client.auth.mfaStatus();
+if (recoveryCodesRemaining < 3) {
+  const { recoveryCodes } = await client.auth.regenerateRecoveryCodes();
+  showRecoveryCodesOnce(recoveryCodes);
+}
+```
+
+</Tab>
+<Tab value="Server">
+
+```ts
+import { iam } from './iam';
+
+const { recoveryCodes } = await iam.api.auth.regenerateRecoveryCodes({ headers: request.headers });
+```
+
+</Tab>
+</Tabs>
+
+**Routes:** `POST /api/iam/auth/recoverMfa`, `POST /api/iam/auth/regenerateRecoveryCodes`, `POST /api/iam/auth/mfaStatus`
+
+### Emailed one-time codes
+
+Emailed codes let an organization require MFA without forcing every member to install an authenticator. They are
+off by default; turn them on per tenant with `mfaEmailCodes` or for the deployment with
+`authentication.mfaEmailCodes` (the tenant setting wins).
+
+- A sign-in offers them (`emailCodeAvailable: true`) only to people with **nothing enrolled** and a **verified**
+  email address, only when `sendEmail` is configured, and **never** to root administrators.
+- `auth.requestMfaCode` emails a six-digit code (template `mfa-code`) bound to that challenge. It is hashed at rest,
+  single-use, and valid for at most ten minutes and never beyond the challenge itself. Requesting again replaces
+  the code, and requests are rate limited per challenge and per person so repeated sign-ins cannot flood a
+  mailbox.
+- A challenge that did not offer codes fails with `FEATURE_DISABLED`.
+
+**Route:** `POST /api/iam/auth/requestMfaCode`
+
+<Callout type="warn" title="Weaker than an authenticator">
+  A code rides on the mailbox, so it is weaker than an authenticator. People with an authenticator enrolled, and
+  root administrators always, must use the authenticator or a recovery code.
+</Callout>
+
+### Passkeys as a second factor
+
+Whenever a person has a passkey registered, the challenge carries `passkeyAvailable: true` and they can complete
+MFA with it instead of typing a code. The assertion is verified like a passkey sign-in and bound to the pending
+sign-in challenge, which must still be open and belong to the same person; both challenges are consumed together.
+A passkey sign-in on its own already satisfies MFA. See
+[passkeys](/docs/authentication/passkeys#use-a-passkey-as-a-second-factor).
+
+### Remember this device
+
+Asking for a code every time someone signs in from the same laptop is tedious, and tedium pushes organizations to
+turn MFA off. "Remember this device" lets a browser that recently completed MFA skip the second factor for a while,
+while a new device, or a stolen password used elsewhere, still has to pass it.
+
+`rememberDevice: true` on `verifyMfa`, `confirmMfa`, or `finishPasskeyMfa` asks Better IAM to remember the browser.
+When the deployment and the tenant allow it, the response carries a `deviceToken` and `deviceExpiresAt`. Passing
+that token to `signIn` or `finishPasswordless` later satisfies the MFA requirement without a code.
+
+- **Lifetime.** The shorter of `authentication.trustedDeviceLifetimeMs` (30 days by default, one year at most, `0`
+  disables the feature) and the tenant's `trustedDeviceDays` (`0` turns it off for the tenant).
+- **Storage.** The token is opaque and stored hashed. Through the HTTP handler it lives in its own HttpOnly
+  `better-iam.device` cookie (`__Host-` prefixed over HTTPS), which the handler injects into later `signIn` and
+  `finishPasswordless` bodies, so the client only has to send `rememberDevice: true` once.
+- **Root administrators** are never remembered.
+- **Invalid or expired tokens** simply lead to the normal challenge.
+- **Sessions** established this way carry `trustedDeviceId`. They count as MFA-verified (`principal.mfa`) but carry
+  no fresh factor time (`principal.mfaTime` is absent).
+
+On the server, pass the stored token yourself:
+
+```ts title="Server"
+import { iam } from './iam';
+
+const result = await iam.api.auth.signIn({ tenantId, email, password, deviceToken });
+```
+
+People manage their remembered devices from their account page:
+
+- `auth.listTrustedDevices` lists the live ones, newest use first, with the client details, `createdAt`,
+  `lastUsedAt`, and `expiresAt`, so people can recognize each browser.
+- `auth.revokeTrustedDevice({ deviceId })` forgets one device, for example a shared computer. The next sign-in
+  from it asks for MFA again. Needs recent authentication.
+- `auth.revokeTrustedDevices()` forgets all of them, and through the HTTP handler also clears the device cookie.
+  Needs recent authentication.
+
+<Tabs items={['Client', 'Server']}>
+<Tab value="Client">
+
+```ts
+import { client } from './lib/iam-client';
+
+const devices = await client.auth.listTrustedDevices();
+await client.auth.revokeTrustedDevice({ deviceId: devices[0].id });
+```
+
+</Tab>
+<Tab value="Server">
+
+```ts
+import { iam } from './iam';
+
+const credential = { headers: request.headers };
+const devices = await iam.api.auth.listTrustedDevices(credential);
+await iam.api.auth.revokeTrustedDevice(credential, { deviceId: devices[0].id });
+const { revoked } = await iam.api.auth.revokeTrustedDevices(credential);
+```
+
+</Tab>
+</Tabs>
+
+**Routes:** `POST /api/iam/auth/listTrustedDevices`, `POST /api/iam/auth/revokeTrustedDevice`,
+`POST /api/iam/auth/revokeTrustedDevices`
+
+Every remembered device is forgotten when the person changes or resets their password, changes their email,
+enrolls or disables an authenticator, or removes a passkey, when an administrator revokes their sessions or
+everyone's in the tenant, and on `revokeTrustedDevices`. Remembering and forgetting are audited as
+`auth:device:trust` and `auth:device:revoke`.
+
+### Managing factors
+
+An account page usually shows what a person has set up and lets them change it. These calls work from a signed-in
+session:
+
+| Call | Route | Needs | Effect |
+| --- | --- | --- | --- |
+| `auth.mfaStatus()` | `POST /api/iam/auth/mfaStatus` | a session | Summarizes the person's setup: `enabled`, `recoveryCodesRemaining`, `passkeys`, `trustedDevices`, and `sessionMfa` (whether this session passed MFA). |
+| `auth.beginMfa()`, `auth.confirmMfa({ code })` | `POST /api/iam/auth/beginMfa`, `POST /api/iam/auth/confirmMfa` | recent authentication | Enrolls an authenticator (audited as `auth:mfa:enable`). |
+| `auth.regenerateRecoveryCodes()` | `POST /api/iam/auth/regenerateRecoveryCodes` | recent authentication, MFA session | Replaces the recovery codes, when they run low or may have been seen. |
+| `auth.disableMfa()` | `POST /api/iam/auth/disableMfa` | recent authentication, MFA session | Removes the authenticator and ends every session (audited as `auth:mfa:disable`). Refused with `MFA_REQUIRED` for root administrators and when the tenant requires MFA. |
+
+```ts
+import { client } from './lib/iam-client';
+
+const status = await client.auth.mfaStatus();
+if (status.enabled && confirm('Turn off two-step verification?')) await client.auth.disableMfa();
+```
+
+### Step-up
+
+Some actions deserve more than a valid session: refunding a payment, deleting a project, changing who is an owner.
+<Term id="step-up">Step-up authentication</Term> asks the person to prove themselves again, or with MFA, right
+before such an action. Better IAM gives you three building blocks:
+
+- **Recent authentication.** Sensitive operations require a session established within `recentAuthenticationMs`
+  (five minutes by default) and fail with `RECENT_AUTH_REQUIRED` otherwise. `auth.reauthenticate({ password })`
+  re-runs the password ceremony, and the second factor when the account has one, and issues a fresh session. See
+  [recent authentication](/docs/authentication/sessions#recent-authentication).
+- **Policy conditions.** <Term id="policy">Policies</Term> can read facts about the
+  <Term id="principal">principal</Term> (the caller): `principal.mfa` (the session passed MFA),
+  `principal.mfaTime` (when a first-hand factor was last verified; absent for remembered-device, impersonation,
+  and API-key sessions), and `principal.authMethod`. A policy can demand MFA for one action only:
+
+  ```ts
+  {
+    effect: 'allow',
+    actions: ['billing:refund'],
+    resources: ['invoice/*'],
+    conditions: { Bool: { 'principal.mfa': true } },
+  }
+  ```
+
+- **Framework guards.** The framework integrations accept a `stepUp` requirement (`mfa: true`, `mfa: 'fresh'`, or
+  `maxAgeMs`) on pages, routes, and actions, and redirect to your `stepUpPath` with a reason. See
+  [Next.js guards](/docs/integrations/nextjs/guards).
+
+Just-in-time elevation can also require an MFA-verified session for every
+<Term id="activation">activation</Term> of an administrator role; see
+[elevation](/docs/features/privileged-access/elevation).
+
+## Options
+
+Deployment options live under `authentication`; tenant fields are set with `tenants.setAuthPolicy`.
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `authentication.requireMfa` | `(tenant, identity) => boolean \| Promise<boolean>` | none | Requires MFA for whoever it returns true for, in addition to root administrators, enrolled people, and tenant policies. |
+| `authentication.mfaEmailCodes` | `boolean` | `false` | Let people without an authenticator answer MFA with an emailed code. Tenants override it. |
+| `authentication.trustedDeviceLifetimeMs` | `number` | 30 days | How long "remember this device" may skip MFA, up to one year. `0` disables it. |
+| `authentication.appName` | `string` | `'Better IAM'` | The issuer label in the `otpauth://` URI. |
+| `authentication.recentAuthenticationMs` | `number` | 5 minutes | How recent a session must be to enroll, disable, regenerate codes, or forget devices. |
+| `authentication.rateLimits.sensitiveAttempts` | `number` | `5` | Attempts per window for MFA codes, recovery codes, and code requests. |
+| `authentication.sendEmail` | `(message) => Promise<void>` | none | Required for emailed codes (`mfa-code` template). |
+| Tenant `requireMfa` | `boolean` | `false` | Every person in the tenant must complete MFA. |
+| Tenant `requireMfaForOwners` | `boolean` | `false` | Only owners must complete MFA. |
+| Tenant `mfaEmailCodes` | `boolean` | deployment value | Overrides `authentication.mfaEmailCodes` for the tenant. |
+| Tenant `trustedDeviceDays` | `number` | deployment value | 0 to 365; `0` turns remembered devices off for the tenant. |
+
+## Schema
+
+| Collection | Key fields | Notes |
+| --- | --- | --- |
+| `authMfa` | `id` (the identity ID), `tenantId`, `identityId`, `encryptedSecret`, `recoveryHashes`, `enabled`, `lastUsedStep` | One record per person with an authenticator. The secret is sealed with the deployment secret; recovery codes are hashed. `lastUsedStep` blocks code replay. |
+| `authDevices` | `id`, `tenantId`, `identityId`, `tokenHash`, `createdAt`, `expiresAt`, `lastUsedAt`, `client` | Remembered devices. The device token is stored hashed. |
+| `authChallenges` | `id`, `tenantId`, `identityId`, `purpose`, `tokenHash`, `expiresAt`, `payload` | Sign-in challenges, pending enrollments, and emailed codes, single-use and hashed. |
+| `sessions` | `mfa`, `mfaAuthenticatedAt`, `trustedDeviceId` | The MFA state of each session; see [Sessions](/docs/authentication/sessions#session-kinds-and-fields). |
+
+## Errors
+
+| Code | When |
+| --- | --- |
+| [`MFA_REQUIRED`](/docs/reference/errors#mfa_required) | A session without MFA is used where MFA is now required; enrolling from a challenge while an authenticator or passkey exists; regenerating codes or disabling MFA from a session that did not pass MFA; disabling MFA when it is required. |
+| [`INVALID_MFA`](/docs/reference/errors#invalid_mfa) | A wrong, expired, or already used authenticator code, emailed code, or recovery code. |
+| [`INVALID_CHALLENGE`](/docs/reference/errors#invalid_challenge) | The sign-in challenge or the pending enrollment is invalid or expired. |
+| [`MFA_ALREADY_ENABLED`](/docs/reference/errors#mfa_already_enabled) | `beginMfa` for a person who already has an authenticator. |
+| [`MFA_NOT_ENROLLED`](/docs/reference/errors#mfa_not_enrolled) | Regenerating recovery codes without an enrolled authenticator, or `verifyMfa` for a person with no authenticator and no emailed code requested for the challenge. |
+| [`FEATURE_DISABLED`](/docs/reference/errors#feature_disabled) | Requesting an emailed code for a challenge that did not offer one, or for a person without a verified email. |
+| [`RECENT_AUTH_REQUIRED`](/docs/reference/errors#recent_auth_required) | Changing factors or devices from a session that is not recent. |
+| [`RATE_LIMITED`](/docs/reference/errors#rate_limited) | Too many second-factor attempts or code requests. |
+| [`NOT_FOUND`](/docs/reference/errors#not_found) | Forgetting a remembered device that is not the caller's. |
+
+## Next steps
+
+<Cards>
+  <Card icon={<FingerprintPattern />} title="Passkeys" href="/docs/authentication/passkeys">
+    Phishing-resistant sign-in that satisfies MFA on its own.
+  </Card>
+  <Card icon={<MonitorSmartphone />} title="Sessions" href="/docs/authentication/sessions">
+    Recent authentication and what a session records.
+  </Card>
+  <Card icon={<SlidersHorizontal />} title="Tenant policy" href="/docs/authentication/tenant-policy">
+    Require MFA for an organization.
+  </Card>
+  <Card icon={<LifeBuoy />} title="Verification and recovery" href="/docs/authentication/recovery">
+    What to do when a factor is lost.
+  </Card>
+</Cards>

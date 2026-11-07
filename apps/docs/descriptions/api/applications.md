@@ -6,7 +6,7 @@ An app is an OpenID Connect client of this deployment (`oauthClientId`, kind `oi
 people open their apps from the launcher, every launch is recorded and audited, and people without an app can request
 it through an access package. For an `oidc` app the built-in OAuth provider enforces the assignments: through the
 `clientAllowed` hook `iam.protocolHost` supplies, it refuses to issue or refresh tokens for people without the app. See
-the [application catalog guide](/docs/guides/governance/applications); the repository guide is
+the [application catalog guide](/docs/features/governance/applications); the repository guide is
 `docs/applications.md`.
 
 ## Who has an app

@@ -131,7 +131,7 @@ await iam.api.ldap.updateSettings(admin, {
 />
 
 `ldap.getSettings` (`iam:ldap:read`) reads the settings. Published attributes must be declared in
-[`permissions.identityAttributes`](/docs/guides/concepts/resources-and-catalog#identity-attributes), with names that
+[`permissions.identityAttributes`](/docs/concepts/resources-and-catalog#identity-attributes), with names that
 start with a letter and use letters, digits and `-` (`INVALID_INPUT` otherwise). A group of another organization is
 `NOT_FOUND`.
 
@@ -181,7 +181,7 @@ Applications bind in one of two ways, always with a simple bind:
   authenticator code to their password (`hunter2` followed by `123456` is `hunter2123456`). People whose MFA is
   required but who have no authenticator app enrolled cannot bind, since LDAP has no way to ask for a passkey. With
   `mfaSuffix: 'never'`, people who must use MFA cannot bind at all; applications then bind as a service account. See
-  [MFA](/docs/guides/authentication/mfa).
+  [MFA](/docs/authentication/mfa).
 </Callout>
 
 A bind with an empty name and password is anonymous and reads only the root DSE, which advertises LDAPv3, the WhoAmI
@@ -243,16 +243,39 @@ ldapsearch -H ldaps://ldap.example.com \
 
 ## API
 
-| Method                                                          | Access                                                                                      |
-| --------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| [`getSettings`](/docs/reference/api/ldap#getsettings)           | `iam:ldap:read` on `iam/ldap/settings`                                                      |
-| [`updateSettings`](/docs/reference/api/ldap#updatesettings)     | `iam:ldap:manage` on `iam/ldap/settings`                                                    |
-| [`directory`](/docs/reference/api/ldap#directory)               | A credential of the organization; `iam:ldap:read` on `iam/ldap/directory` for everyone, otherwise only yourself |
+| Method | Route | Access |
+| --- | --- | --- |
+| [`iam.api.ldap.getSettings`](/docs/reference/api/ldap#getsettings) | `POST /ldap/getSettings` | `iam:ldap:read` on `iam/ldap/settings` |
+| [`iam.api.ldap.updateSettings`](/docs/reference/api/ldap#updatesettings) | `POST /ldap/updateSettings` | `iam:ldap:manage` on `iam/ldap/settings` |
+| [`iam.api.ldap.directory`](/docs/reference/api/ldap#directory) | `POST /ldap/directory` | A credential of the organization; `iam:ldap:read` on `iam/ldap/directory` for everyone, otherwise only yourself |
+
+Routes are relative to the IAM base path (`/api/iam` by default).
 
 `directory` is what the gateway serves searches from, called as the account that bound. It answers
 `FEATURE_DISABLED` while the gateway is off. `iam.ldap.tenantForBase` and `iam.ldap.resolveBindName` are what the
 gateway uses before anyone is bound: they map a base DN to its organization and a bind name to an account, and
 return no secrets. Settings changes are audited as `iam:ldap:manage`.
+
+## Endpoints
+
+| Listener | Default | Notes |
+| --- | --- | --- |
+| LDAPS | `ldaps://{host}:636` | When `tls` is given. TLS from the first byte. |
+| LDAP | `ldap://{host}:389` | Without `tls`. StartTLS is not offered. |
+
+`listen(port, host)` binds to `127.0.0.1` unless you pass a host.
+
+## Errors
+
+LDAP clients see LDAP result codes (the table under [Supported operations](#supported-operations)). The `ldap` API
+group throws Better IAM errors:
+
+| Code | Status | When |
+| --- | --- | --- |
+| [`INVALID_INPUT`](/docs/reference/errors#invalid_input) | 400 | `updateSettings` with a base DN that is malformed, longer than 10 components, or itself `ou=people`, `ou=groups`, or `ou=services`; a non-boolean flag; a `uid` other than `email`, `localPart`, or `id`; an `mfaSuffix` other than `auto` or `never`; more than 64 attributes or an undeclared one; `groups` other than `all` or `selected`; or more than 500 `groupIds`. |
+| [`LDAP_BASE_TAKEN`](/docs/reference/errors#ldap_base_taken) | 409 | Another organization already publishes under that base DN. |
+| [`FEATURE_DISABLED`](/docs/reference/errors#feature_disabled) | 403 | `directory` while the gateway is off for the organization. |
+| [`ACCESS_DENIED`](/docs/reference/errors#access_denied) | 403 | `directory` from a session of another organization, or from an impersonation session. |
 
 ## Next steps
 
@@ -260,7 +283,7 @@ return no secrets. Settings changes are audited as `iam:ldap:manage`.
   <Card title="ldap API reference" href="/docs/reference/api/ldap">
     The settings and directory methods with their permissions and errors.
   </Card>
-  <Card title="API keys" href="/docs/guides/authorization/temporary-access#api-keys">
+  <Card title="API keys" href="/docs/authorization/temporary-access#api-keys">
     Issue the keys LDAP applications bind with as service accounts.
   </Card>
   <Card title="SCIM inbound" href="/docs/federation/scim">

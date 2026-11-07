@@ -174,7 +174,7 @@ Observe these signals and alert on the ones that matter to you:
 Audit events are the other half of monitoring. Subscribe a <Term id="webhook">webhook</Term> or an in-process
 subscriber to
 `auth:signin:fail` for brute-force alerting, to `binding:*` for elevation, and filter by `outcomes: ['deny']` to
-feed a security information and event management system (SIEM). See [Webhooks](/docs/guides/events/webhooks) and
+feed a security information and event management system (SIEM). See [Webhooks](/docs/concepts/events/webhooks) and
 the [observability recipes](/docs/guides/recipes/operations#observe-latency-and-outcomes).
 
 Public errors never expose SQL or raw protocol assertions, so error codes are safe to log and count. For storage
@@ -187,7 +187,7 @@ latency, wrap the adapter with `instrumentStore` (see
   <Card title="Scheduled jobs" href="/docs/operations/jobs">
     The workers whose backlog the gauges and doctor findings report.
   </Card>
-  <Card title="Doctor" href="/docs/operations/storage#doctor">
+  <Card title="Doctor" href="/docs/databases/operations#doctor">
     A one-shot health report for deploy gates and cron.
   </Card>
   <Card title="Security model" href="/docs/operations/security">

@@ -1,4 +1,8 @@
+import { readFileSync } from 'node:fs';
 import { createMDX } from 'fumadocs-mdx/next';
+
+// Permanent redirects from the URLs pages had before the docs were reorganized into Better Auth-style sections.
+const movedPages = JSON.parse(readFileSync(new URL('./redirects.json', import.meta.url), 'utf8'));
 
 const withMDX = createMDX({ macro: false });
 
@@ -42,7 +46,8 @@ const config = {
   async redirects() {
     return [
       ...canonicalHostRedirects(),
-      { source: '/docs', destination: '/docs/guides', permanent: true },
+      { source: '/docs', destination: '/docs/introduction', permanent: true },
+      ...movedPages,
     ];
   },
   async headers() {

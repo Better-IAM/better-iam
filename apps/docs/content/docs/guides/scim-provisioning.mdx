@@ -1,0 +1,444 @@
+---
+title: "SCIM provisioning with Entra ID and Okta"
+description: "Let one organization's Microsoft Entra ID or Okta create, update, deactivate, and delete its people and groups in Better IAM through a SCIM 2.0 connection, with attribute and group-to-role mapping."
+icon: ArrowDownToLine
+packages: ['@better-iam/scim', '@better-iam/server', '@better-iam/next']
+sources:
+  - packages/scim/src/index.ts
+  - packages/scim/src/provisioning.ts
+  - packages/scim/src/validation.ts
+  - packages/scim/src/types.ts
+  - packages/server/src/federation.ts
+  - packages/next/src/index.ts
+  - docs/protocols.md
+  - docs/enterprise.md
+---
+
+import { Building, ListTree, ShieldCheck, Users } from '@/lib/icons';
+
+This guide lets one customer organization, Acme, manage its members from its own directory, Microsoft Entra ID or
+Okta, through <Term id="scim">SCIM 2.0</Term>. The directory creates an account before a person's first day,
+updates their name, title, department, and manager as they change, and deactivates them the moment they leave, even
+if they never sign in again. You will build:
+
+- a SCIM service mounted in a Next.js app at `/api/iam/scim/v2`, with directory fields copied into identity
+  attributes;
+- a provisioning settings page where Acme's administrator creates a connection and receives its bearer token once;
+- the Entra ID or Okta provisioning configuration, with an attribute mapping Better IAM accepts;
+- group-to-role mappings, so membership in a directory group grants roles in your product;
+- token rotation and revocation, and a clear picture of what deactivation and deletion do.
+
+## Prerequisites
+
+- The app from [Build a multi-tenant B2B SaaS](/docs/guides/b2b-saas), or any Next.js app using `@better-iam/next`,
+  with an organization (`acme`), its owner, and the roles you want to map (_Admin_, _Member_).
+- A public HTTPS origin for the app, such as `https://app.example.com`. Entra ID and Okta call your SCIM endpoint
+  from the internet; for local testing, run the app behind an HTTPS tunnel.
+- Administrator access to the Entra ID tenant (to create an enterprise application) or to the Okta organization (to
+  create an app integration with SCIM provisioning).
+
+<Steps>
+<Step>
+
+### Declare the attributes you will receive
+
+Directory fields become typed identity attributes, which policies read as `principal.{name}`. Declare the ones you
+map in the options module:
+
+```js title="better-iam.config.mjs"
+export default {
+  // ...database, secret, baseURL, authentication, resourceTypes, resolveResource
+  permissions: {
+    resourceTypes: {
+      project: { actions: ['projects:read', 'projects:write', 'projects:delete'] },
+    },
+    identityAttributes: { title: 'string', department: 'string', costCenter: 'string' },
+  },
+};
+```
+
+</Step>
+<Step>
+
+### Mount the SCIM service
+
+```npm
+npm i @better-iam/scim
+```
+
+Create the service with the host callbacks from `iam.protocolHost`, put both of its route sets under the IAM route
+that Next.js serves (`/api/iam`), and mount it:
+
+```ts title="lib/iam.ts"
+import { betterIam } from '@better-iam/server';
+import { createScimService } from '@better-iam/scim';
+import config from '../better-iam.config.mjs';
+
+export const iam = betterIam(config);
+
+export const scim = createScimService({
+  ...iam.protocolHost,
+  basePath: '/api/iam/scim/v2',
+  adminBasePath: '/api/iam/scim-admin',
+  mapAttributes: ({ title, enterprise }) => ({
+    ...(title ? { title } : {}),
+    ...(typeof enterprise?.department === 'string' ? { department: enterprise.department } : {}),
+    ...(typeof enterprise?.costCenter === 'string' ? { costCenter: enterprise.costCenter } : {}),
+  }),
+});
+iam.useProtocol(scim);
+```
+
+Add `@better-iam/scim` to `serverExternalPackages` in `next.config.mjs` next to `@better-iam/server`.
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `basePath` | `string` | `'/scim/v2'` | Where the endpoints identity providers call are served. Must be absolute. |
+| `adminBasePath` | `string` | `'/scim/admin'` | Where the JSON administration routes for your admin UI are served. Must not overlap `basePath`. |
+| `mapAttributes` | `(user: ProvisionedUser) => Record<string, unknown> \| undefined` | none | Turns provisioned fields into declared identity attributes. Return `undefined` to leave attributes untouched. |
+| `mapManager` | `boolean` | `true` | Sets each person's `managerId` from the enterprise extension's `manager`. |
+| `store`, `authorize`, `authenticate`, `validateIdentityAttributes`, `syncRoleMappings` | host callbacks | from `iam.protocolHost` | Database access, permission checks, attribute validation, and the trusted callback that applies group role mappings. |
+
+`ProvisionedUser` carries `userName`, `displayName`, `externalId`, `active`, `title`, `emails`, `name`, and
+`enterprise` (the enterprise extension object).
+
+</Step>
+<Step>
+
+### Forward every SCIM method
+
+The IAM API needs only `GET`, `POST`, and `OPTIONS`, but identity providers also send `PUT`, `PATCH`, and `DELETE`
+to update, deactivate, and delete. Forward them to the same handler:
+
+```ts title="app/api/iam/[...path]/route.ts"
+import { iamNext } from '@/lib/iam-next';
+
+export const runtime = 'nodejs';
+
+const handlers = iamNext.handlers();
+export const GET = handlers.GET;
+export const POST = handlers.POST;
+export const OPTIONS = handlers.OPTIONS;
+// SCIM updates, deactivations, and deletions.
+export const PUT = handlers.POST;
+export const PATCH = handlers.POST;
+export const DELETE = handlers.POST;
+```
+
+Each export calls the IAM handler with the request unchanged, whatever its method. If you added the SAML assertion
+wrapper from [SAML single sign-on with Okta](/docs/guides/enterprise-sso-okta), keep your `POST` wrapper and forward
+the three SCIM methods to `handlers.POST` as here. The edge middleware's default `protect` (from
+`createIamMiddleware`) leaves `/api/iam` public, so the directory's requests reach the route without a session
+cookie; a custom `protect` must do the same.
+
+</Step>
+<Step>
+
+### Create a connection
+
+A connection is one directory's credential for one organization. Acme's administrator creates it on your
+provisioning settings page and copies two values into their directory: the connection's URL and its bearer token.
+
+```ts title="app/[org]/settings/provisioning/actions.ts"
+'use server';
+import { iam, scim } from '@/lib/iam';
+import { iamNext } from '@/lib/iam-next';
+
+export async function createScimConnection(name: string) {
+  const session = await iamNext.requireSession();
+  const connection = await scim.createConnection(await iamNext.credential(), {
+    tenantId: session.session.tenantId,
+    name,
+    expiresIn: 180 * 86400, // seconds; 60 seconds to one year, 90 days when omitted
+  });
+  return {
+    url: `${iam.endpoint.origin}${connection.path}`, // https://app.example.com/api/iam/scim/v2/{id}
+    token: connection.token, // shown once: display it, never store it
+    expiresAt: connection.expiresAt,
+  };
+}
+```
+
+`createConnection` requires `iam:scim:connections:create`. The token is stored only as a hash, is restricted to this
+connection and tenant, and expires after `expiresIn` seconds. `iam.endpoint.origin` is the origin from `baseURL`.
+
+| Input | Type | Default | Description |
+| --- | --- | --- | --- |
+| `tenantId` | `string` | required | The organization the directory provisions into. |
+| `name` | `string` | required | A label for administrators, such as `Entra ID provisioning`. |
+| `expiresIn` | `number` | `7776000` (90 days) | Token lifetime in seconds, from 60 seconds to one year. |
+
+The same call is available to browser code as `POST /api/iam/scim-admin/connections/create`, which needs the
+session cookie, `X-Better-IAM: 1`, and a JSON body.
+
+</Step>
+<Step>
+
+### Configure the directory
+
+Give the directory administrator the connection URL and token, and have them enter these values. The field names are
+the ones the directory's admin console shows; consoles rename fields between versions, so match them by meaning.
+
+<Tabs items={['Entra ID', 'Okta']}>
+<Tab value="Entra ID">
+
+1. In **Enterprise applications**, create your own application (non-gallery) for your product.
+2. Open **Provisioning** and set **Provisioning Mode** to **Automatic**.
+3. Under **Admin Credentials**, set **Tenant URL** to the connection URL and **Secret Token** to the token, then
+   press **Test Connection**.
+4. Under **Mappings**, open the user mapping and delete every mapping whose target attribute Better IAM does not
+   accept (see the next step), such as `addresses`, `phoneNumbers`, and `preferredLanguage`.
+5. Under **Settings**, choose the **Scope**, usually only assigned users and groups, and assign the people and groups
+   who should be provisioned in **Users and groups**.
+6. Set **Provisioning Status** to **On**. To test one person without waiting for a cycle, use **Provision on demand**.
+
+Entra ID's SCIM dialect is handled: case-insensitive operation names, `"True"` and `"False"` strings for booleans,
+bare-ID manager values, and member removal by value.
+
+</Tab>
+<Tab value="Okta">
+
+1. Create an app integration with SCIM provisioning enabled for your product.
+2. In the provisioning integration settings, set **SCIM connector base URL** to the connection URL, **Unique
+   identifier field for users** to `userName`, and **Authentication Mode** to **HTTP Header** with the token. Test
+   the connector configuration.
+3. Choose the supported provisioning actions: pushing new users, pushing profile updates, and pushing groups.
+4. In the app's provisioning settings for the app, enable **Create Users**, **Update User Attributes**, and
+   **Deactivate Users**.
+5. Review the app's attribute mappings and remove any that target attributes Better IAM does not accept (see the
+   next step).
+6. Assign people and groups to the app, and push the groups whose roles you will map.
+
+</Tab>
+</Tabs>
+
+The directory first searches for each person (`GET /Users?filter=userName eq "..."`), creates the ones missing, and
+then keeps them updated. Every request runs in one transaction, and the connection's `lastUsedAt` is updated at most
+once a minute, so the settings page can show whether the directory is still calling.
+
+</Step>
+<Step>
+
+### Map attributes
+
+A SCIM user becomes an identity in the organization. Better IAM stores the fields below and refuses any other
+attribute: a create or replace that carries an unsupported attribute fails with `400` and `scimType: mutability`
+("An unsupported or immutable attribute was supplied"), so the directory reports the person as failed.
+
+| SCIM attribute | Becomes | Notes |
+| --- | --- | --- |
+| `userName` | The connection's unique key | Required, unique per connection ignoring case. Used as the email when it is an email address and no `emails` are sent. |
+| `emails` (up to 20; `value`, `type`, `primary`, `display`) | The identity's `email` | The primary email, or the first one. Stored unverified. |
+| `displayName` | The identity's `name` | Falls back to `userName`. |
+| `active` | The identity's `status` | `false` disables the identity and revokes its sessions. |
+| `externalId` | Stored on the SCIM user | Case-exact; filterable. |
+| `name` (`formatted`, `givenName`, `familyName`, `middleName`, `honorificPrefix`, `honorificSuffix`) | Stored on the SCIM user | Returned and filterable. |
+| `title` | `mapAttributes` input | Copied to `title` by the mapping in this guide. |
+| Enterprise extension `employeeNumber`, `costCenter`, `organization`, `division`, `department` | `mapAttributes` input (`enterprise`) | Copied to declared attributes by `mapAttributes`. |
+| Enterprise extension `manager` | The identity's `managerId` | With `mapManager` (default on). The value may be the manager's SCIM ID, `externalId`, or `userName`. |
+
+The enterprise extension schema is `urn:ietf:params:scim:schemas:extension:enterprise:2.0:User`. Attributes such as
+`addresses`, `phoneNumbers`, `preferredLanguage`, `locale`, `timezone`, `nickName`, `userType`, `roles`, and
+`password` are not accepted, and neither are read-only attributes such as `id` and `meta` in a request body. Remove
+their mappings in the directory.
+
+The mapped attributes drive policy conditions, for example `StringEquals: { 'principal.department': 'Finance' }`.
+See [Conditions](/docs/authorization/conditions).
+
+</Step>
+<Step>
+
+### Map groups to roles
+
+A directory group carries no authority by itself: the directory decides who is in "Engineering", and an
+administrator of your product decides what "Engineering" may do. After the directory has pushed its groups, list
+them and map each to roles:
+
+```ts title="app/[org]/settings/provisioning/group-actions.ts"
+'use server';
+import { scim } from '@/lib/iam';
+import { iamNext } from '@/lib/iam-next';
+
+export async function listPushedGroups(connectionId: string) {
+  const session = await iamNext.requireSession();
+  // [{ id, groupId, displayName, externalId?, members, roleIds }]
+  return scim.listGroups(await iamNext.credential(), { tenantId: session.session.tenantId, connectionId });
+}
+
+export async function mapGroupToRoles(connectionId: string, scimGroupId: string, roleIds: string[]) {
+  const session = await iamNext.requireSession();
+  await scim.setRoleMappings(await iamNext.credential(), {
+    tenantId: session.session.tenantId,
+    connectionId,
+    groupId: scimGroupId, // the SCIM group's `id` from listGroups, not the local groupId
+    roleIds, // replaces the group's mapped roles; at most 100
+  });
+}
+```
+
+- `setRoleMappings` needs `iam:scim:mappings:update` on the connection and `iam:bindings:create` on every role, so
+  nobody can map a role they could not grant directly. Protected roles, such as _Owner_, are refused.
+- The mapping creates group <Term id="binding">bindings</Term> under the administrator's grant authority. Joining
+  the group in the directory then grants the roles here, and leaving it removes them.
+- The SCIM token can only move people in and out of groups an administrator mapped. It cannot create roles,
+  policies, or bindings itself.
+- Nested groups are not supported, and a group's members must belong to the same connection (up to 1000 member
+  references per request).
+
+</Step>
+<Step>
+
+### Know what deprovisioning does
+
+Directories end access in two ways: they deactivate (`active: false`) when someone is disabled or unassigned, and
+some later delete the user. Better IAM handles both:
+
+| Directory request | Effect in Better IAM |
+| --- | --- |
+| `PATCH` or `PUT` with `active: false` | Disables the identity and removes its sessions, API keys, remembered MFA devices, and pending sign-in challenges in the same transaction. License seats follow the status. Audited as `iam:scim:UpdateUser`. |
+| `PATCH` or `PUT` with `active: true` | Re-enables the identity, but only if the directory disabled it. An identity an administrator disabled stays disabled. |
+| `DELETE /Users/{id}` | Disables the identity, revokes its sessions, and removes it from the connection's groups (and so from the roles mapped to them). The disabled identity is kept as a historical principal, so audit history still names it. Audited as `iam:scim:DeleteUser`. |
+| `DELETE /Groups/{id}` | Removes the local group and the bindings its mapping created. |
+| Connection revoked | The token stops working at once, and the connection's mapped bindings are removed. Provisioned identities stay as they are. |
+
+- **Protected identities.** Owners and root administrators cannot be changed by SCIM (`403 mutability`), so a
+  directory mistake cannot lock the organization out.
+- **Administrator deletions win.** An identity an administrator deleted is never updated, reactivated, or re-added
+  to groups by SCIM. A SCIM `DELETE` of it still succeeds.
+- **Manager links.** Deleting a manager through SCIM releases the reports SCIM linked to them.
+
+To end everything else a leaver holds in one audited step (role bindings outside mapped groups, group memberships,
+and owned resources handed to a successor), run [`identities.offboard`](/docs/reference/api/identities#offboard)
+as well. The [Enterprise onboarding](/docs/federation/enterprise-onboarding#offboarding-end-to-end) walkthrough
+shows how a SCIM deactivation reaches downstream apps and OAuth clients.
+
+</Step>
+<Step>
+
+### Rotate or revoke the token
+
+Tokens expire; put a reminder on `expiresAt`, or rotate earlier after a leak or a staff change:
+
+```ts title="app/[org]/settings/provisioning/token-actions.ts"
+'use server';
+import { scim } from '@/lib/iam';
+import { iamNext } from '@/lib/iam-next';
+
+export async function rotateScimToken(connectionId: string) {
+  const session = await iamNext.requireSession();
+  const rotated = await scim.rotateToken(await iamNext.credential(), {
+    tenantId: session.session.tenantId,
+    connectionId,
+  });
+  return { token: rotated.token, expiresAt: rotated.expiresAt }; // paste into the directory at once
+}
+
+export async function stopProvisioning(connectionId: string) {
+  const session = await iamNext.requireSession();
+  await scim.revokeConnection(await iamNext.credential(), { tenantId: session.session.tenantId, connectionId });
+}
+```
+
+| Method | Permission | Effect |
+| --- | --- | --- |
+| `scim.listConnections(credential, { tenantId })` | `iam:scim:connections:read` | Name, path, expiry, revocation, last use and rotation times, user and group counts, and role mappings. Never the token. |
+| `scim.rotateToken(credential, { tenantId, connectionId, expiresIn? })` | `iam:scim:credentials:create` | A new token, returned once. The previous token stops working immediately; provisioned users, groups, and mappings are kept. |
+| `scim.revokeConnection(credential, { tenantId, connectionId })` | `iam:scim:connections:delete` | Invalidates the token immediately and removes the connection's mapped bindings. |
+
+</Step>
+</Steps>
+
+<Callout type="warn" title="SCIM accounts and single sign-on">
+  Provisioned identities are not matched to a SAML or OIDC sign-in by email. A person the directory created is
+  refused on their first federated sign-in (`ACCOUNT_LINK_REQUIRED`, which the SAML assertion consumer service reports
+  as `401 SAML_INVALID`) until they link their account once, while signed in to it by another method the
+  organization allows. Plan that step before you restrict the organization to `federated`
+  sign-in; see [Link existing accounts](/docs/guides/enterprise-sso-okta#link-existing-accounts).
+</Callout>
+
+## Verify it works
+
+Test the endpoint with the token before the directory does. Replace the URL and token with your connection's:
+
+```bash
+export SCIM_URL="https://app.example.com/api/iam/scim/v2/<connectionId>"
+export SCIM_TOKEN="<token>"
+
+# Create a person.
+curl -s -X POST "$SCIM_URL/Users" \
+  -H "Authorization: Bearer $SCIM_TOKEN" -H "Content-Type: application/scim+json" \
+  -d '{"schemas":["urn:ietf:params:scim:schemas:core:2.0:User","urn:ietf:params:scim:schemas:extension:enterprise:2.0:User"],
+       "userName":"ada@acme.com","displayName":"Ada Lovelace","active":true,
+       "emails":[{"value":"ada@acme.com","type":"work","primary":true}],
+       "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User":{"department":"Research"}}'
+
+# Find her the way a directory does.
+curl -s "$SCIM_URL/Users?filter=userName%20eq%20%22ada@acme.com%22" -H "Authorization: Bearer $SCIM_TOKEN"
+
+# Deactivate her (use the id from the create response).
+curl -s -X PATCH "$SCIM_URL/Users/<id>" \
+  -H "Authorization: Bearer $SCIM_TOKEN" -H "Content-Type: application/scim+json" \
+  -d '{"schemas":["urn:ietf:params:scim:api:messages:2.0:PatchOp"],"Operations":[{"op":"replace","value":{"active":false}}]}'
+```
+
+1. The create answers `201` with an `id` and an `ETag`. `identities.list` for Acme shows Ada with
+   `attributes.department: 'Research'`.
+2. The search answers a `ListResponse` with one result.
+3. After the `PATCH`, Ada's identity is `disabled` and any session she had is gone.
+4. In the directory, assign a test person and run a provisioning cycle (**Provision on demand** in Entra ID). The
+   audit log shows `iam:scim:CreateUser` with the actor `scim:{connectionId}`, and `scim.listConnections` shows a
+   recent `lastUsedAt`.
+5. Add the test person to a mapped group: they receive the group's roles. Remove them: the roles go.
+
+## Troubleshooting
+
+<Accordions>
+<Accordion title="Every request answers 401 Invalid SCIM credential">
+  The token is wrong, expired, or was rotated or revoked, or the URL names a different connection. The token works
+  only with its own connection's path. Rotate the token and paste the new one into the directory.
+</Accordion>
+<Accordion title="Creates fail with 400 and scimType mutability">
+  The request carries an attribute outside the supported list, for example from the directory's attribute mappings
+  (`addresses`, `phoneNumbers`, `preferredLanguage`, `locale`), or a read-only attribute such as `id` or `meta`.
+  Remove those mappings in the directory and retry the failed users.
+</Accordion>
+<Accordion title="Creates fail with 409 uniqueness">
+  Either another SCIM user of the connection has the same `userName`, or the email already belongs to an identity in
+  the organization, such as a member who accepted an invitation. Provisioning never takes over an existing account
+  by email. Delete the duplicate local account, or leave that person out of the directory's assignment.
+</Accordion>
+<Accordion title="Updates fail with 403 mutability">
+  The identity is a protected owner or root administrator, or an administrator deleted it. SCIM never changes either.
+</Accordion>
+<Accordion title="Updates or deletions answer 404 or 405">
+  The route does not forward `PUT`, `PATCH`, or `DELETE` to the IAM handler, or `basePath` does not match the URL the
+  directory calls. Export all three methods from `app/api/iam/[...path]/route.ts`.
+</Accordion>
+<Accordion title="Searches fail with invalidFilter">
+  The filter is outside the RFC 7644 grammar or over a limit: 2048 characters, 64 comparisons, 16 levels of nesting.
+  Better IAM never answers an unfiltered list for a filter it cannot parse. See
+  [Filtering, sorting, and paging](/docs/federation/scim#filtering-sorting-and-paging).
+</Accordion>
+<Accordion title="New people sign in but get 403 everywhere">
+  They are not in a mapped group yet (the directory has not pushed the group or their membership), or the group has
+  no role mapping. Check `scim.listGroups` for the group's `members` and `roleIds`, and map it with
+  `setRoleMappings`.
+</Accordion>
+</Accordions>
+
+## Next steps
+
+<Cards>
+  <Card icon={<ShieldCheck />} title="SAML single sign-on with Okta" href="/docs/guides/enterprise-sso-okta">
+    Let the same people sign in with their directory account.
+  </Card>
+  <Card icon={<ListTree />} title="SCIM inbound reference" href="/docs/federation/scim">
+    Filters, PATCH, Bulk, ETags, limits, and the administration routes.
+  </Card>
+  <Card icon={<Building />} title="Enterprise onboarding" href="/docs/federation/enterprise-onboarding">
+    Domain, SSO, SCIM in and out, and offboarding for one customer.
+  </Card>
+  <Card icon={<Users />} title="SCIM outbound" href="/docs/federation/scim-outbound">
+    Push the people you manage on to other SaaS applications.
+  </Card>
+</Cards>

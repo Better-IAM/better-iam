@@ -1,0 +1,200 @@
+---
+title: llms.txt
+metaTitle: llms.txt, llms-full.txt, and Markdown pages
+description: What /llms.txt, /llms-full.txt, and the per-page Markdown URLs of the Better IAM docs contain, and how AI agents should use them to find, read, and cite pages.
+icon: ScrollText
+sources:
+  - apps/docs/app/llms.txt/route.ts
+  - apps/docs/app/llms-full.txt/route.ts
+  - apps/docs/app/llms.mdx/docs/[[...slug]]/route.ts
+  - apps/docs/lib/llms-text.ts
+  - apps/docs/lib/source.ts
+  - apps/docs/proxy.ts
+  - apps/docs/next.config.mjs
+---
+
+[llms.txt](https://llmstxt.org) is a convention for publishing a site's content in a form language models read
+well: a Markdown index at a known address, with links to Markdown copies of each page. This site publishes an index
+at `/llms.txt`, every page in one file at `/llms-full.txt`, and a Markdown copy of every page at its URL plus `.md`.
+
+Use these files when your tool can fetch URLs but cannot call an MCP server, when you want to paste documentation
+into a chat, or when you build your own retrieval over the docs. For tools that support MCP, the
+[docs MCP server](/docs/ai/mcp-server) answers the same questions with less context.
+
+## What each file contains
+
+| URL | Content type | Content |
+| --- | --- | --- |
+| `/llms.txt` | `text/plain` | Instructions for agents, then every page's title, Markdown URL, and description, grouped by sidebar section |
+| `/llms-full.txt` | `text/plain` | Every page rendered as Markdown, one after another |
+| `/docs/<page>.md` | `text/markdown` | One page as Markdown |
+
+Both `.txt` files are generated when the site is built, from the same MDX sources as the HTML pages, so they always
+match the docs you are reading. They are marked `noindex` (`X-Robots-Tag`) so search engines show the HTML pages
+instead.
+
+## llms.txt
+
+`/llms.txt` is the index. It has three parts:
+
+1. A title and a one-sentence summary of Better IAM.
+2. **Instructions for AI agents**: how to find a page, fetch its Markdown, and cite it, which reference pages are
+   generated from the code, and where the full-text file, the MCP server, and the [agent skill](/docs/ai/agent-skills)
+   live.
+3. The index: one `## ` heading per sidebar section (Get Started, Concepts, Authentication, Authorization, Databases,
+   Integrations, Features, Federation, Guides, Operations, AI Resources, Reference), with one list item per page.
+   The groups inside a section, such as Guides' "Build" or Federation's "Sign-in", are `### ` sub-headings. Pages
+   inside a sub-folder, such as the migration guides, are indented under the folder's overview page.
+
+Each list item links to the page's Markdown copy and ends with the page's description:
+
+```md title="llms.txt (excerpt)"
+## Get Started
+
+- [Introduction](https://better-iam.com/docs/introduction.md): …
+- [Installation](https://better-iam.com/docs/installation.md): Install better-iam, set the secret and base URL, …
+- [Quickstart](https://better-iam.com/docs/quickstart.md): Bootstrap the root administrator, create an organization, …
+```
+
+The descriptions come from each page's frontmatter and are written as one precise sentence, so an agent can choose
+a page from the index alone.
+
+## llms-full.txt
+
+`/llms-full.txt` starts with the same title and summary, then contains every page. Each page begins with its title,
+its URL path, and its description:
+
+```md title="llms-full.txt (excerpt)"
+# Roles and bindings (/docs/authorization/roles)
+
+> Custom roles built from permission lists or policy documents, role inheritance, bindings to people and groups, and delegated grant authorities.
+
+Listing permissions person by person does not scale: …
+```
+
+The file is large, because it includes the generated reference for every API method, error code, CLI command, and
+export. Load it only into a model with a long context window, and prefer the index plus individual pages otherwise.
+
+## Markdown for one page
+
+Every docs page has a Markdown copy. There are two ways to request it:
+
+<Tabs items={['.md URL', 'Accept header']}>
+<Tab value=".md URL">
+
+Append `.md` to the page URL. Section overview pages work the same way (`/docs/authorization.md`).
+
+```bash
+curl https://better-iam.com/docs/authorization/roles.md
+```
+
+</Tab>
+<Tab value="Accept header">
+
+Request the normal page URL and prefer Markdown. The site serves Markdown when `text/markdown`, `text/x-markdown`, or
+`text/plain` has a quality at least as high as `text/html`, `text/*`, and `*/*` in the `Accept` header, and adds
+`Vary: Accept` to that response.
+
+```bash
+curl -H 'Accept: text/markdown' https://better-iam.com/docs/authorization/roles
+```
+
+</Tab>
+</Tabs>
+
+The response starts with the page's title, URL path, and description, like a page in `llms-full.txt`. It carries a
+`Link: <https://better-iam.com/docs/authorization/roles>; rel="canonical"` header that names the HTML page.
+
+The Markdown is converted for models, not copied from the MDX source. Interactive components become the text they
+stand for:
+
+| On the page | In the Markdown |
+| --- | --- |
+| Tabs | Each tab's content under a bold label, such as `**Server:**` and `**Client:**` |
+| Accordions | A `####` heading per item |
+| Callouts | A blockquote, starting with the callout's bold title when it has one |
+| Cards and feature grids | A bulleted list of links with their descriptions |
+| API endpoint boxes on reference pages | A line with the HTTP route and whether it needs a credential, or "Server only" |
+| Glossary terms | Their plain text |
+| Visual-only components (package tables and graphs, API shape diagrams, API group summaries, playground buttons) | Removed |
+
+Code blocks, tables, and headings are kept as written.
+
+## How agents should use these files
+
+The instructions at the top of `/llms.txt` say the same thing in fewer words:
+
+<Steps>
+<Step>
+
+### Find the page
+
+Read `/llms.txt` once and choose the page whose section and description match the task. For an exact identifier,
+go straight to the Reference section: [API methods](/docs/reference/api), [error codes](/docs/reference/errors),
+[package exports](/docs/reference/exports), [options](/docs/reference/options), and [CLI commands](/docs/reference/cli)
+are generated from the source code.
+
+</Step>
+<Step>
+
+### Fetch its Markdown
+
+Fetch the Markdown URL from the index, or the page URL with `Accept: text/markdown`. Read the whole page before
+writing code from it: setup steps, options, and error codes are in separate sections.
+
+</Step>
+<Step>
+
+### Cite the canonical URL
+
+When you tell a person where an answer came from, link the HTML page: the Markdown URL without `.md`, for example
+`https://better-iam.com/docs/authorization/roles`.
+
+</Step>
+</Steps>
+
+<Callout type="warn" title="Use only what the docs show">
+  If a page does not show a package, import, method, option, or error code, assume it does not exist and say so.
+  Every `iam.api` method has a page under [API reference](/docs/reference/api); a method that is missing there is not
+  part of Better IAM.
+</Callout>
+
+## Use the files in your own tools
+
+Point a retrieval pipeline or a custom agent at the same addresses:
+
+```ts title="fetch-docs.ts"
+const site = 'https://better-iam.com';
+
+/** The llms.txt index, for choosing pages. */
+export async function docsIndex(): Promise<string> {
+  const response = await fetch(`${site}/llms.txt`);
+  if (!response.ok) throw new Error(`llms.txt: HTTP ${response.status}`);
+  return response.text();
+}
+
+/** One page as Markdown, from its path, for example "/docs/authorization/roles". */
+export async function docsPage(path: string): Promise<string> {
+  const response = await fetch(`${site}${path}`, { headers: { Accept: 'text/markdown' } });
+  if (!response.ok) throw new Error(`${path}: HTTP ${response.status}`);
+  return response.text();
+}
+```
+
+The site also serves the search index as JSON at `/api/search?query=…` (the index behind the search dialog) and
+the OpenAPI 3.1 description of the Better IAM HTTP API at `/openapi.json`; see
+[Reference](/docs/reference#machine-readable-docs).
+
+## Next steps
+
+<Cards>
+  <Card title="Docs MCP server" href="/docs/ai/mcp-server">
+    Search and read the docs from an MCP client instead of fetching files.
+  </Card>
+  <Card title="Agent skills" href="/docs/ai/agent-skills">
+    Give an agent the rules for writing Better IAM code before it starts.
+  </Card>
+  <Card title="Prompts and AGENTS.md" href="/docs/ai/prompts">
+    Prompts that point an agent at the right pages.
+  </Card>
+</Cards>

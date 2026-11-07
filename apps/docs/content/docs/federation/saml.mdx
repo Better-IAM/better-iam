@@ -144,13 +144,17 @@ tenant, so only administrators who hold the `iam:saml:connections:*` permissions
 | `listConnections(credential, { tenantId })` | `iam:saml:connections:read` on `saml/*` | Lists the tenant's connections, for an SSO settings page. |
 | `getConnection(credential, { tenantId, connectionId })` | `iam:saml:connections:read` | Reads one connection. |
 | `updateConnection(credential, { tenantId, connectionId, ...changes })` | `iam:saml:connections:update` | Changes settings, uploads refreshed metadata, or rolls certificates. Audited as `iam:saml:UpdateConnection`. |
-| `deleteConnection(credential, { tenantId, connectionId })` | `iam:saml:connections:delete` | Removes the connection and its pending sign-ins. Audited as `iam:saml:DeleteConnection`. |
+| `deleteConnection(credential, { tenantId, connectionId })` | `iam:saml:connections:delete` | Removes the connection, its pending sign-ins, and the account links made through it. Audited as `iam:saml:DeleteConnection`. |
 
-Permissions apply in the connection's tenant. Connection summaries include the values to enter at the IdP
-(`entityId`, `acsUrl`, `metadataUrl`, `loginUrl`) and, for each certificate, its SHA-256 fingerprint, subject,
-validity, and `expired`, so certificate rollover can be monitored.
+Permissions apply in the connection's tenant. Creating a connection, and any update that widens what it trusts
+(another IdP issuer, an added certificate, IdP-initiated sign-in, more trusted email domains), also passes the
+host's `assertTrustChange` check from `iam.protocolHost`: a recent sign-in, and, when owners or root administrators
+sign in through the connection, a caller who could control those accounts anyway. Connection summaries include the
+values to enter at the IdP (`entityId`, `acsUrl`, `metadataUrl`, `loginUrl`) and, for each certificate, its SHA-256
+fingerprint, subject, validity, and `expired`, so certificate rollover can be monitored.
 
-External identities linked through a deleted connection stay with their accounts. Configured `connections` keep
+Deleting a connection deletes the external identity links made through it, so the accounts stay but can no longer
+sign in through that IdP; a connection created later, even with the same ID, never inherits them. Configured `connections` keep
 working alongside managed ones, and their IDs are reserved. To offer the signed SP metadata XML as a download in
 your admin UI, call `getMetadata(id)`, which covers both kinds of connection; the synchronous `metadata(id)` covers
 configured ones only.
@@ -364,7 +368,7 @@ attributeMapping: { department: 'department', title: 'title', costCenter: 'costC
 Configured connections use `mapAttributes(profile)` with the validated assertion profile instead. Either way the
 values reach `completeAuthentication`, are validated against `permissions.identityAttributes` inside the sign-in
 transaction, and replace the <Term id="identity">identity</Term>'s stored attributes on every sign-in, so directory
-data drives `principal.department`-style [policy conditions](/docs/guides/authorization/conditions). An invalid
+data drives `principal.department`-style [policy conditions](/docs/authorization/conditions). An invalid
 mapping fails the sign-in closed.
 
 ## IdP-initiated sign-in
@@ -393,6 +397,34 @@ on a connection to accept such responses at its callback URL.
 SAML sessions are not modified: the person stays signed in at their IdP. SAML IdP functionality (Better IAM acting
 as a SAML IdP for other apps) and federated single logout are outside this release; use the
 [OAuth/OIDC provider](/docs/federation/oauth-provider) to be an identity provider for your own apps.
+
+## Schema
+
+| Collection | What it holds |
+| --- | --- |
+| `samlConnections` | Tenant-managed connections: `id`, `tenantId`, `name`, `enabled`, `entryPoint`, `idpIssuer`, `idpCertificates`, `trustedEmailDomains`, `requireEncryptedAssertions`, `attributeMapping`, `allowIdpInitiated`, `providerKey`, timestamps. Configured connections are not stored. |
+| `samlRelays` | One row per sign-in in progress, keyed by a hash of the relay state, bound to the connection and the browser binding cookie, with the linking session when linking. Deleted when the response arrives. |
+| `samlRequests` | Outstanding AuthnRequest IDs, so a response's `InResponseTo` must match a request this service sent. |
+| `samlAssertions` | Assertion IDs already accepted, kept until they expire, so an assertion works once. |
+| `externalIdentities` | The link between an IdP subject and an identity, shared with OAuth sign-in. |
+
+## Errors
+
+| Code | Status | When |
+| --- | --- | --- |
+| [`SAML_INVALID`](/docs/reference/errors#saml_invalid) | 401 | Any assertion consumer service failure (the built-in route answers `401` even where the direct calls use 400, 413, or 415): an unsafe document, wrong binding, bad signature, wrong issuer, audience, or recipient, an expired or replayed assertion, an unknown `InResponseTo`, an unsolicited response without `allowIdpInitiated`, a missing encrypted assertion when required, or an oversized response. The body says only `SAML_INVALID`. |
+| [`NOT_FOUND`](/docs/reference/errors#not_found) | 404 | The connection ID is unknown or the connection is disabled. |
+| [`INVALID_INPUT`](/docs/reference/errors#invalid_input) | 400 | `createConnection` or `updateConnection` with an invalid ID, name, sign-on URL, issuer, certificates (one to five), email domains, attribute mapping, or encryption settings without a decryption key. |
+| [`CONFLICT`](/docs/reference/errors#conflict) | 409 | A connection with that ID exists, or the connection changed during an update. |
+| [`TENANT_INACTIVE`](/docs/reference/errors#tenant_inactive) | 403 | The connection's tenant is suspended. |
+| [`CSRF`](/docs/reference/errors#csrf) | 403 | A linking `POST` without a trusted `Origin` and the `X-Better-IAM` header. |
+| [`RECENT_AUTH_REQUIRED`](/docs/reference/errors#recent_auth_required) | 403 | Linking without a recent sign-in, as a root administrator, or from another tenant's session; or creating a connection, or widening its trust, without a recent sign-in. |
+| [`ACCESS_DENIED`](/docs/reference/errors#access_denied) | 403 | Widening a connection's trust when an owner or root administrator signs in through it and the caller could not control those accounts. |
+| [`VERIFIED_EMAIL_REQUIRED`](/docs/reference/errors#verified_email_required) | 400 | A first sign-in whose email is not in the connection's trusted email domains, or has no email. |
+| [`ACCOUNT_LINK_REQUIRED`](/docs/reference/errors#account_link_required) | 409 | An account with that email exists; link it explicitly. |
+| [`ACCOUNT_LINK_CONFLICT`](/docs/reference/errors#account_link_conflict) | 409 | The IdP subject is already linked to another account. |
+
+`createSamlService` throws a `configuration` error at startup for incomplete or duplicate configured connections.
 
 ## Next steps
 
