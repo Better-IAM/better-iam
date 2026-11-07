@@ -8,7 +8,6 @@ import (
 	"context"
 	"math"
 	"reflect"
-	"regexp"
 	"sort"
 
 	"github.com/Better-IAM/better-iam/go/apitypes"
@@ -28,9 +27,6 @@ const maxTagClaims = 10
 
 // defaultMaxSessionSeconds is the duration cap of a trust without `maxSessionSeconds`.
 const defaultMaxSessionSeconds = 3600.0
-
-// webIdentityTokenShape is /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*$/.
-var webIdentityTokenShape = regexp.MustCompile(`^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*$`)
 
 func webIdentityDisabled() *core.IamError {
 	return core.NewIamError("FEATURE_DISABLED", "Web identity federation is not enabled", 403)
