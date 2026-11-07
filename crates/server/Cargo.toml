@@ -53,11 +53,17 @@ uuid = { version = "1", features = ["v4"] }
 # IANA time zones for access windows (Intl.DateTimeFormat) and the ICU root collation of String#localeCompare.
 jiff = { version = "0.2", default-features = false, features = ["std", "tz-system", "tzdb-bundle-always"] }
 icu_collator = "2"
+# JOSE for session JWTs (EdDSA, ES256) and external web-identity tokens (RS*, PS*, ES256, ES384, EdDSA).
+ed25519-dalek = "2"
+p256 = { version = "0.13", default-features = false, features = ["ecdsa", "std"] }
+p384 = { version = "0.13", default-features = false, features = ["ecdsa", "std"] }
+rsa = { version = "0.9", default-features = false, features = ["std", "sha2"] }
 
 [dev-dependencies]
 better-iam-adapter-sqlite.workspace = true
 tempfile.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time", "net", "io-util"] }
+rand = "0.8"
 
 [lib]
 doctest = false
