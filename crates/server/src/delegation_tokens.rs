@@ -101,7 +101,7 @@ pub fn audience_refusal(agents: &[Identity], audience: &str) -> IamResult<Option
             .into_iter()
             .flatten()
         {
-            if crate::agents::audience_matches(pattern, audience)? {
+            if crate::agents::audience_matches(pattern, audience) {
                 allowed = true;
                 break;
             }

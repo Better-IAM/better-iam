@@ -24,7 +24,6 @@ use better_iam_core::{
     delegation_token_limits, delegation_token_scope, js as core_js,
 };
 use better_iam_types::api::delegations;
-use futures::FutureExt;
 use serde_json::{Map, Value, json};
 
 use crate::api::agents::{ActivityQuery, audit_activity};
@@ -42,8 +41,8 @@ use crate::delegations::{
     handoff_setting, handoff_value, live_ancestors, needs_confirmation, revoke_handoffs_below,
     spend_setting, spend_value,
 };
-use crate::js::{js_string, number, truthy};
-use crate::port::{Callback, decode, not_ported};
+use crate::js::{number, truthy};
+use crate::port::decode;
 use crate::session_kinds::{acts_in_own_right, next_watermark};
 use crate::temporary_credentials::session_name_value;
 use crate::utils::{by_newest_records, hash, id, token as random_token};
@@ -466,7 +465,7 @@ async fn run_involved(
         InvolvedRun::Get => summary(ctx, tx, &record).await,
         InvolvedRun::Activity(input) => {
             // The paging is validated as `auditActivity` does, once the caller may read the delegation.
-            let query = activity_query(input)?;
+            activity_query(input)?;
             let id = str_member(&record, "id").unwrap_or_default().to_owned();
             let tenant_id = str_member(&record, "tenantId")
                 .unwrap_or_default()
@@ -494,25 +493,18 @@ async fn run_involved(
                 }
             }
             let ids: Arc<HashSet<String>> = Arc::new(ids.into_iter().collect());
-            let matcher: Callback = Arc::new(move |args: Vec<Value>| {
-                let ids = ids.clone();
-                async move {
-                    let event = args.into_iter().next().unwrap_or(Value::Null);
-                    let resource = event
-                        .get("resourceId")
-                        .and_then(Value::as_str)
-                        .unwrap_or("");
-                    let delegation = event
-                        .get("sessionContext")
-                        .and_then(|context| context.get("delegationId"))
-                        .and_then(Value::as_str);
-                    Ok(Value::Bool(
-                        ids.contains(resource) || delegation.is_some_and(|id| ids.contains(id)),
-                    ))
-                }
-                .boxed()
-            });
-            let events = audit_activity(tx, &tenant_id, &query, &matcher).await?;
+            let matcher = move |event: &Record| {
+                let resource = event
+                    .get("resourceId")
+                    .and_then(Value::as_str)
+                    .unwrap_or("");
+                let delegation = event
+                    .get("sessionContext")
+                    .and_then(|context| context.get("delegationId"))
+                    .and_then(Value::as_str);
+                ids.contains(resource) || delegation.is_some_and(|id| ids.contains(id))
+            };
+            let events = audit_activity(tx, &tenant_id, input, &matcher).await?;
             Ok(serde_json::to_value(events).unwrap_or(Value::Array(Vec::new())))
         }
     }
@@ -697,12 +689,11 @@ fn activity_query(input: &Map<String, Value>) -> IamResult<ActivityQuery> {
 
 /// Signs a delegation token's claims with the deployment's `a2a` card signer (`signer.signJwt(claims, typ)`).
 async fn sign_delegation_token(
-    signer: &Value,
+    signer: &crate::a2a::CardSigner,
     claims: &Map<String, Value>,
     typ: &str,
 ) -> IamResult<String> {
-    let _ = (signer, claims, typ);
-    Err(not_ported("a2a.ts CardSigner.signJwt"))
+    Ok(signer.sign_jwt(claims, typ))
 }
 
 impl DelegationsApi {
@@ -1893,7 +1884,7 @@ impl DelegationsApi {
                     return Err(inactive());
                 }
                 let chain: Vec<String> = agents.iter().map(|item| item.id.clone()).collect();
-                let issuer = js_string(signer.get("issuer"));
+                let issuer = signer.issuer.clone();
                 let jti = random_token();
                 let actor = delegation_actor(&chain).map_err(|_| crate::js::internal_error())?;
                 let mut claims = Map::new();

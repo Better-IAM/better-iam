@@ -428,7 +428,12 @@ async fn live(
 ) -> Result<better_iam_core::DelegationTokenSummary, better_iam_core::IamError> {
     f.iam
         .a2a
-        .verify_delegation_token(token, &json!({ "audience": audience, "live": true }))
+        .verify_delegation_token(
+            token,
+            &better_iam_server::a2a::VerifyIssuedDelegationTokenOptions::from_value(Some(
+                &json!({ "audience": audience, "live": true }),
+            )),
+        )
         .await
 }
 
@@ -477,7 +482,12 @@ fn lets_an_agent_show_another_service_with_a_signed_token_that_it_acts_for_a_per
         let verified = f
             .iam
             .a2a
-            .verify_delegation_token(&token, &json!({ "audience": CALENDAR }))
+            .verify_delegation_token(
+                &token,
+                &better_iam_server::a2a::VerifyIssuedDelegationTokenOptions::from_value(Some(
+                    &json!({ "audience": CALENDAR }),
+                )),
+            )
             .await
             .unwrap();
         assert_eq!(verified.agent_id, assistant.id);
@@ -486,7 +496,18 @@ fn lets_an_agent_show_another_service_with_a_signed_token_that_it_acts_for_a_per
         let refused = |options: Value| {
             let token = token.clone();
             let a2a = &f.iam.a2a;
-            async move { refusal(a2a.verify_delegation_token(&token, &options).await).code }
+            async move {
+                refusal(
+                    a2a.verify_delegation_token(
+                        &token,
+                        &better_iam_server::a2a::VerifyIssuedDelegationTokenOptions::from_value(
+                            Some(&options),
+                        ),
+                    )
+                    .await,
+                )
+                .code
+            }
         };
         assert_eq!(
             refused(json!({ "audience": FILES })).await,
@@ -511,7 +532,12 @@ fn lets_an_agent_show_another_service_with_a_signed_token_that_it_acts_for_a_per
         assert_eq!(
             f.iam
                 .a2a
-                .verify_delegation_token(&token, &json!({ "audience": CALENDAR }))
+                .verify_delegation_token(
+                    &token,
+                    &better_iam_server::a2a::VerifyIssuedDelegationTokenOptions::from_value(Some(
+                        &json!({ "audience": CALENDAR })
+                    ))
+                )
                 .await
                 .unwrap()
                 .agent_id,
@@ -729,7 +755,12 @@ fn names_every_agent_a_hand_off_passed_through_in_nested_act_claims() {
         let verified = f
             .iam
             .a2a
-            .verify_delegation_token(&token, &json!({ "audience": FILES }))
+            .verify_delegation_token(
+                &token,
+                &better_iam_server::a2a::VerifyIssuedDelegationTokenOptions::from_value(Some(
+                    &json!({ "audience": FILES }),
+                )),
+            )
             .await
             .unwrap();
         assert_eq!(verified.agent_id, researcher.id);
@@ -1083,7 +1114,12 @@ fn matches_audiences_by_url_structure_quickly_and_re_checks_everything_live() {
         // Offline verification cannot see any of this before the token expires.
         f.iam
             .a2a
-            .verify_delegation_token(&first, &json!({ "audience": CALENDAR }))
+            .verify_delegation_token(
+                &first,
+                &better_iam_server::a2a::VerifyIssuedDelegationTokenOptions::from_value(Some(
+                    &json!({ "audience": CALENDAR }),
+                )),
+            )
             .await
             .unwrap();
     });
