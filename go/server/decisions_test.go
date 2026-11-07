@@ -8,6 +8,7 @@ package server
 import (
 	"context"
 	"errors"
+	"sort"
 	"strings"
 	"testing"
 
@@ -123,6 +124,14 @@ func (f *decisionFixture) audits(action string) []*core.Object {
 	if err != nil {
 		f.t.Fatal(err)
 	}
+	// Records come back in ID order (random UUIDs); the assertions read them oldest first.
+	sort.SliceStable(events, func(i, j int) bool {
+		left, right := events[i], events[j]
+		if a, b := jsNumber(left.Get("timestamp")), jsNumber(right.Get("timestamp")); a != b {
+			return a < b
+		}
+		return jsNumber(left.Get("sequence")) < jsNumber(right.Get("sequence"))
+	})
 	return events
 }
 
