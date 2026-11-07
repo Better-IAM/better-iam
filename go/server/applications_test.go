@@ -636,7 +636,7 @@ func TestApplicationsListCountsLiveAssignmentsAndRecentLaunches(t *testing.T) {
 	}
 	// The direct assignment ended; the group one stays; beta's launch is older than 30 days.
 	s.advance(31 * appsDay)
-	listOut, err = s.apps.List(s.ctx, s.ownerSignIn(),Input[apitypes.ApplicationsListInput](core.NewObject("tenantId", s.tenantID)))
+	listOut, err = s.apps.List(s.ctx, s.ownerSignIn(), Input[apitypes.ApplicationsListInput](core.NewObject("tenantId", s.tenantID)))
 	list = appsList(t, listOut.Value, err)
 	if jsNumber(list[0].Get("assignments")) != 1 || jsNumber(list[1].Get("launchedLast30Days")) != 0 {
 		t.Fatalf("list later: %v", list)
