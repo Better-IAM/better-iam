@@ -315,12 +315,6 @@ func TestDelegationsShowThePersonAndTheSponsorWhatTheAgentDid(t *testing.T) {
 	if f.allowed(token, "documents:write", "secret") || f.allowed(agentKey.Token, "documents:read", "own") {
 		t.Fatal("both actions must be denied")
 	}
-	// Another member sees nothing (refused before the activity is read).
-	f.person("mallory")
-	mallory := f.login("mallory")
-	_, err := f.api().Activity(f.ctx, mallory, Input[apitypes.DelegationsActivityInput](f.in("delegationId", delegation.Get("id"))))
-	expectCodeOrSkip(t, err, "ACCESS_DENIED")
-
 	forAlice := f.items(f.api().Activity(f.ctx, aliceSession, Input[apitypes.DelegationsActivityInput](f.in("delegationId", delegation.Get("id")))))
 	actions := []string{}
 	for _, event := range forAlice {
@@ -335,6 +329,12 @@ func TestDelegationsShowThePersonAndTheSponsorWhatTheAgentDid(t *testing.T) {
 			dlgMatches(t, event, core.NewObject("actorId", alice.Get("id"), "resourceId", "secret", "outcome", "deny"))
 		}
 	}
+	// Another member sees nothing (refused before the activity is read). Checked last: the refusal is itself
+	// audited against the delegation, so it would show in the activity above.
+	f.person("mallory")
+	mallory := f.login("mallory")
+	_, err := f.api().Activity(f.ctx, mallory, Input[apitypes.DelegationsActivityInput](f.in("delegationId", delegation.Get("id"))))
+	expectCodeOrSkip(t, err, "ACCESS_DENIED")
 }
 
 func TestDelegationsHoldBackSensitiveActionsUntilThePersonConfirmsEachOne(t *testing.T) {
