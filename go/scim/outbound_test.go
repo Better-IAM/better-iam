@@ -591,11 +591,22 @@ func TestSyncsFromIamEventsGuardsManagementAndValidatesInput(t *testing.T) {
 	}
 	ok(t, handler(bg, obj("tenantId", "a", "action", "iam:identities:update")))
 	ok(t, handler(bg, obj("tenantId", "a", "action", "iam:groups:update")))
+	// Wait for the scheduled run to finish, not just for its users to appear downstream: a SyncTarget made while it
+	// is still in flight shares its result (runOnce), as in TypeScript. lastRun is stored before the run leaves
+	// p.running, so reading it first and then finding nothing in flight means that run is done.
+	settled := func() bool {
+		if !must(service.GetTarget(bg, admin, "a", id)).Has("lastRun") {
+			return false
+		}
+		service.mu.Lock()
+		defer service.mu.Unlock()
+		return len(service.running) == 0
+	}
 	deadline := time.Now().Add(5 * time.Second)
-	for f.downstream.userCount() != 2 && time.Now().Before(deadline) {
+	for !settled() && time.Now().Before(deadline) {
 		time.Sleep(20 * time.Millisecond)
 	}
-	if f.downstream.userCount() != 2 {
+	if !settled() || f.downstream.userCount() != 2 {
 		t.Fatal("the debounced sync did not run")
 	}
 	unsubscribe()
