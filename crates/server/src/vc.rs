@@ -1902,14 +1902,15 @@ pub async fn sweep_credentials(
     ctx: &Arc<ServerContext>,
     input: Option<&Value>,
 ) -> IamResult<crate::vc::VcSweepResult> {
+    assert_vc(ctx)?;
     let requested = match input {
         None => None,
+        // Reading `tenantId` of `null` is a TypeError.
         Some(Value::Null) => return Err(thrown()),
         Some(Value::Object(input)) => input.get("tenantId").filter(|value| truthy(Some(value))),
         // A primitive has no `tenantId`.
         Some(_) => None,
     };
-    assert_vc(ctx)?;
     let now = ctx.now();
     let tenant_ids: Vec<String> = match requested {
         Some(tenant_id) => vec![crate::js::js_string(Some(tenant_id))],

@@ -2582,6 +2582,7 @@ impl VcRuntime {
         presentation: &str,
         options: Option<&Value>,
     ) -> Result<VerifiedCredential, VerifyFailure> {
+        assert_vc(&self.ctx)?;
         let options = local_options(options)?;
         verify_local_presentation(&self.ctx, presentation, &options).await
     }
@@ -2608,6 +2609,7 @@ impl VcRuntime {
         match method {
             "verify" => Some(
                 async {
+                    assert_vc(&self.ctx)?;
                     let options = local_options(arg(1))?;
                     // A presentation that is not a string fails like one without `~` (`malformed`).
                     let presentation = match arg(0) {
