@@ -270,6 +270,10 @@ func TestFlowsRedeemAMemberInvitationOnceUnderTheInviterAuthority(t *testing.T) 
 	var mu sync.Mutex
 	var inbox []auth.DeliveryMessage
 	f := newOpsFixture(t, func(options *BetterIamOptions) {
+		options.Permissions = &core.PermissionsConfig{Actions: []string{"documents:read"}}
+		options.ResolveResource = func(ctx context.Context, reference core.ResourceRef) (*ResolvedResource, error) {
+			return &ResolvedResource{TenantID: reference.TenantID, Type: reference.Type, ID: reference.ID, Attributes: core.NewObject()}, nil
+		}
 		options.Authentication.SendEmail = func(ctx context.Context, message auth.DeliveryMessage) error {
 			mu.Lock()
 			defer mu.Unlock()
