@@ -247,6 +247,11 @@ function exchange(port, { method = 'POST', path, headers = {}, body }) {
     );
     req.setTimeout(60_000, () => req.destroy(new Error(`timeout on ${method} ${path}`)));
     req.on('error', reject);
+    // A pooled keep-alive socket the server resets while it sits idle (a server shutting down) must not crash the
+    // runner with an unhandled ECONNRESET; errors during an exchange still reach `req` and reject it.
+    req.on('socket', (socket) => {
+      if (!socket.listenerCount('error')) socket.on('error', () => {});
+    });
     if (payload) req.write(payload);
     req.end();
   });
