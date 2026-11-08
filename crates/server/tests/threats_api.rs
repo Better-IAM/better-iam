@@ -993,6 +993,149 @@ fn playbooks_that_suspend_clearances_need_the_clearance_officer_permission() {
             )
             .await;
         assert_eq!(stored[0]["enabled"], json!(false));
+        // Each refusal is an audited denial of the operation.
+        let denials = f
+            .find(
+                "audit",
+                Filter::new()
+                    .eq("tenantId", tenant.clone())
+                    .eq("action", "iam:threats:manage")
+                    .eq("outcome", "deny"),
+            )
+            .await;
+        assert_eq!(denials.len(), 2);
+    });
+}
+
+// --- tests/threats-clearances.test.ts (the API's part) -------------------------------------------------------------
+
+#[test]
+#[ignore = "needs threats.ts, threat-engine.ts, threat-response.ts and threat-rules.ts (threats units)"]
+fn lets_only_people_who_may_suspend_clearances_write_playbooks_that_do() {
+    run(|| async {
+        let f =
+            organization(|options| options.clearances = Some(ClearanceOptions::default())).await;
+        let tenant = f.tenant_id.clone();
+        let threats = &f.iam.api.threats;
+        let (manager_id, manager) = member_with(
+            &f,
+            "manager",
+            json!([{ "effect": "allow", "actions": ["iam:threats:read", "iam:threats:manage"], "resources": ["*"] }]),
+        )
+        .await;
+        let suspend = json!([{ "kind": "suspend-clearance" }]);
+        let denied_for = || {
+            let (tenant, manager_id) = (tenant.clone(), manager_id.clone());
+            let f = &f;
+            async move {
+                f.find(
+                    "audit",
+                    Filter::new()
+                        .eq("tenantId", tenant)
+                        .eq("action", "iam:threats:manage")
+                        .eq("outcome", "deny")
+                        .eq("actorId", manager_id),
+                )
+                .await
+                .len()
+            }
+        };
+        let error = fails(
+            threats
+                .create_playbook(
+                    &manager,
+                    body(json!({ "tenantId": tenant, "name": "Suspend everyone", "trigger": {}, "actions": suspend })),
+                )
+                .await,
+        );
+        assert_eq!(code(&error), "ACCESS_DENIED");
+        assert_eq!(denied_for().await, 1);
+        let notify = ok(threats
+            .create_playbook(
+                &manager,
+                body(json!({ "tenantId": tenant, "name": "Notify", "trigger": {}, "actions": [{ "kind": "notify" }] })),
+            )
+            .await);
+        let error = fails(
+            threats
+                .update_playbook(
+                    &manager,
+                    body(json!({
+                        "tenantId": tenant, "playbookId": notify["id"],
+                        "actions": [{ "kind": "notify" }, { "kind": "suspend-clearance" }],
+                    })),
+                )
+                .await,
+        );
+        assert_eq!(code(&error), "ACCESS_DENIED");
+        let stored = |playbook_id: Value| {
+            let f = &f;
+            async move {
+                f.find("threatPlaybooks", Filter::new().eq("id", playbook_id))
+                    .await
+                    .remove(0)
+            }
+        };
+        assert_eq!(
+            stored(notify["id"].clone()).await["actions"],
+            json!([{ "kind": "notify" }])
+        );
+
+        // Written by someone who may (the owner), it can be renamed, described and switched off by the manager, but
+        // not switched back on or retriggered.
+        let owner = f.session(&f.owner_id, false).await;
+        let written = ok(threats
+            .create_playbook(
+                &owner,
+                body(json!({
+                    "tenantId": tenant, "name": "Suspend on probing",
+                    "trigger": { "ruleIds": ["classified-access-attempts"] }, "actions": suspend,
+                })),
+            )
+            .await);
+        let update = |change: Value| {
+            let (tenant, manager) = (tenant.clone(), manager.clone());
+            let playbook_id = written["id"].clone();
+            async move {
+                threats
+                    .update_playbook(
+                        &manager,
+                        body(merged(
+                            json!({ "tenantId": tenant, "playbookId": playbook_id }),
+                            change,
+                        )),
+                    )
+                    .await
+                    .and_then(|reply| reply.into_value())
+            }
+        };
+        update(json!({ "name": "Suspend on classified probing", "description": "Owner-approved" }))
+            .await
+            .unwrap();
+        assert_matches(
+            &update(json!({ "enabled": false })).await.unwrap(),
+            json!({ "enabled": false }),
+        );
+        for change in [json!({ "enabled": true }), json!({ "trigger": {} })] {
+            assert_eq!(code(&update(change).await.unwrap_err()), "ACCESS_DENIED");
+        }
+        assert_matches(
+            &Value::Object(stored(written["id"].clone()).await),
+            json!({
+                "name": "Suspend on classified probing",
+                "enabled": false,
+                "trigger": { "ruleIds": ["classified-access-attempts"] },
+                "actions": suspend,
+            }),
+        );
+        // Taking the suspension out only narrows what it does.
+        assert_matches(
+            &update(json!({ "actions": [{ "kind": "notify" }] }))
+                .await
+                .unwrap(),
+            json!({ "actions": [{ "kind": "notify" }] }),
+        );
+        assert_eq!(denied_for().await, 4);
     });
 }
 

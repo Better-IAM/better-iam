@@ -891,8 +891,7 @@ fn merge_rules(
                     let bounds = rule
                         .get("tunable")
                         .and_then(|tunable| tunable.get(field.as_str()))
-                        .and_then(Value::as_array)
-                        .filter(|bounds| !bounds.is_empty());
+                        .and_then(Value::as_array);
                     if raw.is_null() {
                         setting.shift_remove(field.as_str());
                     } else if let Some(bounds) = bounds {
@@ -983,8 +982,13 @@ fn rule_view(rule: &Value, settings: &Value, stored: Option<&Record>) -> Value {
             Value::Bool(effective_member("everyone") == Some(&Value::Bool(true))),
         );
     }
-    let customized = matches!(own, Some(Value::Object(own)) if !own.is_empty())
-        || matches!(own, Some(value) if !value.is_object());
+    // `own !== undefined && Object.keys(own).length > 0`.
+    let customized = match own {
+        Some(Value::Object(own)) => !own.is_empty(),
+        Some(Value::Array(items)) => !items.is_empty(),
+        Some(Value::String(text)) => !text.is_empty(),
+        _ => false,
+    };
     view.insert("customized".into(), Value::Bool(customized));
     Value::Object(view)
 }
@@ -2460,13 +2464,14 @@ impl ThreatsApi {
                 let mut incidents: Vec<Record> = found.into_iter().flatten().collect();
                 if several {
                     incidents.sort_by(|a, b| {
-                        descending(
-                            num_member(Some(&Value::Object(a.clone())), "lastDetectedAt")
-                                .unwrap_or(f64::NAN),
-                            num_member(Some(&Value::Object(b.clone())), "lastDetectedAt")
-                                .unwrap_or(f64::NAN),
-                        )
-                        .then_with(|| by_id(str_of(a, "id"), str_of(b, "id")))
+                        let last = |record: &Record| {
+                            record
+                                .get("lastDetectedAt")
+                                .and_then(core_js::as_number)
+                                .unwrap_or(f64::NAN)
+                        };
+                        descending(last(a), last(b))
+                            .then_with(|| by_id(str_of(a, "id"), str_of(b, "id")))
                     });
                 }
                 let shown = page(&incidents, offset, limit);
