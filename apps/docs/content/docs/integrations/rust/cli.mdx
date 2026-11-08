@@ -1,0 +1,211 @@
+---
+title: CLI
+metaTitle: Rust better-iam CLI
+description: The better-iam command line built in Rust, with the same 60 commands, flags, output formats, and exit codes as the npm CLI, configured by better-iam.json, and extensible with project commands.
+icon: SquareTerminal
+status: experimental
+sources:
+  - crates/cli/README.md
+  - crates/cli/src/lib.rs
+  - crates/cli/src/main.rs
+  - crates/cli/src/config.rs
+  - crates/cli/src/commands/mod.rs
+  - crates/cli/src/commands/setup.rs
+  - crates/cli/src/commands/access.rs
+  - crates/cli/src/profiles.rs
+  - crates/cli/tests/cli.rs
+---
+
+import { Rust, SquareTerminal, Server } from '@/lib/icons';
+
+The `better-iam-cli` crate builds a native `better-iam` binary: the Rust counterpart of
+[`@better-iam/cli`](/docs/reference/cli). It has the same commands, flags, help text, output formats
+(`--format json|compact|table`, `--query`), and exit codes, and it works on the same database, so you can run the
+scheduled jobs of a TypeScript deployment from the Rust binary and the other way around. It needs no Node.js runtime,
+which suits containers and hosts that run only Rust or Go services.
+
+<Callout type="warn" title="Not on crates.io yet">
+Install the binary from a checkout of the repository. See the [Rust overview](/docs/integrations/rust) for the
+current parity status.
+</Callout>
+
+## Install
+
+```bash
+# from a checkout of the repository
+cargo install --path crates/cli                      # SQLite and PostgreSQL
+cargo install --path crates/cli --features libsql    # also libsql:// and file: databases
+better-iam --version
+```
+
+The binary is named `better-iam`, like the npm CLI's `bin`. When both are installed, the one earlier on your `PATH`
+wins; `better-iam doctor` reports which one ran (`"runtime": "rust better-iam-cli 0.3.1"`).
+
+## Quick start
+
+```bash
+better-iam init                                  # writes better-iam.json for SQLite
+export BETTER_IAM_SECRET=$(better-iam secret)    # keep it stable: it seals stored secrets
+better-iam migrate
+BETTER_IAM_ROOT_EMAIL=root@example.com BETTER_IAM_ROOT_PASSWORD='a long passphrase' better-iam bootstrap
+better-iam doctor
+```
+
+`better-iam init --database postgres` (or `libsql`) writes a configuration that reads the database URL from the
+environment instead. `better-iam help` lists every command, `better-iam help <command>` shows one command's flags and
+examples, and `better-iam help --json` prints the machine-readable manifest.
+
+## Configuration
+
+This is the one real difference from the npm CLI. The npm CLI imports `better-iam.config.mjs`, a JavaScript module;
+the Rust CLI reads the standalone configuration every implementation shares, `better-iam.json`
+([From better-iam.json](/docs/integrations/rust#from-better-iamjson) describes the format). It looks for it in this
+order:
+
+1. `--config PATH`
+2. the `BETTER_IAM_CONFIG` environment variable
+3. the nearest `better-iam.json` in the working directory or a parent, up to the repository root or your home
+   directory (files another user could have planted are skipped)
+4. no file: `BETTER_IAM_DATABASE_URL` and `BETTER_IAM_SECRET` alone
+
+With environment variables only, `BETTER_IAM_DATABASE_URL` is `postgres://...`, `sqlite:PATH` (or a path ending in
+`.db`), or `libsql://...` / `file:...` (with the `libsql` feature; `BETTER_IAM_DATABASE_TOKEN` authenticates). The
+optional `BETTER_IAM_PREVIOUS_SECRETS` (comma-separated), `BETTER_IAM_BASE_URL`, `BETTER_IAM_BASE_PATH`, and
+`BETTER_IAM_TRUSTED_ORIGINS` complete it.
+
+The module's `cli` export becomes a `cli` member of the JSON file, holding flag defaults per command (or `*` for every
+command that has the flag):
+
+```json title="better-iam.json"
+{
+  "store": { "kind": "sqlite", "path": "./better-iam.db" },
+  "secret": { "env": "BETTER_IAM_SECRET" },
+  "baseURL": "https://iam.example.com",
+  "cli": { "defaults": { "sweep": { "retention-days": 30 }, "*": { "format": "compact" } } }
+}
+```
+
+A flag on the command line wins over its environment variable, which wins over the `cli` default.
+
+## How it matches the npm CLI
+
+| | npm `better-iam` | Rust `better-iam` |
+| --- | --- | --- |
+| Commands | 60 built-in commands | The same 60, with the same names, flags, and help |
+| Output | `--format json\|compact\|table`, `--query` | The same |
+| Exit codes | 0 on success, 2 for a usage mistake, 1 otherwise; `vault-run` exits with its command's status | The same |
+| Configuration | `better-iam.config.mjs` (or `.js`, `.ts`, `.mts`, `.cjs`) | `better-iam.json` |
+| `init` | Writes a module; `--typescript` writes `better-iam.config.ts` | Writes `better-iam.json`; `--typescript` is refused |
+| `config-plan`, `config-apply`, `config-validate` input | JSON or a JavaScript/TypeScript module | JSON |
+| `config-export --output` | `.json`, `.ts`, or `.mjs` | The same (`.ts` and `.mjs` for Node.js projects) |
+| Project commands | The config module's `commands` export | Your own binary built with `create_cli` |
+| Saved sessions (`login`) | `~/.config/better-iam/credentials.json` (`%APPDATA%` on Windows) | The same file and `BETTER_IAM_CREDENTIALS` override |
+| libSQL | `@better-iam/adapter-libsql` installed next to the CLI | The `libsql` feature |
+
+Because the commands are the same, the [CLI reference](/docs/reference/cli) documents both: every flag, environment
+variable, and example there applies to the Rust binary with `--config better-iam.json` in place of a module path. The
+groups are the same too:
+
+- **Setup**: `init`, `migrate`, `bootstrap`, `recover-root`, `doctor`, `secret`, `ssh-host-enroll`
+- **Operations** (the scheduled jobs): `outbox`, `purge`, `sweep`, `digest`, `remind`, `reconcile`,
+  `close-certifications`, `monitor-invariants`, `detect-threats`, `rotate-secrets`, the `billing-*` jobs,
+  `ssh-host-sync`, `ssh-sweep`, `vc-sweep`, `compliance-evaluate`, and the `vault-*` maintenance jobs
+- **Audit**: `audit-verify`, `audit-export`, `audit-prune`, `audit-archive`, `audit-verify-archive`
+- **Storage**: `store-export`, `store-import`, `store-copy`
+- **Access** (as a signed-in token): `config-export`, `config-plan`, `config-apply`, `config-validate`, `analyze`,
+  `report`, `mine-roles`, `check-invariants`, `whoami`, `can`, `explain`, `who-can`, `spend`, `ssh-cert`,
+  `vault-get`, `vault-put`, `vault-run`
+- **API and session**: `api`, `login`, `logout`, `profiles`, `token`
+- **Shell**: `completion`
+
+```bash
+better-iam login --url https://iam.example.com --org acme --email me@acme.test
+better-iam api identities.list limit:=5 --format table
+better-iam config-plan --tenant ten_123 --input iam/tenant.json --fail-on-drift
+better-iam store-copy --config sqlite.json --target-config postgres.json
+```
+
+## Schedule the jobs
+
+The operation commands are the same jobs the npm CLI runs, against the same database, so a deployment can schedule them
+with either binary. A container that already runs a Rust server can run them with the Rust binary:
+
+```bash title="crontab"
+*/1 * * * *  better-iam outbox --config /etc/better-iam/better-iam.json
+0 * * * *    better-iam sweep --config /etc/better-iam/better-iam.json
+0 3 * * *    better-iam purge --config /etc/better-iam/better-iam.json
+```
+
+[Scheduling the job commands](/docs/reference/cli#scheduling-the-job-commands) lists every job and how often to run
+it. Give the CLI the same `BETTER_IAM_SECRET` and `BETTER_IAM_PREVIOUS_SECRETS` as the servers.
+
+## Project commands
+
+A project ships its own commands by building its own binary on the library: `create_cli` takes the built-in commands
+plus yours, with the same parsing, help, configuration loading, and output. It replaces the `commands` export of the
+npm config module.
+
+```toml title="Cargo.toml"
+[dependencies]
+better-iam-cli = { path = "../better-iam/crates/cli" }
+serde_json = "1"
+```
+
+```rust title="src/bin/iam.rs"
+use better_iam_cli::{CommandTarget, CreateCliOptions, FlagSpec, create_cli, define_command};
+use serde_json::json;
+
+fn main() {
+    let seed = define_command("seed", "Create the demo organization", |context| async move {
+        let iam = context.iam()?; // the instance better-iam.json describes
+        let slug = context.flags.string("slug").unwrap_or("demo").to_owned();
+        let _ = iam; // create the organization with iam.api.* here
+        Ok(Some(json!({ "created": slug })))
+    })
+    .target(CommandTarget::Config)
+    .flag("slug", FlagSpec::string("Organization slug").default_text("demo"));
+
+    let cli = create_cli(CreateCliOptions { commands: vec![seed], ..Default::default() });
+    std::process::exit(better_iam_cli::run_binary(std::env::args().skip(1).collect(), Some(cli)));
+}
+```
+
+```bash
+cargo run --bin iam -- seed --slug acme
+# { "created": "acme" }
+```
+
+- `define_command(name, summary, run)` takes an async closure that receives a `CommandContext`. Returning
+  `Ok(Some(value))` prints the value with `--format` and `--query` applied; `Ok(None)` prints nothing.
+- `.target(...)` says what the command needs: `CommandTarget::Config` (the configuration and database,
+  `context.iam()`), `CommandTarget::Token` (a saved session or token, `context.api(...)`), or `CommandTarget::None`.
+- `.flag(name, FlagSpec::string(...))`, `FlagSpec::integer`, and `FlagSpec::boolean` declare flags, with `.required()`,
+  `.env("NAME")`, `.default_text(...)`, `.choices(...)`, `.min(...)` and `.max(...)`; `.arg(ArgSpec::new(...))`
+  declares positional arguments. The `cli.defaults` of `better-iam.json` apply to project commands too.
+- `run_binary` runs the program like the `better-iam` binary does: on a runtime with large stacks, printing
+  `CODE: message` on failure and returning the exit status. `CreateCliOptions { builtins: Some(false), .. }` ships only
+  your commands.
+
+To run a command from Rust code, such as a test, call `cli.run(&argv, Some(io)).await` on the program, or
+`better_iam_cli::run_cli(&argv, None)` for the built-in commands; both return `CliResult<()>`, whose `CliError`
+carries the error code.
+
+## The standalone server binary
+
+The `better-iam` binary does not serve HTTP, as the npm CLI does not. The `better-iam-server` binary from the
+`better-iam-server` crate does: it reads the same `better-iam.json`, migrates, and serves the API. See
+[The standalone server](/docs/integrations/rust#the-standalone-server).
+
+## Related
+
+<Cards>
+  <Card icon={<SquareTerminal />} title="CLI reference" href="/docs/reference/cli">
+    Every command, flag, and environment variable, shared by both binaries.
+  </Card>
+  <Card icon={<Rust />} title="Rust overview" href="/docs/integrations/rust">
+    Crates, better-iam.json, and the mixed-fleet guarantee.
+  </Card>
+  <Card icon={<Server />} title="axum" href="/docs/integrations/rust/axum">
+    Serve the API from a Rust application.
+  </Card>
+</Cards>

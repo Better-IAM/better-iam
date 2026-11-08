@@ -1,0 +1,321 @@
+---
+title: Typed client
+metaTitle: Rust client for the Better IAM API
+description: Call a Better IAM server from Rust with better-iam-client, a typed method per route with generated request and result types, CSRF headers, bearer tokens, structured errors, a session store, and device proofs.
+icon: Globe
+status: experimental
+sources:
+  - crates/client/README.md
+  - crates/client/src/lib.rs
+  - crates/client/src/api.rs
+  - crates/client/src/session.rs
+  - crates/client/src/device.rs
+  - crates/client/tests/client.rs
+  - crates/client/tests/client_hooks.rs
+  - crates/client/tests/session.rs
+  - crates/better-iam/tests/umbrella.rs
+---
+
+import { Rust, Server, Globe } from '@/lib/icons';
+
+`better-iam-client` is the Rust port of [`@better-iam/client`](/docs/concepts/client). Every route of the HTTP API is
+a method with the request and result types of `better-iam-types`, generated from the TypeScript server's OpenAPI
+document, so the JSON matches the server member for member. It talks to any Better IAM server: TypeScript, Rust, or
+Go.
+
+Calls behave exactly like the TypeScript client: `POST {basePath}/{group}/{method}` with a JSON body, the CSRF headers
+the server requires (`content-type: application/json`, `x-better-iam: 1`), a bearer token read at each request and
+refused locally when it cannot be one the server issues, structured errors that keep the server's code without
+echoing response bodies, an optional single retry of rate-limited calls, and `X-Request-Id` tagging.
+
+<Callout type="warn" title="Not on crates.io yet">
+The Rust crates are installed from a checkout of the repository. See the [Rust overview](/docs/integrations/rust)
+for the current parity status.
+</Callout>
+
+## Installation
+
+Use the umbrella crate (the `client` feature is on by default) or the client crate alone:
+
+```toml title="Cargo.toml"
+[dependencies]
+better-iam = { path = "../better-iam/crates/better-iam", default-features = false, features = ["client"] }
+# or: better-iam-client = { path = "../better-iam/crates/client" }
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+```
+
+With the umbrella, the client is `better_iam::client` and the API types are `better_iam::types`; with the crate alone
+they are `better_iam_client` and `better_iam_types`. The `default-transport` feature (on by default) is an HTTP(S)
+transport built on hyper and rustls with the webpki roots, with no OpenSSL dependency. Turn it off and pass your own
+`Fetch` to route requests elsewhere.
+
+## Create the client
+
+`create_iam_client(options)` validates the options and returns an `IamClient`. `ClientOptions::new(base_url)` takes
+the server's origin (required: a Rust process has no current page) and has a builder method per option.
+
+```rust title="src/iam_client.rs"
+use better_iam::client::{ClientOptions, Error, IamClient, create_iam_client};
+
+pub fn iam_client(token: String) -> Result<IamClient, Error> {
+    create_iam_client(ClientOptions::new("https://app.example.com").token(token))
+}
+```
+
+`IamClient` is cheap to clone and safe to share across tasks.
+
+## Call the API
+
+Each API group is an accessor (`client.auth()`, `client.tenants()`, `client.identities()`, ...) with one method per
+route; the decision routes are on the client itself (`client.authorize(input)`, `client.authorize_many(input)`,
+`client.list_accessible(input)`). A method returns a `Call`, which you `.await`.
+
+```rust title="src/whoami.rs"
+use better_iam::client::{Error, IamClient};
+
+pub async fn whoami(client: &IamClient) -> Result<(), Error> {
+    let session = client.auth().get_session().await?;
+    println!("{} in {}", session.identity.name, session.session.tenant_id);
+    Ok(())
+}
+```
+
+**Route:** `POST /api/iam/auth/getSession`
+
+Inputs are the generated `<Method>Input` structs, which implement `Default` when every member is optional or easy to
+leave empty. Results are the generated `<Method>Output` types; unions such as the sign-in result are enums.
+
+```rust title="src/sign_in.rs"
+use better_iam::client::{ConfirmMfaInput, Error, IamClient, MfaChallenge};
+use better_iam::types::api::{auth, tenants};
+use better_iam::types::schemas::SignInResult;
+
+pub async fn sign_in(client: &IamClient, org: &str, email: &str, password: &str) -> Result<Option<String>, Error> {
+    let organization = client
+        .tenants()
+        .lookup(tenants::LookupInput { slug: Some(org.into()), ..Default::default() })
+        .await?;
+    let result = client
+        .auth()
+        .sign_in(auth::SignInInput {
+            tenant_id: organization.tenant_id.clone(),
+            email: email.into(),
+            password: password.into(),
+            ..Default::default()
+        })
+        .await?;
+    match result {
+        SignInResult::SessionResult(session) => Ok(Some(session.token)),
+        SignInResult::MfaRequired(challenge) => {
+            // Ask for the code, then confirm it with the challenge.
+            client
+                .auth()
+                .confirm_mfa(ConfirmMfaInput {
+                    credential: Some(MfaChallenge {
+                        tenant_id: organization.tenant_id,
+                        challenge: challenge.challenge,
+                    }),
+                    code: "123456".into(),
+                    remember_device: None,
+                })
+                .await?;
+            Ok(None)
+        }
+    }
+}
+```
+
+**Route:** `POST /api/iam/tenants/lookup`, `POST /api/iam/auth/signIn`, `POST /api/iam/auth/confirmMfa`
+
+### Per-call options
+
+A `Call` takes an abort signal and extra headers before it is awaited:
+
+```rust
+use better_iam::client::AbortController;
+
+let controller = AbortController::new();
+let session = client
+    .auth()
+    .get_session()
+    .signal(controller.signal())
+    .header("x-trace-id", "trace-1")
+    .await?;
+```
+
+Aborting the signal fails the call with `Error::Aborted` and the signal's reason.
+
+### Plugin endpoints and untyped calls
+
+`client.request(path, &input)` sends any route relative to the base path and deserializes the result into the type you
+name. Use it for plugin endpoints, which have no generated method.
+
+```rust
+use serde_json::{Value, json};
+
+let projects: Value = client
+    .request("plugins/projects/list", &json!({ "tenantId": tenant_id }))
+    .await?;
+```
+
+## Options
+
+| Builder method | Field | Description |
+| --- | --- | --- |
+| `ClientOptions::new(base_url)` | `base_url` | The server's origin. Required |
+| `base_path(path)` | `base_path` | The API base path, `/api/iam` by default |
+| `token(token)` | `token` | A fixed bearer token. Opaque tokens and IAM-signed session JWTs are accepted; any other shape fails with `INVALID_TOKEN` before a request is made |
+| `token_fn(closure)` | `token` | Reads the token at each request; `Ok(None)` sends no `Authorization` header |
+| `headers(pairs)` | `headers` | Headers added to every request |
+| `headers_fn(closure)` | `headers` | Headers read at each request, for example device proofs |
+| `fetch(fetch)` / `fetch_fn(closure)` | `fetch` | The transport; the built-in hyper transport by default |
+| `on_unauthenticated(hook)` | `on_unauthenticated` | Called once per request the server refused because the session can no longer be used (`UNAUTHENTICATED`, `SESSION_NETWORK_MISMATCH`); never for credential failures such as `INVALID_CREDENTIALS` |
+| `retry_rate_limited(RetryRateLimited { max_wait_ms })` | `retry_rate_limited` | Retry a `RATE_LIMITED` answer once after the server's `retryAfterMs` when it is at most `max_wait_ms` (5 seconds by default). Off by default |
+| `request_id(RequestId::Generate)` | `request_id` | Send an `X-Request-Id` on every request (`RequestId::Custom` supplies your own) and expose it on errors |
+
+```rust title="src/iam_client.rs"
+use std::sync::{Arc, Mutex};
+
+use better_iam::client::{ClientOptions, Error, IamClient, RequestId, RetryRateLimited, create_iam_client};
+
+pub fn session_client(current_token: Arc<Mutex<Option<String>>>) -> Result<IamClient, Error> {
+    create_iam_client(
+        ClientOptions::new("https://app.example.com")
+            .token_fn(move || {
+                let token = current_token.lock().unwrap().clone();
+                async move { Ok(token) }
+            })
+            .on_unauthenticated(|error| eprintln!("session ended: {}", error.code))
+            .retry_rate_limited(RetryRateLimited { max_wait_ms: Some(2_000.0) })
+            .request_id(RequestId::Generate),
+    )
+}
+```
+
+## Errors
+
+A call fails with `better_iam::client::Error`, which names each case the TypeScript client rejects with:
+
+| Variant | When |
+| --- | --- |
+| `Error::Client(IamClientError)` | The server refused the call, its answer was invalid, or the client refused to send it |
+| `Error::Aborted(reason)` | The call's signal was aborted |
+| `Error::Fetch(error)` | The transport failed (network failure, refused redirect) |
+| `Error::Other(error)` | A configured callback (the token or headers provider) failed, or a header was invalid |
+
+`IamClientError` keeps the server's `code`, `message`, and `status`, plus `retry_after_ms` for `RATE_LIMITED`,
+`region` and `location` for `WRONG_REGION`, and the `request_id` the call carried. Errors raised before anything was
+sent (configuration, path, token) have status 0. `error.code()` and `error.status()` read them from any `Error`.
+
+```rust
+use better_iam::client::Error;
+
+match client.auth().list_sessions().await {
+    Ok(sessions) => println!("{} sessions", sessions.len()),
+    Err(error) if error.code() == Some("UNAUTHENTICATED") => println!("signed out"),
+    Err(Error::Client(error)) => eprintln!("{} ({}), request {:?}", error.code, error.status, error.request_id),
+    Err(error) => return Err(error),
+}
+```
+
+The codes are those of the [error reference](/docs/reference/errors).
+
+## Session store
+
+`better_iam::client::session` is the framework-neutral session store of `@better-iam/client/session`: the current
+identity and session, a status (`Loading`, `Authenticated`, `Unauthenticated`, `Error`), the last error, and change
+notifications.
+
+```rust title="src/session.rs"
+use std::sync::Arc;
+
+use better_iam::client::session::{SessionStatus, SessionStoreOptions, create_session_store};
+use better_iam::client::{Error, IamClient};
+
+pub async fn track(client: IamClient) -> Result<(), Error> {
+    let store = create_session_store(client, SessionStoreOptions::default());
+    let subscription = store.subscribe(Arc::new(|| println!("session changed")));
+    let snapshot = store.refresh().await;
+    if snapshot.status == SessionStatus::Authenticated {
+        println!("{:?}", snapshot.session.map(|session| session.identity.email));
+    }
+    store.sign_out().await?; // revokes the session on the server and publishes Unauthenticated
+    subscription.unsubscribe();
+    Ok(())
+}
+```
+
+`IamClient` implements the store's `SessionClient` trait (`get_session` and `sign_out`); another implementation can
+stand in for tests. `is_unauthenticated(&error)` tells a 401 or 403 from a transport failure, for both client errors
+and the server's `IamError`.
+
+## Device proofs
+
+`better_iam::client::device` signs registered-device proofs (`x-better-iam-device`), as
+`@better-iam/client/device` does. The prover keeps an ECDSA P-256 key pair (in memory by default) and signs a
+short-lived proof bound to the session it presents.
+
+```rust title="src/device.rs"
+use std::sync::{Arc, Mutex};
+
+use better_iam::client::device::{DeviceProverOptions, create_device_prover};
+use better_iam::client::{ClientOptions, Error, create_iam_client};
+
+pub async fn with_device_proofs(origin: &str) -> Result<(), Error> {
+    let device = create_device_prover(DeviceProverOptions::default())?;
+    let prover = device.clone();
+    let session_id = Arc::new(Mutex::new(None::<String>));
+    let current = session_id.clone();
+    let client = create_iam_client(ClientOptions::new(origin).headers_fn(move || {
+        let (prover, id) = (prover.clone(), current.lock().unwrap().clone());
+        async move { Ok(prover.headers(id.as_deref(), None).await) }
+    }))?;
+    *session_id.lock().unwrap() = Some(client.auth().get_session().await?.session.id);
+    let public_key = device.public_jwk().await?; // enroll it once with devices.enroll
+    let _ = public_key;
+    Ok(())
+}
+```
+
+The server keeps each device key for one account, so a process used with several accounts needs a prover per account:
+give each its own `scope`, such as the identity id. See [Device posture](/docs/features/device-posture).
+
+## In-process transport
+
+The transport is a trait (`Fetch`), so the client can call a `BetterIam` instance in the same process with no network
+hop. `fetch_fn` takes an async closure from `FetchRequest` to `FetchResponse`:
+
+```rust title="src/in_process_client.rs"
+use std::sync::Arc;
+
+use better_iam::BetterIam;
+use better_iam::client::{BoxError, ClientOptions, FetchRequest, FetchResponse, IamClient, create_iam_client};
+
+pub fn in_process_client(iam: &BetterIam) -> IamClient {
+    let http = iam.http.clone();
+    create_iam_client(ClientOptions::new("http://localhost:3000").fetch_fn(move |request: FetchRequest| {
+        let http = http.clone();
+        async move {
+            let request = request.into_http().map_err(|error| Arc::new(error) as BoxError)?;
+            Ok::<_, BoxError>(FetchResponse::from_http(http.handler(request).await))
+        }
+    }))
+    .expect("valid client options")
+}
+```
+
+The same pattern makes tests fast: the repository's own client tests run against a real server this way.
+
+## Related
+
+<Cards>
+  <Card icon={<Rust />} title="Rust overview" href="/docs/integrations/rust">
+    Crates, features, and serving the API.
+  </Card>
+  <Card icon={<Server />} title="axum" href="/docs/integrations/rust/axum">
+    Serve the API this client calls.
+  </Card>
+  <Card icon={<Globe />} title="TypeScript client" href="/docs/concepts/client">
+    The client this crate ports, with the same behavior.
+  </Card>
+</Cards>

@@ -1,0 +1,491 @@
+---
+title: Rust
+metaTitle: Better IAM for Rust
+description: Run Better IAM natively in Rust from the better-iam crates. Create the instance from options or better-iam.json, migrate, serve the HTTP API, call it in process, and share one database with TypeScript and Go servers.
+icon: Rust
+status: experimental
+sources:
+  - spec/BUILDOUT.md
+  - crates/better-iam/src/lib.rs
+  - crates/better-iam/tests/umbrella.rs
+  - crates/server/README.md
+  - crates/server/src/index.rs
+  - crates/server/src/http.rs
+  - crates/server/src/standalone_config.rs
+  - crates/server/src/conformance.rs
+  - crates/core/src/lib.rs
+  - spec/conformance/CONFIG.md
+---
+
+import { Server, SquareTerminal, Globe, Database, ShieldCheck } from '@/lib/icons';
+
+Better IAM has a native Rust implementation in the repository's `crates/` folder. It is a port of the TypeScript
+server, not a client of it: the Rust server answers the same HTTP routes with the same JSON, error codes, cookies, and
+CSRF rules, and it reads and writes the same database. A Rust service can therefore embed Better IAM in process, and a
+Rust replica can run next to Node.js replicas on one database.
+
+<Callout type="warn" title="Status: in progress">
+The Rust port is under active development and is not published to crates.io yet. Depend on it from a checkout of the
+repository (see [Installation](#installation)). Parity is measured by replaying traces recorded from the TypeScript
+test suite against the Rust server: at the time of writing, 1,364 or more of the 1,381 recorded traces replay
+identically, and the number is improving. Pin a commit and run your own tests before you rely on it in production.
+</Callout>
+
+## The crates
+
+Each crate is the counterpart of one npm package, with the same module layout (`decisions.ts` is `decisions.rs`).
+
+| Crate | npm counterpart | What it holds |
+| --- | --- | --- |
+| `better-iam` | `better-iam` | The umbrella: re-exports the crates below as modules behind features |
+| `better-iam-server` | `@better-iam/server` | `better_iam()`, the decision engine, the provisioning API, the HTTP router, and the `better-iam-server` binary |
+| `better-iam-core` | `@better-iam/core` | Records, the `IamStore` contract, policies, filter compilers, the audit chain, `IamError` |
+| `better-iam-auth` | `@better-iam/auth` | Passwords, sessions, MFA, passkeys, passwordless sign-in, the outbox |
+| `better-iam-adapter-sqlite`, `-postgres`, `-libsql` | `@better-iam/adapter-*` | Storage adapters with the same schema and migrations as the TypeScript adapters |
+| `better-iam-types` | (generated) | Every request, result, and model type of the HTTP API |
+| `better-iam-client` | `@better-iam/client` | The [typed HTTP client](/docs/integrations/rust/client) |
+| `better-iam-middleware` | `@better-iam/middleware` | A tower layer, route guards, and the [axum](/docs/integrations/rust/axum) and [actix-web](/docs/integrations/rust/actix-web) adapters |
+| `better-iam-oauth`, `-saml`, `-scim`, `-ldap` | `@better-iam/oauth`, `saml`, `scim`, `ldap` | Federation protocols |
+| `better-iam-mcp`, `-a2a` | `@better-iam/mcp`, `a2a` | Authorization for MCP servers and Agent2Agent |
+| `better-iam-projects` | `@better-iam/projects` | The reference plugin |
+| `better-iam-cli` | `@better-iam/cli` | The [`better-iam` binary](/docs/integrations/rust/cli) |
+
+The JavaScript UI packages (React, Vue, Svelte, Next.js, Nuxt, NestJS, React Router) have no Rust counterpart. Their
+server-side role is covered by `better-iam-middleware`.
+
+## Installation
+
+<Steps>
+<Step>
+
+### Add the dependency
+
+The crates are not on crates.io yet, so point Cargo at a checkout of the repository. Cargo finds each crate in the
+workspace by name, so a `git` dependency works the same way.
+
+```toml title="Cargo.toml"
+[dependencies]
+better-iam = { path = "../better-iam/crates/better-iam" }
+# or: better-iam = { git = "https://github.com/Better-IAM/better-iam" }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net"] }
+serde_json = "1"
+```
+
+The workspace requires Rust 1.88 or newer (edition 2024).
+
+</Step>
+<Step>
+
+### Choose features
+
+The umbrella crate re-exports each crate as a module behind a feature. The defaults cover a server on SQLite with the
+client and the projects plugin.
+
+| Feature | Module | Default |
+| --- | --- | --- |
+| `server` | `better_iam::server`, `better_iam::session_tokens`, the root re-exports (`better_iam`, `BetterIam`, `BetterIamOptions`, ...) | yes |
+| `auth` | `better_iam::auth` | yes |
+| `sqlite` | `better_iam::adapter_sqlite` | yes |
+| `postgres` | `better_iam::adapter_postgres` | no |
+| `libsql` | `better_iam::adapter_libsql` | no |
+| `client` | `better_iam::client` (with `client::session` and `client::device`) | yes |
+| `projects` | `better_iam::projects` | yes |
+| `types` | `better_iam::types` (enabled by `server` and `client`) | no |
+| (always) | `better_iam::core` | |
+
+```toml title="Cargo.toml"
+[dependencies]
+# PostgreSQL instead of SQLite, without the client:
+better-iam = { path = "../better-iam/crates/better-iam", default-features = false, features = ["server", "auth", "postgres"] }
+```
+
+The framework adapters are not part of the umbrella. Add `better-iam-middleware` with the `axum` or `actix-web`
+feature next to it (see [axum](/docs/integrations/rust/axum) and [actix-web](/docs/integrations/rust/actix-web)).
+
+</Step>
+</Steps>
+
+## Create the instance
+
+`better_iam(options)` is the Rust form of `betterIam(options)`. It validates the options and returns a `BetterIam`,
+or an `IamError` (for example `INVALID_CONFIG`) when they are refused.
+
+### From options
+
+`BetterIamOptions::new(store, secret, base_url)` takes the required members; every other member is a public field that
+defaults to the TypeScript default. Field names are the snake_case forms of the TypeScript option names
+(`trustedOrigins` is `trusted_origins`).
+
+```rust title="src/iam.rs"
+use std::sync::Arc;
+
+use better_iam::adapter_sqlite::{SqliteAdapterOptions, sqlite_adapter};
+use better_iam::core::PermissionsConfig;
+use better_iam::{BetterIam, BetterIamOptions, IamError, IamStore, better_iam};
+
+pub async fn create_iam() -> Result<Arc<BetterIam>, IamError> {
+    let store: Arc<dyn IamStore> = sqlite_adapter(SqliteAdapterOptions::new("./better-iam.db"))?;
+    let secret = std::env::var("BETTER_IAM_SECRET")
+        .map_err(|_| IamError::new("MISSING_ENV", "Set BETTER_IAM_SECRET"))?;
+    let mut options = BetterIamOptions::new(store, secret, "http://localhost:3000");
+    options.permissions = Some(PermissionsConfig {
+        actions: Some(vec!["projects:read".into(), "projects:write".into()]),
+        ..PermissionsConfig::default()
+    });
+    let iam = better_iam(options)?;
+    iam.initialize().await?; // migrations and startup backfills
+    Ok(Arc::new(iam))
+}
+```
+
+The other adapters follow the same pattern: `postgres_adapter(PostgresAdapterOptions::new(url))` with the `postgres`
+feature, and `libsql_adapter(LibsqlAdapterOptions::new(url))` with `libsql`. Plugins go in `options.plugins`, for
+example `Some(vec![better_iam::projects::create_projects_plugin()])`.
+
+### From better-iam.json
+
+Every implementation (TypeScript, Rust, and Go) reads the same standalone configuration file, `better-iam.json`. It
+holds the JSON-representable members of `BetterIamOptions` spelled as in TypeScript, plus `store` (the database),
+`delivery` (email, SMS, webhook, and event transports), and `resolveResource`. Secrets can come from the environment
+with `{ "env": "NAME" }`.
+
+```json title="better-iam.json"
+{
+  "store": { "kind": "sqlite", "path": "./better-iam.db" },
+  "secret": { "env": "BETTER_IAM_SECRET" },
+  "baseURL": "http://localhost:3000",
+  "authentication": { "signUpEnabled": false },
+  "delivery": { "email": { "kind": "http", "url": "https://mailer.internal/send" } },
+  "permissions": { "actions": ["projects:read", "projects:write"] }
+}
+```
+
+`load_config_file` reads the file and builds the options. The store kinds it can open follow the features of
+`better-iam-server` (`sqlite` by default, `postgres` and `libsql` on request).
+
+```rust title="src/iam.rs"
+use std::path::Path;
+use std::sync::Arc;
+
+use better_iam::server::standalone_config::{ConfigRuntime, load_config_file};
+use better_iam::{BetterIam, IamError, better_iam};
+
+pub async fn create_iam_from_file() -> Result<Arc<BetterIam>, IamError> {
+    let options = load_config_file(Path::new("better-iam.json"), &ConfigRuntime::default())?;
+    let iam = better_iam(options)?;
+    iam.initialize().await?;
+    Ok(Arc::new(iam))
+}
+```
+
+Unknown top-level members are refused with `INVALID_CONFIG` (`Invalid better-iam.json: unknown member "x"`), and
+the members are validated exactly as in-process options are. Callbacks have no JSON form (plugins, protocol mounts, a
+custom rate limiter); build the options in code when you need them. The full member list is in
+[`spec/conformance/CONFIG.md`](https://github.com/Better-IAM/better-iam/blob/main/spec/conformance/CONFIG.md).
+
+## Run migrations
+
+`iam.initialize()` creates or upgrades the schema and applies plugin migrations, as `iam.initialize()` does in
+TypeScript. Call it once at startup, or run it as a release step with the CLI:
+
+```bash
+BETTER_IAM_SECRET=... better-iam migrate --config better-iam.json
+```
+
+The migrations are the same SQL files the TypeScript adapters run (`iam_migrations` records them), so a database
+migrated by one implementation is ready for the others. Create the first administrator with
+`iam.bootstrap(&json!({ "email", "name", "password" }))` or `better-iam bootstrap`. See
+[Migrations](/docs/databases/migrations).
+
+## Serve the HTTP API
+
+You have three ways to put the API on the network.
+
+### The standalone server
+
+`better-iam-server` (in the `better-iam-server` crate) reads a `better-iam.json`, runs `initialize()`, and serves the
+full HTTP surface: `POST {basePath}/{group}/{method}`, the operational `GET` routes, and the protocol mounts the
+options enable.
+
+```bash
+cargo install --path crates/server   # from a checkout
+better-iam-server --config better-iam.json --port 4100 --host 127.0.0.1
+```
+
+When the configuration is refused, it exits with status 1 and prints one JSON line,
+`{"error":{"code","status","message"}}`, on stderr. Never pass `--conformance` in production: it adds the test-control
+endpoints the replay runner drives.
+
+### A framework adapter
+
+Embed the API in your own axum or actix-web application with `better-iam-middleware`. The adapter serves the API under
+`/api/iam`, adds per-request helpers, and provides route guards.
+
+<Cards>
+  <Card icon={<Server />} title="axum" href="/docs/integrations/rust/axum">
+    `IamTower`: a tower layer, the `IamRequest` extractor, and `route_layer` guards.
+  </Card>
+  <Card icon={<Server />} title="actix-web" href="/docs/integrations/rust/actix-web">
+    `IamActix`: middleware, the `IamRequest` extractor, and `.wrap()` guards.
+  </Card>
+</Cards>
+
+### Any other server
+
+`BetterIam` exposes two framework-neutral transports, both on `http` crate types:
+
+- `iam.handler(request)` takes an `http::Request<Bytes>` and returns an `http::Response<Bytes>`. It is the fetch-style
+  handler (`iam.handler` in TypeScript), and `better_iam::server::http::HttpService(iam.http.clone())` wraps it as a
+  `tower::Service`.
+- `iam.http.node_handler(method, target, headers, body)` is the transport of `iam.nodeHandler`: it also checks the
+  request target, applies the body limits outside the API, serves node-only protocol mounts (the OAuth provider), and
+  reads the `Host` header for organization sign-in addresses. The standalone server and the adapters use it.
+
+A hyper server over `node_handler`, reading the body up to the limit the path allows:
+
+```rust title="src/main.rs"
+use std::convert::Infallible;
+use std::sync::Arc;
+
+use better_iam::BetterIam;
+use bytes::Bytes;
+use http_body_util::{BodyExt, Full, Limited};
+use hyper::body::Incoming;
+use hyper::server::conn::http1;
+use hyper::service::service_fn;
+use hyper_util::rt::TokioIo;
+
+mod iam; // create_iam() from "From options" above
+
+async fn handle(iam: Arc<BetterIam>, request: http::Request<Incoming>) -> http::Response<Full<Bytes>> {
+    let (parts, body) = request.into_parts();
+    let target = parts.uri.path_and_query().map_or("/", |target| target.as_str()).to_owned();
+    // 64 KiB under the base path, 2 MiB for protocol mounts.
+    let body = match iam.http.node_url(&target, &parts.headers) {
+        Ok(url) => match Limited::new(body, iam.http.body_limit(&url)).collect().await {
+            Ok(collected) => collected.to_bytes(),
+            Err(_) => {
+                let mut response = http::Response::new(Full::new(Bytes::from_static(b"Request too large")));
+                *response.status_mut() = http::StatusCode::PAYLOAD_TOO_LARGE;
+                return response;
+            }
+        },
+        Err(_) => Bytes::new(), // an invalid request target: node_handler answers 400
+    };
+    iam.http.node_handler(parts.method, &target, parts.headers, body).await.map(Full::new)
+}
+
+fn main() -> std::io::Result<()> {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .thread_stack_size(64 * 1024 * 1024) // see "Stack size" below
+        .build()?;
+    runtime.block_on(async { tokio::spawn(serve()).await.expect("server task panicked") })
+}
+
+async fn serve() -> std::io::Result<()> {
+    let iam = iam::create_iam().await.expect("Better IAM failed to start");
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:3000").await?;
+    loop {
+        let (stream, _) = listener.accept().await?;
+        let iam = iam.clone();
+        tokio::spawn(async move {
+            let service = service_fn(move |request| {
+                let iam = iam.clone();
+                async move { Ok::<_, Infallible>(handle(iam, request).await) }
+            });
+            let _ = http1::Builder::new().serve_connection(TokioIo::new(stream), service).await;
+        });
+    }
+}
+```
+
+This example also depends on `hyper` (features `server`, `http1`), `hyper-util` (feature `tokio`), `http-body-util`,
+`http`, and `bytes`.
+
+### Stack size
+
+The server's futures are large, especially in debug builds, and overflow the default stacks: tokio's 2 MiB worker
+threads, and the main thread (1 MiB on Windows), where `block_on` and `#[tokio::main]` poll your top-level future.
+The bundled binaries run the server on threads with 64 MiB stacks (`thread_stack_size(64 * 1024 * 1024)`). Do the
+same: build the runtime by hand and `tokio::spawn` the code that uses Better IAM, as the examples on
+these pages do, instead of awaiting it directly in `main`.
+
+```rust title="src/main.rs"
+fn main() -> std::io::Result<()> {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .thread_stack_size(64 * 1024 * 1024)
+        .build()?;
+    runtime.block_on(async { tokio::spawn(run()).await.expect("task panicked") })
+}
+
+async fn run() -> std::io::Result<()> {
+    // create the instance, serve, call the API ...
+    Ok(())
+}
+```
+
+For threads you do not create (actix-web's workers), set the `RUST_MIN_STACK` environment variable, in bytes, when
+the process starts: `RUST_MIN_STACK=67108864`.
+
+## Call the API in process
+
+Every API group is a field of `iam.api` (`iam.api.identities`, `iam.api.roles`, ...), with one async method per
+route. A method takes the caller's credential and the request body, runs the same validation, authorization, and audit
+as the HTTP route, and returns a `Reply`. `Body::typed` builds the body from the generated request type, and
+`into_typed()` reads the result as the generated result type.
+
+```rust title="src/people.rs"
+use better_iam::core::CredentialInput;
+use better_iam::server::api::Body;
+use better_iam::types::api::identities;
+use better_iam::{BetterIam, IamError};
+
+pub async fn list_people(
+    iam: &BetterIam,
+    credential: &CredentialInput,
+    tenant_id: &str,
+) -> Result<Vec<String>, IamError> {
+    let people = iam
+        .api
+        .identities
+        .list(
+            credential,
+            Body::typed(&identities::ListInput {
+                tenant_id: tenant_id.to_owned(),
+                ..Default::default()
+            }),
+        )
+        .await?
+        .into_typed()?;
+    Ok(people.into_iter().map(|person| person.name).collect())
+}
+```
+
+A `CredentialInput` is either a bearer token (`CredentialInput { token: Some(token), headers: None }`) or the
+request's headers as name and value pairs, which carries the session cookie. In an axum or actix-web handler,
+`IamRequest::credential()` builds it from the current request.
+
+Decisions have their own entry points, as in TypeScript: `iam.authorize`, `iam.authorize_many`, `iam.require`, and
+`iam.list_accessible`.
+
+```rust title="src/access.rs"
+use better_iam::core::CredentialInput;
+use better_iam::server::options::ResourceTarget;
+use better_iam::{AuthorizationRequest, BetterIam, IamError};
+
+pub async fn can_read_project(
+    iam: &BetterIam,
+    credential: CredentialInput,
+    tenant_id: &str,
+    project_id: &str,
+) -> Result<bool, IamError> {
+    let decision = iam
+        .authorize(&AuthorizationRequest {
+            credential,
+            tenant_id: tenant_id.to_owned(),
+            action: "projects:read".into(),
+            resource: ResourceTarget { kind: "project".into(), id: project_id.to_owned() },
+        })
+        .await?;
+    Ok(decision.allowed)
+}
+```
+
+`iam.require(&request)` returns `Ok(())` when allowed and `ACCESS_DENIED` (403) otherwise. Deployment operations are
+methods too: `iam.bootstrap`, `iam.sweep_expired`, `iam.prune_audit`, `iam.self_check`, `iam.rotate_secrets`, and the
+other jobs the [CLI](/docs/integrations/rust/cli) schedules.
+
+To call the API through the typed client without a network hop, give the client a transport that calls the handler:
+
+```rust title="src/in_process_client.rs"
+use std::sync::Arc;
+
+use better_iam::BetterIam;
+use better_iam::client::{BoxError, ClientOptions, FetchRequest, FetchResponse, IamClient, create_iam_client};
+
+pub fn in_process_client(iam: &BetterIam) -> IamClient {
+    let http = iam.http.clone();
+    create_iam_client(ClientOptions::new("http://localhost:3000").fetch_fn(move |request: FetchRequest| {
+        let http = http.clone();
+        async move {
+            let request = request.into_http().map_err(|error| Arc::new(error) as BoxError)?;
+            Ok::<_, BoxError>(FetchResponse::from_http(http.handler(request).await))
+        }
+    }))
+    .expect("valid client options")
+}
+```
+
+## Handle errors
+
+Every failure is a `better_iam::IamError` (from `better-iam-core`) with the same fields the TypeScript `IamError` has:
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `code` | `String` | The stable machine-readable code, such as `ACCESS_DENIED` or `INVALID_INPUT` |
+| `message` | `String` | A human-readable message, the same text the TypeScript server uses |
+| `status` | `u16` | The HTTP status the server answers with (400 unless stated) |
+| `details` | `Option<Box<IamErrorDetails>>` | `retry_after_ms` for `RATE_LIMITED`, `region` and `location` for `WRONG_REGION` |
+
+`IamError` implements `std::error::Error` and `Display` (the message), so it works with `?` and with error crates
+such as `anyhow`. Branch on `code`, never on the message:
+
+```rust
+match list_people(&iam, &credential, &tenant_id).await {
+    Ok(people) => println!("{people:?}"),
+    Err(error) if error.code == "UNAUTHENTICATED" => println!("signed out ({})", error.status),
+    Err(error) => eprintln!("{} ({}): {}", error.code, error.status, error.message),
+}
+```
+
+`better_iam::server::http::error_response(&error)` turns an error into the HTTP answer the server sends
+(`{ "error": { "code", "message" } }` with its status and `Cache-Control: no-store`). The adapters convert errors for
+you: `MiddlewareError` implements `From<IamError>`. The codes are listed in the [error reference](/docs/reference/errors).
+
+## Mixed fleets
+
+The Rust server is held to the same contract as the TypeScript server and the Go port (`spec/` in the repository):
+
+- **Same HTTP surface.** Every route, request and response shape, error code, HTTP status, cookie, CORS, and CSRF rule
+  matches. Browser code built on `@better-iam/client` works against a Rust server unchanged.
+- **Same database.** All three implementations read and write the same SQLite, PostgreSQL, or libSQL schema with the
+  same record shapes. Password hashes, sealed secrets, token hashes, the audit hash chain, session JWTs, assertions,
+  and delegation tokens are byte-compatible.
+- **Same behavior.** The decision engine, validation, and every API group are checked by replaying the traces recorded
+  from the TypeScript test suite against the Rust server and comparing normalized responses.
+
+In practice, a session a TypeScript replica issued is valid on a Rust replica, an audit chain written by both verifies
+as one chain, and a deployment can move between implementations without converting data. Run every replica on the
+same release (the version numbers move in lockstep) and the same `secret` and `previousSecrets`, and run migrations
+from one of them before the others start.
+
+<Callout type="info">
+Parity is proven per recorded trace, not assumed: the replay result (1,364 or more of 1,381 TypeScript traces at
+the time of writing) is the current measure. Behavior that no trace covers can still differ, so test the flows your
+application depends on against a Rust replica before you route production traffic to it.
+</Callout>
+
+## Related
+
+<Cards>
+  <Card icon={<Server />} title="axum" href="/docs/integrations/rust/axum">
+    The tower layer, extractor, and guards.
+  </Card>
+  <Card icon={<Server />} title="actix-web" href="/docs/integrations/rust/actix-web">
+    Middleware, extractor, and guards for actix-web.
+  </Card>
+  <Card icon={<Globe />} title="Typed client" href="/docs/integrations/rust/client">
+    Call a Better IAM server from Rust over HTTP.
+  </Card>
+  <Card icon={<SquareTerminal />} title="CLI" href="/docs/integrations/rust/cli">
+    The Rust `better-iam` binary.
+  </Card>
+  <Card icon={<Database />} title="Databases" href="/docs/databases">
+    The schema and adapters every implementation shares.
+  </Card>
+  <Card icon={<ShieldCheck />} title="Error reference" href="/docs/reference/errors">
+    Every error code and status.
+  </Card>
+</Cards>
