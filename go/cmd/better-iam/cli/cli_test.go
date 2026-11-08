@@ -720,3 +720,26 @@ func TestCreateCliAndExitCodes(t *testing.T) {
 		t.Fatalf("hello exits %d", status)
 	}
 }
+
+// The file init writes carries the CLI's "cli" member, which the standalone server refuses (as the TypeScript server
+// refuses it): the refusal says why, and the same document without "cli" is accepted.
+func TestInitFileIsNotAStandaloneServerConfiguration(t *testing.T) {
+	text := JSONConfigTemplate("sqlite")
+	runtime := server.ConfigRuntime{Adapters: storeAdapters(t.TempDir()), Env: map[string]string{"BETTER_IAM_SECRET": "init-template-secret-with-at-least-32-characters"}}
+	_, err := server.LoadStandaloneConfig([]byte(text), runtime)
+	known, ok := err.(*core.IamError)
+	if !ok || known.Code != "INVALID_CONFIG" || !strings.HasPrefix(known.Message, `Invalid better-iam.json: unknown member "cli": it holds the better-iam CLI's flag defaults`) {
+		t.Fatalf("refusal: %v", err)
+	}
+	parsed, err := core.ParseJSON([]byte(text))
+	if err != nil {
+		t.Fatal(err)
+	}
+	document := parsed.(*core.Object)
+	document.Delete("cli")
+	options, err := server.OptionsFromConfig(document, runtime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = options.Database.Close(context.Background())
+}

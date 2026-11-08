@@ -101,8 +101,10 @@ export const commands` + commandsType + ` = [];
 }
 
 // JSONConfigTemplate is the starter better-iam.json `init` writes: the same deployment as ConfigTemplate in the
-// standalone JSON form (spec/conformance/CONFIG.md) the Go CLI and every server read, with the secret from
-// BETTER_IAM_SECRET and CLI flag defaults.
+// standalone JSON form (spec/conformance/CONFIG.md), with the secret from BETTER_IAM_SECRET and CLI flag defaults in
+// a "cli" member. That member makes it a CLI configuration only: the standalone servers (better-iam-server and
+// the TypeScript and Rust ones) refuse it as an unknown member, just as the TypeScript server cannot read the
+// TypeScript CLI's better-iam.config module, so a server needs its own copy without "cli".
 func JSONConfigTemplate(database string) string {
 	adapter := templateAdapters[database]
 	document := core.NewObject(
