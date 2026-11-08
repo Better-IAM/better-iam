@@ -629,7 +629,8 @@ impl PublicKey {
                 let Ok(signature) = ed25519_dalek::Signature::from_slice(signature) else {
                     return false;
                 };
-                key.verify_strict(data, &signature).is_ok()
+                // Cofactorless with a canonical `s`, as OpenSSL verifies Ed25519.
+                ed25519_dalek::Verifier::verify(&key, data, &signature).is_ok()
             }
             (PublicKey::P256(key), Some(hash)) => {
                 let Ok(signature) = p256::ecdsa::Signature::from_der(signature) else {
