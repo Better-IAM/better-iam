@@ -752,17 +752,19 @@ fn lets_administrators_offer_credentials_to_others_and_sweeps_credentials_of_peo
             sweep_result(org.iam.verifiable_credentials.sweep(None).await),
             json!({ "examined": 1, "revoked": 0 })
         );
-        // `identities.setStatus` (disabled): written to the identity as that call writes it. The API call itself
-        // reaches the package-automation hook, which another port unit owns.
-        let identity_id = issued["record"]["identityId"].as_str().unwrap().to_owned();
-        let mut identity = org
-            .store()
-            .get("identities", &identity_id)
-            .await
-            .unwrap()
-            .expect("identity");
-        identity.insert("status".into(), json!("disabled"));
-        org.put("identities", identity).await;
+        ok(org
+            .iam
+            .api
+            .identities
+            .set_status(
+                &org.owner_credential,
+                body(json!({
+                    "tenantId": org.tenant_id,
+                    "identityId": issued["record"]["identityId"],
+                    "status": "disabled",
+                })),
+            )
+            .await);
         assert_eq!(
             sweep_result(
                 org.iam
