@@ -1018,10 +1018,15 @@ func (h *HTTPTransport) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	request := req.Clone(req.Context())
 	request.URL = target
 	request.Host = target.Host
+	// The Node transport builds its Request from req.headers keeping only non-empty values, so a header sent
+	// empty (`cookie: ""`) reads as absent everywhere after the Node protocol mounts, which see the raw request.
+	filtered := nonEmptyHeaders(request.Header)
 	client := (*core.SessionClientInfo)(nil)
 	for _, protocol := range h.server.MountedProtocols {
 		if protocol.Node {
-			client = ClientFromRequest(h.server.Options, request)
+			probe := request.Clone(request.Context())
+			probe.Header = filtered
+			client = ClientFromRequest(h.server.Options, probe)
 			break
 		}
 	}
@@ -1054,8 +1059,22 @@ func (h *HTTPTransport) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		body = data
 	}
 	request.Body = io.NopCloser(bytes.NewReader(body))
+	request.Header = filtered
 	response := h.handle(request, body, hasBody)
 	writeResponse(w, response)
+}
+
+// nonEmptyHeaders is the nodeHandler's copy of req.headers: Node joins repeated lines of a header into one value
+// (Cookie with "; ", others with ", "), and a header whose value comes out empty is left out.
+func nonEmptyHeaders(header http.Header) http.Header {
+	out := make(http.Header, len(header))
+	for key, values := range header {
+		if len(values) == 0 || (len(values) == 1 && values[0] == "") {
+			continue
+		}
+		out[key] = append([]string(nil), values...)
+	}
+	return out
 }
 
 // requestURL is the URL the Node transport resolves a request to: the deployment's base URL, or with organization
