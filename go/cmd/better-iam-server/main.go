@@ -189,8 +189,9 @@ func main() {
 	application := &app{args: args, configText: text, clock: &clocks{}, state: &state{}}
 	current, err := application.start(text, true)
 	if err != nil {
-		// One JSON line, so a conformance runner can compare why construction failed (CONTROL.md "Startup").
-		fmt.Fprintln(os.Stderr, server.ConfigErrorLine(err))
+		// One JSON line, so a conformance runner can compare why construction failed (CONTROL.md "Startup"), and for
+		// the file `better-iam init` writes a hint line after it.
+		fmt.Fprintln(os.Stderr, startupError(err))
 		os.Exit(1)
 	}
 	application.current = current
@@ -498,4 +499,24 @@ func (a *app) handle(path string, body any, exclusive bool) (any, error) {
 		return core.NewObject("shutdown", true), nil
 	}
 	return nil, core.NewIamError("NOT_FOUND", "Unknown control endpoint", 404)
+}
+
+// cliMemberRefusal is the refusal of a configuration that has the better-iam CLI's "cli" member (TypeScript's
+// message, unchanged).
+const cliMemberRefusal = `Invalid better-iam.json: unknown member "cli"`
+
+// cliMemberHint follows the error line when the configuration has the "cli" member: the Go CLI keeps its flag
+// defaults there (better-iam init writes it), and no standalone server reads it, the TypeScript one included.
+const cliMemberHint = `better-iam-server: "cli" holds the better-iam CLI's flag defaults (better-iam init writes it); ` +
+	`the standalone server does not read it, so give better-iam-server a copy of the file without "cli".`
+
+// startupError is what the server writes to stderr when it cannot start: the error line (ConfigErrorLine), plus
+// cliMemberHint on a second line for the "cli" member's refusal.
+func startupError(err error) string {
+	line := server.ConfigErrorLine(err)
+	var known *core.IamError
+	if errors.As(err, &known) && known.Code == "INVALID_CONFIG" && known.Message == cliMemberRefusal {
+		return line + "\n" + cliMemberHint
+	}
+	return line
 }
