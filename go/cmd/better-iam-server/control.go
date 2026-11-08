@@ -267,7 +267,7 @@ func (a *app) storeOp(ctx context.Context, current *instance, target core.IamSto
 		if err != nil {
 			return nil, err
 		}
-		return invoke(ctx, fn, args, target)
+		return invokeMember(ctx, fn, op.Get("path"), args, target)
 	}
 	if !storeMethods[method] {
 		return nil, malformed("Unknown store method " + method)

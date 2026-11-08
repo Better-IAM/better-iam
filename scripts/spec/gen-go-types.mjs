@@ -139,6 +139,38 @@ const CORRECTIONS = {
       },
     },
   },
+  // Members the TypeScript server leaves out (undefined) that openapi.json marks required, and stored members the
+  // answers carry that openapi.json does not declare (seen in spec/conformance/traces).
+  'AuditExportOutput.firstSequence': { optional: true },
+  'AuditExportOutput.nextSequence': { optional: true },
+  'AuditExportOutput.lastSequence': { optional: true },
+  'CredentialsRotateOutput.name': { optional: true },
+  'IdentitiesExportOutput.audit': { optional: true },
+  'PackagesListMineOutputPackagesItem.assignment': { optional: true },
+  'PackagesListMineOutputPackagesItem.pending': { optional: true },
+  'RoleMiningUsageOutput.trackingSince': { optional: true },
+  'WebhooksListDeliveriesOutputItem.eventId': { optional: true },
+  // policies.restoreVersion answers the stored policy, which keeps the authority that granted it.
+  PoliciesRestoreVersionOutput: { add: { authorityId: { type: 'string' } } },
+  // issuedView spreads the stored VcIssuedCredential, typeId included.
+  VcIssuedView: {
+    add: {
+      typeId: { type: 'string' },
+      selfService: { type: 'boolean' },
+      mfa: { type: 'boolean' },
+      offerId: { type: 'string' },
+    },
+    after: { typeId: 'tenantId', selfService: 'issuedBy', mfa: 'selfService', offerId: 'mfa' },
+  },
+  // tenants.create answers InvitedTenant { tenant, invitationId, ownerEmail } or, with activate: true,
+  // ActivatedTenant { tenant, ownerEmail, owner }; openapi.json keeps only the members both share.
+  TenantsCreateOutput: {
+    add: {
+      invitationId: { type: 'string' },
+      owner: { $ref: '#/components/schemas/PublicIdentity' },
+    },
+    after: { invitationId: 'tenant' },
+  },
 };
 const correctionsApplied = new Set();
 
@@ -149,7 +181,14 @@ function correct(name, ir) {
     for (const [member, schema] of Object.entries(whole.add ?? {})) {
       if (ir.props.some((prop) => prop.name === member))
         throw new Error(`${name}.${member} is already declared`);
-      ir.props.push({ name: member, ir: norm(schema), required: false, schema });
+      const prop = { name: member, ir: norm(schema), required: false, schema };
+      // `after` places an added member behind an existing one (the order the TypeScript server sends).
+      const anchor = whole.after?.[member];
+      const index = anchor === undefined ? -1 : ir.props.findIndex((p) => p.name === anchor);
+      if (anchor !== undefined && index < 0)
+        throw new Error(`${name}.${member}: no member ${anchor} to place it after`);
+      if (index < 0) ir.props.push(prop);
+      else ir.props.splice(index + 1, 0, prop);
     }
     if (whole.open) ir.extra ??= { k: 'any' };
   }

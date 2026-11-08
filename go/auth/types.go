@@ -127,8 +127,8 @@ type SignInFailureReason = string
 
 // Principal is a verified identity and session (AuthenticatedPrincipal) as stored records.
 type Principal struct {
-	Identity *core.Object
-	Session  *core.Object
+	Identity *core.Object `json:"identity"`
+	Session  *core.Object `json:"session"`
 }
 
 // Core returns the principal as typed core views (fields the structs do not model are dropped).

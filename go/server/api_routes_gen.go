@@ -1307,6 +1307,10 @@ var rpcRoutes = map[string]rpcCall{
 		out, err := api.Identities.Invite(ctx, credential, Input[apitypes.IdentitiesInviteInput](body))
 		return out.Value, err
 	},
+	"identities/linkProvider": func(ctx context.Context, api *API, credential core.CredentialInput, body *core.Object) (any, error) {
+		out, err := api.Identities.LinkProvider(ctx, credential, Input[apitypes.IdentitiesLinkProviderInput](body))
+		return out.Value, err
+	},
 	"identities/list": func(ctx context.Context, api *API, credential core.CredentialInput, body *core.Object) (any, error) {
 		out, err := api.Identities.List(ctx, credential, Input[apitypes.IdentitiesListInput](body))
 		return out.Value, err
@@ -1321,6 +1325,10 @@ var rpcRoutes = map[string]rpcCall{
 	},
 	"identities/listInvitations": func(ctx context.Context, api *API, credential core.CredentialInput, body *core.Object) (any, error) {
 		out, err := api.Identities.ListInvitations(ctx, credential, Input[apitypes.IdentitiesListInvitationsInput](body))
+		return out.Value, err
+	},
+	"identities/listProviders": func(ctx context.Context, api *API, credential core.CredentialInput, body *core.Object) (any, error) {
+		out, err := api.Identities.ListProviders(ctx, credential, Input[apitypes.IdentitiesListProvidersInput](body))
 		return out.Value, err
 	},
 	"identities/listReports": func(ctx context.Context, api *API, credential core.CredentialInput, body *core.Object) (any, error) {
@@ -1361,6 +1369,10 @@ var rpcRoutes = map[string]rpcCall{
 	},
 	"identities/setStatus": func(ctx context.Context, api *API, credential core.CredentialInput, body *core.Object) (any, error) {
 		out, err := api.Identities.SetStatus(ctx, credential, Input[apitypes.IdentitiesSetStatusInput](body))
+		return out.Value, err
+	},
+	"identities/unlinkProvider": func(ctx context.Context, api *API, credential core.CredentialInput, body *core.Object) (any, error) {
+		out, err := api.Identities.UnlinkProvider(ctx, credential, Input[apitypes.IdentitiesUnlinkProviderInput](body))
 		return out.Value, err
 	},
 	"identities/unlock": func(ctx context.Context, api *API, credential core.CredentialInput, body *core.Object) (any, error) {

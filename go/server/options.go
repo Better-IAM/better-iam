@@ -576,7 +576,7 @@ func ResolveConfig(options *BetterIamOptions) (*ServerConfig, error) {
 func resolveConfigValue(options *core.Object, locate func(ctx context.Context, alias string) (*string, error)) (*ServerConfig, error) {
 	baseURL, err := auth.ParseFetchURL(jsString(options.Get("baseURL")))
 	if err != nil {
-		return nil, &core.TypeError{Message: "Invalid URL"}
+		return nil, invalidConfig("baseURL must be an absolute URL")
 	}
 	if baseURL.Protocol != "https:" && !containsString([]string{"localhost", "127.0.0.1", "[::1]"}, baseURL.Hostname) {
 		return nil, invalidConfig("HTTPS is required outside localhost")

@@ -286,9 +286,7 @@ func TestResolveConfigBasics(t *testing.T) {
 	_, err = resolve(t, `{"baseURL":"http://iam.example.com"}`)
 	expectError(t, err, "INVALID_CONFIG", "HTTPS is required outside localhost")
 	_, err = resolve(t, `{"baseURL":"not a url"}`)
-	if err == nil || err.Error() != "Invalid URL" {
-		t.Fatalf("invalid URL: %v", err)
-	}
+	expectError(t, err, "INVALID_CONFIG", "baseURL must be an absolute URL")
 	for _, basePath := range []string{`"api"`, `"/api/"`, `"/api iam"`, `""`} {
 		_, err = resolve(t, `{"basePath":`+basePath+`}`)
 		expectError(t, err, "INVALID_CONFIG", "Invalid basePath")

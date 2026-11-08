@@ -160,6 +160,14 @@ func OptionsFromConfig(config any, runtime ConfigRuntime) (*BetterIamOptions, er
 	}
 	raw := config.(*core.Object)
 	for _, key := range raw.Keys() {
+		// "cli" is refused like any other unknown member, with TypeScript's exact message (parity: same code, message
+		// and status). The CLI's configuration is not a standalone server configuration, in TypeScript as here: the
+		// TypeScript CLI reads a JavaScript module (better-iam.config.mjs, packages/cli/src/config.ts) whose named
+		// `cli` export holds its flag defaults, and the standalone server (scripts/conformance/serve.mjs) reads
+		// better-iam.json, refusing every member CONFIG.md does not list (rule 1). The Go CLI, which cannot import
+		// JavaScript, reads better-iam.json with an extra "cli" member instead (cmd/better-iam/cli/config.go), so the
+		// file `better-iam init` writes reaches this refusal when handed to better-iam-server, which prints a hint
+		// after the error line (cmd/better-iam-server, startupError).
 		if !containsString(ConfigKeys, key) {
 			return nil, configError(`unknown member "` + key + `"`)
 		}

@@ -281,6 +281,9 @@ func TestStandaloneConfigMismatchesAndErrors(t *testing.T) {
 	if err == nil || errorName(err) != "SyntaxError" {
 		t.Fatalf("syntax error: %v", err)
 	}
+	// The CLI's "cli" member is refused like any unknown member, with the TypeScript server's exact message.
+	_, err = LoadStandaloneConfig([]byte(`{"secret":"standalone-config-secret-with-at-least-32-characters","baseURL":"http://localhost:3000","cli":{"defaults":{}}}`), runtime)
+	expectError(t, err, "INVALID_CONFIG", `Invalid better-iam.json: unknown member "cli"`)
 	line := ConfigErrorLine(core.NewIamError("INVALID_CONFIG", "Invalid basePath"))
 	if line != `{"error":{"code":"INVALID_CONFIG","status":400,"message":"Invalid basePath"}}` {
 		t.Fatal(line)

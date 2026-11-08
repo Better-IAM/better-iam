@@ -342,10 +342,12 @@ var operationTable = [...]Operation{
 	{Path: "identities/get", OperationID: "identities.get", Group: "identities", Method: "get", Public: false, Call: "credential, input", TenantBound: false, SetsSessionCookie: false, ReadsDeviceCookie: false, Special: false, Input: reflect.TypeFor[IdentitiesGetInput](), Output: reflect.TypeFor[IdentitiesGetOutput]()},
 	{Path: "identities/impersonate", OperationID: "identities.impersonate", Group: "identities", Method: "impersonate", Public: false, Call: "credential, input", TenantBound: false, SetsSessionCookie: false, ReadsDeviceCookie: false, Special: false, Input: reflect.TypeFor[IdentitiesImpersonateInput](), Output: reflect.TypeFor[IdentitiesImpersonateOutput]()},
 	{Path: "identities/invite", OperationID: "identities.invite", Group: "identities", Method: "invite", Public: false, Call: "credential, input", TenantBound: false, SetsSessionCookie: false, ReadsDeviceCookie: false, Special: false, Input: reflect.TypeFor[IdentitiesInviteInput](), Output: reflect.TypeFor[IdentitiesInviteOutput]()},
+	{Path: "identities/linkProvider", OperationID: "identities.linkProvider", Group: "identities", Method: "linkProvider", Public: false, Call: "credential, input", TenantBound: false, SetsSessionCookie: false, ReadsDeviceCookie: false, Special: false, Input: reflect.TypeFor[IdentitiesLinkProviderInput](), Output: reflect.TypeFor[IdentitiesLinkProviderOutput]()},
 	{Path: "identities/list", OperationID: "identities.list", Group: "identities", Method: "list", Public: false, Call: "credential, input", TenantBound: false, SetsSessionCookie: false, ReadsDeviceCookie: false, Special: false, Input: reflect.TypeFor[IdentitiesListInput](), Output: reflect.TypeFor[IdentitiesListOutput]()},
 	{Path: "identities/listBindings", OperationID: "identities.listBindings", Group: "identities", Method: "listBindings", Public: false, Call: "credential, input", TenantBound: false, SetsSessionCookie: false, ReadsDeviceCookie: false, Special: false, Input: reflect.TypeFor[IdentitiesListBindingsInput](), Output: reflect.TypeFor[IdentitiesListBindingsOutput]()},
 	{Path: "identities/listGroups", OperationID: "identities.listGroups", Group: "identities", Method: "listGroups", Public: false, Call: "credential, input", TenantBound: false, SetsSessionCookie: false, ReadsDeviceCookie: false, Special: false, Input: reflect.TypeFor[IdentitiesListGroupsInput](), Output: reflect.TypeFor[IdentitiesListGroupsOutput]()},
 	{Path: "identities/listInvitations", OperationID: "identities.listInvitations", Group: "identities", Method: "listInvitations", Public: false, Call: "credential, input", TenantBound: false, SetsSessionCookie: false, ReadsDeviceCookie: false, Special: false, Input: reflect.TypeFor[IdentitiesListInvitationsInput](), Output: reflect.TypeFor[IdentitiesListInvitationsOutput]()},
+	{Path: "identities/listProviders", OperationID: "identities.listProviders", Group: "identities", Method: "listProviders", Public: false, Call: "credential, input", TenantBound: false, SetsSessionCookie: false, ReadsDeviceCookie: false, Special: false, Input: reflect.TypeFor[IdentitiesListProvidersInput](), Output: reflect.TypeFor[IdentitiesListProvidersOutput]()},
 	{Path: "identities/listReports", OperationID: "identities.listReports", Group: "identities", Method: "listReports", Public: false, Call: "credential, input", TenantBound: false, SetsSessionCookie: false, ReadsDeviceCookie: false, Special: false, Input: reflect.TypeFor[IdentitiesListReportsInput](), Output: reflect.TypeFor[IdentitiesListReportsOutput]()},
 	{Path: "identities/listSessions", OperationID: "identities.listSessions", Group: "identities", Method: "listSessions", Public: false, Call: "credential, input", TenantBound: false, SetsSessionCookie: false, ReadsDeviceCookie: false, Special: false, Input: reflect.TypeFor[IdentitiesListSessionsInput](), Output: reflect.TypeFor[IdentitiesListSessionsOutput]()},
 	{Path: "identities/offboard", OperationID: "identities.offboard", Group: "identities", Method: "offboard", Public: false, Call: "credential, input", TenantBound: false, SetsSessionCookie: false, ReadsDeviceCookie: false, Special: false, Input: reflect.TypeFor[IdentitiesOffboardInput](), Output: reflect.TypeFor[IdentitiesOffboardOutput]()},
@@ -356,6 +358,7 @@ var operationTable = [...]Operation{
 	{Path: "identities/setBoundary", OperationID: "identities.setBoundary", Group: "identities", Method: "setBoundary", Public: false, Call: "credential, input", TenantBound: false, SetsSessionCookie: false, ReadsDeviceCookie: false, Special: false, Input: reflect.TypeFor[IdentitiesSetBoundaryInput](), Output: reflect.TypeFor[IdentitiesSetBoundaryOutput]()},
 	{Path: "identities/setOwner", OperationID: "identities.setOwner", Group: "identities", Method: "setOwner", Public: false, Call: "credential, input", TenantBound: false, SetsSessionCookie: false, ReadsDeviceCookie: false, Special: false, Input: reflect.TypeFor[IdentitiesSetOwnerInput](), Output: reflect.TypeFor[IdentitiesSetOwnerOutput]()},
 	{Path: "identities/setStatus", OperationID: "identities.setStatus", Group: "identities", Method: "setStatus", Public: false, Call: "credential, input", TenantBound: false, SetsSessionCookie: false, ReadsDeviceCookie: false, Special: false, Input: reflect.TypeFor[IdentitiesSetStatusInput](), Output: reflect.TypeFor[IdentitiesSetStatusOutput]()},
+	{Path: "identities/unlinkProvider", OperationID: "identities.unlinkProvider", Group: "identities", Method: "unlinkProvider", Public: false, Call: "credential, input", TenantBound: false, SetsSessionCookie: false, ReadsDeviceCookie: false, Special: false, Input: reflect.TypeFor[IdentitiesUnlinkProviderInput](), Output: reflect.TypeFor[IdentitiesUnlinkProviderOutput]()},
 	{Path: "identities/unlock", OperationID: "identities.unlock", Group: "identities", Method: "unlock", Public: false, Call: "credential, input", TenantBound: false, SetsSessionCookie: false, ReadsDeviceCookie: false, Special: false, Input: reflect.TypeFor[IdentitiesUnlockInput](), Output: reflect.TypeFor[IdentitiesUnlockOutput]()},
 	{Path: "identities/update", OperationID: "identities.update", Group: "identities", Method: "update", Public: false, Call: "credential, input", TenantBound: false, SetsSessionCookie: false, ReadsDeviceCookie: false, Special: false, Input: reflect.TypeFor[IdentitiesUpdateInput](), Output: reflect.TypeFor[IdentitiesUpdateOutput]()},
 	{Path: "impact/preview", OperationID: "impact.preview", Group: "impact", Method: "preview", Public: false, Call: "credential, input", TenantBound: false, SetsSessionCookie: false, ReadsDeviceCookie: false, Special: false, Input: reflect.TypeFor[ImpactPreviewInput](), Output: reflect.TypeFor[ImpactPreviewOutput]()},
@@ -1426,9 +1429,9 @@ var (
 	OpHostnamesVerify = Op[HostnamesVerifyInput, HostnamesVerifyOutput]{&operationTable[315]}
 	// OpIdentitiesAcceptInvitation is POST {basePath}/identities/acceptInvitation. Redeems a member invitation: creates the person's account with the invited email, applies the invitation's roles and groups, and signs them in.
 	OpIdentitiesAcceptInvitation = Op[IdentitiesAcceptInvitationInput, IdentitiesAcceptInvitationOutput]{&operationTable[316]}
-	// OpIdentitiesCreate is POST {basePath}/identities/create. Creates a person in the tenant, optionally with a password, a manager, and a scheduled deactivation date.
+	// OpIdentitiesCreate is POST {basePath}/identities/create. Creates a person in the tenant, optionally with a password, a manager, a scheduled deactivation date, a verified email, and linked external sign-ins.
 	OpIdentitiesCreate = Op[IdentitiesCreateInput, IdentitiesCreateOutput]{&operationTable[317]}
-	// OpIdentitiesCreateMany is POST {basePath}/identities/createMany. Creates up to 100 people in one transaction, each with optional attributes, roles, groups, password, and expiry.
+	// OpIdentitiesCreateMany is POST {basePath}/identities/createMany. Creates up to 100 people in one transaction, each with optional attributes, roles, groups, password, expiry, verified email, and linked external sign-ins.
 	OpIdentitiesCreateMany = Op[IdentitiesCreateManyInput, IdentitiesCreateManyOutput]{&operationTable[318]}
 	// OpIdentitiesDelete is POST {basePath}/identities/delete. Removes a person or service account for good, leaving a tombstone so audit records still name who acted.
 	OpIdentitiesDelete = Op[IdentitiesDeleteInput, IdentitiesDeleteOutput]{&operationTable[319]}
@@ -1440,896 +1443,902 @@ var (
 	OpIdentitiesImpersonate = Op[IdentitiesImpersonateInput, IdentitiesImpersonateOutput]{&operationTable[322]}
 	// OpIdentitiesInvite is POST {basePath}/identities/invite. Invites a person to the tenant by email, with roles and groups they receive when they accept.
 	OpIdentitiesInvite = Op[IdentitiesInviteInput, IdentitiesInviteOutput]{&operationTable[323]}
+	// OpIdentitiesLinkProvider is POST {basePath}/identities/linkProvider. Links an external sign-in (OAuth/OIDC or SAML) to an existing account, so that IdP account signs in to it without an account-linking step.
+	OpIdentitiesLinkProvider = Op[IdentitiesLinkProviderInput, IdentitiesLinkProviderOutput]{&operationTable[324]}
 	// OpIdentitiesList is POST {basePath}/identities/list. Lists the tenant's people and service accounts, with filters and paging.
-	OpIdentitiesList = Op[IdentitiesListInput, IdentitiesListOutput]{&operationTable[324]}
+	OpIdentitiesList = Op[IdentitiesListInput, IdentitiesListOutput]{&operationTable[325]}
 	// OpIdentitiesListBindings is POST {basePath}/identities/listBindings. Lists an identity's role bindings, direct and through its groups, with their activation and window state.
-	OpIdentitiesListBindings = Op[IdentitiesListBindingsInput, IdentitiesListBindingsOutput]{&operationTable[325]}
+	OpIdentitiesListBindings = Op[IdentitiesListBindingsInput, IdentitiesListBindingsOutput]{&operationTable[326]}
 	// OpIdentitiesListGroups is POST {basePath}/identities/listGroups. Lists the groups an identity currently belongs to, with membershipExpiresAt on temporary memberships.
-	OpIdentitiesListGroups = Op[IdentitiesListGroupsInput, IdentitiesListGroupsOutput]{&operationTable[326]}
+	OpIdentitiesListGroups = Op[IdentitiesListGroupsInput, IdentitiesListGroupsOutput]{&operationTable[327]}
 	// OpIdentitiesListInvitations is POST {basePath}/identities/listInvitations. Lists every member invitation of the tenant, pending or not, without tokens.
-	OpIdentitiesListInvitations = Op[IdentitiesListInvitationsInput, IdentitiesListInvitationsOutput]{&operationTable[327]}
+	OpIdentitiesListInvitations = Op[IdentitiesListInvitationsInput, IdentitiesListInvitationsOutput]{&operationTable[328]}
+	// OpIdentitiesListProviders is POST {basePath}/identities/listProviders. Lists the external sign-ins linked to an account, sorted by provider.
+	OpIdentitiesListProviders = Op[IdentitiesListProvidersInput, IdentitiesListProvidersOutput]{&operationTable[329]}
 	// OpIdentitiesListReports is POST {basePath}/identities/listReports. Lists the active people whose manager is this identity, by name.
-	OpIdentitiesListReports = Op[IdentitiesListReportsInput, IdentitiesListReportsOutput]{&operationTable[328]}
+	OpIdentitiesListReports = Op[IdentitiesListReportsInput, IdentitiesListReportsOutput]{&operationTable[330]}
 	// OpIdentitiesListSessions is POST {basePath}/identities/listSessions. Lists an identity's unexpired sessions and API keys, most recently used first, without token hashes.
-	OpIdentitiesListSessions = Op[IdentitiesListSessionsInput, IdentitiesListSessionsOutput]{&operationTable[329]}
+	OpIdentitiesListSessions = Op[IdentitiesListSessionsInput, IdentitiesListSessionsOutput]{&operationTable[331]}
 	// OpIdentitiesOffboard is POST {basePath}/identities/offboard. Disables an identity and removes everything that gave it access in one transaction, handing what it owned to a successor.
-	OpIdentitiesOffboard = Op[IdentitiesOffboardInput, IdentitiesOffboardOutput]{&operationTable[330]}
+	OpIdentitiesOffboard = Op[IdentitiesOffboardInput, IdentitiesOffboardOutput]{&operationTable[332]}
 	// OpIdentitiesRequestPasswordReset is POST {basePath}/identities/requestPasswordReset. Emails a member a password-reset link on an administrator's behalf.
-	OpIdentitiesRequestPasswordReset = Op[IdentitiesRequestPasswordResetInput, IdentitiesRequestPasswordResetOutput]{&operationTable[331]}
+	OpIdentitiesRequestPasswordReset = Op[IdentitiesRequestPasswordResetInput, IdentitiesRequestPasswordResetOutput]{&operationTable[333]}
 	// OpIdentitiesResendInvitation is POST {basePath}/identities/resendInvitation. Sends a member invitation again with a new token and a fresh lifetime; the earlier link stops working.
-	OpIdentitiesResendInvitation = Op[IdentitiesResendInvitationInput, IdentitiesResendInvitationOutput]{&operationTable[332]}
+	OpIdentitiesResendInvitation = Op[IdentitiesResendInvitationInput, IdentitiesResendInvitationOutput]{&operationTable[334]}
 	// OpIdentitiesRevokeInvitation is POST {basePath}/identities/revokeInvitation. Cancels a member invitation so its link can no longer be used.
-	OpIdentitiesRevokeInvitation = Op[IdentitiesRevokeInvitationInput, IdentitiesRevokeInvitationOutput]{&operationTable[333]}
+	OpIdentitiesRevokeInvitation = Op[IdentitiesRevokeInvitationInput, IdentitiesRevokeInvitationOutput]{&operationTable[335]}
 	// OpIdentitiesRevokeSessions is POST {basePath}/identities/revokeSessions. Ends every session and API key of an identity without disabling it.
-	OpIdentitiesRevokeSessions = Op[IdentitiesRevokeSessionsInput, IdentitiesRevokeSessionsOutput]{&operationTable[334]}
+	OpIdentitiesRevokeSessions = Op[IdentitiesRevokeSessionsInput, IdentitiesRevokeSessionsOutput]{&operationTable[336]}
 	// OpIdentitiesSetBoundary is POST {basePath}/identities/setBoundary. Sets a root-controlled permissions boundary on one identity, capping what it may do in the tenant whatever its roles grant.
-	OpIdentitiesSetBoundary = Op[IdentitiesSetBoundaryInput, IdentitiesSetBoundaryOutput]{&operationTable[335]}
+	OpIdentitiesSetBoundary = Op[IdentitiesSetBoundaryInput, IdentitiesSetBoundaryOutput]{&operationTable[337]}
 	// OpIdentitiesSetOwner is POST {basePath}/identities/setOwner. Makes a member an owner of the tenant, or removes their ownership.
-	OpIdentitiesSetOwner = Op[IdentitiesSetOwnerInput, IdentitiesSetOwnerOutput]{&operationTable[336]}
+	OpIdentitiesSetOwner = Op[IdentitiesSetOwnerInput, IdentitiesSetOwnerOutput]{&operationTable[338]}
 	// OpIdentitiesSetStatus is POST {basePath}/identities/setStatus. Disables an identity or re-enables it.
-	OpIdentitiesSetStatus = Op[IdentitiesSetStatusInput, IdentitiesSetStatusOutput]{&operationTable[337]}
+	OpIdentitiesSetStatus = Op[IdentitiesSetStatusInput, IdentitiesSetStatusOutput]{&operationTable[339]}
+	// OpIdentitiesUnlinkProvider is POST {basePath}/identities/unlinkProvider. Removes a linked external sign-in; that IdP account no longer signs in to this account.
+	OpIdentitiesUnlinkProvider = Op[IdentitiesUnlinkProviderInput, IdentitiesUnlinkProviderOutput]{&operationTable[340]}
 	// OpIdentitiesUnlock is POST {basePath}/identities/unlock. Clears the rate-limit counters that lock a person out of sign-in, recovery, and MFA after too many attempts.
-	OpIdentitiesUnlock = Op[IdentitiesUnlockInput, IdentitiesUnlockOutput]{&operationTable[338]}
+	OpIdentitiesUnlock = Op[IdentitiesUnlockInput, IdentitiesUnlockOutput]{&operationTable[341]}
 	// OpIdentitiesUpdate is POST {basePath}/identities/update. Changes an identity's name, declared attributes, email, manager, or scheduled deactivation.
-	OpIdentitiesUpdate = Op[IdentitiesUpdateInput, IdentitiesUpdateOutput]{&operationTable[339]}
+	OpIdentitiesUpdate = Op[IdentitiesUpdateInput, IdentitiesUpdateOutput]{&operationTable[342]}
 	// OpImpactPreview is POST {basePath}/impact/preview. Simulates a role update, a policy document change, or a role deletion, and reports the actions each holder would gain and lose per resource, plus the access invariants the change would break or fix.
-	OpImpactPreview = Op[ImpactPreviewInput, ImpactPreviewOutput]{&operationTable[340]}
+	OpImpactPreview = Op[ImpactPreviewInput, ImpactPreviewOutput]{&operationTable[343]}
 	// OpInferenceCheck is POST {basePath}/inference/check. Tells the caller whether they may invoke a model now and, when they may, returns a single-use ticket for an external gateway.
-	OpInferenceCheck = Op[InferenceCheckInput, InferenceCheckOutput]{&operationTable[341]}
+	OpInferenceCheck = Op[InferenceCheckInput, InferenceCheckOutput]{&operationTable[344]}
 	// OpInferenceCreateModel is POST {basePath}/inference/createModel. Publishes a model under a public name, served by a provider of this tenant or an ancestor.
-	OpInferenceCreateModel = Op[InferenceCreateModelInput, InferenceCreateModelOutput]{&operationTable[342]}
+	OpInferenceCreateModel = Op[InferenceCreateModelInput, InferenceCreateModelOutput]{&operationTable[345]}
 	// OpInferenceCreateProvider is POST {basePath}/inference/createProvider. Registers an upstream model provider account, whose API key is sealed and never returned.
-	OpInferenceCreateProvider = Op[InferenceCreateProviderInput, InferenceCreateProviderOutput]{&operationTable[343]}
+	OpInferenceCreateProvider = Op[InferenceCreateProviderInput, InferenceCreateProviderOutput]{&operationTable[346]}
 	// OpInferenceDeleteBudget is POST {basePath}/inference/deleteBudget. Deletes a budget together with its usage counters.
-	OpInferenceDeleteBudget = Op[InferenceDeleteBudgetInput, InferenceDeleteBudgetOutput]{&operationTable[344]}
+	OpInferenceDeleteBudget = Op[InferenceDeleteBudgetInput, InferenceDeleteBudgetOutput]{&operationTable[347]}
 	// OpInferenceDeleteModel is POST {basePath}/inference/deleteModel. Removes one of this tenant's models; an inherited model of the same name becomes visible again.
-	OpInferenceDeleteModel = Op[InferenceDeleteModelInput, InferenceDeleteModelOutput]{&operationTable[345]}
+	OpInferenceDeleteModel = Op[InferenceDeleteModelInput, InferenceDeleteModelOutput]{&operationTable[348]}
 	// OpInferenceDeleteProvider is POST {basePath}/inference/deleteProvider. Deletes a provider that no model uses, together with its sealed key.
-	OpInferenceDeleteProvider = Op[InferenceDeleteProviderInput, InferenceDeleteProviderOutput]{&operationTable[346]}
+	OpInferenceDeleteProvider = Op[InferenceDeleteProviderInput, InferenceDeleteProviderOutput]{&operationTable[349]}
 	// OpInferenceListBudgets is POST {basePath}/inference/listBudgets. Lists the tenant's budgets by name, with the current window's standing of each shared pool.
-	OpInferenceListBudgets = Op[InferenceListBudgetsInput, InferenceListBudgetsOutput]{&operationTable[347]}
+	OpInferenceListBudgets = Op[InferenceListBudgetsInput, InferenceListBudgetsOutput]{&operationTable[350]}
 	// OpInferenceListMine is POST {basePath}/inference/listMine. Lists the enabled models the caller may invoke, for a model picker.
-	OpInferenceListMine = Op[InferenceListMineInput, InferenceListMineOutput]{&operationTable[348]}
+	OpInferenceListMine = Op[InferenceListMineInput, InferenceListMineOutput]{&operationTable[351]}
 	// OpInferenceListModels is POST {basePath}/inference/listModels. Lists every model the tenant can see, its own and inherited ones, by name.
-	OpInferenceListModels = Op[InferenceListModelsInput, InferenceListModelsOutput]{&operationTable[349]}
+	OpInferenceListModels = Op[InferenceListModelsInput, InferenceListModelsOutput]{&operationTable[352]}
 	// OpInferenceListProviders is POST {basePath}/inference/listProviders. Lists the providers this tenant's models may use: its own, then its ancestors'.
-	OpInferenceListProviders = Op[InferenceListProvidersInput, InferenceListProvidersOutput]{&operationTable[350]}
+	OpInferenceListProviders = Op[InferenceListProvidersInput, InferenceListProvidersOutput]{&operationTable[353]}
 	// OpInferenceMyUsage is POST {basePath}/inference/myUsage. Returns the caller's own usage by model and the standing of every budget that covers them.
-	OpInferenceMyUsage = Op[InferenceMyUsageInput, InferenceMyUsageOutput]{&operationTable[351]}
+	OpInferenceMyUsage = Op[InferenceMyUsageInput, InferenceMyUsageOutput]{&operationTable[354]}
 	// OpInferenceRecord is POST {basePath}/inference/record. Meters a call an external gateway made after check, by redeeming the check's ticket.
-	OpInferenceRecord = Op[InferenceRecordInput, InferenceRecordOutput]{&operationTable[352]}
+	OpInferenceRecord = Op[InferenceRecordInput, InferenceRecordOutput]{&operationTable[355]}
 	// OpInferenceSetBudget is POST {basePath}/inference/setBudget. Creates a budget, or replaces one when budgetId is given.
-	OpInferenceSetBudget = Op[InferenceSetBudgetInput, InferenceSetBudgetOutput]{&operationTable[353]}
+	OpInferenceSetBudget = Op[InferenceSetBudgetInput, InferenceSetBudgetOutput]{&operationTable[356]}
 	// OpInferenceUpdateModel is POST {basePath}/inference/updateModel. Changes one of this tenant's models, found by its name.
-	OpInferenceUpdateModel = Op[InferenceUpdateModelInput, InferenceUpdateModelOutput]{&operationTable[354]}
+	OpInferenceUpdateModel = Op[InferenceUpdateModelInput, InferenceUpdateModelOutput]{&operationTable[357]}
 	// OpInferenceUpdateProvider is POST {basePath}/inference/updateProvider. Renames a provider, moves its base URL, or replaces its API key.
-	OpInferenceUpdateProvider = Op[InferenceUpdateProviderInput, InferenceUpdateProviderOutput]{&operationTable[355]}
+	OpInferenceUpdateProvider = Op[InferenceUpdateProviderInput, InferenceUpdateProviderOutput]{&operationTable[358]}
 	// OpInferenceUsage is POST {basePath}/inference/usage. Reports model calls between two times, grouped by identity, agent, model, or day.
-	OpInferenceUsage = Op[InferenceUsageInput, InferenceUsageOutput]{&operationTable[356]}
+	OpInferenceUsage = Op[InferenceUsageInput, InferenceUsageOutput]{&operationTable[359]}
 	// OpInvariantsCreate is POST {basePath}/invariants/create. Stores an invariant and returns it with its current result.
-	OpInvariantsCreate = Op[InvariantsCreateInput, InvariantsCreateOutput]{&operationTable[357]}
+	OpInvariantsCreate = Op[InvariantsCreateInput, InvariantsCreateOutput]{&operationTable[360]}
 	// OpInvariantsDelete is POST {basePath}/invariants/delete. Deletes an invariant, ending its monitoring and enforcement.
-	OpInvariantsDelete = Op[InvariantsDeleteInput, InvariantsDeleteOutput]{&operationTable[358]}
+	OpInvariantsDelete = Op[InvariantsDeleteInput, InvariantsDeleteOutput]{&operationTable[361]}
 	// OpInvariantsList is POST {basePath}/invariants/list. Lists the tenant's invariants by name, with the outcome of the last scheduled check.
-	OpInvariantsList = Op[InvariantsListInput, InvariantsListOutput]{&operationTable[359]}
+	OpInvariantsList = Op[InvariantsListInput, InvariantsListOutput]{&operationTable[362]}
 	// OpInvariantsRun is POST {basePath}/invariants/run. Evaluates every invariant, or one, against the current configuration and reports which pass.
-	OpInvariantsRun = Op[InvariantsRunInput, InvariantsRunOutput]{&operationTable[360]}
+	OpInvariantsRun = Op[InvariantsRunInput, InvariantsRunOutput]{&operationTable[363]}
 	// OpInvariantsUpdate is POST {basePath}/invariants/update. Changes any field of an invariant and returns it with its new result.
-	OpInvariantsUpdate = Op[InvariantsUpdateInput, InvariantsUpdateOutput]{&operationTable[361]}
+	OpInvariantsUpdate = Op[InvariantsUpdateInput, InvariantsUpdateOutput]{&operationTable[364]}
 	// OpKeysCancelDeletion is POST {basePath}/keys/cancelDeletion. Cancels a scheduled deletion. The key comes back disabled.
-	OpKeysCancelDeletion = Op[KeysCancelDeletionInput, KeysCancelDeletionOutput]{&operationTable[362]}
+	OpKeysCancelDeletion = Op[KeysCancelDeletionInput, KeysCancelDeletionOutput]{&operationTable[365]}
 	// OpKeysCreate is POST {basePath}/keys/create. Creates a key, optionally with an alias, tags, a description and automatic rotation.
-	OpKeysCreate = Op[KeysCreateInput, KeysCreateOutput]{&operationTable[363]}
+	OpKeysCreate = Op[KeysCreateInput, KeysCreateOutput]{&operationTable[366]}
 	// OpKeysCreateAlias is POST {basePath}/keys/createAlias. Names a key alias/{name}. Names use letters, digits, slashes, underscores and hyphens and are unique within the tenant.
-	OpKeysCreateAlias = Op[KeysCreateAliasInput, KeysCreateAliasOutput]{&operationTable[364]}
+	OpKeysCreateAlias = Op[KeysCreateAliasInput, KeysCreateAliasOutput]{&operationTable[367]}
 	// OpKeysCreateGrant is POST {basePath}/keys/createGrant. Allows an identity to perform named operations on one key, optionally until expiresAt and, for encryption operations, only with a matching encryption context (constraints.encryptionContextEquals or e…
-	OpKeysCreateGrant = Op[KeysCreateGrantInput, KeysCreateGrantOutput]{&operationTable[365]}
+	OpKeysCreateGrant = Op[KeysCreateGrantInput, KeysCreateGrantOutput]{&operationTable[368]}
 	// OpKeysDecrypt is POST {basePath}/keys/decrypt. Decrypts a ciphertext from encrypt, generateDataKey or reEncrypt, given the same encryption context. Text comes back as plaintext, bytes as plaintextBase64.
-	OpKeysDecrypt = Op[KeysDecryptInput, KeysDecryptOutput]{&operationTable[366]}
+	OpKeysDecrypt = Op[KeysDecryptInput, KeysDecryptOutput]{&operationTable[369]}
 	// OpKeysDeleteAlias is POST {basePath}/keys/deleteAlias. Removes an alias. The key stays.
-	OpKeysDeleteAlias = Op[KeysDeleteAliasInput, KeysDeleteAliasOutput]{&operationTable[367]}
+	OpKeysDeleteAlias = Op[KeysDeleteAliasInput, KeysDeleteAliasOutput]{&operationTable[370]}
 	// OpKeysDisable is POST {basePath}/keys/disable. Disables a key. Every cryptographic call with it is refused with KEYSTATEINVALID until it is enabled again, so data encrypted under it cannot be read in the meantime.
-	OpKeysDisable = Op[KeysDisableInput, KeysDisableOutput]{&operationTable[368]}
+	OpKeysDisable = Op[KeysDisableInput, KeysDisableOutput]{&operationTable[371]}
 	// OpKeysEnable is POST {basePath}/keys/enable. Enables a disabled key.
-	OpKeysEnable = Op[KeysEnableInput, KeysEnableOutput]{&operationTable[369]}
+	OpKeysEnable = Op[KeysEnableInput, KeysEnableOutput]{&operationTable[372]}
 	// OpKeysEncrypt is POST {basePath}/keys/encrypt. Encrypts up to 4 KiB (plaintext as UTF-8 text, or plaintextBase64) with the key's current version, bound to the optional encryption context.
-	OpKeysEncrypt = Op[KeysEncryptInput, KeysEncryptOutput]{&operationTable[370]}
+	OpKeysEncrypt = Op[KeysEncryptInput, KeysEncryptOutput]{&operationTable[373]}
 	// OpKeysGenerateDataKey is POST {basePath}/keys/generateDataKey. Returns a fresh random data key of 16, 24, 32 (default) or 64 bytes for encrypting large data locally: the plaintext key to use and discard, and its ciphertext under the KMS key to store beside the d…
-	OpKeysGenerateDataKey = Op[KeysGenerateDataKeyInput, KeysGenerateDataKeyOutput]{&operationTable[371]}
+	OpKeysGenerateDataKey = Op[KeysGenerateDataKeyInput, KeysGenerateDataKeyOutput]{&operationTable[374]}
 	// OpKeysGenerateMac is POST {basePath}/keys/generateMac. Computes an HMAC of a message with the key's current version and returns it as base64url.
-	OpKeysGenerateMac = Op[KeysGenerateMacInput, KeysGenerateMacOutput]{&operationTable[372]}
+	OpKeysGenerateMac = Op[KeysGenerateMacInput, KeysGenerateMacOutput]{&operationTable[375]}
 	// OpKeysGet is POST {basePath}/keys/get. One key by id or alias: its spec, usage, state, current version, tags, aliases, algorithms and rotation schedule. Never its material.
-	OpKeysGet = Op[KeysGetInput, KeysGetOutput]{&operationTable[373]}
+	OpKeysGet = Op[KeysGetInput, KeysGetOutput]{&operationTable[376]}
 	// OpKeysJwks is POST {basePath}/keys/jwks. Every version's public key of an asymmetric key, as a JWK Set for verifying tokens signed with signJwt.
-	OpKeysJwks = Op[KeysJwksInput, KeysJwksOutput]{&operationTable[374]}
+	OpKeysJwks = Op[KeysJwksInput, KeysJwksOutput]{&operationTable[377]}
 	// OpKeysList is POST {basePath}/keys/list. The tenant's keys that the caller may read, newest first, optionally filtered by state or keyUsage.
-	OpKeysList = Op[KeysListInput, KeysListOutput]{&operationTable[375]}
+	OpKeysList = Op[KeysListInput, KeysListOutput]{&operationTable[378]}
 	// OpKeysListAliases is POST {basePath}/keys/listAliases. Every alias in the tenant, or the aliases of one key (keyId), sorted by name.
-	OpKeysListAliases = Op[KeysListAliasesInput, KeysListAliasesOutput]{&operationTable[376]}
+	OpKeysListAliases = Op[KeysListAliasesInput, KeysListAliasesOutput]{&operationTable[379]}
 	// OpKeysListGrants is POST {basePath}/keys/listGrants. The key's grants, newest first, each with active (not lapsed).
-	OpKeysListGrants = Op[KeysListGrantsInput, KeysListGrantsOutput]{&operationTable[377]}
+	OpKeysListGrants = Op[KeysListGrantsInput, KeysListGrantsOutput]{&operationTable[380]}
 	// OpKeysListVersions is POST {basePath}/keys/listVersions. The key's versions, newest first, with their origin (create, rotate or automatic) and, for asymmetric keys, a fingerprint of the public key.
-	OpKeysListVersions = Op[KeysListVersionsInput, KeysListVersionsOutput]{&operationTable[378]}
+	OpKeysListVersions = Op[KeysListVersionsInput, KeysListVersionsOutput]{&operationTable[381]}
 	// OpKeysPublicKey is POST {basePath}/keys/publicKey. The public key of an asymmetric key version (the current one by default), as SPKI PEM and as a JWK whose kid is {keyId}.{version}. Anyone holding it can verify signatures without calling IAM.
-	OpKeysPublicKey = Op[KeysPublicKeyInput, KeysPublicKeyOutput]{&operationTable[379]}
+	OpKeysPublicKey = Op[KeysPublicKeyInput, KeysPublicKeyOutput]{&operationTable[382]}
 	// OpKeysReEncrypt is POST {basePath}/keys/reEncrypt. Decrypts a ciphertext and encrypts it again under another key or context, without the plaintext leaving the server.
-	OpKeysReEncrypt = Op[KeysReEncryptInput, KeysReEncryptOutput]{&operationTable[380]}
+	OpKeysReEncrypt = Op[KeysReEncryptInput, KeysReEncryptOutput]{&operationTable[383]}
 	// OpKeysRetireGrant is POST {basePath}/keys/retireGrant. Gives up a grant made to the caller's own identity. It needs no permission, so a workload can drop access it no longer uses.
-	OpKeysRetireGrant = Op[KeysRetireGrantInput, KeysRetireGrantOutput]{&operationTable[381]}
+	OpKeysRetireGrant = Op[KeysRetireGrantInput, KeysRetireGrantOutput]{&operationTable[384]}
 	// OpKeysRevokeGrant is POST {basePath}/keys/revokeGrant. Revokes a grant.
-	OpKeysRevokeGrant = Op[KeysRevokeGrantInput, KeysRevokeGrantOutput]{&operationTable[382]}
+	OpKeysRevokeGrant = Op[KeysRevokeGrantInput, KeysRevokeGrantOutput]{&operationTable[385]}
 	// OpKeysRotate is POST {basePath}/keys/rotate. Creates a new version on demand. The new version encrypts, signs and computes MACs from now on, and older versions keep decrypting and verifying.
-	OpKeysRotate = Op[KeysRotateInput, KeysRotateOutput]{&operationTable[383]}
+	OpKeysRotate = Op[KeysRotateInput, KeysRotateOutput]{&operationTable[386]}
 	// OpKeysScheduleDeletion is POST {basePath}/keys/scheduleDeletion. Schedules the key's destruction after a waiting period of 7 to 30 days (30 by default). The key is unusable while it waits.
-	OpKeysScheduleDeletion = Op[KeysScheduleDeletionInput, KeysScheduleDeletionOutput]{&operationTable[384]}
+	OpKeysScheduleDeletion = Op[KeysScheduleDeletionInput, KeysScheduleDeletionOutput]{&operationTable[387]}
 	// OpKeysSign is POST {basePath}/keys/sign. Signs a message (message or messageBase64, up to 64 KiB) with the key's current version. algorithm defaults to the key's first (ES256, ES384, EdDSA, or PS256 for RSA).
-	OpKeysSign = Op[KeysSignInput, KeysSignOutput]{&operationTable[385]}
+	OpKeysSign = Op[KeysSignInput, KeysSignOutput]{&operationTable[388]}
 	// OpKeysSignJwt is POST {basePath}/keys/signJwt. Signs a JWT with a signing key or a MAC key. The header is { alg, kid, typ } with kid = {keyId}.{version} (the same kid as in jwks).
-	OpKeysSignJwt = Op[KeysSignJwtInput, KeysSignJwtOutput]{&operationTable[386]}
+	OpKeysSignJwt = Op[KeysSignJwtInput, KeysSignJwtOutput]{&operationTable[389]}
 	// OpKeysUpdate is POST {basePath}/keys/update. Changes the description, replaces the tags, or sets or clears (null) the automatic rotation period.
-	OpKeysUpdate = Op[KeysUpdateInput, KeysUpdateOutput]{&operationTable[387]}
+	OpKeysUpdate = Op[KeysUpdateInput, KeysUpdateOutput]{&operationTable[390]}
 	// OpKeysUpdateAlias is POST {basePath}/keys/updateAlias. Points an alias at another key of the same kind and usage, so applications that name the alias switch keys without a deploy.
-	OpKeysUpdateAlias = Op[KeysUpdateAliasInput, KeysUpdateAliasOutput]{&operationTable[388]}
+	OpKeysUpdateAlias = Op[KeysUpdateAliasInput, KeysUpdateAliasOutput]{&operationTable[391]}
 	// OpKeysVerify is POST {basePath}/keys/verify. Checks a signature from sign with the given keyVersion (the current one by default). Returns { valid }: a mismatch is not an error.
-	OpKeysVerify = Op[KeysVerifyInput, KeysVerifyOutput]{&operationTable[389]}
+	OpKeysVerify = Op[KeysVerifyInput, KeysVerifyOutput]{&operationTable[392]}
 	// OpKeysVerifyJwt is POST {basePath}/keys/verifyJwt. Verifies a JWT made with a key.
-	OpKeysVerifyJwt = Op[KeysVerifyJwtInput, KeysVerifyJwtOutput]{&operationTable[390]}
+	OpKeysVerifyJwt = Op[KeysVerifyJwtInput, KeysVerifyJwtOutput]{&operationTable[393]}
 	// OpKeysVerifyMac is POST {basePath}/keys/verifyMac. Checks a MAC in constant time with the given keyVersion (the current one by default). Returns { valid }.
-	OpKeysVerifyMac = Op[KeysVerifyMacInput, KeysVerifyMacOutput]{&operationTable[391]}
+	OpKeysVerifyMac = Op[KeysVerifyMacInput, KeysVerifyMacOutput]{&operationTable[394]}
 	// OpLdapDirectory is POST {basePath}/ldap/directory. The directory as the caller may read it: active people, published groups with their members and, when listed, service accounts and agents.
-	OpLdapDirectory = Op[LdapDirectoryInput, LdapDirectoryOutput]{&operationTable[392]}
+	OpLdapDirectory = Op[LdapDirectoryInput, LdapDirectoryOutput]{&operationTable[395]}
 	// OpLdapGetSettings is POST {basePath}/ldap/getSettings. The organization's gateway settings: whether it is on, its base DN, how uid is formed (email, localPart or id), who may bind (peopleBind, serviceBind), requireTls, mfaSuffix, whether service accounts…
-	OpLdapGetSettings = Op[LdapGetSettingsInput, LdapGetSettingsOutput]{&operationTable[393]}
+	OpLdapGetSettings = Op[LdapGetSettingsInput, LdapGetSettingsOutput]{&operationTable[396]}
 	// OpLdapUpdateSettings is POST {basePath}/ldap/updateSettings. Changes the gateway settings; fields left out keep their values. A base DN is attr=value components (letters, digits, spaces, ., or -), at most 10, compared without regard to case.
-	OpLdapUpdateSettings = Op[LdapUpdateSettingsInput, LdapUpdateSettingsOutput]{&operationTable[394]}
+	OpLdapUpdateSettings = Op[LdapUpdateSettingsInput, LdapUpdateSettingsOutput]{&operationTable[397]}
 	// OpLicensesAddPool is POST {basePath}/licenses/addPool. Gives a tenant seats of a product: a quantity, optionally from a start until an end.
-	OpLicensesAddPool = Op[LicensesAddPoolInput, LicensesAddPoolOutput]{&operationTable[395]}
+	OpLicensesAddPool = Op[LicensesAddPoolInput, LicensesAddPoolOutput]{&operationTable[398]}
 	// OpLicensesAssign is POST {basePath}/licenses/assign. Gives a product to a person or a group of the tenant; the person, or each live member of the group, claims a seat.
-	OpLicensesAssign = Op[LicensesAssignInput, LicensesAssignOutput]{&operationTable[396]}
+	OpLicensesAssign = Op[LicensesAssignInput, LicensesAssignOutput]{&operationTable[399]}
 	// OpLicensesAssignMany is POST {basePath}/licenses/assignMany. Gives a product to up to 100 people in one transaction.
-	OpLicensesAssignMany = Op[LicensesAssignManyInput, LicensesAssignManyOutput]{&operationTable[397]}
+	OpLicensesAssignMany = Op[LicensesAssignManyInput, LicensesAssignManyOutput]{&operationTable[400]}
 	// OpLicensesConfigure is POST {basePath}/licenses/configure. Turns inactive-seat reclaim and waiting-list email on or off for the tenant.
-	OpLicensesConfigure = Op[LicensesConfigureInput, LicensesConfigureOutput]{&operationTable[398]}
+	OpLicensesConfigure = Op[LicensesConfigureInput, LicensesConfigureOutput]{&operationTable[401]}
 	// OpLicensesCreateProduct is POST {basePath}/licenses/createProduct. Defines a product: a permanent key, a name, and the feature keys a seat unlocks.
-	OpLicensesCreateProduct = Op[LicensesCreateProductInput, LicensesCreateProductOutput]{&operationTable[399]}
+	OpLicensesCreateProduct = Op[LicensesCreateProductInput, LicensesCreateProductOutput]{&operationTable[402]}
 	// OpLicensesGetProduct is POST {basePath}/licenses/getProduct. Returns one product visible to the tenant, with where it is defined and whether it is shadowed.
-	OpLicensesGetProduct = Op[LicensesGetProductInput, LicensesGetProductOutput]{&operationTable[400]}
+	OpLicensesGetProduct = Op[LicensesGetProductInput, LicensesGetProductOutput]{&operationTable[403]}
 	// OpLicensesGetSettings is POST {basePath}/licenses/getSettings. Returns the tenant's license settings, with the defaults when they were never configured.
-	OpLicensesGetSettings = Op[LicensesGetSettingsInput, LicensesGetSettingsOutput]{&operationTable[401]}
+	OpLicensesGetSettings = Op[LicensesGetSettingsInput, LicensesGetSettingsOutput]{&operationTable[404]}
 	// OpLicensesListAssignments is POST {basePath}/licenses/listAssignments. Lists the tenant's assignments, newest first, optionally of one product or subject.
-	OpLicensesListAssignments = Op[LicensesListAssignmentsInput, LicensesListAssignmentsOutput]{&operationTable[402]}
+	OpLicensesListAssignments = Op[LicensesListAssignmentsInput, LicensesListAssignmentsOutput]{&operationTable[405]}
 	// OpLicensesListPools is POST {basePath}/licenses/listPools. Lists the tenant's pools and, for products it defines, the pools it granted to tenants below it, newest first.
-	OpLicensesListPools = Op[LicensesListPoolsInput, LicensesListPoolsOutput]{&operationTable[403]}
+	OpLicensesListPools = Op[LicensesListPoolsInput, LicensesListPoolsOutput]{&operationTable[406]}
 	// OpLicensesListProducts is POST {basePath}/licenses/listProducts. Lists the products the tenant can use, its own and its ancestors', sorted by key.
-	OpLicensesListProducts = Op[LicensesListProductsInput, LicensesListProductsOutput]{&operationTable[404]}
+	OpLicensesListProducts = Op[LicensesListProductsInput, LicensesListProductsOutput]{&operationTable[407]}
 	// OpLicensesListSeats is POST {basePath}/licenses/listSeats. Lists the tenant's seats: who holds each product and who waits, in order.
-	OpLicensesListSeats = Op[LicensesListSeatsInput, LicensesListSeatsOutput]{&operationTable[405]}
+	OpLicensesListSeats = Op[LicensesListSeatsInput, LicensesListSeatsOutput]{&operationTable[408]}
 	// OpLicensesMine is POST {basePath}/licenses/mine. Returns the caller's own licenses in the tenant, waiting-list places included, and the feature keys they unlock.
-	OpLicensesMine = Op[LicensesMineInput, LicensesMineOutput]{&operationTable[406]}
+	OpLicensesMine = Op[LicensesMineInput, LicensesMineOutput]{&operationTable[409]}
 	// OpLicensesRemovePool is POST {basePath}/licenses/removePool. Removes a pool; the newest active seats beyond the remaining capacity move to the waiting list.
-	OpLicensesRemovePool = Op[LicensesRemovePoolInput, LicensesRemovePoolOutput]{&operationTable[407]}
+	OpLicensesRemovePool = Op[LicensesRemovePoolInput, LicensesRemovePoolOutput]{&operationTable[410]}
 	// OpLicensesRetireProduct is POST {basePath}/licenses/retireProduct. Retires a product for good, releasing its seats in every tenant.
-	OpLicensesRetireProduct = Op[LicensesRetireProductInput, LicensesRetireProductOutput]{&operationTable[408]}
+	OpLicensesRetireProduct = Op[LicensesRetireProductInput, LicensesRetireProductOutput]{&operationTable[411]}
 	// OpLicensesUnassign is POST {basePath}/licenses/unassign. Removes an assignment; seats it carried are released unless another assignment still covers the person.
-	OpLicensesUnassign = Op[LicensesUnassignInput, LicensesUnassignOutput]{&operationTable[409]}
+	OpLicensesUnassign = Op[LicensesUnassignInput, LicensesUnassignOutput]{&operationTable[412]}
 	// OpLicensesUpdatePool is POST {basePath}/licenses/updatePool. Changes a pool's quantity, its end, or its note; seats follow the new capacity at once.
-	OpLicensesUpdatePool = Op[LicensesUpdatePoolInput, LicensesUpdatePoolOutput]{&operationTable[410]}
+	OpLicensesUpdatePool = Op[LicensesUpdatePoolInput, LicensesUpdatePoolOutput]{&operationTable[413]}
 	// OpLicensesUpdateProduct is POST {basePath}/licenses/updateProduct. Renames a product, changes its description, or replaces its feature keys; the key never changes.
-	OpLicensesUpdateProduct = Op[LicensesUpdateProductInput, LicensesUpdateProductOutput]{&operationTable[411]}
+	OpLicensesUpdateProduct = Op[LicensesUpdateProductInput, LicensesUpdateProductOutput]{&operationTable[414]}
 	// OpLicensesUsage is POST {basePath}/licenses/usage. Reports, per product the tenant uses, its capacity and how many seats are active, waiting, available, and reclaimable.
-	OpLicensesUsage = Op[LicensesUsageInput, LicensesUsageOutput]{&operationTable[412]}
+	OpLicensesUsage = Op[LicensesUsageInput, LicensesUsageOutput]{&operationTable[415]}
 	// OpLinksCreate is POST {basePath}/links/create. Links the caller's account to another account of theirs in a different tenant, proving control of both.
-	OpLinksCreate = Op[LinksCreateInput, LinksCreateOutput]{&operationTable[413]}
+	OpLinksCreate = Op[LinksCreateInput, LinksCreateOutput]{&operationTable[416]}
 	// OpLinksList is POST {basePath}/links/list. Lists the accounts linked to the caller's account, for an account-switcher menu.
-	OpLinksList = Op[LinksListInput, LinksListOutput]{&operationTable[414]}
+	OpLinksList = Op[LinksListInput, LinksListOutput]{&operationTable[417]}
 	// OpLinksRevoke is POST {basePath}/links/revoke. Removes a link the person no longer wants.
-	OpLinksRevoke = Op[LinksRevokeInput, LinksRevokeOutput]{&operationTable[415]}
+	OpLinksRevoke = Op[LinksRevokeInput, LinksRevokeOutput]{&operationTable[418]}
 	// OpLinksSwitch is POST {basePath}/links/switch. Opens a fresh session for a linked account, using a recently authenticated credential for that account.
-	OpLinksSwitch = Op[LinksSwitchInput, LinksSwitchOutput]{&operationTable[416]}
+	OpLinksSwitch = Op[LinksSwitchInput, LinksSwitchOutput]{&operationTable[419]}
 	// OpOidcProvidersCreate is POST {basePath}/oidcProviders/create. Registers an OIDC provider whose tokens the tenant's web-identity trusts can admit.
-	OpOidcProvidersCreate = Op[OidcProvidersCreateInput, OidcProvidersCreateOutput]{&operationTable[417]}
+	OpOidcProvidersCreate = Op[OidcProvidersCreateInput, OidcProvidersCreateOutput]{&operationTable[420]}
 	// OpOidcProvidersDelete is POST {basePath}/oidcProviders/delete. Deletes a provider that no live trust uses any more.
-	OpOidcProvidersDelete = Op[OidcProvidersDeleteInput, OidcProvidersDeleteOutput]{&operationTable[418]}
+	OpOidcProvidersDelete = Op[OidcProvidersDeleteInput, OidcProvidersDeleteOutput]{&operationTable[421]}
 	// OpOidcProvidersGet is POST {basePath}/oidcProviders/get. Returns one provider.
-	OpOidcProvidersGet = Op[OidcProvidersGetInput, OidcProvidersGetOutput]{&operationTable[419]}
+	OpOidcProvidersGet = Op[OidcProvidersGetInput, OidcProvidersGetOutput]{&operationTable[422]}
 	// OpOidcProvidersList is POST {basePath}/oidcProviders/list. Lists the tenant's OIDC providers, oldest first.
-	OpOidcProvidersList = Op[OidcProvidersListInput, OidcProvidersListOutput]{&operationTable[420]}
+	OpOidcProvidersList = Op[OidcProvidersListInput, OidcProvidersListOutput]{&operationTable[423]}
 	// OpOidcProvidersRevokeSessions is POST {basePath}/oidcProviders/revokeSessions. Ends the web-identity sessions issued through a provider before a point in time, across every trust that uses it.
-	OpOidcProvidersRevokeSessions = Op[OidcProvidersRevokeSessionsInput, OidcProvidersRevokeSessionsOutput]{&operationTable[421]}
+	OpOidcProvidersRevokeSessions = Op[OidcProvidersRevokeSessionsInput, OidcProvidersRevokeSessionsOutput]{&operationTable[424]}
 	// OpOidcProvidersUpdate is POST {basePath}/oidcProviders/update. Changes a provider's name, audiences, keys, algorithms, token limits, replay protection, or enabled state.
-	OpOidcProvidersUpdate = Op[OidcProvidersUpdateInput, OidcProvidersUpdateOutput]{&operationTable[422]}
+	OpOidcProvidersUpdate = Op[OidcProvidersUpdateInput, OidcProvidersUpdateOutput]{&operationTable[425]}
 	// OpOnboardingCreateFlow is POST {basePath}/onboarding/createFlow. Creates a flow at this tenant's level.
-	OpOnboardingCreateFlow = Op[OnboardingCreateFlowInput, OnboardingCreateFlowOutput]{&operationTable[423]}
+	OpOnboardingCreateFlow = Op[OnboardingCreateFlowInput, OnboardingCreateFlowOutput]{&operationTable[426]}
 	// OpOnboardingDeleteFlow is POST {basePath}/onboarding/deleteFlow. Deletes a flow with every progress record of it, in every tenant it reached, and removes it from tenants' disabledFlowIds.
-	OpOnboardingDeleteFlow = Op[OnboardingDeleteFlowInput, OnboardingDeleteFlowOutput]{&operationTable[424]}
+	OpOnboardingDeleteFlow = Op[OnboardingDeleteFlowInput, OnboardingDeleteFlowOutput]{&operationTable[427]}
 	// OpOnboardingEffective is POST {basePath}/onboarding/effective. Everything onboarding looks like from this tenant, for administration pages.
-	OpOnboardingEffective = Op[OnboardingEffectiveInput, OnboardingEffectiveOutput]{&operationTable[425]}
+	OpOnboardingEffective = Op[OnboardingEffectiveInput, OnboardingEffectiveOutput]{&operationTable[428]}
 	// OpOnboardingGetFlow is POST {basePath}/onboarding/getFlow. Returns one flow this tenant defines.
-	OpOnboardingGetFlow = Op[OnboardingGetFlowInput, OnboardingGetFlowOutput]{&operationTable[426]}
+	OpOnboardingGetFlow = Op[OnboardingGetFlowInput, OnboardingGetFlowOutput]{&operationTable[429]}
 	// OpOnboardingListFlows is POST {basePath}/onboarding/listFlows. Lists the flows this tenant defines, oldest first, optionally for one audience.
-	OpOnboardingListFlows = Op[OnboardingListFlowsInput, OnboardingListFlowsOutput]{&operationTable[427]}
+	OpOnboardingListFlows = Op[OnboardingListFlowsInput, OnboardingListFlowsOutput]{&operationTable[430]}
 	// OpOnboardingMemberProgress is POST {basePath}/onboarding/memberProgress. One person's member flows in this tenant, with the state of every step and their answers, and pending (required flows still open).
-	OpOnboardingMemberProgress = Op[OnboardingMemberProgressInput, OnboardingMemberProgressOutput]{&operationTable[428]}
+	OpOnboardingMemberProgress = Op[OnboardingMemberProgressInput, OnboardingMemberProgressOutput]{&operationTable[431]}
 	// OpOnboardingMine is POST {basePath}/onboarding/mine. The caller's own onboarding: the welcome screen and their member flows, with step states and their own answers.
-	OpOnboardingMine = Op[OnboardingMineInput, OnboardingMineOutput]{&operationTable[429]}
+	OpOnboardingMine = Op[OnboardingMineInput, OnboardingMineOutput]{&operationTable[432]}
 	// OpOnboardingProgress is POST {basePath}/onboarding/progress. Progress through one flow as this tenant sees it.
-	OpOnboardingProgress = Op[OnboardingProgressInput, OnboardingProgressOutput]{&operationTable[430]}
+	OpOnboardingProgress = Op[OnboardingProgressInput, OnboardingProgressOutput]{&operationTable[433]}
 	// OpOnboardingResetProgress is POST {basePath}/onboarding/resetProgress. Clears progress through a flow, or one step of it (stepId), so people or tenants go through it again.
-	OpOnboardingResetProgress = Op[OnboardingResetProgressInput, OnboardingResetProgressOutput]{&operationTable[431]}
+	OpOnboardingResetProgress = Op[OnboardingResetProgressInput, OnboardingResetProgressOutput]{&operationTable[434]}
 	// OpOnboardingSetSettings is POST {basePath}/onboarding/setSettings. Replaces this tenant's onboarding settings: welcomeTitle, welcomeMessage, supportEmail, supportUrl (empty or null falls back to the level above), and disabledFlowIds, the inherited member flows switc…
-	OpOnboardingSetSettings = Op[OnboardingSetSettingsInput, OnboardingSetSettingsOutput]{&operationTable[432]}
+	OpOnboardingSetSettings = Op[OnboardingSetSettingsInput, OnboardingSetSettingsOutput]{&operationTable[435]}
 	// OpOnboardingSetup is POST {basePath}/onboarding/setup. This tenant's own setup checklists (the tenant flows defined above it), with the state of every step and the answers.
-	OpOnboardingSetup = Op[OnboardingSetupInput, OnboardingSetupOutput]{&operationTable[433]}
+	OpOnboardingSetup = Op[OnboardingSetupInput, OnboardingSetupOutput]{&operationTable[436]}
 	// OpOnboardingSubmitSetupStep is POST {basePath}/onboarding/submitSetupStep. Completes a form, acknowledge, or task step of this tenant's setup.
-	OpOnboardingSubmitSetupStep = Op[OnboardingSubmitSetupStepInput, OnboardingSubmitSetupStepOutput]{&operationTable[434]}
+	OpOnboardingSubmitSetupStep = Op[OnboardingSubmitSetupStepInput, OnboardingSubmitSetupStepOutput]{&operationTable[437]}
 	// OpOnboardingSubmitStep is POST {basePath}/onboarding/submitStep. Completes one step of the caller's own member flow: answers for a form, acknowledged: true for an acknowledgement, nothing for a task (an admin-verified task is submitted for review).
-	OpOnboardingSubmitStep = Op[OnboardingSubmitStepInput, OnboardingSubmitStepOutput]{&operationTable[435]}
+	OpOnboardingSubmitStep = Op[OnboardingSubmitStepInput, OnboardingSubmitStepOutput]{&operationTable[438]}
 	// OpOnboardingUpdateFlow is POST {basePath}/onboarding/updateFlow. Changes any field of a flow but its audience.
-	OpOnboardingUpdateFlow = Op[OnboardingUpdateFlowInput, OnboardingUpdateFlowOutput]{&operationTable[436]}
+	OpOnboardingUpdateFlow = Op[OnboardingUpdateFlowInput, OnboardingUpdateFlowOutput]{&operationTable[439]}
 	// OpOnboardingVerifyStep is POST {basePath}/onboarding/verifyStep. Approves (the default) or sends back (approve: false, with an optional note) an administrator-verified task.
-	OpOnboardingVerifyStep = Op[OnboardingVerifyStepInput, OnboardingVerifyStepOutput]{&operationTable[437]}
+	OpOnboardingVerifyStep = Op[OnboardingVerifyStepInput, OnboardingVerifyStepOutput]{&operationTable[440]}
 	// OpPackagesApproveRequest is POST {basePath}/packages/approveRequest. Grants a pending package request by assigning the package to the requester under your own authority.
-	OpPackagesApproveRequest = Op[PackagesApproveRequestInput, PackagesApproveRequestOutput]{&operationTable[438]}
+	OpPackagesApproveRequest = Op[PackagesApproveRequestInput, PackagesApproveRequestOutput]{&operationTable[441]}
 	// OpPackagesAssign is POST {basePath}/packages/assign. Grants a package to a person: one binding per role and one membership per group, all ending together.
-	OpPackagesAssign = Op[PackagesAssignInput, PackagesAssignOutput]{&operationTable[439]}
+	OpPackagesAssign = Op[PackagesAssignInput, PackagesAssignOutput]{&operationTable[442]}
 	// OpPackagesCancelRequest is POST {basePath}/packages/cancelRequest. Withdraws one of your own pending package requests.
-	OpPackagesCancelRequest = Op[PackagesCancelRequestInput, PackagesCancelRequestOutput]{&operationTable[440]}
+	OpPackagesCancelRequest = Op[PackagesCancelRequestInput, PackagesCancelRequestOutput]{&operationTable[443]}
 	// OpPackagesCreate is POST {basePath}/packages/create. Defines a package of roles and groups, optionally requestable or assigned automatically by a rule.
-	OpPackagesCreate = Op[PackagesCreateInput, PackagesCreateOutput]{&operationTable[441]}
+	OpPackagesCreate = Op[PackagesCreateInput, PackagesCreateOutput]{&operationTable[444]}
 	// OpPackagesDelete is POST {basePath}/packages/delete. Deletes a package nobody holds, together with its request history.
-	OpPackagesDelete = Op[PackagesDeleteInput, PackagesDeleteOutput]{&operationTable[442]}
+	OpPackagesDelete = Op[PackagesDeleteInput, PackagesDeleteOutput]{&operationTable[445]}
 	// OpPackagesDenyRequest is POST {basePath}/packages/denyRequest. Refuses a pending package request, with an optional note to the requester.
-	OpPackagesDenyRequest = Op[PackagesDenyRequestInput, PackagesDenyRequestOutput]{&operationTable[443]}
+	OpPackagesDenyRequest = Op[PackagesDenyRequestInput, PackagesDenyRequestOutput]{&operationTable[446]}
 	// OpPackagesExtend is POST {basePath}/packages/extend. Moves the end of a person's manual assignment, for the assignment and every record it created at once.
-	OpPackagesExtend = Op[PackagesExtendInput, PackagesExtendOutput]{&operationTable[444]}
+	OpPackagesExtend = Op[PackagesExtendInput, PackagesExtendOutput]{&operationTable[447]}
 	// OpPackagesGet is POST {basePath}/packages/get. Returns one package with its live holder counts and, for a rule package, the rule's state.
-	OpPackagesGet = Op[PackagesGetInput, PackagesGetOutput]{&operationTable[445]}
+	OpPackagesGet = Op[PackagesGetInput, PackagesGetOutput]{&operationTable[448]}
 	// OpPackagesList is POST {basePath}/packages/list. Lists the tenant's packages by name, each with its live holder counts.
-	OpPackagesList = Op[PackagesListInput, PackagesListOutput]{&operationTable[446]}
+	OpPackagesList = Op[PackagesListInput, PackagesListOutput]{&operationTable[449]}
 	// OpPackagesListApprovals is POST {basePath}/packages/listApprovals. Lists the pending package requests you may decide on.
-	OpPackagesListApprovals = Op[PackagesListApprovalsInput, PackagesListApprovalsOutput]{&operationTable[447]}
+	OpPackagesListApprovals = Op[PackagesListApprovalsInput, PackagesListApprovalsOutput]{&operationTable[450]}
 	// OpPackagesListAssignments is POST {basePath}/packages/listAssignments. Lists the holders of a package, or the packages of a person, newest first.
-	OpPackagesListAssignments = Op[PackagesListAssignmentsInput, PackagesListAssignmentsOutput]{&operationTable[448]}
+	OpPackagesListAssignments = Op[PackagesListAssignmentsInput, PackagesListAssignmentsOutput]{&operationTable[451]}
 	// OpPackagesListMine is POST {basePath}/packages/listMine. Returns your self-service view: the requestable packages with your status on each, your assignments, and your recent requests.
-	OpPackagesListMine = Op[PackagesListMineInput, PackagesListMineOutput]{&operationTable[449]}
+	OpPackagesListMine = Op[PackagesListMineInput, PackagesListMineOutput]{&operationTable[452]}
 	// OpPackagesListRequests is POST {basePath}/packages/listRequests. Lists package requests for a package or a person, newest first, optionally by status.
-	OpPackagesListRequests = Op[PackagesListRequestsInput, PackagesListRequestsOutput]{&operationTable[450]}
+	OpPackagesListRequests = Op[PackagesListRequestsInput, PackagesListRequestsOutput]{&operationTable[453]}
 	// OpPackagesPreviewAutoAssign is POST {basePath}/packages/previewAutoAssign. Shows what a package rule matches and, for a package, what a reconcile would change, without writing anything.
-	OpPackagesPreviewAutoAssign = Op[PackagesPreviewAutoAssignInput, PackagesPreviewAutoAssignOutput]{&operationTable[451]}
+	OpPackagesPreviewAutoAssign = Op[PackagesPreviewAutoAssignInput, PackagesPreviewAutoAssignOutput]{&operationTable[454]}
 	// OpPackagesReconcile is POST {basePath}/packages/reconcile. Runs the package-rule reconciler now for the tenant or one package, optionally confirming held-back changes.
-	OpPackagesReconcile = Op[PackagesReconcileInput, PackagesReconcileOutput]{&operationTable[452]}
+	OpPackagesReconcile = Op[PackagesReconcileInput, PackagesReconcileOutput]{&operationTable[455]}
 	// OpPackagesRequest is POST {basePath}/packages/request. Asks for a requestable package for yourself; approvers are notified and one of them decides.
-	OpPackagesRequest = Op[PackagesRequestInput, PackagesRequestOutput]{&operationTable[453]}
+	OpPackagesRequest = Op[PackagesRequestInput, PackagesRequestOutput]{&operationTable[456]}
 	// OpPackagesRevoke is POST {basePath}/packages/revoke. Removes a package from a person, taking away exactly the bindings and memberships the assignment still owns.
-	OpPackagesRevoke = Op[PackagesRevokeInput, PackagesRevokeOutput]{&operationTable[454]}
+	OpPackagesRevoke = Op[PackagesRevokeInput, PackagesRevokeOutput]{&operationTable[457]}
 	// OpPackagesUpdate is POST {basePath}/packages/update. Changes a package's name, description, contents, request settings, or rule.
-	OpPackagesUpdate = Op[PackagesUpdateInput, PackagesUpdateOutput]{&operationTable[455]}
+	OpPackagesUpdate = Op[PackagesUpdateInput, PackagesUpdateOutput]{&operationTable[458]}
 	// OpPkiBundle is POST {basePath}/pki/bundle. The tenant's active root certificates as one PEM bundle: what relying parties trust. Intermediates travel in each server's chain.
-	OpPkiBundle = Op[PkiBundleInput, PkiBundleOutput]{&operationTable[456]}
+	OpPkiBundle = Op[PkiBundleInput, PkiBundleOutput]{&operationTable[459]}
 	// OpPkiCreateAuthority is POST {basePath}/pki/createAuthority. Creates a root (self-signed) or an intermediate authority (signed by parentId in the same tenant), with a new KMS signing key (keySpec, default ecc-p256) or an existing one (keyId) whose current vers…
-	OpPkiCreateAuthority = Op[PkiCreateAuthorityInput, PkiCreateAuthorityOutput]{&operationTable[457]}
+	OpPkiCreateAuthority = Op[PkiCreateAuthorityInput, PkiCreateAuthorityOutput]{&operationTable[460]}
 	// OpPkiCrl is POST {basePath}/pki/crl. The authority's current certificate revocation list as PEM, rebuilt after revocations and at least every 12 hours.
-	OpPkiCrl = Op[PkiCrlInput, PkiCrlOutput]{&operationTable[458]}
+	OpPkiCrl = Op[PkiCrlInput, PkiCrlOutput]{&operationTable[461]}
 	// OpPkiGetAuthority is POST {basePath}/pki/getAuthority. One authority: subject, type, parent, KMS key and pinned version, certificate, validity, state, trust domain, name constraints and leaf limits.
-	OpPkiGetAuthority = Op[PkiGetAuthorityInput, PkiGetAuthorityOutput]{&operationTable[459]}
+	OpPkiGetAuthority = Op[PkiGetAuthorityInput, PkiGetAuthorityOutput]{&operationTable[462]}
 	// OpPkiGetCertificate is POST {basePath}/pki/getCertificate. One certificate by serial number (hexadecimal, colons allowed).
-	OpPkiGetCertificate = Op[PkiGetCertificateInput, PkiGetCertificateOutput]{&operationTable[460]}
+	OpPkiGetCertificate = Op[PkiGetCertificateInput, PkiGetCertificateOutput]{&operationTable[463]}
 	// OpPkiIssueCertificate is POST {basePath}/pki/issueCertificate. Issues a certificate for the key in a PEM PKCS#10 request (csr). The request must be signed by its own key, which proves the requester holds the private key.
-	OpPkiIssueCertificate = Op[PkiIssueCertificateInput, PkiIssueCertificateOutput]{&operationTable[461]}
+	OpPkiIssueCertificate = Op[PkiIssueCertificateInput, PkiIssueCertificateOutput]{&operationTable[464]}
 	// OpPkiListAuthorities is POST {basePath}/pki/listAuthorities. The tenant's authorities the caller may read, oldest first.
-	OpPkiListAuthorities = Op[PkiListAuthoritiesInput, PkiListAuthoritiesOutput]{&operationTable[462]}
+	OpPkiListAuthorities = Op[PkiListAuthoritiesInput, PkiListAuthoritiesOutput]{&operationTable[465]}
 	// OpPkiListCertificates is POST {basePath}/pki/listCertificates. Certificates the caller may read, newest first, filtered by authorityId, status (valid, revoked, expired) or identityId.
-	OpPkiListCertificates = Op[PkiListCertificatesInput, PkiListCertificatesOutput]{&operationTable[463]}
+	OpPkiListCertificates = Op[PkiListCertificatesInput, PkiListCertificatesOutput]{&operationTable[466]}
 	// OpPkiRequestCertificate is POST {basePath}/pki/requestCertificate. A workload certificate (SPIFFE X.509-SVID) for the caller's own identity.
-	OpPkiRequestCertificate = Op[PkiRequestCertificateInput, PkiRequestCertificateOutput]{&operationTable[464]}
+	OpPkiRequestCertificate = Op[PkiRequestCertificateInput, PkiRequestCertificateOutput]{&operationTable[467]}
 	// OpPkiRevokeCertificate is POST {basePath}/pki/revokeCertificate. Revokes a certificate with a reason (unspecified, keyCompromise, caCompromise, affiliationChanged, superseded, cessationOfOperation or privilegeWithdrawn).
-	OpPkiRevokeCertificate = Op[PkiRevokeCertificateInput, PkiRevokeCertificateOutput]{&operationTable[465]}
+	OpPkiRevokeCertificate = Op[PkiRevokeCertificateInput, PkiRevokeCertificateOutput]{&operationTable[468]}
 	// OpPkiUpdateAuthority is POST {basePath}/pki/updateAuthority. Disables or re-enables an authority (state), and changes maxValiditySeconds, defaultValiditySeconds or crlUrl (null clears it) for future certificates.
-	OpPkiUpdateAuthority = Op[PkiUpdateAuthorityInput, PkiUpdateAuthorityOutput]{&operationTable[466]}
+	OpPkiUpdateAuthority = Op[PkiUpdateAuthorityInput, PkiUpdateAuthorityOutput]{&operationTable[469]}
 	// OpPoliciesCreate is POST {basePath}/policies/create. Stores a new policy document at version 1 under your grant authority.
-	OpPoliciesCreate = Op[PoliciesCreateInput, PoliciesCreateOutput]{&operationTable[467]}
+	OpPoliciesCreate = Op[PoliciesCreateInput, PoliciesCreateOutput]{&operationTable[470]}
 	// OpPoliciesDelete is POST {basePath}/policies/delete. Deletes a policy that no role attaches.
-	OpPoliciesDelete = Op[PoliciesDeleteInput, PoliciesDeleteOutput]{&operationTable[468]}
+	OpPoliciesDelete = Op[PoliciesDeleteInput, PoliciesDeleteOutput]{&operationTable[471]}
 	// OpPoliciesEffectiveActions is POST {basePath}/policies/effectiveActions. Lists which actions one identity could perform on one resource, with a reason per action.
-	OpPoliciesEffectiveActions = Op[PoliciesEffectiveActionsInput, PoliciesEffectiveActionsOutput]{&operationTable[469]}
+	OpPoliciesEffectiveActions = Op[PoliciesEffectiveActionsInput, PoliciesEffectiveActionsOutput]{&operationTable[472]}
 	// OpPoliciesGet is POST {basePath}/policies/get. Returns one policy with its current document and version.
-	OpPoliciesGet = Op[PoliciesGetInput, PoliciesGetOutput]{&operationTable[470]}
+	OpPoliciesGet = Op[PoliciesGetInput, PoliciesGetOutput]{&operationTable[473]}
 	// OpPoliciesList is POST {basePath}/policies/list. Lists every policy in the tenant at its current version, including the protected Owner policy.
-	OpPoliciesList = Op[PoliciesListInput, PoliciesListOutput]{&operationTable[471]}
+	OpPoliciesList = Op[PoliciesListInput, PoliciesListOutput]{&operationTable[474]}
 	// OpPoliciesListVersions is POST {basePath}/policies/listVersions. Returns a policy's full history, oldest first, ending with the current version.
-	OpPoliciesListVersions = Op[PoliciesListVersionsInput, PoliciesListVersionsOutput]{&operationTable[472]}
+	OpPoliciesListVersions = Op[PoliciesListVersionsInput, PoliciesListVersionsOutput]{&operationTable[475]}
 	// OpPoliciesRestoreVersion is POST {basePath}/policies/restoreVersion. Rolls a policy back to an earlier document by saving that document as a new version.
-	OpPoliciesRestoreVersion = Op[PoliciesRestoreVersionInput, PoliciesRestoreVersionOutput]{&operationTable[473]}
+	OpPoliciesRestoreVersion = Op[PoliciesRestoreVersionInput, PoliciesRestoreVersionOutput]{&operationTable[476]}
 	// OpPoliciesSimulate is POST {basePath}/policies/simulate. Explains the decision one identity would get for one action on one resource, without creating a session or granting anything.
-	OpPoliciesSimulate = Op[PoliciesSimulateInput, PoliciesSimulateOutput]{&operationTable[474]}
+	OpPoliciesSimulate = Op[PoliciesSimulateInput, PoliciesSimulateOutput]{&operationTable[477]}
 	// OpPoliciesTest is POST {basePath}/policies/test. Evaluates an unsaved policy document against one action, resource, and context, for policy editors.
-	OpPoliciesTest = Op[PoliciesTestInput, PoliciesTestOutput]{&operationTable[475]}
+	OpPoliciesTest = Op[PoliciesTestInput, PoliciesTestOutput]{&operationTable[478]}
 	// OpPoliciesUpdate is POST {basePath}/policies/update. Saves a new version of a policy's document, name, or description, keeping the previous version in its history.
-	OpPoliciesUpdate = Op[PoliciesUpdateInput, PoliciesUpdateOutput]{&operationTable[476]}
+	OpPoliciesUpdate = Op[PoliciesUpdateInput, PoliciesUpdateOutput]{&operationTable[479]}
 	// OpPoliciesWhoCan is POST {basePath}/policies/whoCan. Lists every active identity that could perform an action on a resource, with the reason, for access reviews.
-	OpPoliciesWhoCan = Op[PoliciesWhoCanInput, PoliciesWhoCanOutput]{&operationTable[477]}
+	OpPoliciesWhoCan = Op[PoliciesWhoCanInput, PoliciesWhoCanOutput]{&operationTable[480]}
 	// OpPrivacyAddNote is POST {basePath}/privacy/addNote. Adds an internal note to a request's timeline.
-	OpPrivacyAddNote = Op[PrivacyAddNoteInput, PrivacyAddNoteOutput]{&operationTable[478]}
+	OpPrivacyAddNote = Op[PrivacyAddNoteInput, PrivacyAddNoteOutput]{&operationTable[481]}
 	// OpPrivacyAssignRequest is POST {basePath}/privacy/assignRequest. Hands a request to a handler, or clears the assignment with assigneeId: null.
-	OpPrivacyAssignRequest = Op[PrivacyAssignRequestInput, PrivacyAssignRequestOutput]{&operationTable[479]}
+	OpPrivacyAssignRequest = Op[PrivacyAssignRequestInput, PrivacyAssignRequestOutput]{&operationTable[482]}
 	// OpPrivacyAudience is POST {basePath}/privacy/audience. Lists the subjects a purpose may be processed for right now.
-	OpPrivacyAudience = Op[PrivacyAudienceInput, PrivacyAudienceOutput]{&operationTable[480]}
+	OpPrivacyAudience = Op[PrivacyAudienceInput, PrivacyAudienceOutput]{&operationTable[483]}
 	// OpPrivacyCancelMyRequest is POST {basePath}/privacy/cancelMyRequest. Withdraws one of your own requests while it is still being handled.
-	OpPrivacyCancelMyRequest = Op[PrivacyCancelMyRequestInput, PrivacyCancelMyRequestOutput]{&operationTable[481]}
+	OpPrivacyCancelMyRequest = Op[PrivacyCancelMyRequestInput, PrivacyCancelMyRequestOutput]{&operationTable[484]}
 	// OpPrivacyCheck is POST {basePath}/privacy/check. Tells whether a purpose may be processed for one subject right now, and why.
-	OpPrivacyCheck = Op[PrivacyCheckInput, PrivacyCheckOutput]{&operationTable[482]}
+	OpPrivacyCheck = Op[PrivacyCheckInput, PrivacyCheckOutput]{&operationTable[485]}
 	// OpPrivacyConfirmPublic is POST {basePath}/privacy/confirmPublic. Confirms a public request from the link emailed to the requester.
-	OpPrivacyConfirmPublic = Op[PrivacyConfirmPublicInput, PrivacyConfirmPublicOutput]{&operationTable[483]}
+	OpPrivacyConfirmPublic = Op[PrivacyConfirmPublicInput, PrivacyConfirmPublicOutput]{&operationTable[486]}
 	// OpPrivacyCreatePurpose is POST {basePath}/privacy/createPurpose. Adds a processing purpose at version 1.
-	OpPrivacyCreatePurpose = Op[PrivacyCreatePurposeInput, PrivacyCreatePurposeOutput]{&operationTable[484]}
+	OpPrivacyCreatePurpose = Op[PrivacyCreatePurposeInput, PrivacyCreatePurposeOutput]{&operationTable[487]}
 	// OpPrivacyCreateRequest is POST {basePath}/privacy/createRequest. Files a data-subject request on someone's behalf, received by phone, mail or a support ticket.
-	OpPrivacyCreateRequest = Op[PrivacyCreateRequestInput, PrivacyCreateRequestOutput]{&operationTable[485]}
+	OpPrivacyCreateRequest = Op[PrivacyCreateRequestInput, PrivacyCreateRequestOutput]{&operationTable[488]}
 	// OpPrivacyDecide is POST {basePath}/privacy/decide. Records your own decision on a purpose and returns its signed receipt.
-	OpPrivacyDecide = Op[PrivacyDecideInput, PrivacyDecideOutput]{&operationTable[486]}
+	OpPrivacyDecide = Op[PrivacyDecideInput, PrivacyDecideOutput]{&operationTable[489]}
 	// OpPrivacyDeletePurpose is POST {basePath}/privacy/deletePurpose. Deletes a purpose nobody has decided on yet.
-	OpPrivacyDeletePurpose = Op[PrivacyDeletePurposeInput, PrivacyDeletePurposeOutput]{&operationTable[487]}
+	OpPrivacyDeletePurpose = Op[PrivacyDeletePurposeInput, PrivacyDeletePurposeOutput]{&operationTable[490]}
 	// OpPrivacyDownloadExport is POST {basePath}/privacy/downloadExport. Returns the export an access or portability request produced.
-	OpPrivacyDownloadExport = Op[PrivacyDownloadExportInput, PrivacyDownloadExportOutput]{&operationTable[488]}
+	OpPrivacyDownloadExport = Op[PrivacyDownloadExportInput, PrivacyDownloadExportOutput]{&operationTable[491]}
 	// OpPrivacyExtendRequest is POST {basePath}/privacy/extendRequest. Extends an open request's deadline once by the regulation's extension, telling the subject why.
-	OpPrivacyExtendRequest = Op[PrivacyExtendRequestInput, PrivacyExtendRequestOutput]{&operationTable[489]}
+	OpPrivacyExtendRequest = Op[PrivacyExtendRequestInput, PrivacyExtendRequestOutput]{&operationTable[492]}
 	// OpPrivacyFilterSubjects is POST {basePath}/privacy/filterSubjects. Splits up to 1000 subjects into those a purpose may be processed for and those it may not.
-	OpPrivacyFilterSubjects = Op[PrivacyFilterSubjectsInput, PrivacyFilterSubjectsOutput]{&operationTable[490]}
+	OpPrivacyFilterSubjects = Op[PrivacyFilterSubjectsInput, PrivacyFilterSubjectsOutput]{&operationTable[493]}
 	// OpPrivacyFulfilRequest is POST {basePath}/privacy/fulfilRequest. Completes an open request by doing what it asks, and emails the subject.
-	OpPrivacyFulfilRequest = Op[PrivacyFulfilRequestInput, PrivacyFulfilRequestOutput]{&operationTable[491]}
+	OpPrivacyFulfilRequest = Op[PrivacyFulfilRequestInput, PrivacyFulfilRequestOutput]{&operationTable[494]}
 	// OpPrivacyGetRequest is POST {basePath}/privacy/getRequest. Returns one request with the subject's legal hold and restriction status.
-	OpPrivacyGetRequest = Op[PrivacyGetRequestInput, PrivacyGetRequestOutput]{&operationTable[492]}
+	OpPrivacyGetRequest = Op[PrivacyGetRequestInput, PrivacyGetRequestOutput]{&operationTable[495]}
 	// OpPrivacyGetSettings is POST {basePath}/privacy/getSettings. Returns the tenant's privacy settings with the statutory windows.
-	OpPrivacyGetSettings = Op[PrivacyGetSettingsInput, PrivacyGetSettingsOutput]{&operationTable[493]}
+	OpPrivacyGetSettings = Op[PrivacyGetSettingsInput, PrivacyGetSettingsOutput]{&operationTable[496]}
 	// OpPrivacyHistory is POST {basePath}/privacy/history. Lists a subject's recorded decisions, newest first.
-	OpPrivacyHistory = Op[PrivacyHistoryInput, PrivacyHistoryOutput]{&operationTable[494]}
+	OpPrivacyHistory = Op[PrivacyHistoryInput, PrivacyHistoryOutput]{&operationTable[497]}
 	// OpPrivacyImportDecisions is POST {basePath}/privacy/importDecisions. Imports up to 500 consent decisions from another system in one transaction.
-	OpPrivacyImportDecisions = Op[PrivacyImportDecisionsInput, PrivacyImportDecisionsOutput]{&operationTable[495]}
+	OpPrivacyImportDecisions = Op[PrivacyImportDecisionsInput, PrivacyImportDecisionsOutput]{&operationTable[498]}
 	// OpPrivacyLiftRestriction is POST {basePath}/privacy/liftRestriction. Ends a restriction of processing for a subject.
-	OpPrivacyLiftRestriction = Op[PrivacyLiftRestrictionInput, PrivacyLiftRestrictionOutput]{&operationTable[496]}
+	OpPrivacyLiftRestriction = Op[PrivacyLiftRestrictionInput, PrivacyLiftRestrictionOutput]{&operationTable[499]}
 	// OpPrivacyLinkRequest is POST {basePath}/privacy/linkRequest. Links a request known only by an email address to the account or application subject it is about.
-	OpPrivacyLinkRequest = Op[PrivacyLinkRequestInput, PrivacyLinkRequestOutput]{&operationTable[497]}
+	OpPrivacyLinkRequest = Op[PrivacyLinkRequestInput, PrivacyLinkRequestOutput]{&operationTable[500]}
 	// OpPrivacyListConsents is POST {basePath}/privacy/listConsents. Lists current decisions, newest first, each with its state.
-	OpPrivacyListConsents = Op[PrivacyListConsentsInput, PrivacyListConsentsOutput]{&operationTable[498]}
+	OpPrivacyListConsents = Op[PrivacyListConsentsInput, PrivacyListConsentsOutput]{&operationTable[501]}
 	// OpPrivacyListHolds is POST {basePath}/privacy/listHolds. Lists the tenant's legal holds, newest first.
-	OpPrivacyListHolds = Op[PrivacyListHoldsInput, PrivacyListHoldsOutput]{&operationTable[499]}
+	OpPrivacyListHolds = Op[PrivacyListHoldsInput, PrivacyListHoldsOutput]{&operationTable[502]}
 	// OpPrivacyListPurposes is POST {basePath}/privacy/listPurposes. Lists the tenant's purposes by name.
-	OpPrivacyListPurposes = Op[PrivacyListPurposesInput, PrivacyListPurposesOutput]{&operationTable[500]}
+	OpPrivacyListPurposes = Op[PrivacyListPurposesInput, PrivacyListPurposesOutput]{&operationTable[503]}
 	// OpPrivacyListRequests is POST {basePath}/privacy/listRequests. Lists requests, open ones first by deadline, then the newest.
-	OpPrivacyListRequests = Op[PrivacyListRequestsInput, PrivacyListRequestsOutput]{&operationTable[501]}
+	OpPrivacyListRequests = Op[PrivacyListRequestsInput, PrivacyListRequestsOutput]{&operationTable[504]}
 	// OpPrivacyListRestrictions is POST {basePath}/privacy/listRestrictions. Lists subjects whose processing is restricted, newest first.
-	OpPrivacyListRestrictions = Op[PrivacyListRestrictionsInput, PrivacyListRestrictionsOutput]{&operationTable[502]}
+	OpPrivacyListRestrictions = Op[PrivacyListRestrictionsInput, PrivacyListRestrictionsOutput]{&operationTable[505]}
 	// OpPrivacyMine is POST {basePath}/privacy/mine. Returns your privacy page: every purpose with your decision and its effect, your requests, and the privacy contact.
-	OpPrivacyMine = Op[PrivacyMineInput, PrivacyMineOutput]{&operationTable[503]}
+	OpPrivacyMine = Op[PrivacyMineInput, PrivacyMineOutput]{&operationTable[506]}
 	// OpPrivacyMyHistory is POST {basePath}/privacy/myHistory. Lists your own recorded decisions, newest first.
-	OpPrivacyMyHistory = Op[PrivacyMyHistoryInput, PrivacyMyHistoryOutput]{&operationTable[504]}
+	OpPrivacyMyHistory = Op[PrivacyMyHistoryInput, PrivacyMyHistoryOutput]{&operationTable[507]}
 	// OpPrivacyMyReceipt is POST {basePath}/privacy/myReceipt. Returns the signed receipt of one of your own decisions.
-	OpPrivacyMyReceipt = Op[PrivacyMyReceiptInput, PrivacyMyReceiptOutput]{&operationTable[505]}
+	OpPrivacyMyReceipt = Op[PrivacyMyReceiptInput, PrivacyMyReceiptOutput]{&operationTable[508]}
 	// OpPrivacyPlaceHold is POST {basePath}/privacy/placeHold. Places a legal hold on a subject: erasure, and every deletion of their account, is refused until it is released.
-	OpPrivacyPlaceHold = Op[PrivacyPlaceHoldInput, PrivacyPlaceHoldOutput]{&operationTable[506]}
+	OpPrivacyPlaceHold = Op[PrivacyPlaceHoldInput, PrivacyPlaceHoldOutput]{&operationTable[509]}
 	// OpPrivacyRecord is POST {basePath}/privacy/record. Records a consent decision for a person of the tenant or an application subject, and returns its receipt.
-	OpPrivacyRecord = Op[PrivacyRecordInput, PrivacyRecordOutput]{&operationTable[507]}
+	OpPrivacyRecord = Op[PrivacyRecordInput, PrivacyRecordOutput]{&operationTable[510]}
 	// OpPrivacyRejectRequest is POST {basePath}/privacy/rejectRequest. Declines an open or unverified request with a reason the subject is emailed.
-	OpPrivacyRejectRequest = Op[PrivacyRejectRequestInput, PrivacyRejectRequestOutput]{&operationTable[508]}
+	OpPrivacyRejectRequest = Op[PrivacyRejectRequestInput, PrivacyRejectRequestOutput]{&operationTable[511]}
 	// OpPrivacyReleaseHold is POST {basePath}/privacy/releaseHold. Releases a legal hold.
-	OpPrivacyReleaseHold = Op[PrivacyReleaseHoldInput, PrivacyReleaseHoldOutput]{&operationTable[509]}
+	OpPrivacyReleaseHold = Op[PrivacyReleaseHoldInput, PrivacyReleaseHoldOutput]{&operationTable[512]}
 	// OpPrivacySubmitPublic is POST {basePath}/privacy/submitPublic. Files a request from someone without an account, from a public form, when the organization turned on public intake.
-	OpPrivacySubmitPublic = Op[PrivacySubmitPublicInput, PrivacySubmitPublicOutput]{&operationTable[510]}
+	OpPrivacySubmitPublic = Op[PrivacySubmitPublicInput, PrivacySubmitPublicOutput]{&operationTable[513]}
 	// OpPrivacySubmitRequest is POST {basePath}/privacy/submitRequest. Files a data-subject request for yourself; signing in verified who you are, so its deadline starts at once.
-	OpPrivacySubmitRequest = Op[PrivacySubmitRequestInput, PrivacySubmitRequestOutput]{&operationTable[511]}
+	OpPrivacySubmitRequest = Op[PrivacySubmitRequestInput, PrivacySubmitRequestOutput]{&operationTable[514]}
 	// OpPrivacySummary is POST {basePath}/privacy/summary. Returns consent counts per purpose, the request queue, holds and restrictions at a glance.
-	OpPrivacySummary = Op[PrivacySummaryInput, PrivacySummaryOutput]{&operationTable[512]}
+	OpPrivacySummary = Op[PrivacySummaryInput, PrivacySummaryOutput]{&operationTable[515]}
 	// OpPrivacyUpdatePurpose is POST {basePath}/privacy/updatePurpose. Edits a purpose, optionally publishing the change as a new version or archiving it.
-	OpPrivacyUpdatePurpose = Op[PrivacyUpdatePurposeInput, PrivacyUpdatePurposeOutput]{&operationTable[513]}
+	OpPrivacyUpdatePurpose = Op[PrivacyUpdatePurposeInput, PrivacyUpdatePurposeOutput]{&operationTable[516]}
 	// OpPrivacyUpdateSettings is POST {basePath}/privacy/updateSettings. Changes the privacy contact, default regulation, internal response windows, public intake and export lifetime.
-	OpPrivacyUpdateSettings = Op[PrivacyUpdateSettingsInput, PrivacyUpdateSettingsOutput]{&operationTable[514]}
+	OpPrivacyUpdateSettings = Op[PrivacyUpdateSettingsInput, PrivacyUpdateSettingsOutput]{&operationTable[517]}
 	// OpPrivacyVerifyReceipt is POST {basePath}/privacy/verifyReceipt. Checks a consent receipt someone presents against the signature and the history.
-	OpPrivacyVerifyReceipt = Op[PrivacyVerifyReceiptInput, PrivacyVerifyReceiptOutput]{&operationTable[515]}
+	OpPrivacyVerifyReceipt = Op[PrivacyVerifyReceiptInput, PrivacyVerifyReceiptOutput]{&operationTable[518]}
 	// OpPrivacyVerifyRequest is POST {basePath}/privacy/verifyRequest. Records how the requester's identity was confirmed, which opens the request and starts its deadline.
-	OpPrivacyVerifyRequest = Op[PrivacyVerifyRequestInput, PrivacyVerifyRequestOutput]{&operationTable[516]}
+	OpPrivacyVerifyRequest = Op[PrivacyVerifyRequestInput, PrivacyVerifyRequestOutput]{&operationTable[519]}
 	// OpProtectionCreateProfile is POST {basePath}/protection/createProfile. Creates a tokenization profile, with an existing tenant AES key the caller may use (keyId) or a new one.
-	OpProtectionCreateProfile = Op[ProtectionCreateProfileInput, ProtectionCreateProfileOutput]{&operationTable[517]}
+	OpProtectionCreateProfile = Op[ProtectionCreateProfileInput, ProtectionCreateProfileOutput]{&operationTable[520]}
 	// OpProtectionDeleteProfile is POST {basePath}/protection/deleteProfile. Deletes a profile that holds no tokens. A key the profile created is scheduled for deletion after 7 days.
-	OpProtectionDeleteProfile = Op[ProtectionDeleteProfileInput, ProtectionDeleteProfileOutput]{&operationTable[518]}
+	OpProtectionDeleteProfile = Op[ProtectionDeleteProfileInput, ProtectionDeleteProfileOutput]{&operationTable[521]}
 	// OpProtectionDeleteTokens is POST {basePath}/protection/deleteTokens. Deletes tokens and their values for good, named by tokens or by values. Erasing by value finds every token issued for it, even in profiles that are not deterministic.
-	OpProtectionDeleteTokens = Op[ProtectionDeleteTokensInput, ProtectionDeleteTokensOutput]{&operationTable[519]}
+	OpProtectionDeleteTokens = Op[ProtectionDeleteTokensInput, ProtectionDeleteTokensOutput]{&operationTable[522]}
 	// OpProtectionDetokenize is POST {basePath}/protection/detokenize. Turns up to 100 tokens of the profile back into their values, in order, with null for tokens the profile does not hold. purpose is required: a short lowercase name such as payment-processing.
-	OpProtectionDetokenize = Op[ProtectionDetokenizeInput, ProtectionDetokenizeOutput]{&operationTable[520]}
+	OpProtectionDetokenize = Op[ProtectionDetokenizeInput, ProtectionDetokenizeOutput]{&operationTable[523]}
 	// OpProtectionGetProfile is POST {basePath}/protection/getProfile. One profile, with the number of tokens it holds.
-	OpProtectionGetProfile = Op[ProtectionGetProfileInput, ProtectionGetProfileOutput]{&operationTable[521]}
+	OpProtectionGetProfile = Op[ProtectionGetProfileInput, ProtectionGetProfileOutput]{&operationTable[524]}
 	// OpProtectionListProfiles is POST {basePath}/protection/listProfiles. The tenant's profiles the caller may read, by name.
-	OpProtectionListProfiles = Op[ProtectionListProfilesInput, ProtectionListProfilesOutput]{&operationTable[522]}
+	OpProtectionListProfiles = Op[ProtectionListProfilesInput, ProtectionListProfilesOutput]{&operationTable[525]}
 	// OpProtectionMask is POST {basePath}/protection/mask. The masked form of up to 100 tokens' values (4242, j@example.com), with the profile's mask or a style its data type allows (last4, first6last4 for cards, email for email addresses, full).
-	OpProtectionMask = Op[ProtectionMaskInput, ProtectionMaskOutput]{&operationTable[523]}
+	OpProtectionMask = Op[ProtectionMaskInput, ProtectionMaskOutput]{&operationTable[526]}
 	// OpProtectionTokenize is POST {basePath}/protection/tokenize. Replaces up to 100 values by tokens, in order. Values are validated and normalized for the data type (text to Unicode NFC; a card number must pass the Luhn check).
-	OpProtectionTokenize = Op[ProtectionTokenizeInput, ProtectionTokenizeOutput]{&operationTable[524]}
+	OpProtectionTokenize = Op[ProtectionTokenizeInput, ProtectionTokenizeOutput]{&operationTable[527]}
 	// OpProtectionUpdateProfile is POST {basePath}/protection/updateProfile. Changes the description, the mask, or the retention (retentionDays: null keeps tokens until they are deleted). The data type, format and key never change.
-	OpProtectionUpdateProfile = Op[ProtectionUpdateProfileInput, ProtectionUpdateProfileOutput]{&operationTable[525]}
+	OpProtectionUpdateProfile = Op[ProtectionUpdateProfileInput, ProtectionUpdateProfileOutput]{&operationTable[528]}
 	// OpQuotasAssign is POST {basePath}/quotas/assign. Assigns a plan to an API key (subjectType: 'apiKey' with the key's credentialId), an identity, or a group, replacing the subject's plan for the same meter.
-	OpQuotasAssign = Op[QuotasAssignInput, QuotasAssignOutput]{&operationTable[526]}
+	OpQuotasAssign = Op[QuotasAssignInput, QuotasAssignOutput]{&operationTable[529]}
 	// OpQuotasConsume is POST {basePath}/quotas/consume. Counts cost (default 1) units of a meter for the caller's own session, or refuses without counting anything when the throttle or a period limit would be exceeded: allowed: false with reason (throttle…
-	OpQuotasConsume = Op[QuotasConsumeInput, QuotasConsumeOutput]{&operationTable[527]}
+	OpQuotasConsume = Op[QuotasConsumeInput, QuotasConsumeOutput]{&operationTable[530]}
 	// OpQuotasCreatePlan is POST {basePath}/quotas/createPlan. Defines a plan for a meter with a throttle, limits, or both.
-	OpQuotasCreatePlan = Op[QuotasCreatePlanInput, QuotasCreatePlanOutput]{&operationTable[528]}
+	OpQuotasCreatePlan = Op[QuotasCreatePlanInput, QuotasCreatePlanOutput]{&operationTable[531]}
 	// OpQuotasDeletePlan is POST {basePath}/quotas/deletePlan. Deletes a plan with its assignments and counters.
-	OpQuotasDeletePlan = Op[QuotasDeletePlanInput, QuotasDeletePlanOutput]{&operationTable[529]}
+	OpQuotasDeletePlan = Op[QuotasDeletePlanInput, QuotasDeletePlanOutput]{&operationTable[532]}
 	// OpQuotasGetPlan is POST {basePath}/quotas/getPlan. One plan.
-	OpQuotasGetPlan = Op[QuotasGetPlanInput, QuotasGetPlanOutput]{&operationTable[530]}
+	OpQuotasGetPlan = Op[QuotasGetPlanInput, QuotasGetPlanOutput]{&operationTable[533]}
 	// OpQuotasListAssignments is POST {basePath}/quotas/listAssignments. Assignments, optionally of one plan, with each subject's name (an API key's label).
-	OpQuotasListAssignments = Op[QuotasListAssignmentsInput, QuotasListAssignmentsOutput]{&operationTable[531]}
+	OpQuotasListAssignments = Op[QuotasListAssignmentsInput, QuotasListAssignmentsOutput]{&operationTable[534]}
 	// OpQuotasListPlans is POST {basePath}/quotas/listPlans. Every plan of the tenant, by name, with how many subjects are assigned to each.
-	OpQuotasListPlans = Op[QuotasListPlansInput, QuotasListPlansOutput]{&operationTable[532]}
+	OpQuotasListPlans = Op[QuotasListPlansInput, QuotasListPlansOutput]{&operationTable[535]}
 	// OpQuotasReset is POST {basePath}/quotas/reset. Starts one subject's counters and throttle over (as usage names it), or every subject's when none is given.
-	OpQuotasReset = Op[QuotasResetInput, QuotasResetOutput]{&operationTable[533]}
+	OpQuotasReset = Op[QuotasResetInput, QuotasResetOutput]{&operationTable[536]}
 	// OpQuotasStatus is POST {basePath}/quotas/status. The caller's own plan for a meter and what is left in each window, without counting.
-	OpQuotasStatus = Op[QuotasStatusInput, QuotasStatusOutput]{&operationTable[534]}
+	OpQuotasStatus = Op[QuotasStatusInput, QuotasStatusOutput]{&operationTable[537]}
 	// OpQuotasUnassign is POST {basePath}/quotas/unassign. Removes a subject's plan for a meter; removed says whether there was one.
-	OpQuotasUnassign = Op[QuotasUnassignInput, QuotasUnassignOutput]{&operationTable[535]}
+	OpQuotasUnassign = Op[QuotasUnassignInput, QuotasUnassignOutput]{&operationTable[538]}
 	// OpQuotasUpdatePlan is POST {basePath}/quotas/updatePlan. Changes a plan; fields left out keep their value, throttle: null and description: null clear them, and limits replaces the list. The meter cannot change.
-	OpQuotasUpdatePlan = Op[QuotasUpdatePlanInput, QuotasUpdatePlanOutput]{&operationTable[536]}
+	OpQuotasUpdatePlan = Op[QuotasUpdatePlanInput, QuotasUpdatePlanOutput]{&operationTable[539]}
 	// OpQuotasUsage is POST {basePath}/quotas/usage. Every subject's use of a plan in the current windows, the most used first. Subjects are named identity:{id}, key:{credentialId}, or tenant for a tenant-scoped plan.
-	OpQuotasUsage = Op[QuotasUsageInput, QuotasUsageOutput]{&operationTable[537]}
+	OpQuotasUsage = Op[QuotasUsageInput, QuotasUsageOutput]{&operationTable[540]}
 	// OpRelationshipsCreate is POST {basePath}/relationships/create. Gives an identity or group a declared relation on one resource, optionally until a given time.
-	OpRelationshipsCreate = Op[RelationshipsCreateInput, RelationshipsCreateOutput]{&operationTable[538]}
+	OpRelationshipsCreate = Op[RelationshipsCreateInput, RelationshipsCreateOutput]{&operationTable[541]}
 	// OpRelationshipsDelete is POST {basePath}/relationships/delete. Removes one relationship tuple, ending the access it gave.
-	OpRelationshipsDelete = Op[RelationshipsDeleteInput, RelationshipsDeleteOutput]{&operationTable[539]}
+	OpRelationshipsDelete = Op[RelationshipsDeleteInput, RelationshipsDeleteOutput]{&operationTable[542]}
 	// OpRelationshipsList is POST {basePath}/relationships/list. Lists relationship tuples of one resource, one subject, one type, or the whole tenant, newest first.
-	OpRelationshipsList = Op[RelationshipsListInput, RelationshipsListOutput]{&operationTable[540]}
+	OpRelationshipsList = Op[RelationshipsListInput, RelationshipsListOutput]{&operationTable[543]}
 	// OpReportsAccess is POST {basePath}/reports/access. Returns the tenant's access report: identities and grants ending soon, live elevations, pending requests, and unused or expiring API keys.
-	OpReportsAccess = Op[ReportsAccessInput, ReportsAccessOutput]{&operationTable[541]}
+	OpReportsAccess = Op[ReportsAccessInput, ReportsAccessOutput]{&operationTable[544]}
 	// OpResourceTypesDelete is POST {basePath}/resourceTypes/delete. Deletes a tenant-defined resource type and its actions.
-	OpResourceTypesDelete = Op[ResourceTypesDeleteInput, ResourceTypesDeleteOutput]{&operationTable[542]}
+	OpResourceTypesDelete = Op[ResourceTypesDeleteInput, ResourceTypesDeleteOutput]{&operationTable[545]}
 	// OpResourceTypesGet is POST {basePath}/resourceTypes/get. Returns one resource type, platform or tenant-defined, with its actions, attributes, relations, and parent.
-	OpResourceTypesGet = Op[ResourceTypesGetInput, ResourceTypesGetOutput]{&operationTable[543]}
+	OpResourceTypesGet = Op[ResourceTypesGetInput, ResourceTypesGetOutput]{&operationTable[546]}
 	// OpResourceTypesList is POST {basePath}/resourceTypes/list. Lists every resource type the tenant can use: platform types first, then the tenant's own.
-	OpResourceTypesList = Op[ResourceTypesListInput, ResourceTypesListOutput]{&operationTable[544]}
+	OpResourceTypesList = Op[ResourceTypesListInput, ResourceTypesListOutput]{&operationTable[547]}
 	// OpResourceTypesRegister is POST {basePath}/resourceTypes/register. Defines a new resource type for the tenant, and registers its actions in the same transaction.
-	OpResourceTypesRegister = Op[ResourceTypesRegisterInput, ResourceTypesRegisterOutput]{&operationTable[545]}
+	OpResourceTypesRegister = Op[ResourceTypesRegisterInput, ResourceTypesRegisterOutput]{&operationTable[548]}
 	// OpResourceTypesUpdate is POST {basePath}/resourceTypes/update. Changes a tenant-defined type's description, attribute schema, or relations, and adds action verbs.
-	OpResourceTypesUpdate = Op[ResourceTypesUpdateInput, ResourceTypesUpdateOutput]{&operationTable[546]}
+	OpResourceTypesUpdate = Op[ResourceTypesUpdateInput, ResourceTypesUpdateOutput]{&operationTable[549]}
 	// OpResourcesDelete is POST {basePath}/resources/delete. Removes a registered resource and every relationship tuple on it.
-	OpResourcesDelete = Op[ResourcesDeleteInput, ResourcesDeleteOutput]{&operationTable[547]}
+	OpResourcesDelete = Op[ResourcesDeleteInput, ResourcesDeleteOutput]{&operationTable[550]}
 	// OpResourcesGet is POST {basePath}/resources/get. Returns the registration of one resource.
-	OpResourcesGet = Op[ResourcesGetInput, ResourcesGetOutput]{&operationTable[548]}
+	OpResourcesGet = Op[ResourcesGetInput, ResourcesGetOutput]{&operationTable[551]}
 	// OpResourcesList is POST {basePath}/resources/list. Lists registered resources, optionally of one type, under one parent, or owned by one identity.
-	OpResourcesList = Op[ResourcesListInput, ResourcesListOutput]{&operationTable[549]}
+	OpResourcesList = Op[ResourcesListInput, ResourcesListOutput]{&operationTable[552]}
 	// OpResourcesRegister is POST {basePath}/resources/register. Registers a managed resource with its attributes, owner, and parent.
-	OpResourcesRegister = Op[ResourcesRegisterInput, ResourcesRegisterOutput]{&operationTable[550]}
+	OpResourcesRegister = Op[ResourcesRegisterInput, ResourcesRegisterOutput]{&operationTable[553]}
 	// OpResourcesRegisterMany is POST {basePath}/resources/registerMany. Registers up to 100 managed resources in one transaction, either all of them or none.
-	OpResourcesRegisterMany = Op[ResourcesRegisterManyInput, ResourcesRegisterManyOutput]{&operationTable[551]}
+	OpResourcesRegisterMany = Op[ResourcesRegisterManyInput, ResourcesRegisterManyOutput]{&operationTable[554]}
 	// OpResourcesUpdate is POST {basePath}/resources/update. Replaces a registered resource's attributes, or changes or clears its owner.
-	OpResourcesUpdate = Op[ResourcesUpdateInput, ResourcesUpdateOutput]{&operationTable[552]}
+	OpResourcesUpdate = Op[ResourcesUpdateInput, ResourcesUpdateOutput]{&operationTable[555]}
 	// OpRoleMiningApply is POST {basePath}/roleMining/apply. Carries out a group-binding or redundant-binding suggestion: binds the role to the group once and removes the direct bindings it replaces.
-	OpRoleMiningApply = Op[RoleMiningApplyInput, RoleMiningApplyOutput]{&operationTable[553]}
+	OpRoleMiningApply = Op[RoleMiningApplyInput, RoleMiningApplyOutput]{&operationTable[556]}
 	// OpRoleMiningOutliers is POST {basePath}/roleMining/outliers. Finds people whose roles differ from their peers': roles few peers hold and roles most peers hold that the person lacks.
-	OpRoleMiningOutliers = Op[RoleMiningOutliersInput, RoleMiningOutliersOutput]{&operationTable[554]}
+	OpRoleMiningOutliers = Op[RoleMiningOutliersInput, RoleMiningOutliersOutput]{&operationTable[557]}
 	// OpRoleMiningReviewRecommendations is POST {basePath}/roleMining/reviewRecommendations. Suggests a keep or revoke decision, with a reason, for every item of an access-certification campaign.
-	OpRoleMiningReviewRecommendations = Op[RoleMiningReviewRecommendationsInput, RoleMiningReviewRecommendationsOutput]{&operationTable[555]}
+	OpRoleMiningReviewRecommendations = Op[RoleMiningReviewRecommendationsInput, RoleMiningReviewRecommendationsOutput]{&operationTable[558]}
 	// OpRoleMiningRightSize is POST {basePath}/roleMining/rightSize. Lists every live binding whose holder used none or only some of the role's actions in a window, plus, per role, the actions nobody used.
-	OpRoleMiningRightSize = Op[RoleMiningRightSizeInput, RoleMiningRightSizeOutput]{&operationTable[556]}
+	OpRoleMiningRightSize = Op[RoleMiningRightSizeInput, RoleMiningRightSizeOutput]{&operationTable[559]}
 	// OpRoleMiningSuggest is POST {basePath}/roleMining/suggest. Lists ways to simplify how the tenant grants access, most actionable first.
-	OpRoleMiningSuggest = Op[RoleMiningSuggestInput, RoleMiningSuggestOutput]{&operationTable[557]}
+	OpRoleMiningSuggest = Op[RoleMiningSuggestInput, RoleMiningSuggestOutput]{&operationTable[560]}
 	// OpRoleMiningUsage is POST {basePath}/roleMining/usage. Returns the recorded access usage of the tenant: per person and action, when it was first and last allowed and how often.
-	OpRoleMiningUsage = Op[RoleMiningUsageInput, RoleMiningUsageOutput]{&operationTable[558]}
+	OpRoleMiningUsage = Op[RoleMiningUsageInput, RoleMiningUsageOutput]{&operationTable[561]}
 	// OpRolesAssume is POST {basePath}/roles/assume. Exchanges your session for a short-lived role session in a target tenant, through a trust the platform root created.
-	OpRolesAssume = Op[RolesAssumeInput, RolesAssumeOutput]{&operationTable[559]}
+	OpRolesAssume = Op[RolesAssumeInput, RolesAssumeOutput]{&operationTable[562]}
 	// OpRolesCreate is POST {basePath}/roles/create. Creates a role from a permissions list, an inline policy document, attached policies, inherited roles, or a mix of them.
-	OpRolesCreate = Op[RolesCreateInput, RolesCreateOutput]{&operationTable[560]}
+	OpRolesCreate = Op[RolesCreateInput, RolesCreateOutput]{&operationTable[563]}
 	// OpRolesDelete is POST {basePath}/roles/delete. Deletes a role together with its bindings and their activations.
-	OpRolesDelete = Op[RolesDeleteInput, RolesDeleteOutput]{&operationTable[561]}
+	OpRolesDelete = Op[RolesDeleteInput, RolesDeleteOutput]{&operationTable[564]}
 	// OpRolesGet is POST {basePath}/roles/get. Returns one role by id, with its attached policies, inline document, and inherited roles.
-	OpRolesGet = Op[RolesGetInput, RolesGetOutput]{&operationTable[562]}
+	OpRolesGet = Op[RolesGetInput, RolesGetOutput]{&operationTable[565]}
 	// OpRolesList is POST {basePath}/roles/list. Lists every role in the tenant, including the protected Owner role.
-	OpRolesList = Op[RolesListInput, RolesListOutput]{&operationTable[563]}
+	OpRolesList = Op[RolesListInput, RolesListOutput]{&operationTable[566]}
 	// OpRolesListBindings is POST {basePath}/roles/listBindings. Lists who holds a role: its bindings, each with a summary of the person, service account, or group it names.
-	OpRolesListBindings = Op[RolesListBindingsInput, RolesListBindingsOutput]{&operationTable[564]}
+	OpRolesListBindings = Op[RolesListBindingsInput, RolesListBindingsOutput]{&operationTable[567]}
 	// OpRolesListSessions is POST {basePath}/roles/listSessions. Lists the live role sessions in the tenant, of one role or trust when given, newest first.
-	OpRolesListSessions = Op[RolesListSessionsInput, RolesListSessionsOutput]{&operationTable[565]}
+	OpRolesListSessions = Op[RolesListSessionsInput, RolesListSessionsOutput]{&operationTable[568]}
 	// OpRolesRevokeSessions is POST {basePath}/roles/revokeSessions. Ends every role session of a role issued before a point in time, whichever trust or provider issued it.
-	OpRolesRevokeSessions = Op[RolesRevokeSessionsInput, RolesRevokeSessionsOutput]{&operationTable[566]}
+	OpRolesRevokeSessions = Op[RolesRevokeSessionsInput, RolesRevokeSessionsOutput]{&operationTable[569]}
 	// OpRolesUpdate is POST {basePath}/roles/update. Changes a role's name, description, permissions or inline document, attached policies, or inherited roles.
-	OpRolesUpdate = Op[RolesUpdateInput, RolesUpdateOutput]{&operationTable[567]}
+	OpRolesUpdate = Op[RolesUpdateInput, RolesUpdateOutput]{&operationTable[570]}
 	// OpRootListAdministrators is POST {basePath}/root/listAdministrators. Lists the identities that hold the root capability.
-	OpRootListAdministrators = Op[RootListAdministratorsInput, RootListAdministratorsOutput]{&operationTable[568]}
+	OpRootListAdministrators = Op[RootListAdministratorsInput, RootListAdministratorsOutput]{&operationTable[571]}
 	// OpRootSetAdministrator is POST {basePath}/root/setAdministrator. Grants the root capability to a person in the root tenant, or removes it.
-	OpRootSetAdministrator = Op[RootSetAdministratorInput, RootSetAdministratorOutput]{&operationTable[569]}
+	OpRootSetAdministrator = Op[RootSetAdministratorInput, RootSetAdministratorOutput]{&operationTable[572]}
 	// OpSecurityBlockNetwork is POST {basePath}/security/blockNetwork. Blocks an IP address or CIDR range for the tenant, or for the whole platform, optionally for a limited time.
-	OpSecurityBlockNetwork = Op[SecurityBlockNetworkInput, SecurityBlockNetworkOutput]{&operationTable[570]}
+	OpSecurityBlockNetwork = Op[SecurityBlockNetworkInput, SecurityBlockNetworkOutput]{&operationTable[573]}
 	// OpSecurityListBlocks is POST {basePath}/security/listBlocks. Lists the tenant's network blocks, newest first, each with active telling whether it still applies.
-	OpSecurityListBlocks = Op[SecurityListBlocksInput, SecurityListBlocksOutput]{&operationTable[571]}
+	OpSecurityListBlocks = Op[SecurityListBlocksInput, SecurityListBlocksOutput]{&operationTable[574]}
 	// OpSecurityUnblockNetwork is POST {basePath}/security/unblockNetwork. Lifts a network block before it lapses.
-	OpSecurityUnblockNetwork = Op[SecurityUnblockNetworkInput, SecurityUnblockNetworkOutput]{&operationTable[572]}
+	OpSecurityUnblockNetwork = Op[SecurityUnblockNetworkInput, SecurityUnblockNetworkOutput]{&operationTable[575]}
 	// OpServiceAccountsCreate is POST {basePath}/serviceAccounts/create. Creates a service account in the tenant, optionally with a date after which it is deactivated.
-	OpServiceAccountsCreate = Op[ServiceAccountsCreateInput, ServiceAccountsCreateOutput]{&operationTable[573]}
+	OpServiceAccountsCreate = Op[ServiceAccountsCreateInput, ServiceAccountsCreateOutput]{&operationTable[576]}
 	// OpServiceAccountsDelete is POST {basePath}/serviceAccounts/delete. Deletes a service account, revoking its keys and removing every grant it held.
-	OpServiceAccountsDelete = Op[ServiceAccountsDeleteInput, ServiceAccountsDeleteOutput]{&operationTable[574]}
+	OpServiceAccountsDelete = Op[ServiceAccountsDeleteInput, ServiceAccountsDeleteOutput]{&operationTable[577]}
 	// OpServiceAccountsGet is POST {basePath}/serviceAccounts/get. Returns one service account by id.
-	OpServiceAccountsGet = Op[ServiceAccountsGetInput, ServiceAccountsGetOutput]{&operationTable[575]}
+	OpServiceAccountsGet = Op[ServiceAccountsGetInput, ServiceAccountsGetOutput]{&operationTable[578]}
 	// OpServiceAccountsList is POST {basePath}/serviceAccounts/list. Lists the tenant's service accounts, without deleted ones unless you ask for them.
-	OpServiceAccountsList = Op[ServiceAccountsListInput, ServiceAccountsListOutput]{&operationTable[576]}
+	OpServiceAccountsList = Op[ServiceAccountsListInput, ServiceAccountsListOutput]{&operationTable[579]}
 	// OpServiceAccountsSetStatus is POST {basePath}/serviceAccounts/setStatus. Disables a service account, ending all its access at once, or enables it again.
-	OpServiceAccountsSetStatus = Op[ServiceAccountsSetStatusInput, ServiceAccountsSetStatusOutput]{&operationTable[577]}
+	OpServiceAccountsSetStatus = Op[ServiceAccountsSetStatusInput, ServiceAccountsSetStatusOutput]{&operationTable[580]}
 	// OpServiceAccountsUpdate is POST {basePath}/serviceAccounts/update. Renames a service account, changes its description or directory attributes, or schedules or clears its deactivation.
-	OpServiceAccountsUpdate = Op[ServiceAccountsUpdateInput, ServiceAccountsUpdateOutput]{&operationTable[578]}
+	OpServiceAccountsUpdate = Op[ServiceAccountsUpdateInput, ServiceAccountsUpdateOutput]{&operationTable[581]}
 	// OpSignalsCreateSource is POST {basePath}/signals/createSource. Registers an identity provider as a signal source for the organization.
-	OpSignalsCreateSource = Op[SignalsCreateSourceInput, SignalsCreateSourceOutput]{&operationTable[579]}
+	OpSignalsCreateSource = Op[SignalsCreateSourceInput, SignalsCreateSourceOutput]{&operationTable[582]}
 	// OpSignalsDeleteSource is POST {basePath}/signals/deleteSource. Deletes a signal source; the events it sent stay until they expire.
-	OpSignalsDeleteSource = Op[SignalsDeleteSourceInput, SignalsDeleteSourceOutput]{&operationTable[580]}
+	OpSignalsDeleteSource = Op[SignalsDeleteSourceInput, SignalsDeleteSourceOutput]{&operationTable[583]}
 	// OpSignalsGetEvent is POST {basePath}/signals/getEvent. Returns one received security event.
-	OpSignalsGetEvent = Op[SignalsGetEventInput, SignalsGetEventOutput]{&operationTable[581]}
+	OpSignalsGetEvent = Op[SignalsGetEventInput, SignalsGetEventOutput]{&operationTable[584]}
 	// OpSignalsGetSource is POST {basePath}/signals/getSource. Returns one signal source with its health.
-	OpSignalsGetSource = Op[SignalsGetSourceInput, SignalsGetSourceOutput]{&operationTable[582]}
+	OpSignalsGetSource = Op[SignalsGetSourceInput, SignalsGetSourceOutput]{&operationTable[585]}
 	// OpSignalsListEvents is POST {basePath}/signals/listEvents. Lists received events, newest first, optionally narrowed by source, status, identity, and event type.
-	OpSignalsListEvents = Op[SignalsListEventsInput, SignalsListEventsOutput]{&operationTable[583]}
+	OpSignalsListEvents = Op[SignalsListEventsInput, SignalsListEventsOutput]{&operationTable[586]}
 	// OpSignalsListSources is POST {basePath}/signals/listSources. Lists the organization's signal sources, oldest first.
-	OpSignalsListSources = Op[SignalsListSourcesInput, SignalsListSourcesOutput]{&operationTable[584]}
+	OpSignalsListSources = Op[SignalsListSourcesInput, SignalsListSourcesOutput]{&operationTable[587]}
 	// OpSignalsPoll is POST {basePath}/signals/poll. Polls one poll source now, as the scheduled iam.signals.poll() does, and returns what it did.
-	OpSignalsPoll = Op[SignalsPollInput, SignalsPollOutput]{&operationTable[585]}
+	OpSignalsPoll = Op[SignalsPollInput, SignalsPollOutput]{&operationTable[588]}
 	// OpSignalsReprocess is POST {basePath}/signals/reprocess. Maps an unmatched or failed event again and runs the source's action for it, after the mapping or the directory changed.
-	OpSignalsReprocess = Op[SignalsReprocessInput, SignalsReprocessOutput]{&operationTable[586]}
+	OpSignalsReprocess = Op[SignalsReprocessInput, SignalsReprocessOutput]{&operationTable[589]}
 	// OpSignalsRotatePushToken is POST {basePath}/signals/rotatePushToken. Replaces a push source's bearer token and returns the new one, shown only once.
-	OpSignalsRotatePushToken = Op[SignalsRotatePushTokenInput, SignalsRotatePushTokenOutput]{&operationTable[587]}
+	OpSignalsRotatePushToken = Op[SignalsRotatePushTokenInput, SignalsRotatePushTokenOutput]{&operationTable[590]}
 	// OpSignalsUpdateSource is POST {basePath}/signals/updateSource. Changes a signal source: names, aliases, audiences, keys, algorithms, poll settings, mapping, actions, type check, or status.
-	OpSignalsUpdateSource = Op[SignalsUpdateSourceInput, SignalsUpdateSourceOutput]{&operationTable[588]}
+	OpSignalsUpdateSource = Op[SignalsUpdateSourceInput, SignalsUpdateSourceOutput]{&operationTable[591]}
 	// OpSodCreate is POST {basePath}/sod/create. Declares 2 to 20 roles that nobody may hold together, and reports how many people already hold two of them.
-	OpSodCreate = Op[SodCreateInput, SodCreateOutput]{&operationTable[589]}
+	OpSodCreate = Op[SodCreateInput, SodCreateOutput]{&operationTable[592]}
 	// OpSodDelete is POST {basePath}/sod/delete. Removes a rule, so the combination is no longer checked or reported.
-	OpSodDelete = Op[SodDeleteInput, SodDeleteOutput]{&operationTable[590]}
+	OpSodDelete = Op[SodDeleteInput, SodDeleteOutput]{&operationTable[593]}
 	// OpSodList is POST {basePath}/sod/list. Lists the tenant's rules, newest first.
-	OpSodList = Op[SodListInput, SodListOutput]{&operationTable[591]}
+	OpSodList = Op[SodListInput, SodListOutput]{&operationTable[594]}
 	// OpSodUpdate is POST {basePath}/sod/update. Changes a rule's name, description, roles, or mode.
-	OpSodUpdate = Op[SodUpdateInput, SodUpdateOutput]{&operationTable[592]}
+	OpSodUpdate = Op[SodUpdateInput, SodUpdateOutput]{&operationTable[595]}
 	// OpSodViolations is POST {basePath}/sod/violations. Lists everyone who currently holds two or more roles of a rule, with names for review screens.
-	OpSodViolations = Op[SodViolationsInput, SodViolationsOutput]{&operationTable[593]}
+	OpSodViolations = Op[SodViolationsInput, SodViolationsOutput]{&operationTable[596]}
 	// OpSshActivateAuthority is POST {basePath}/ssh/activateAuthority. Makes a pending authority the signing key. The key it replaces stays trusted as previous, so certificates it issued keep working until they expire.
-	OpSshActivateAuthority = Op[SshActivateAuthorityInput, SshActivateAuthorityOutput]{&operationTable[594]}
+	OpSshActivateAuthority = Op[SshActivateAuthorityInput, SshActivateAuthorityOutput]{&operationTable[597]}
 	// OpSshClientTrust is POST {basePath}/ssh/clientTrust. What a member's SSH client needs: knownhosts lines trusting the host authority for the organization's enrolled names (or its patterns), @revoked lines for host keys to refuse, and the host revocation…
-	OpSshClientTrust = Op[SshClientTrustInput, SshClientTrustOutput]{&operationTable[595]}
+	OpSshClientTrust = Op[SshClientTrustInput, SshClientTrustOutput]{&operationTable[598]}
 	// OpSshCreateHost is POST {basePath}/ssh/createHost. Registers a server: its name (unique, lowercase letters, digits, .
-	OpSshCreateHost = Op[SshCreateHostInput, SshCreateHostOutput]{&operationTable[596]}
+	OpSshCreateHost = Op[SshCreateHostInput, SshCreateHostOutput]{&operationTable[599]}
 	// OpSshDeleteHost is POST {basePath}/ssh/deleteHost. Deletes a host and revokes its certificate. Certificates naming it open nothing afterwards.
-	OpSshDeleteHost = Op[SshDeleteHostInput, SshDeleteHostOutput]{&operationTable[597]}
+	OpSshDeleteHost = Op[SshDeleteHostInput, SshDeleteHostOutput]{&operationTable[600]}
 	// OpSshDisableHost is POST {basePath}/ssh/disableHost. Takes a host out of service.
-	OpSshDisableHost = Op[SshDisableHostInput, SshDisableHostOutput]{&operationTable[598]}
+	OpSshDisableHost = Op[SshDisableHostInput, SshDisableHostOutput]{&operationTable[601]}
 	// OpSshEnrollHost is POST {basePath}/ssh/enrollHost. A server enrolls with its join token and public host key (not a security key).
-	OpSshEnrollHost = Op[SshEnrollHostInput, SshEnrollHostOutput]{&operationTable[599]}
+	OpSshEnrollHost = Op[SshEnrollHostInput, SshEnrollHostOutput]{&operationTable[602]}
 	// OpSshGetCertificate is POST {basePath}/ssh/getCertificate. One certificate record: kind, serial, key ID, principals, hosts and logins, extensions, key fingerprint, validity, and revocation details.
-	OpSshGetCertificate = Op[SshGetCertificateInput, SshGetCertificateOutput]{&operationTable[600]}
+	OpSshGetCertificate = Op[SshGetCertificateInput, SshGetCertificateOutput]{&operationTable[603]}
 	// OpSshGetHost is POST {basePath}/ssh/getHost. One host: status, addresses, logins, labels, host key fingerprint, certificate expiry and when it last synced. Token hashes never appear.
-	OpSshGetHost = Op[SshGetHostInput, SshGetHostOutput]{&operationTable[601]}
+	OpSshGetHost = Op[SshGetHostInput, SshGetHostOutput]{&operationTable[604]}
 	// OpSshGetSettings is POST {basePath}/ssh/getSettings. The tenant's settings (MFA, security keys, source-address binding, default and maximum lifetimes, host patterns), the revocation list version, and the deployment's ceiling for maxCertificateMs.
-	OpSshGetSettings = Op[SshGetSettingsInput, SshGetSettingsOutput]{&operationTable[602]}
+	OpSshGetSettings = Op[SshGetSettingsInput, SshGetSettingsOutput]{&operationTable[605]}
 	// OpSshIssueCertificate is POST {basePath}/ssh/issueCertificate. Certifies the caller's public key (Ed25519, ECDSA, RSA of 2048+ bits, or a FIDO security key) for every requested host and login policies allow (default: every enrolled host).
-	OpSshIssueCertificate = Op[SshIssueCertificateInput, SshIssueCertificateOutput]{&operationTable[603]}
+	OpSshIssueCertificate = Op[SshIssueCertificateInput, SshIssueCertificateOutput]{&operationTable[606]}
 	// OpSshListAuthorities is POST {basePath}/ssh/listAuthorities. Every authority key of the tenant, retired ones included: kind (user or host), status (pending, active, previous, retired), public key and fingerprint. Private keys never appear.
-	OpSshListAuthorities = Op[SshListAuthoritiesInput, SshListAuthoritiesOutput]{&operationTable[604]}
+	OpSshListAuthorities = Op[SshListAuthoritiesInput, SshListAuthoritiesOutput]{&operationTable[607]}
 	// OpSshListCertificates is POST {basePath}/ssh/listCertificates. Issued certificates, newest first, filtered by kind, identityId, hostId or status (active, revoked, expired), paged with limit (at most 500) and offset.
-	OpSshListCertificates = Op[SshListCertificatesInput, SshListCertificatesOutput]{&operationTable[605]}
+	OpSshListCertificates = Op[SshListCertificatesInput, SshListCertificatesOutput]{&operationTable[608]}
 	// OpSshListHosts is POST {basePath}/ssh/listHosts. The tenant's hosts by name, filtered by status, exact labels, or a query over names, addresses and descriptions.
-	OpSshListHosts = Op[SshListHostsInput, SshListHostsOutput]{&operationTable[606]}
+	OpSshListHosts = Op[SshListHostsInput, SshListHostsOutput]{&operationTable[609]}
 	// OpSshMyAccess is POST {basePath}/ssh/myAccess. The enrolled hosts the caller may open, with the logins and forwarding policies allow, and the settings that affect a request (MFA, security keys, lifetimes). No permission needed.
-	OpSshMyAccess = Op[SshMyAccessInput, SshMyAccessOutput]{&operationTable[607]}
+	OpSshMyAccess = Op[SshMyAccessInput, SshMyAccessOutput]{&operationTable[610]}
 	// OpSshMyCertificates is POST {basePath}/ssh/myCertificates. The caller's own certificates in the tenant, newest first (the last 100), with their status.
-	OpSshMyCertificates = Op[SshMyCertificatesInput, SshMyCertificatesOutput]{&operationTable[608]}
+	OpSshMyCertificates = Op[SshMyCertificatesInput, SshMyCertificatesOutput]{&operationTable[611]}
 	// OpSshResetJoinToken is POST {basePath}/ssh/resetJoinToken. Returns a fresh one-time join token, for a rebuilt server or to bring a disabled host back. The host's renewal token stops working; re-enrolling revokes its previous certificates as superseded.
-	OpSshResetJoinToken = Op[SshResetJoinTokenInput, SshResetJoinTokenOutput]{&operationTable[609]}
+	OpSshResetJoinToken = Op[SshResetJoinTokenInput, SshResetJoinTokenOutput]{&operationTable[612]}
 	// OpSshRetireAuthority is POST {basePath}/ssh/retireAuthority. Stops trusting a previous (or pending) authority.
-	OpSshRetireAuthority = Op[SshRetireAuthorityInput, SshRetireAuthorityOutput]{&operationTable[610]}
+	OpSshRetireAuthority = Op[SshRetireAuthorityInput, SshRetireAuthorityOutput]{&operationTable[613]}
 	// OpSshRevocationList is POST {basePath}/ssh/revocationList. A key revocation list, base64.
-	OpSshRevocationList = Op[SshRevocationListInput, SshRevocationListOutput]{&operationTable[611]}
+	OpSshRevocationList = Op[SshRevocationListInput, SshRevocationListOutput]{&operationTable[614]}
 	// OpSshRevokeAllCertificates is POST {basePath}/ssh/revokeAllCertificates. Revokes every live user certificate of the tenant, after a suspected compromise.
-	OpSshRevokeAllCertificates = Op[SshRevokeAllCertificatesInput, SshRevokeAllCertificatesOutput]{&operationTable[612]}
+	OpSshRevokeAllCertificates = Op[SshRevokeAllCertificatesInput, SshRevokeAllCertificatesOutput]{&operationTable[615]}
 	// OpSshRevokeCertificate is POST {basePath}/ssh/revokeCertificate. Revokes one certificate. Anyone may revoke their own user certificate; revoking someone else's needs the permission. Hosts refuse it from their next revocation list.
-	OpSshRevokeCertificate = Op[SshRevokeCertificateInput, SshRevokeCertificateOutput]{&operationTable[613]}
+	OpSshRevokeCertificate = Op[SshRevokeCertificateInput, SshRevokeCertificateOutput]{&operationTable[616]}
 	// OpSshRevokeIdentity is POST {basePath}/ssh/revokeIdentity. Revokes every live user certificate of one identity, for incident response.
-	OpSshRevokeIdentity = Op[SshRevokeIdentityInput, SshRevokeIdentityOutput]{&operationTable[614]}
+	OpSshRevokeIdentity = Op[SshRevokeIdentityInput, SshRevokeIdentityOutput]{&operationTable[617]}
 	// OpSshRotateAuthority is POST {basePath}/ssh/rotateAuthority. Starts rotating the user or host authority. A new pending key is published and trusted by hosts and clients from their next sync, and it signs from activateAuthority.
-	OpSshRotateAuthority = Op[SshRotateAuthorityInput, SshRotateAuthorityOutput]{&operationTable[615]}
+	OpSshRotateAuthority = Op[SshRotateAuthorityInput, SshRotateAuthorityOutput]{&operationTable[618]}
 	// OpSshSetup is POST {basePath}/ssh/setup. Creates the tenant's user authority and host authority when they are missing, and returns every authority and the trust material to distribute. Calling it again changes nothing (created is empty).
-	OpSshSetup = Op[SshSetupInput, SshSetupOutput]{&operationTable[616]}
+	OpSshSetup = Op[SshSetupInput, SshSetupOutput]{&operationTable[619]}
 	// OpSshStatus is POST {basePath}/ssh/status. The tenant's SSH configuration at a glance: whether it is set up, the settings, the authorities that are not retired, hosts by status, counts of live user and host certificates and of revoked ones, a…
-	OpSshStatus = Op[SshStatusInput, SshStatusOutput]{&operationTable[617]}
+	OpSshStatus = Op[SshStatusInput, SshStatusOutput]{&operationTable[620]}
 	// OpSshSweep is POST {basePath}/ssh/sweep. Runs the continuous-authorization sweep for this tenant now.
-	OpSshSweep = Op[SshSweepInput, SshSweepOutput]{&operationTable[618]}
+	OpSshSweep = Op[SshSweepInput, SshSweepOutput]{&operationTable[621]}
 	// OpSshSyncHost is POST {basePath}/ssh/syncHost. A host's periodic check-in with its renewal token.
-	OpSshSyncHost = Op[SshSyncHostInput, SshSyncHostOutput]{&operationTable[619]}
+	OpSshSyncHost = Op[SshSyncHostInput, SshSyncHostOutput]{&operationTable[622]}
 	// OpSshTrust is POST {basePath}/ssh/trust. The tenant's public trust: user authority keys for hosts (trustedUserCaKeys for TrustedUserCAKeys), host authority keys, and the @cert-authority knownhosts line only when hostPatterns is set.
-	OpSshTrust = Op[SshTrustInput, SshTrustOutput]{&operationTable[620]}
+	OpSshTrust = Op[SshTrustInput, SshTrustOutput]{&operationTable[623]}
 	// OpSshUpdateHost is POST {basePath}/ssh/updateHost. Changes a host's addresses, logins, labels or description (null clears it).
-	OpSshUpdateHost = Op[SshUpdateHostInput, SshUpdateHostOutput]{&operationTable[621]}
+	OpSshUpdateHost = Op[SshUpdateHostInput, SshUpdateHostOutput]{&operationTable[624]}
 	// OpSshUpdateSettings is POST {basePath}/ssh/updateSettings. Changes the tenant's settings; fields left out keep their values. hostPatterns are knownhosts patterns ( and ? globs, ! negation).
-	OpSshUpdateSettings = Op[SshUpdateSettingsInput, SshUpdateSettingsOutput]{&operationTable[622]}
+	OpSshUpdateSettings = Op[SshUpdateSettingsInput, SshUpdateSettingsOutput]{&operationTable[625]}
 	// OpSshWhoCanLogin is POST {basePath}/ssh/whoCanLogin. Access review: which active identities may log in to a host, and as which logins. Each identity is decided in a synthetic session (with MFA when assumeMfa), optionally for one login or kind.
-	OpSshWhoCanLogin = Op[SshWhoCanLoginInput, SshWhoCanLoginOutput]{&operationTable[623]}
+	OpSshWhoCanLogin = Op[SshWhoCanLoginInput, SshWhoCanLoginOutput]{&operationTable[626]}
 	// OpStsAssumeRoleWithWebIdentity is POST {basePath}/sts/assumeRoleWithWebIdentity. Exchanges a verified external OpenID Connect token, such as a GitHub Actions or Kubernetes token, for a role session under a web-identity trust.
-	OpStsAssumeRoleWithWebIdentity = Op[StsAssumeRoleWithWebIdentityInput, StsAssumeRoleWithWebIdentityOutput]{&operationTable[624]}
+	OpStsAssumeRoleWithWebIdentity = Op[StsAssumeRoleWithWebIdentityInput, StsAssumeRoleWithWebIdentityOutput]{&operationTable[627]}
 	// OpStsGetCallerIdentity is POST {basePath}/sts/getCallerIdentity. Returns who the presented credential acts as: identity, tenant, session kind and id, format, MFA, expiry, and any role, trust, session name, tags, or web identity behind it.
-	OpStsGetCallerIdentity = Op[StsGetCallerIdentityInput, StsGetCallerIdentityOutput]{&operationTable[625]}
+	OpStsGetCallerIdentity = Op[StsGetCallerIdentityInput, StsGetCallerIdentityOutput]{&operationTable[628]}
 	// OpStsGetSessionToken is POST {basePath}/sts/getSessionToken. Mints a short-lived session token for your own identity from a signed-in session or an API key, optionally narrowed by a policy and attested with a fresh MFA code.
-	OpStsGetSessionToken = Op[StsGetSessionTokenInput, StsGetSessionTokenOutput]{&operationTable[626]}
+	OpStsGetSessionToken = Op[StsGetSessionTokenInput, StsGetSessionTokenOutput]{&operationTable[629]}
 	// OpTeamsAddMember is POST {basePath}/teams/addMember. Adds a person to a team as a member (default) or maintainer, optionally until expiresAt.
-	OpTeamsAddMember = Op[TeamsAddMemberInput, TeamsAddMemberOutput]{&operationTable[627]}
+	OpTeamsAddMember = Op[TeamsAddMemberInput, TeamsAddMemberOutput]{&operationTable[630]}
 	// OpTeamsAddMembers is POST {basePath}/teams/addMembers. Adds up to 100 people with the same role and expiry in one transaction; one failure rejects the batch.
-	OpTeamsAddMembers = Op[TeamsAddMembersInput, TeamsAddMembersOutput]{&operationTable[628]}
+	OpTeamsAddMembers = Op[TeamsAddMembersInput, TeamsAddMembersOutput]{&operationTable[631]}
 	// OpTeamsApproveRequest is POST {basePath}/teams/approveRequest. Grants a pending join request: the requester joins as a member (optionally until expiresAt) and is emailed (team-join-decided). Nobody decides their own request.
-	OpTeamsApproveRequest = Op[TeamsApproveRequestInput, TeamsApproveRequestOutput]{&operationTable[629]}
+	OpTeamsApproveRequest = Op[TeamsApproveRequestInput, TeamsApproveRequestOutput]{&operationTable[632]}
 	// OpTeamsCancelRequest is POST {basePath}/teams/cancelRequest. Withdraws your own pending join request.
-	OpTeamsCancelRequest = Op[TeamsCancelRequestInput, TeamsCancelRequestOutput]{&operationTable[630]}
+	OpTeamsCancelRequest = Op[TeamsCancelRequestInput, TeamsCancelRequestOutput]{&operationTable[633]}
 	// OpTeamsCancelReview is POST {basePath}/teams/cancelReview. Cancels an open membership review without changing the team.
-	OpTeamsCancelReview = Op[TeamsCancelReviewInput, TeamsCancelReviewOutput]{&operationTable[631]}
+	OpTeamsCancelReview = Op[TeamsCancelReviewInput, TeamsCancelReviewOutput]{&operationTable[634]}
 	// OpTeamsCandidates is POST {basePath}/teams/candidates. People who could be added: active people of the organization who are not direct members, matched on name or email by query, at most limit (default 50, up to 200).
-	OpTeamsCandidates = Op[TeamsCandidatesInput, TeamsCandidatesOutput]{&operationTable[632]}
+	OpTeamsCandidates = Op[TeamsCandidatesInput, TeamsCandidatesOutput]{&operationTable[635]}
 	// OpTeamsCompleteReview is POST {basePath}/teams/completeReview. Completes an open review: people decided remove leave the team, and people nobody decided on follow the review's onUndecided.
-	OpTeamsCompleteReview = Op[TeamsCompleteReviewInput, TeamsCompleteReviewOutput]{&operationTable[633]}
+	OpTeamsCompleteReview = Op[TeamsCompleteReviewInput, TeamsCompleteReviewOutput]{&operationTable[636]}
 	// OpTeamsCreate is POST {basePath}/teams/create. Creates a team with its backing group.
-	OpTeamsCreate = Op[TeamsCreateInput, TeamsCreateOutput]{&operationTable[634]}
+	OpTeamsCreate = Op[TeamsCreateInput, TeamsCreateOutput]{&operationTable[637]}
 	// OpTeamsDecideReview is POST {basePath}/teams/decideReview. Records keep or remove for up to 200 people under an open review, each with an optional note. A later decision replaces an earlier one; nothing changes in the team until the review completes.
-	OpTeamsDecideReview = Op[TeamsDecideReviewInput, TeamsDecideReviewOutput]{&operationTable[635]}
+	OpTeamsDecideReview = Op[TeamsDecideReviewInput, TeamsDecideReviewOutput]{&operationTable[638]}
 	// OpTeamsDelete is POST {basePath}/teams/delete. Deletes a team, its memberships and join requests, and its backing group with the bindings and relationships on it.
-	OpTeamsDelete = Op[TeamsDeleteInput, TeamsDeleteOutput]{&operationTable[636]}
+	OpTeamsDelete = Op[TeamsDeleteInput, TeamsDeleteOutput]{&operationTable[639]}
 	// OpTeamsDenyRequest is POST {basePath}/teams/denyRequest. Refuses a pending join request; the requester is emailed with the note.
-	OpTeamsDenyRequest = Op[TeamsDenyRequestInput, TeamsDenyRequestOutput]{&operationTable[637]}
+	OpTeamsDenyRequest = Op[TeamsDenyRequestInput, TeamsDenyRequestOutput]{&operationTable[640]}
 	// OpTeamsGet is POST {basePath}/teams/get. One team with its path (the teams above it), its children, department, maintainers, total member count (with the teams below), and the roles its members hold through it or a team above (inherited).
-	OpTeamsGet = Op[TeamsGetInput, TeamsGetOutput]{&operationTable[638]}
+	OpTeamsGet = Op[TeamsGetInput, TeamsGetOutput]{&operationTable[641]}
 	// OpTeamsGetReview is POST {basePath}/teams/getReview. One membership review with every person under it: their role, the decision, who made it and when, and the note.
-	OpTeamsGetReview = Op[TeamsGetReviewInput, TeamsGetReviewOutput]{&operationTable[639]}
+	OpTeamsGetReview = Op[TeamsGetReviewInput, TeamsGetReviewOutput]{&operationTable[642]}
 	// OpTeamsLeave is POST {basePath}/teams/leave. Leaves a team you belong to directly.
-	OpTeamsLeave = Op[TeamsLeaveInput, TeamsLeaveOutput]{&operationTable[640]}
+	OpTeamsLeave = Op[TeamsLeaveInput, TeamsLeaveOutput]{&operationTable[643]}
 	// OpTeamsList is POST {basePath}/teams/list. Every team with member, maintainer, and child counts, in name order. Filters: parentId (null for top-level teams), departmentId, and query (name or slug).
-	OpTeamsList = Op[TeamsListInput, TeamsListOutput]{&operationTable[641]}
+	OpTeamsList = Op[TeamsListInput, TeamsListOutput]{&operationTable[644]}
 	// OpTeamsListForIdentity is POST {basePath}/teams/listForIdentity. The teams one person belongs to directly, with their role, expiry, and the teams above each one.
-	OpTeamsListForIdentity = Op[TeamsListForIdentityInput, TeamsListForIdentityOutput]{&operationTable[642]}
+	OpTeamsListForIdentity = Op[TeamsListForIdentityInput, TeamsListForIdentityOutput]{&operationTable[645]}
 	// OpTeamsListMembers is POST {basePath}/teams/listMembers. The team's live direct members with their role, expiry, and who added them; includeChildTeams adds the members of every team below, each with the team they belong to.
-	OpTeamsListMembers = Op[TeamsListMembersInput, TeamsListMembersOutput]{&operationTable[643]}
+	OpTeamsListMembers = Op[TeamsListMembersInput, TeamsListMembersOutput]{&operationTable[646]}
 	// OpTeamsListMine is POST {basePath}/teams/listMine. Your teams (with role, expiry, and parents), your join requests (newest first), the teams that take join requests that you are not in, and the open membership reviews of teams you maintain (reviews,…
-	OpTeamsListMine = Op[TeamsListMineInput, TeamsListMineOutput]{&operationTable[644]}
+	OpTeamsListMine = Op[TeamsListMineInput, TeamsListMineOutput]{&operationTable[647]}
 	// OpTeamsListRequests is POST {basePath}/teams/listRequests. A team's join requests, pending by default (status picks another state; lapsed requests read as expired).
-	OpTeamsListRequests = Op[TeamsListRequestsInput, TeamsListRequestsOutput]{&operationTable[645]}
+	OpTeamsListRequests = Op[TeamsListRequestsInput, TeamsListRequestsOutput]{&operationTable[648]}
 	// OpTeamsListReviews is POST {basePath}/teams/listReviews. Membership reviews, newest first (at most 100), without their items: of one team with teamId, or of every team. status (open, completed, cancelled) filters.
-	OpTeamsListReviews = Op[TeamsListReviewsInput, TeamsListReviewsOutput]{&operationTable[646]}
+	OpTeamsListReviews = Op[TeamsListReviewsInput, TeamsListReviewsOutput]{&operationTable[649]}
 	// OpTeamsReconcile is POST {basePath}/teams/reconcile. Runs team sync for every synced team (synced: team memberships added, removed, and updated), then recomputes every backing group from team membership, after a restore, an import, or a manual repair:…
-	OpTeamsReconcile = Op[TeamsReconcileInput, TeamsReconcileOutput]{&operationTable[647]}
+	OpTeamsReconcile = Op[TeamsReconcileInput, TeamsReconcileOutput]{&operationTable[650]}
 	// OpTeamsRemoveMember is POST {basePath}/teams/removeMember. Removes a direct member; the backing groups and the person's activations of their eligible bindings follow.
-	OpTeamsRemoveMember = Op[TeamsRemoveMemberInput, TeamsRemoveMemberOutput]{&operationTable[648]}
+	OpTeamsRemoveMember = Op[TeamsRemoveMemberInput, TeamsRemoveMemberOutput]{&operationTable[651]}
 	// OpTeamsRequestToJoin is POST {basePath}/teams/requestToJoin. Asks to join a team whose joinPolicy is request, with an optional justification.
-	OpTeamsRequestToJoin = Op[TeamsRequestToJoinInput, TeamsRequestToJoinOutput]{&operationTable[649]}
+	OpTeamsRequestToJoin = Op[TeamsRequestToJoinInput, TeamsRequestToJoinOutput]{&operationTable[652]}
 	// OpTeamsStartReview is POST {basePath}/teams/startReview. Opens a membership review of the team, due at dueAt (one to 90 days ahead; in 14 days by default), with an optional note for the maintainers.
-	OpTeamsStartReview = Op[TeamsStartReviewInput, TeamsStartReviewOutput]{&operationTable[650]}
+	OpTeamsStartReview = Op[TeamsStartReviewInput, TeamsStartReviewOutput]{&operationTable[653]}
 	// OpTeamsSuggestBirthright is POST {basePath}/teams/suggestBirthright. Roles and groups that most of a team's members already hold by hand, proposed as a ready-made automatic access package whose rule names the team.
-	OpTeamsSuggestBirthright = Op[TeamsSuggestBirthrightInput, TeamsSuggestBirthrightOutput]{&operationTable[651]}
+	OpTeamsSuggestBirthright = Op[TeamsSuggestBirthrightInput, TeamsSuggestBirthrightOutput]{&operationTable[654]}
 	// OpTeamsUpdate is POST {basePath}/teams/update. Renames, re-slugs, re-describes, moves (parentId, null for top level), or re-files (departmentId, null to clear) a team, or changes joinPolicy, memberManagement, or syncGroupIds (team sync; null stop…
-	OpTeamsUpdate = Op[TeamsUpdateInput, TeamsUpdateOutput]{&operationTable[652]}
+	OpTeamsUpdate = Op[TeamsUpdateInput, TeamsUpdateOutput]{&operationTable[655]}
 	// OpTeamsUpdateMember is POST {basePath}/teams/updateMember. Changes a member's role or expiry (expiresAt: null makes the membership permanent).
-	OpTeamsUpdateMember = Op[TeamsUpdateMemberInput, TeamsUpdateMemberOutput]{&operationTable[653]}
+	OpTeamsUpdateMember = Op[TeamsUpdateMemberInput, TeamsUpdateMemberOutput]{&operationTable[656]}
 	// OpTenantsAcceptInvitation is POST {basePath}/tenants/acceptInvitation. Redeems an owner invitation: creates the first owner of a pending tenant, activates the tenant, and signs the owner in.
-	OpTenantsAcceptInvitation = Op[TenantsAcceptInvitationInput, TenantsAcceptInvitationOutput]{&operationTable[654]}
-	// OpTenantsCreate is POST {basePath}/tenants/create. Creates a child tenant in the pending state under a parent and emails an invitation to its first owner.
-	OpTenantsCreate = Op[TenantsCreateInput, TenantsCreateOutput]{&operationTable[655]}
+	OpTenantsAcceptInvitation = Op[TenantsAcceptInvitationInput, TenantsAcceptInvitationOutput]{&operationTable[657]}
+	// OpTenantsCreate is POST {basePath}/tenants/create. Creates a child tenant in the pending state under a parent and emails an invitation to its first owner, or, for a root principal with activate: true, creates it active with its owner account.
+	OpTenantsCreate = Op[TenantsCreateInput, TenantsCreateOutput]{&operationTable[658]}
 	// OpTenantsGet is POST {basePath}/tenants/get. Returns a tenant with its status, parent, alias, policies, limits, and boundary.
-	OpTenantsGet = Op[TenantsGetInput, TenantsGetOutput]{&operationTable[656]}
+	OpTenantsGet = Op[TenantsGetInput, TenantsGetOutput]{&operationTable[659]}
 	// OpTenantsListChildren is POST {basePath}/tenants/listChildren. Lists the direct children of a tenant, whatever their status.
-	OpTenantsListChildren = Op[TenantsListChildrenInput, TenantsListChildrenOutput]{&operationTable[657]}
+	OpTenantsListChildren = Op[TenantsListChildrenInput, TenantsListChildrenOutput]{&operationTable[660]}
 	// OpTenantsListInvitations is POST {basePath}/tenants/listInvitations. Lists a tenant's owner invitations without their tokens.
-	OpTenantsListInvitations = Op[TenantsListInvitationsInput, TenantsListInvitationsOutput]{&operationTable[658]}
+	OpTenantsListInvitations = Op[TenantsListInvitationsInput, TenantsListInvitationsOutput]{&operationTable[661]}
 	// OpTenantsLookup is POST {basePath}/tenants/lookup. Resolves a tenant's public alias, or an address it signs in at, to its ID, name, and type, so a sign-in page can ask for an organization name instead of a tenant ID.
-	OpTenantsLookup = Op[TenantsLookupInput, TenantsLookupOutput]{&operationTable[659]}
+	OpTenantsLookup = Op[TenantsLookupInput, TenantsLookupOutput]{&operationTable[662]}
 	// OpTenantsReparent is POST {basePath}/tenants/reparent. Moves a tenant, with its whole subtree, under a different parent.
-	OpTenantsReparent = Op[TenantsReparentInput, TenantsReparentOutput]{&operationTable[660]}
+	OpTenantsReparent = Op[TenantsReparentInput, TenantsReparentOutput]{&operationTable[663]}
 	// OpTenantsResendInvitation is POST {basePath}/tenants/resendInvitation. Sends an owner invitation again with a new token and a fresh lifetime; the earlier link stops working.
-	OpTenantsResendInvitation = Op[TenantsResendInvitationInput, TenantsResendInvitationOutput]{&operationTable[661]}
+	OpTenantsResendInvitation = Op[TenantsResendInvitationInput, TenantsResendInvitationOutput]{&operationTable[664]}
 	// OpTenantsRevokeInvitation is POST {basePath}/tenants/revokeInvitation. Cancels an owner invitation so its link can no longer be used.
-	OpTenantsRevokeInvitation = Op[TenantsRevokeInvitationInput, TenantsRevokeInvitationOutput]{&operationTable[662]}
+	OpTenantsRevokeInvitation = Op[TenantsRevokeInvitationInput, TenantsRevokeInvitationOutput]{&operationTable[665]}
 	// OpTenantsRevokeSessions is POST {basePath}/tenants/revokeSessions. Signs everyone out of a tenant at once, keeping your own session unless you pass includeSelf.
-	OpTenantsRevokeSessions = Op[TenantsRevokeSessionsInput, TenantsRevokeSessionsOutput]{&operationTable[663]}
+	OpTenantsRevokeSessions = Op[TenantsRevokeSessionsInput, TenantsRevokeSessionsOutput]{&operationTable[666]}
 	// OpTenantsSetAccessPolicy is POST {basePath}/tenants/setAccessPolicy. Sets organization-wide floors for just-in-time activation that every eligible binding in the tenant must meet.
-	OpTenantsSetAccessPolicy = Op[TenantsSetAccessPolicyInput, TenantsSetAccessPolicyOutput]{&operationTable[664]}
+	OpTenantsSetAccessPolicy = Op[TenantsSetAccessPolicyInput, TenantsSetAccessPolicyOutput]{&operationTable[667]}
 	// OpTenantsSetAuthPolicy is POST {basePath}/tenants/setAuthPolicy. Sets the tenant's authentication policy: MFA, allowed sign-in methods, session lifetimes, password rules, network restrictions, and impersonation.
-	OpTenantsSetAuthPolicy = Op[TenantsSetAuthPolicyInput, TenantsSetAuthPolicyOutput]{&operationTable[665]}
+	OpTenantsSetAuthPolicy = Op[TenantsSetAuthPolicyInput, TenantsSetAuthPolicyOutput]{&operationTable[668]}
 	// OpTenantsSetBoundary is POST {basePath}/tenants/setBoundary. Sets a root-controlled permissions boundary on a tenant, capping what anyone in it or in any tenant below it may do.
-	OpTenantsSetBoundary = Op[TenantsSetBoundaryInput, TenantsSetBoundaryOutput]{&operationTable[666]}
+	OpTenantsSetBoundary = Op[TenantsSetBoundaryInput, TenantsSetBoundaryOutput]{&operationTable[669]}
 	// OpTenantsSetLimits is POST {basePath}/tenants/setLimits. Sets the tenant's plan limits, root only: how many people, service accounts, groups, roles, policies, registered resources, and webhooks it may hold.
-	OpTenantsSetLimits = Op[TenantsSetLimitsInput, TenantsSetLimitsOutput]{&operationTable[667]}
+	OpTenantsSetLimits = Op[TenantsSetLimitsInput, TenantsSetLimitsOutput]{&operationTable[670]}
 	// OpTenantsSetRegion is POST {basePath}/tenants/setRegion. Moves a tenant's home region in a multi-region deployment, root only, so its sign-in is served by that region from then on.
-	OpTenantsSetRegion = Op[TenantsSetRegionInput, TenantsSetRegionOutput]{&operationTable[668]}
+	OpTenantsSetRegion = Op[TenantsSetRegionInput, TenantsSetRegionOutput]{&operationTable[671]}
 	// OpTenantsSetSlug is POST {basePath}/tenants/setSlug. Sets, changes, or removes the tenant's public sign-in alias.
-	OpTenantsSetSlug = Op[TenantsSetSlugInput, TenantsSetSlugOutput]{&operationTable[669]}
+	OpTenantsSetSlug = Op[TenantsSetSlugInput, TenantsSetSlugOutput]{&operationTable[672]}
 	// OpTenantsSetStatus is POST {basePath}/tenants/setStatus. Suspends, reactivates, or deletes a tenant together with its whole subtree.
-	OpTenantsSetStatus = Op[TenantsSetStatusInput, TenantsSetStatusOutput]{&operationTable[670]}
+	OpTenantsSetStatus = Op[TenantsSetStatusInput, TenantsSetStatusOutput]{&operationTable[673]}
 	// OpTenantsUpdate is POST {basePath}/tenants/update. Renames a tenant.
-	OpTenantsUpdate = Op[TenantsUpdateInput, TenantsUpdateOutput]{&operationTable[671]}
+	OpTenantsUpdate = Op[TenantsUpdateInput, TenantsUpdateOutput]{&operationTable[674]}
 	// OpTenantsUsage is POST {basePath}/tenants/usage. Returns the tenant's current record counts next to its plan limits, for plan pages and metering.
-	OpTenantsUsage = Op[TenantsUsageInput, TenantsUsageOutput]{&operationTable[672]}
+	OpTenantsUsage = Op[TenantsUsageInput, TenantsUsageOutput]{&operationTable[675]}
 	// OpThreatsAddNote is POST {basePath}/threats/addNote. Adds an investigation note to an incident.
-	OpThreatsAddNote = Op[ThreatsAddNoteInput, ThreatsAddNoteOutput]{&operationTable[673]}
+	OpThreatsAddNote = Op[ThreatsAddNoteInput, ThreatsAddNoteOutput]{&operationTable[676]}
 	// OpThreatsConfigure is POST {basePath}/threats/configure. Tunes detection for the tenant: rules, trusted networks, dormancy, risk decay, alert recipients, and the containment brake.
-	OpThreatsConfigure = Op[ThreatsConfigureInput, ThreatsConfigureOutput]{&operationTable[674]}
+	OpThreatsConfigure = Op[ThreatsConfigureInput, ThreatsConfigureOutput]{&operationTable[677]}
 	// OpThreatsCreatePlaybook is POST {basePath}/threats/createPlaybook. Defines an automatic response: actions that run when a new detection matches the trigger.
-	OpThreatsCreatePlaybook = Op[ThreatsCreatePlaybookInput, ThreatsCreatePlaybookOutput]{&operationTable[675]}
+	OpThreatsCreatePlaybook = Op[ThreatsCreatePlaybookInput, ThreatsCreatePlaybookOutput]{&operationTable[678]}
 	// OpThreatsDeletePlaybook is POST {basePath}/threats/deletePlaybook. Deletes a playbook; responses it already took stay on their incidents.
-	OpThreatsDeletePlaybook = Op[ThreatsDeletePlaybookInput, ThreatsDeletePlaybookOutput]{&operationTable[676]}
+	OpThreatsDeletePlaybook = Op[ThreatsDeletePlaybookInput, ThreatsDeletePlaybookOutput]{&operationTable[679]}
 	// OpThreatsDetect is POST {basePath}/threats/detect. Runs detection for the tenant now instead of waiting for the scheduled job, and returns what the run did.
-	OpThreatsDetect = Op[ThreatsDetectInput, ThreatsDetectOutput]{&operationTable[677]}
+	OpThreatsDetect = Op[ThreatsDetectInput, ThreatsDetectOutput]{&operationTable[680]}
 	// OpThreatsDismissDetection is POST {basePath}/threats/dismissDetection. Marks an open detection as a false alarm and takes its points out of the identity's risk.
-	OpThreatsDismissDetection = Op[ThreatsDismissDetectionInput, ThreatsDismissDetectionOutput]{&operationTable[678]}
+	OpThreatsDismissDetection = Op[ThreatsDismissDetectionInput, ThreatsDismissDetectionOutput]{&operationTable[681]}
 	// OpThreatsGetDetection is POST {basePath}/threats/getDetection. Returns one detection with its evidence.
-	OpThreatsGetDetection = Op[ThreatsGetDetectionInput, ThreatsGetDetectionOutput]{&operationTable[679]}
+	OpThreatsGetDetection = Op[ThreatsGetDetectionInput, ThreatsGetDetectionOutput]{&operationTable[682]}
 	// OpThreatsGetIncident is POST {basePath}/threats/getIncident. Returns an incident with its detections, notes, responses, and the risk of the identity it concerns.
-	OpThreatsGetIncident = Op[ThreatsGetIncidentInput, ThreatsGetIncidentOutput]{&operationTable[680]}
+	OpThreatsGetIncident = Op[ThreatsGetIncidentInput, ThreatsGetIncidentOutput]{&operationTable[683]}
 	// OpThreatsGetRisk is POST {basePath}/threats/getRisk. Returns one identity's risk: score, level, override, containment, and the contributions behind them.
-	OpThreatsGetRisk = Op[ThreatsGetRiskInput, ThreatsGetRiskOutput]{&operationTable[681]}
+	OpThreatsGetRisk = Op[ThreatsGetRiskInput, ThreatsGetRiskOutput]{&operationTable[684]}
 	// OpThreatsGetSettings is POST {basePath}/threats/getSettings. Returns the tenant's detection settings with every default applied.
-	OpThreatsGetSettings = Op[ThreatsGetSettingsInput, ThreatsGetSettingsOutput]{&operationTable[682]}
+	OpThreatsGetSettings = Op[ThreatsGetSettingsInput, ThreatsGetSettingsOutput]{&operationTable[685]}
 	// OpThreatsListDetections is POST {basePath}/threats/listDetections. Lists the tenant's detections, newest first, optionally narrowed by status, rule, severity, identity, incident, and time.
-	OpThreatsListDetections = Op[ThreatsListDetectionsInput, ThreatsListDetectionsOutput]{&operationTable[683]}
+	OpThreatsListDetections = Op[ThreatsListDetectionsInput, ThreatsListDetectionsOutput]{&operationTable[686]}
 	// OpThreatsListIncidents is POST {basePath}/threats/listIncidents. Lists the tenant's incidents, most recently active first, optionally narrowed by status, severity, assignee, and identity.
-	OpThreatsListIncidents = Op[ThreatsListIncidentsInput, ThreatsListIncidentsOutput]{&operationTable[684]}
+	OpThreatsListIncidents = Op[ThreatsListIncidentsInput, ThreatsListIncidentsOutput]{&operationTable[687]}
 	// OpThreatsListPlaybooks is POST {basePath}/threats/listPlaybooks. Lists the tenant's playbooks by name.
-	OpThreatsListPlaybooks = Op[ThreatsListPlaybooksInput, ThreatsListPlaybooksOutput]{&operationTable[685]}
+	OpThreatsListPlaybooks = Op[ThreatsListPlaybooksInput, ThreatsListPlaybooksOutput]{&operationTable[688]}
 	// OpThreatsListRisk is POST {basePath}/threats/listRisk. Lists the identities at or above a risk level, and contained ones, highest score first.
-	OpThreatsListRisk = Op[ThreatsListRiskInput, ThreatsListRiskOutput]{&operationTable[686]}
+	OpThreatsListRisk = Op[ThreatsListRiskInput, ThreatsListRiskOutput]{&operationTable[689]}
 	// OpThreatsRelease is POST {basePath}/threats/release. Lifts a containment, so the identity is active again and its API keys work.
-	OpThreatsRelease = Op[ThreatsReleaseInput, ThreatsReleaseOutput]{&operationTable[687]}
+	OpThreatsRelease = Op[ThreatsReleaseInput, ThreatsReleaseOutput]{&operationTable[690]}
 	// OpThreatsReportSuspicious is POST {basePath}/threats/reportSuspicious. Lets a person report activity on their own account that was not them: it raises an incident and signs out everywhere else.
-	OpThreatsReportSuspicious = Op[ThreatsReportSuspiciousInput, ThreatsReportSuspiciousOutput]{&operationTable[688]}
+	OpThreatsReportSuspicious = Op[ThreatsReportSuspiciousInput, ThreatsReportSuspiciousOutput]{&operationTable[691]}
 	// OpThreatsResolveIncident is POST {basePath}/threats/resolveIncident. Closes an incident as a true positive, a false positive, or benign.
-	OpThreatsResolveIncident = Op[ThreatsResolveIncidentInput, ThreatsResolveIncidentOutput]{&operationTable[689]}
+	OpThreatsResolveIncident = Op[ThreatsResolveIncidentInput, ThreatsResolveIncidentOutput]{&operationTable[692]}
 	// OpThreatsRespond is POST {basePath}/threats/respond. Responds by hand to an incident, an identity, or a network with one to five response actions.
-	OpThreatsRespond = Op[ThreatsRespondInput, ThreatsRespondOutput]{&operationTable[690]}
+	OpThreatsRespond = Op[ThreatsRespondInput, ThreatsRespondOutput]{&operationTable[693]}
 	// OpThreatsRules is POST {basePath}/threats/rules. Lists every detection rule with its defaults, tuning bounds, and the setting in force for the tenant.
-	OpThreatsRules = Op[ThreatsRulesInput, ThreatsRulesOutput]{&operationTable[691]}
+	OpThreatsRules = Op[ThreatsRulesInput, ThreatsRulesOutput]{&operationTable[694]}
 	// OpThreatsSetRisk is POST {basePath}/threats/setRisk. Sets an identity's risk level by hand, as a floor that holds until it expires, or clears it.
-	OpThreatsSetRisk = Op[ThreatsSetRiskInput, ThreatsSetRiskOutput]{&operationTable[692]}
+	OpThreatsSetRisk = Op[ThreatsSetRiskInput, ThreatsSetRiskOutput]{&operationTable[695]}
 	// OpThreatsSummary is POST {basePath}/threats/summary. Returns the tenant's threat posture at a glance for a dashboard.
-	OpThreatsSummary = Op[ThreatsSummaryInput, ThreatsSummaryOutput]{&operationTable[693]}
+	OpThreatsSummary = Op[ThreatsSummaryInput, ThreatsSummaryOutput]{&operationTable[696]}
 	// OpThreatsTimeline is POST {basePath}/threats/timeline. Returns an identity's recent audit trail, newest first: what it did and what was done to it.
-	OpThreatsTimeline = Op[ThreatsTimelineInput, ThreatsTimelineOutput]{&operationTable[694]}
+	OpThreatsTimeline = Op[ThreatsTimelineInput, ThreatsTimelineOutput]{&operationTable[697]}
 	// OpThreatsUpdateIncident is POST {basePath}/threats/updateIncident. Moves an incident between open and investigating, assigns it, or changes its severity.
-	OpThreatsUpdateIncident = Op[ThreatsUpdateIncidentInput, ThreatsUpdateIncidentOutput]{&operationTable[695]}
+	OpThreatsUpdateIncident = Op[ThreatsUpdateIncidentInput, ThreatsUpdateIncidentOutput]{&operationTable[698]}
 	// OpThreatsUpdatePlaybook is POST {basePath}/threats/updatePlaybook. Changes a playbook's name, description, trigger, actions, or whether it is enabled.
-	OpThreatsUpdatePlaybook = Op[ThreatsUpdatePlaybookInput, ThreatsUpdatePlaybookOutput]{&operationTable[696]}
+	OpThreatsUpdatePlaybook = Op[ThreatsUpdatePlaybookInput, ThreatsUpdatePlaybookOutput]{&operationTable[699]}
 	// OpTrustCreate is POST {basePath}/trust/create. Creates a trust that lets one source identity assume one role of this tenant.
-	OpTrustCreate = Op[TrustCreateInput, TrustCreateOutput]{&operationTable[697]}
+	OpTrustCreate = Op[TrustCreateInput, TrustCreateOutput]{&operationTable[700]}
 	// OpTrustEvaluateWebIdentity is POST {basePath}/trust/evaluateWebIdentity. Checks what a web-identity trust would conclude about an external token, without issuing anything.
-	OpTrustEvaluateWebIdentity = Op[TrustEvaluateWebIdentityInput, TrustEvaluateWebIdentityOutput]{&operationTable[698]}
+	OpTrustEvaluateWebIdentity = Op[TrustEvaluateWebIdentityInput, TrustEvaluateWebIdentityOutput]{&operationTable[701]}
 	// OpTrustList is POST {basePath}/trust/list. Lists the trusts that target this tenant's roles.
-	OpTrustList = Op[TrustListInput, TrustListOutput]{&operationTable[699]}
+	OpTrustList = Op[TrustListInput, TrustListOutput]{&operationTable[702]}
 	// OpTrustRevoke is POST {basePath}/trust/revoke. Revokes a trust so its source can no longer assume the role, and ends the role sessions already issued under it.
-	OpTrustRevoke = Op[TrustRevokeInput, TrustRevokeOutput]{&operationTable[700]}
+	OpTrustRevoke = Op[TrustRevokeInput, TrustRevokeOutput]{&operationTable[703]}
 	// OpTrustRevokeSessions is POST {basePath}/trust/revokeSessions. Ends the role sessions issued under one trust before a point in time, without revoking the trust.
-	OpTrustRevokeSessions = Op[TrustRevokeSessionsInput, TrustRevokeSessionsOutput]{&operationTable[701]}
+	OpTrustRevokeSessions = Op[TrustRevokeSessionsInput, TrustRevokeSessionsOutput]{&operationTable[704]}
 	// OpTrustUpdate is POST {basePath}/trust/update. Changes a trust's safeguards and options, such as its MFA requirement, ceiling, session length, attribute passing, tag keys, source identity mode, or a web-identity trust's conditions and claim mappi…
-	OpTrustUpdate = Op[TrustUpdateInput, TrustUpdateOutput]{&operationTable[702]}
+	OpTrustUpdate = Op[TrustUpdateInput, TrustUpdateOutput]{&operationTable[705]}
 	// OpVaultAccessLog is POST {basePath}/vault/accessLog. Who used a secret, newest first: reveals, check-outs and returns, leases, renewals, revocations, new versions and rotations, with the person's name, session kind and agent.
-	OpVaultAccessLog = Op[VaultAccessLogInput, VaultAccessLogOutput]{&operationTable[703]}
+	OpVaultAccessLog = Op[VaultAccessLogInput, VaultAccessLogOutput]{&operationTable[706]}
 	// OpVaultCheckin is POST {basePath}/vault/checkin. Returns a check-out.
-	OpVaultCheckin = Op[VaultCheckinInput, VaultCheckinOutput]{&operationTable[704]}
+	OpVaultCheckin = Op[VaultCheckinInput, VaultCheckinOutput]{&operationTable[707]}
 	// OpVaultCheckout is POST {basePath}/vault/checkout. Hands out a static secret's current value with a lease of durationMs (default and at most the policy's maxDurationMs), with a reason when the policy asks for one.
-	OpVaultCheckout = Op[VaultCheckoutInput, VaultCheckoutOutput]{&operationTable[705]}
+	OpVaultCheckout = Op[VaultCheckoutInput, VaultCheckoutOutput]{&operationTable[708]}
 	// OpVaultCreate is POST {basePath}/vault/create. Creates a secret. A static secret may start with value (or fields for a json secret), with generate (true or a generator), or without a value.
-	OpVaultCreate = Op[VaultCreateInput, VaultCreateOutput]{&operationTable[706]}
+	OpVaultCreate = Op[VaultCreateInput, VaultCreateOutput]{&operationTable[709]}
 	// OpVaultDelete is POST {basePath}/vault/delete. Schedules the secret for deletion after recoveryDays (7-30, default 30), during which it can be restored but not read, changed or leased; its check-outs end.
-	OpVaultDelete = Op[VaultDeleteInput, VaultDeleteOutput]{&operationTable[707]}
+	OpVaultDelete = Op[VaultDeleteInput, VaultDeleteOutput]{&operationTable[710]}
 	// OpVaultDestroyVersion is POST {basePath}/vault/destroyVersion. Erases a version's value for good; its record stays as history and labels on it are removed. The current version cannot be destroyed.
-	OpVaultDestroyVersion = Op[VaultDestroyVersionInput, VaultDestroyVersionOutput]{&operationTable[708]}
+	OpVaultDestroyVersion = Op[VaultDestroyVersionInput, VaultDestroyVersionOutput]{&operationTable[711]}
 	// OpVaultGenerate is POST {basePath}/vault/generate. A value from a generator without storing it: length 8-256 (default 32), charset (alphanumeric, ascii, hex, base64url, numeric), exclude, and eachClass. Needs only a credential.
-	OpVaultGenerate = Op[VaultGenerateInput, VaultGenerateOutput]{&operationTable[709]}
+	OpVaultGenerate = Op[VaultGenerateInput, VaultGenerateOutput]{&operationTable[712]}
 	// OpVaultGet is POST {basePath}/vault/get. A secret's metadata: kind, format, tags, status, stage labels, rotation schedule (with due and the last failure), check-out policy, engine settings, key, live check-outs (who holds the value until wh…
-	OpVaultGet = Op[VaultGetInput, VaultGetOutput]{&operationTable[710]}
+	OpVaultGet = Op[VaultGetInput, VaultGetOutput]{&operationTable[713]}
 	// OpVaultLease is POST {basePath}/vault/lease. Asks a dynamic secret's engine for a credential minted for the caller, valid for ttlMs (default and at most from the secret's lease settings). The credential is returned once and never stored.
-	OpVaultLease = Op[VaultLeaseInput, VaultLeaseOutput]{&operationTable[711]}
+	OpVaultLease = Op[VaultLeaseInput, VaultLeaseOutput]{&operationTable[714]}
 	// OpVaultList is POST {basePath}/vault/list. The secrets the caller may read, sorted by name, optionally under prefix, with all of tags, and by status (active by default, pending-deletion or all), at most limit (1-500, default 100) from offset,…
-	OpVaultList = Op[VaultListInput, VaultListOutput]{&operationTable[712]}
+	OpVaultList = Op[VaultListInput, VaultListOutput]{&operationTable[715]}
 	// OpVaultListLeases is POST {basePath}/vault/listLeases. A secret's live check-outs and leases, or all kept history with includeEnded, newest first, with the holder's name and reason.
-	OpVaultListLeases = Op[VaultListLeasesInput, VaultListLeasesOutput]{&operationTable[713]}
+	OpVaultListLeases = Op[VaultListLeasesInput, VaultListLeasesOutput]{&operationTable[716]}
 	// OpVaultListMine is POST {basePath}/vault/listMine. The caller's own live check-outs and leases in the tenant. Needs only a session of the tenant.
-	OpVaultListMine = Op[VaultListMineInput, VaultListMineOutput]{&operationTable[714]}
+	OpVaultListMine = Op[VaultListMineInput, VaultListMineOutput]{&operationTable[717]}
 	// OpVaultListVersions is POST {basePath}/vault/listVersions. Every kept version, newest first, with its state (enabled, disabled, destroyed), stage labels, source (put, generated, rotation) and author. Never a value.
-	OpVaultListVersions = Op[VaultListVersionsInput, VaultListVersionsOutput]{&operationTable[715]}
+	OpVaultListVersions = Op[VaultListVersionsInput, VaultListVersionsOutput]{&operationTable[718]}
 	// OpVaultPromote is POST {basePath}/vault/promote. Makes an enabled version current; the old current version becomes previous. Rolls back as well as forward; rolling back does not restart the rotation clock.
-	OpVaultPromote = Op[VaultPromoteInput, VaultPromoteOutput]{&operationTable[716]}
+	OpVaultPromote = Op[VaultPromoteInput, VaultPromoteOutput]{&operationTable[719]}
 	// OpVaultPut is POST {basePath}/vault/put. Stores a new version from value, fields or generate. It becomes current (the old one previous) unless stage names pending or a custom label. Versions past maxVersions that no label names are deleted.
-	OpVaultPut = Op[VaultPutInput, VaultPutOutput]{&operationTable[717]}
+	OpVaultPut = Op[VaultPutInput, VaultPutOutput]{&operationTable[720]}
 	// OpVaultRenewLease is POST {basePath}/vault/renewLease. Extends the caller's live check-out or dynamic lease by ttlMs from now (default: the length it was issued for), never past maxExpiresAt; tells the engine when it has renew.
-	OpVaultRenewLease = Op[VaultRenewLeaseInput, VaultRenewLeaseOutput]{&operationTable[718]}
+	OpVaultRenewLease = Op[VaultRenewLeaseInput, VaultRenewLeaseOutput]{&operationTable[721]}
 	// OpVaultRestore is POST {basePath}/vault/restore. Cancels a scheduled deletion.
-	OpVaultRestore = Op[VaultRestoreInput, VaultRestoreOutput]{&operationTable[719]}
+	OpVaultRestore = Op[VaultRestoreInput, VaultRestoreOutput]{&operationTable[722]}
 	// OpVaultReveal is POST {basePath}/vault/reveal. The value of the current version, or of version or stage: value, and fields for json secrets.
-	OpVaultReveal = Op[VaultRevealInput, VaultRevealOutput]{&operationTable[720]}
+	OpVaultReveal = Op[VaultRevealInput, VaultRevealOutput]{&operationTable[723]}
 	// OpVaultRevokeLease is POST {basePath}/vault/revokeLease. Ends a lease now: a check-out ends like a check-in (a secret with rotateOnCheckin rotates once its last holder is gone, reported as rotated), a dynamic lease is revoked at its engine.
-	OpVaultRevokeLease = Op[VaultRevokeLeaseInput, VaultRevokeLeaseOutput]{&operationTable[721]}
+	OpVaultRevokeLease = Op[VaultRevokeLeaseInput, VaultRevokeLeaseOutput]{&operationTable[724]}
 	// OpVaultRotate is POST {basePath}/vault/rotate. Rotates a static secret now: stages a new version as pending (generated, or value / fields when given), calls the secret's rotator with it outside any transaction, then makes it current.
-	OpVaultRotate = Op[VaultRotateInput, VaultRotateOutput]{&operationTable[722]}
+	OpVaultRotate = Op[VaultRotateInput, VaultRotateOutput]{&operationTable[725]}
 	// OpVaultSetStage is POST {basePath}/vault/setStage. Points a custom stage label, or pending, at a version, or removes it with version: null. current and previous move only through put, promote and rotate.
-	OpVaultSetStage = Op[VaultSetStageInput, VaultSetStageOutput]{&operationTable[723]}
+	OpVaultSetStage = Op[VaultSetStageInput, VaultSetStageOutput]{&operationTable[726]}
 	// OpVaultSetVersionState is POST {basePath}/vault/setVersionState. Disables a version (kept, but not revealed) or enables it again. The current version cannot be disabled.
-	OpVaultSetVersionState = Op[VaultSetVersionStateInput, VaultSetVersionStateOutput]{&operationTable[724]}
+	OpVaultSetVersionState = Op[VaultSetVersionStateInput, VaultSetVersionStateOutput]{&operationTable[727]}
 	// OpVaultUpdate is POST {basePath}/vault/update. Changes settings: description (null clears), tags (replaced), maxVersions, rotation and checkout (null removes), a dynamic secret's engineConfig and lease, and kmsKey (a new key re-encrypts every kep…
-	OpVaultUpdate = Op[VaultUpdateInput, VaultUpdateOutput]{&operationTable[725]}
+	OpVaultUpdate = Op[VaultUpdateInput, VaultUpdateOutput]{&operationTable[728]}
 	// OpVerifiableCredentialsAvailable is POST {basePath}/verifiableCredentials/available. The enabled types the caller may request for themselves right now: vc:request allowed on credential-type/{name}, MFA when the type asks, and not in a "view as" session or a delegated agent session.
-	OpVerifiableCredentialsAvailable = Op[VerifiableCredentialsAvailableInput, VerifiableCredentialsAvailableOutput]{&operationTable[726]}
+	OpVerifiableCredentialsAvailable = Op[VerifiableCredentialsAvailableInput, VerifiableCredentialsAvailableOutput]{&operationTable[729]}
 	// OpVerifiableCredentialsCreateOffer is POST {basePath}/verifiableCredentials/createOffer. An OpenID4VCI credential offer with a pre-authorized code, and its openid-credential-offer:// link for a wallet to scan.
-	OpVerifiableCredentialsCreateOffer = Op[VerifiableCredentialsCreateOfferInput, VerifiableCredentialsCreateOfferOutput]{&operationTable[727]}
+	OpVerifiableCredentialsCreateOffer = Op[VerifiableCredentialsCreateOfferInput, VerifiableCredentialsCreateOfferOutput]{&operationTable[730]}
 	// OpVerifiableCredentialsCreateType is POST {basePath}/verifiableCredentials/createType. Defines a credential type: a name, a displayName and description for wallets, card colors, a lifetime (default 30 days, at most the deployment's maxLifetimeMs), requireMfa, and 1 to 32 claims.
-	OpVerifiableCredentialsCreateType = Op[VerifiableCredentialsCreateTypeInput, VerifiableCredentialsCreateTypeOutput]{&operationTable[728]}
+	OpVerifiableCredentialsCreateType = Op[VerifiableCredentialsCreateTypeInput, VerifiableCredentialsCreateTypeOutput]{&operationTable[731]}
 	// OpVerifiableCredentialsDeleteType is POST {basePath}/verifiableCredentials/deleteType. Deletes a type and its pending offers.
-	OpVerifiableCredentialsDeleteType = Op[VerifiableCredentialsDeleteTypeInput, VerifiableCredentialsDeleteTypeOutput]{&operationTable[729]}
+	OpVerifiableCredentialsDeleteType = Op[VerifiableCredentialsDeleteTypeInput, VerifiableCredentialsDeleteTypeOutput]{&operationTable[732]}
 	// OpVerifiableCredentialsGetType is POST {basePath}/verifiableCredentials/getType. One credential type.
-	OpVerifiableCredentialsGetType = Op[VerifiableCredentialsGetTypeInput, VerifiableCredentialsGetTypeOutput]{&operationTable[730]}
+	OpVerifiableCredentialsGetType = Op[VerifiableCredentialsGetTypeInput, VerifiableCredentialsGetTypeOutput]{&operationTable[733]}
 	// OpVerifiableCredentialsIssuerMetadata is POST {basePath}/verifiableCredentials/issuerMetadata. The tenant's OpenID4VCI credential issuer metadata: endpoints, and every enabled type with its format (dc+sd-jwt), vct, binding methods, proof algorithms and wallet display.
-	OpVerifiableCredentialsIssuerMetadata = Op[VerifiableCredentialsIssuerMetadataInput, VerifiableCredentialsIssuerMetadataOutput]{&operationTable[731]}
+	OpVerifiableCredentialsIssuerMetadata = Op[VerifiableCredentialsIssuerMetadataInput, VerifiableCredentialsIssuerMetadataOutput]{&operationTable[734]}
 	// OpVerifiableCredentialsListIssued is POST {basePath}/verifiableCredentials/listIssued. Issued credentials, newest first, by type, identityId or state (valid, suspended, revoked, expired), with limit (at most 500) and offset. Records hold claim names, never values.
-	OpVerifiableCredentialsListIssued = Op[VerifiableCredentialsListIssuedInput, VerifiableCredentialsListIssuedOutput]{&operationTable[732]}
+	OpVerifiableCredentialsListIssued = Op[VerifiableCredentialsListIssuedInput, VerifiableCredentialsListIssuedOutput]{&operationTable[735]}
 	// OpVerifiableCredentialsListKeys is POST {basePath}/verifiableCredentials/listKeys. The issuer's signing keys, oldest first: active, previous (still published, so its credentials verify) and retired.
-	OpVerifiableCredentialsListKeys = Op[VerifiableCredentialsListKeysInput, VerifiableCredentialsListKeysOutput]{&operationTable[733]}
+	OpVerifiableCredentialsListKeys = Op[VerifiableCredentialsListKeysInput, VerifiableCredentialsListKeysOutput]{&operationTable[736]}
 	// OpVerifiableCredentialsListTypes is POST {basePath}/verifiableCredentials/listTypes. Every credential type of the tenant, by name.
-	OpVerifiableCredentialsListTypes = Op[VerifiableCredentialsListTypesInput, VerifiableCredentialsListTypesOutput]{&operationTable[734]}
+	OpVerifiableCredentialsListTypes = Op[VerifiableCredentialsListTypesInput, VerifiableCredentialsListTypesOutput]{&operationTable[737]}
 	// OpVerifiableCredentialsMine is POST {basePath}/verifiableCredentials/mine. The caller's own credentials in the tenant, newest first (the last 100), with their state. Refused for delegated agent sessions (ACCESSDENIED).
-	OpVerifiableCredentialsMine = Op[VerifiableCredentialsMineInput, VerifiableCredentialsMineOutput]{&operationTable[735]}
+	OpVerifiableCredentialsMine = Op[VerifiableCredentialsMineInput, VerifiableCredentialsMineOutput]{&operationTable[738]}
 	// OpVerifiableCredentialsNonce is POST {basePath}/verifiableCredentials/nonce. A single-use proof nonce (cnonce) for the tenant's issuer, valid five minutes. Nonces are signed rather than stored, so handing one out writes nothing; a proof spends its nonce. Public.
-	OpVerifiableCredentialsNonce = Op[VerifiableCredentialsNonceInput, VerifiableCredentialsNonceOutput]{&operationTable[736]}
+	OpVerifiableCredentialsNonce = Op[VerifiableCredentialsNonceInput, VerifiableCredentialsNonceOutput]{&operationTable[739]}
 	// OpVerifiableCredentialsReinstate is POST {basePath}/verifiableCredentials/reinstate. Lifts a suspension.
-	OpVerifiableCredentialsReinstate = Op[VerifiableCredentialsReinstateInput, VerifiableCredentialsReinstateOutput]{&operationTable[737]}
+	OpVerifiableCredentialsReinstate = Op[VerifiableCredentialsReinstateInput, VerifiableCredentialsReinstateOutput]{&operationTable[740]}
 	// OpVerifiableCredentialsRequest is POST {basePath}/verifiableCredentials/request. Issues a credential of type to the caller, bound to the key in proof.
-	OpVerifiableCredentialsRequest = Op[VerifiableCredentialsRequestInput, VerifiableCredentialsRequestOutput]{&operationTable[738]}
+	OpVerifiableCredentialsRequest = Op[VerifiableCredentialsRequestInput, VerifiableCredentialsRequestOutput]{&operationTable[741]}
 	// OpVerifiableCredentialsRetireKey is POST {basePath}/verifiableCredentials/retireKey. Stops publishing a previous key, after which credentials it signed no longer verify.
-	OpVerifiableCredentialsRetireKey = Op[VerifiableCredentialsRetireKeyInput, VerifiableCredentialsRetireKeyOutput]{&operationTable[739]}
+	OpVerifiableCredentialsRetireKey = Op[VerifiableCredentialsRetireKeyInput, VerifiableCredentialsRetireKeyOutput]{&operationTable[742]}
 	// OpVerifiableCredentialsRevoke is POST {basePath}/verifiableCredentials/revoke. Revokes a credential for good: its status list entry becomes invalid.
-	OpVerifiableCredentialsRevoke = Op[VerifiableCredentialsRevokeInput, VerifiableCredentialsRevokeOutput]{&operationTable[740]}
+	OpVerifiableCredentialsRevoke = Op[VerifiableCredentialsRevokeInput, VerifiableCredentialsRevokeOutput]{&operationTable[743]}
 	// OpVerifiableCredentialsRotateKey is POST {basePath}/verifiableCredentials/rotateKey. Starts signing with a new ES256 key. The current one stays published as previous.
-	OpVerifiableCredentialsRotateKey = Op[VerifiableCredentialsRotateKeyInput, VerifiableCredentialsRotateKeyOutput]{&operationTable[741]}
+	OpVerifiableCredentialsRotateKey = Op[VerifiableCredentialsRotateKeyInput, VerifiableCredentialsRotateKeyOutput]{&operationTable[744]}
 	// OpVerifiableCredentialsStatus is POST {basePath}/verifiableCredentials/status. The issuer at a glance: its identifier and metadata URL, the published keys, the number of credential types, issued credentials by state (valid, suspended, revoked, expired), and status lists.
-	OpVerifiableCredentialsStatus = Op[VerifiableCredentialsStatusInput, VerifiableCredentialsStatusOutput]{&operationTable[742]}
+	OpVerifiableCredentialsStatus = Op[VerifiableCredentialsStatusInput, VerifiableCredentialsStatusOutput]{&operationTable[745]}
 	// OpVerifiableCredentialsSuspend is POST {basePath}/verifiableCredentials/suspend. Suspends a valid credential (a lost phone). Verifiers see it as suspended until reinstate.
-	OpVerifiableCredentialsSuspend = Op[VerifiableCredentialsSuspendInput, VerifiableCredentialsSuspendOutput]{&operationTable[743]}
+	OpVerifiableCredentialsSuspend = Op[VerifiableCredentialsSuspendInput, VerifiableCredentialsSuspendOutput]{&operationTable[746]}
 	// OpVerifiableCredentialsUpdateType is POST {basePath}/verifiableCredentials/updateType. Changes a type's display, claims, lifetime, requireMfa or enabled. The name and vct never change.
-	OpVerifiableCredentialsUpdateType = Op[VerifiableCredentialsUpdateTypeInput, VerifiableCredentialsUpdateTypeOutput]{&operationTable[744]}
+	OpVerifiableCredentialsUpdateType = Op[VerifiableCredentialsUpdateTypeInput, VerifiableCredentialsUpdateTypeOutput]{&operationTable[747]}
 	// OpVerifiableCredentialsVerify is POST {basePath}/verifiableCredentials/verify. Verifies a presentation of a credential this deployment issued.
-	OpVerifiableCredentialsVerify = Op[VerifiableCredentialsVerifyInput, VerifiableCredentialsVerifyOutput]{&operationTable[745]}
+	OpVerifiableCredentialsVerify = Op[VerifiableCredentialsVerifyInput, VerifiableCredentialsVerifyOutput]{&operationTable[748]}
 	// OpWebhooksCreate is POST {basePath}/webhooks/create. Subscribes an HTTPS endpoint to the tenant's audit events and returns the signing secret, which is shown only once.
-	OpWebhooksCreate = Op[WebhooksCreateInput, WebhooksCreateOutput]{&operationTable[746]}
+	OpWebhooksCreate = Op[WebhooksCreateInput, WebhooksCreateOutput]{&operationTable[749]}
 	// OpWebhooksDelete is POST {basePath}/webhooks/delete. Deletes a subscription and discards the deliveries still waiting to be sent.
-	OpWebhooksDelete = Op[WebhooksDeleteInput, WebhooksDeleteOutput]{&operationTable[747]}
+	OpWebhooksDelete = Op[WebhooksDeleteInput, WebhooksDeleteOutput]{&operationTable[750]}
 	// OpWebhooksGet is POST {basePath}/webhooks/get. Returns one subscription without its secret.
-	OpWebhooksGet = Op[WebhooksGetInput, WebhooksGetOutput]{&operationTable[748]}
+	OpWebhooksGet = Op[WebhooksGetInput, WebhooksGetOutput]{&operationTable[751]}
 	// OpWebhooksList is POST {basePath}/webhooks/list. Lists every subscription of the tenant, without secrets.
-	OpWebhooksList = Op[WebhooksListInput, WebhooksListOutput]{&operationTable[749]}
+	OpWebhooksList = Op[WebhooksListInput, WebhooksListOutput]{&operationTable[752]}
 	// OpWebhooksListDeliveries is POST {basePath}/webhooks/listDeliveries. Returns the delivery history of one subscription, newest first, with status, attempt count, and the last error.
-	OpWebhooksListDeliveries = Op[WebhooksListDeliveriesInput, WebhooksListDeliveriesOutput]{&operationTable[750]}
+	OpWebhooksListDeliveries = Op[WebhooksListDeliveriesInput, WebhooksListDeliveriesOutput]{&operationTable[753]}
 	// OpWebhooksPing is POST {basePath}/webhooks/ping. Queues a synthetic webhook:ping delivery so you can check an endpoint and its signature verification end to end.
-	OpWebhooksPing = Op[WebhooksPingInput, WebhooksPingOutput]{&operationTable[751]}
+	OpWebhooksPing = Op[WebhooksPingInput, WebhooksPingOutput]{&operationTable[754]}
 	// OpWebhooksRedeliver is POST {basePath}/webhooks/redeliver. Queues the event behind an earlier delivery again, rebuilt from the audit log and signed with the current secret.
-	OpWebhooksRedeliver = Op[WebhooksRedeliverInput, WebhooksRedeliverOutput]{&operationTable[752]}
+	OpWebhooksRedeliver = Op[WebhooksRedeliverInput, WebhooksRedeliverOutput]{&operationTable[755]}
 	// OpWebhooksRotateSecret is POST {basePath}/webhooks/rotateSecret. Replaces a subscription's signing secret and returns the new one, which is shown only once.
-	OpWebhooksRotateSecret = Op[WebhooksRotateSecretInput, WebhooksRotateSecretOutput]{&operationTable[753]}
+	OpWebhooksRotateSecret = Op[WebhooksRotateSecretInput, WebhooksRotateSecretOutput]{&operationTable[756]}
 	// OpWebhooksUpdate is POST {basePath}/webhooks/update. Changes a subscription's URL, event patterns, filters, description, or active flag.
-	OpWebhooksUpdate = Op[WebhooksUpdateInput, WebhooksUpdateOutput]{&operationTable[754]}
+	OpWebhooksUpdate = Op[WebhooksUpdateInput, WebhooksUpdateOutput]{&operationTable[757]}
 	// OpWorkflowsCancelRun is POST {basePath}/workflows/cancelRun. Stops a pending, running, waiting or failed run; steps already done stay done.
-	OpWorkflowsCancelRun = Op[WorkflowsCancelRunInput, WorkflowsCancelRunOutput]{&operationTable[755]}
+	OpWorkflowsCancelRun = Op[WorkflowsCancelRunInput, WorkflowsCancelRunOutput]{&operationTable[758]}
 	// OpWorkflowsCreate is POST {basePath}/workflows/create. Creates a workflow owned by the caller, who must hold every permission its steps use.
-	OpWorkflowsCreate = Op[WorkflowsCreateInput, WorkflowsCreateOutput]{&operationTable[756]}
+	OpWorkflowsCreate = Op[WorkflowsCreateInput, WorkflowsCreateOutput]{&operationTable[759]}
 	// OpWorkflowsDelete is POST {basePath}/workflows/delete. Deletes a workflow and cancels its pending, running and waiting runs; finished runs stay as history.
-	OpWorkflowsDelete = Op[WorkflowsDeleteInput, WorkflowsDeleteOutput]{&operationTable[757]}
+	OpWorkflowsDelete = Op[WorkflowsDeleteInput, WorkflowsDeleteOutput]{&operationTable[760]}
 	// OpWorkflowsEvaluate is POST {basePath}/workflows/evaluate. Evaluates this organization's workflows and runs whatever is due now, instead of waiting for the scheduler.
-	OpWorkflowsEvaluate = Op[WorkflowsEvaluateInput, WorkflowsEvaluateOutput]{&operationTable[758]}
+	OpWorkflowsEvaluate = Op[WorkflowsEvaluateInput, WorkflowsEvaluateOutput]{&operationTable[761]}
 	// OpWorkflowsGet is POST {basePath}/workflows/get. Returns one workflow with run statistics and its 50 most recent runs.
-	OpWorkflowsGet = Op[WorkflowsGetInput, WorkflowsGetOutput]{&operationTable[759]}
+	OpWorkflowsGet = Op[WorkflowsGetInput, WorkflowsGetOutput]{&operationTable[762]}
 	// OpWorkflowsGetRun is POST {basePath}/workflows/getRun. Returns one run with its steps and results.
-	OpWorkflowsGetRun = Op[WorkflowsGetRunInput, WorkflowsGetRunOutput]{&operationTable[760]}
+	OpWorkflowsGetRun = Op[WorkflowsGetRunInput, WorkflowsGetRunOutput]{&operationTable[763]}
 	// OpWorkflowsList is POST {basePath}/workflows/list. Lists the tenant's workflows by name, with run statistics.
-	OpWorkflowsList = Op[WorkflowsListInput, WorkflowsListOutput]{&operationTable[761]}
+	OpWorkflowsList = Op[WorkflowsListInput, WorkflowsListOutput]{&operationTable[764]}
 	// OpWorkflowsListRuns is POST {basePath}/workflows/listRuns. Lists runs, newest first, optionally of one workflow, one person or one status.
-	OpWorkflowsListRuns = Op[WorkflowsListRunsInput, WorkflowsListRunsOutput]{&operationTable[762]}
+	OpWorkflowsListRuns = Op[WorkflowsListRunsInput, WorkflowsListRunsOutput]{&operationTable[765]}
 	// OpWorkflowsPreview is POST {basePath}/workflows/preview. Shows what a workflow would do right now, without changing anything.
-	OpWorkflowsPreview = Op[WorkflowsPreviewInput, WorkflowsPreviewOutput]{&operationTable[763]}
+	OpWorkflowsPreview = Op[WorkflowsPreviewInput, WorkflowsPreviewOutput]{&operationTable[766]}
 	// OpWorkflowsRetryRun is POST {basePath}/workflows/retryRun. Resumes a failed run at the step that failed, with the caller's rights.
-	OpWorkflowsRetryRun = Op[WorkflowsRetryRunInput, WorkflowsRetryRunOutput]{&operationTable[764]}
+	OpWorkflowsRetryRun = Op[WorkflowsRetryRunInput, WorkflowsRetryRunOutput]{&operationTable[767]}
 	// OpWorkflowsRun is POST {basePath}/workflows/run. Runs a workflow now for up to 100 people you choose, whatever its trigger and scope.
-	OpWorkflowsRun = Op[WorkflowsRunInput, WorkflowsRunOutput]{&operationTable[765]}
+	OpWorkflowsRun = Op[WorkflowsRunInput, WorkflowsRunOutput]{&operationTable[768]}
 	// OpWorkflowsUpdate is POST {basePath}/workflows/update. Edits a workflow; the caller becomes its owner and must hold the steps' permissions.
-	OpWorkflowsUpdate = Op[WorkflowsUpdateInput, WorkflowsUpdateOutput]{&operationTable[766]}
+	OpWorkflowsUpdate = Op[WorkflowsUpdateInput, WorkflowsUpdateOutput]{&operationTable[769]}
 	// OpAuthorize is POST {basePath}/authorize.
-	OpAuthorize = Op[AuthorizeInput, AuthorizeOutput]{&operationTable[767]}
+	OpAuthorize = Op[AuthorizeInput, AuthorizeOutput]{&operationTable[770]}
 	// OpAuthorizeMany is POST {basePath}/authorizeMany.
-	OpAuthorizeMany = Op[AuthorizeManyInput, AuthorizeManyOutput]{&operationTable[768]}
+	OpAuthorizeMany = Op[AuthorizeManyInput, AuthorizeManyOutput]{&operationTable[771]}
 	// OpListAccessible is POST {basePath}/listAccessible.
-	OpListAccessible = Op[ListAccessibleInput, ListAccessibleOutput]{&operationTable[769]}
+	OpListAccessible = Op[ListAccessibleInput, ListAccessibleOutput]{&operationTable[772]}
 )

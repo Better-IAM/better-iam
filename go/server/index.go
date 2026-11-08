@@ -25,12 +25,12 @@ type IamSessionTokens struct {
 // Jwks is the public signing and verification keys, as served at {basePath}/.well-known/jwks.json.
 func (t *IamSessionTokens) Jwks() (*core.Object, error) { return t.signer.PublicJwks() }
 
-// Verify verifies a session JWT for audience ("": the issuer) and then requires its stored session to be live: the
-// row, its identity and every revocation condition are re-validated. A revoked token fails with
+// Verify verifies a session JWT for options.Audience ("": the issuer) and then requires its stored session to be
+// live: the row, its identity and every revocation condition are re-validated. A revoked token fails with
 // SessionTokenError reason `revoked`.
-func (t *IamSessionTokens) Verify(ctx context.Context, token string, audience string) (*core.Object, error) {
+func (t *IamSessionTokens) Verify(ctx context.Context, token string, options SessionTokenVerifyOptions) (*core.Object, error) {
 	server := t.server
-	claims, err := t.signer.Verify(ctx, token, audience)
+	claims, err := t.signer.Verify(ctx, token, options.Audience)
 	if err != nil {
 		return nil, err
 	}
@@ -304,7 +304,11 @@ func New(options *BetterIamOptions) (*BetterIam, error) {
 	server.Flows = CreateFlows(server)
 	server.Usage = CreateUsageRecorder(server)
 	// The billing ledger; validates the billing option, so a bad value fails construction with INVALID_CONFIG.
-	server.Billing = BillingServiceOf(server).Hooks
+	billing := BillingServiceOf(server)
+	if known, ok := asIamError(billing.BillingSettingsError()); ok && known.Code == "INVALID_CONFIG" {
+		return nil, known
+	}
+	server.Billing = billing.Hooks
 	// Wallet-facing issuer endpoints ({basePath}/vc/{tenantId}/... and their /.well-known metadata).
 	if options.VerifiableCredentials.IsOn() {
 		protocol, err := CreateVcProtocol(server)
@@ -320,8 +324,17 @@ func New(options *BetterIamOptions) (*BetterIam, error) {
 	authAPI := CreateAuthAPI(authService, observe, func(headers http.Header) *core.SessionClientInfo {
 		return ClientFromHeaders(options, headers, config.BaseURL.Href)
 	})
+	// createDomainsApi refuses a domains.recordName that is not a single DNS label (INVALID_CONFIG).
+	if err := CheckDomainOptions(options); err != nil {
+		return nil, err
+	}
 	api := CreateAPI(server, authAPI)
 	retention := CreateRetention(server)
+	// Validates the auditArchive option, so a bad batchSize or leaseMs fails construction with INVALID_CONFIG.
+	auditArchive := CreateAuditArchive(server)
+	if err := auditArchive.ConfigError(); err != nil {
+		return nil, err
+	}
 	federation := CreateFederation(server, api.Bindings)
 	extras := HTTPExtras{Metrics: metrics}
 	if metricsOptions != nil {
@@ -334,9 +347,14 @@ func New(options *BetterIamOptions) (*BetterIam, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Validates the a2a option, so invalid card keys fail construction with INVALID_CONFIG.
+	a2a := CreateA2aRuntime(server)
+	if err := a2a.ConfigError(); err != nil {
+		return nil, err
+	}
 	iam := &BetterIam{
 		API: api, Auth: authService, HTTP: transport, Context: server, Store: options.Database,
-		Features: CreateFeatureEvaluator(server), Inference: CreateInferenceRuntime(server), A2a: CreateA2aRuntime(server),
+		Features: CreateFeatureEvaluator(server), Inference: CreateInferenceRuntime(server), A2a: a2a,
 		Billing: CreateBillingRuntime(server), Kms: CreateKmsRuntime(server), Pki: CreatePkiRuntime(server),
 		Protection: CreateProtectionRuntime(server), Vault: CreateVaultRuntime(server), Quotas: CreateQuotasRuntime(server),
 		Privacy: CreatePrivacyRuntime(server), Workflows: CreateWorkflowsRuntime(server),
@@ -350,7 +368,7 @@ func New(options *BetterIamOptions) (*BetterIam, error) {
 			Origin: urlOrigin(config.BaseURL), BasePath: config.BasePath, Secure: config.BaseURL.Protocol == "https:",
 			CookieSameSite: transport.sameSite, PersistentCookies: transport.persistent == nil || *transport.persistent,
 		},
-		lifecycle: CreateLifecycle(server), retention: retention, auditArchive: CreateAuditArchive(server),
+		lifecycle: CreateLifecycle(server), retention: retention, auditArchive: auditArchive,
 		certificationWorker: CreateCertificationWorker(server), planResources: CreatePlanRuntime(server),
 	}
 	if config.Regions != nil {
@@ -522,5 +540,8 @@ func (iam *BetterIam) RotateSecrets(ctx context.Context, options SecretRotationO
 	return RotateSecrets(ctx, iam.Context, options)
 }
 
-// Close stops the background work of the instance (the access usage writer); it does not close the database.
+// Close stops the background work of the instance: the access usage writer's timer (the recorder's stop() in
+// packages/server/src/usage.ts). It neither flushes buffered access usage (call FlushAccessUsage first to keep it)
+// nor closes the store. That matches TypeScript, where the instance has no close at all and the database stays with
+// whoever opened it (the CLI calls iam.store.close() itself): close the store with iam.Store.Close(ctx) after Close.
 func (iam *BetterIam) Close() { iam.Context.Usage.Stop() }

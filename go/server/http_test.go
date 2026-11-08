@@ -350,6 +350,14 @@ func TestNodeTransportLimitsAndMethods(t *testing.T) {
 	if empty := serve(http.MethodPost, "/api/iam/auth/signIn", "", map[string]string{"content-type": "application/json", "x-better-iam": "1"}); empty.Code != 400 {
 		t.Errorf("empty body: %d %s", empty.Code, empty.Body)
 	}
+	// The Node transport drops empty-valued headers: an empty Cookie is no cookie, so no Origin is needed.
+	emptyCookie := serve(http.MethodPost, "/api/iam/auth/getSession", "{}", map[string]string{"content-type": "application/json", "x-better-iam": "1", "cookie": ""})
+	if emptyCookie.Code != 401 || !strings.Contains(emptyCookie.Body.String(), "UNAUTHENTICATED") {
+		t.Errorf("empty cookie: %d %s", emptyCookie.Code, emptyCookie.Body)
+	}
+	if cookie := serve(http.MethodPost, "/api/iam/auth/getSession", "{}", map[string]string{"content-type": "application/json", "x-better-iam": "1", "cookie": "better-iam.session=x"}); cookie.Code != 403 || !strings.Contains(cookie.Body.String(), "Cookie requests require Origin") {
+		t.Errorf("cookie without origin: %d %s", cookie.Code, cookie.Body)
+	}
 	if health := serve(http.MethodGet, "/api/iam/health", "", nil); health.Code != 200 || health.Header().Get("Content-Type") != "application/json" {
 		t.Errorf("health: %d %v", health.Code, health.Header())
 	}

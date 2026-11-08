@@ -9340,6 +9340,16 @@ type PublicHostnameDnsRecordsRouting struct {
 	Value string `json:"value"`
 }
 
+// ProviderLinkInput is the components/schemas/ProviderLinkInput schema.
+type ProviderLinkInput struct {
+	// The connection's provider key: an OAuth connection's `id`, a SAML connection's `providerId`.
+	ProviderID string `json:"providerId"`
+	// The IdP's issuer exactly as the protocol reports it (OIDC `iss`, SAML IdP entity ID).
+	Issuer string `json:"issuer"`
+	// The person's stable ID at the IdP (OIDC `sub`, SAML NameID).
+	Subject string `json:"subject"`
+}
+
 // Relationship is the components/schemas/Relationship schema.
 type Relationship struct {
 	Type        string                  `json:"type"`
@@ -9382,6 +9392,19 @@ const (
 	RelationshipSubjectTypeIdentity RelationshipSubjectType = "identity"
 	RelationshipSubjectTypeGroup    RelationshipSubjectType = "group"
 )
+
+// ProviderLink is the components/schemas/ProviderLink schema.
+type ProviderLink struct {
+	ID         string   `json:"id"`
+	IdentityID string   `json:"identityId"`
+	CreatedAt  *float64 `json:"createdAt,omitzero"`
+	// The connection's provider key: an OAuth connection's `id`, a SAML connection's `providerId`.
+	ProviderID string `json:"providerId"`
+	// The IdP's issuer exactly as the protocol reports it (OIDC `iss`, SAML IdP entity ID).
+	Issuer string `json:"issuer"`
+	// The person's stable ID at the IdP (OIDC `sub`, SAML NameID).
+	Subject string `json:"subject"`
+}
 
 // ImpactChange is the components/schemas/ImpactChange schema.
 type ImpactChange struct {
@@ -25251,6 +25274,7 @@ type VcCredentialTypeInput struct {
 type VcIssuedView struct {
 	ID               string             `json:"id"`
 	TenantID         string             `json:"tenantId"`
+	TypeID           *string            `json:"typeId,omitzero"`
 	TypeName         string             `json:"typeName"`
 	Vct              string             `json:"vct"`
 	IdentityID       string             `json:"identityId"`
@@ -25260,15 +25284,18 @@ type VcIssuedView struct {
 	StatusIndex      float64            `json:"statusIndex"`
 	Status           VcCredentialStatus `json:"status"`
 	// `expired` once past `validUntil`, whatever the status.
-	State      VcIssuedViewState `json:"state"`
-	ClaimNames []string          `json:"claimNames"`
-	Via        VcIssuedViewVia   `json:"via"`
-	IssuedBy   string            `json:"issuedBy"`
-	IssuedAt   float64           `json:"issuedAt"`
-	ValidUntil float64           `json:"validUntil"`
-	RevokedAt  *float64          `json:"revokedAt,omitzero"`
-	RevokedBy  *string           `json:"revokedBy,omitzero"`
-	Reason     *string           `json:"reason,omitzero"`
+	State       VcIssuedViewState `json:"state"`
+	ClaimNames  []string          `json:"claimNames"`
+	Via         VcIssuedViewVia   `json:"via"`
+	IssuedBy    string            `json:"issuedBy"`
+	SelfService *bool             `json:"selfService,omitzero"`
+	Mfa         *bool             `json:"mfa,omitzero"`
+	OfferID     *string           `json:"offerId,omitzero"`
+	IssuedAt    float64           `json:"issuedAt"`
+	ValidUntil  float64           `json:"validUntil"`
+	RevokedAt   *float64          `json:"revokedAt,omitzero"`
+	RevokedBy   *string           `json:"revokedBy,omitzero"`
+	Reason      *string           `json:"reason,omitzero"`
 }
 
 // VcIssuedViewState is one of the string constants below.
@@ -26736,7 +26763,7 @@ type IncomingMessage struct {
 	// Function (not serializable)
 	Construct Optional[any] `json:"_construct,omitzero"`
 	// Function (not serializable)
-	CaptureRejectionSymbol14019 Optional[any] `json:"__@captureRejectionSymbol@14019,omitzero"`
+	CaptureRejectionSymbol14063 Optional[any] `json:"__@captureRejectionSymbol@14063,omitzero"`
 }
 
 // IncomingMessageReadableEncoding is one of the string constants below.
@@ -26822,7 +26849,7 @@ type Socket struct {
 	// `Duplex` stream instance, but must be changed before the `'end'` event is emitted.
 	AllowHalfOpen bool `json:"allowHalfOpen"`
 	// Function (not serializable)
-	CaptureRejectionSymbol14019 Optional[any] `json:"__@captureRejectionSymbol@14019,omitzero"`
+	CaptureRejectionSymbol14063 Optional[any] `json:"__@captureRejectionSymbol@14063,omitzero"`
 	// Returns whether the stream was destroyed or errored before emitting `'end'`.
 	ReadableAborted bool `json:"readableAborted"`
 	// Is `true` if it is safe to call {@link read}, which means
@@ -27133,7 +27160,7 @@ type ServerResponse struct {
 	// Function (not serializable)
 	Construct Optional[any] `json:"_construct,omitzero"`
 	// Function (not serializable)
-	CaptureRejectionSymbol14019 Optional[any] `json:"__@captureRejectionSymbol@14019,omitzero"`
+	CaptureRejectionSymbol14063 Optional[any] `json:"__@captureRejectionSymbol@14063,omitzero"`
 }
 
 // PlanResourcesRequest is the components/schemas/PlanResourcesRequest schema.
@@ -27617,7 +27644,9 @@ var schemaTypes = map[string]reflect.Type{
 	"EnrollmentResult":                reflect.TypeFor[EnrollmentResult](),
 	"GuestRemoval":                    reflect.TypeFor[GuestRemoval](),
 	"PublicHostname":                  reflect.TypeFor[PublicHostname](),
+	"ProviderLinkInput":               reflect.TypeFor[ProviderLinkInput](),
 	"Relationship":                    reflect.TypeFor[Relationship](),
+	"ProviderLink":                    reflect.TypeFor[ProviderLink](),
 	"ImpactChange":                    reflect.TypeFor[ImpactChange](),
 	"ImpactPreview":                   reflect.TypeFor[ImpactPreview](),
 	"ImpactIdentity":                  reflect.TypeFor[ImpactIdentity](),

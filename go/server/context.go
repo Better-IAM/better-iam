@@ -18,13 +18,19 @@ import (
 
 // Principal is core's AuthenticatedPrincipal with the identity and session as stored records.
 type Principal struct {
-	Identity *core.Object
-	Session  *core.Object
-	// DeviceProof is the unverified device proof the request carried (x-better-iam-device), "" when none.
-	DeviceProof string
+	Identity *core.Object `json:"identity"`
+	Session  *core.Object `json:"session"`
+	// DeviceProof is the unverified device proof the request carried (x-better-iam-device), "" when none. It encodes
+	// only when present, as principals.ts authenticate spreads it in only then.
+	DeviceProof string `json:"deviceProof,omitempty"`
 	// proofBinding is the session the device proof is bound to when it is not this principal's own (devices.go
 	// WithRequestDevice).
 	proofBinding *ProofBinding
+	// pinnedKey is the device key WithDeviceKey pinned on a principal a job without a request decides for (devices.go),
+	// nil when none.
+	pinnedKey *string
+	// presented caches PresentedDevice for this principal object (devices.go), nil until it ran.
+	presented *presentedCache
 }
 
 // PrincipalFromAuth wraps a principal the auth service verified.
@@ -119,6 +125,8 @@ type ServerContext struct {
 	Hosts *HostService
 	// Billing is the billing ledger's hooks (nil until attached).
 	Billing *BillingHooks
+	// billingService memoizes BillingServiceOf (billing-service.ts `services` WeakMap).
+	billingService *BillingService
 }
 
 // ContextBase is what createContext receives.

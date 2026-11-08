@@ -1,0 +1,1555 @@
+{
+ "encodings": [
+  {
+   "name": "bind",
+   "hex": "3038020101603302010304237569643d616c6963652c6f753d70656f706c652c64633d61636d652c64633d74657374800970c3a47373776f7264"
+  },
+  {
+   "name": "unbind",
+   "hex": "30050201074200"
+  },
+  {
+   "name": "search",
+   "hex": "3081b50202012c638188040f64633d61636d652c64633d746573740a01010a01000201050201000101ffa05ba315040b6f626a656374436c6173730406706572736f6ea125a30d04037569640406616c2a696365a41404046d61696c300c820a4061636d652e74657374a209a5070402636e04016da8070402636e040178a6070402736e04017a300904046d61696c04012ba02430220416312e322e3834302e3131333535362e312e342e33313904083006020102040134"
+  },
+  {
+   "name": "extended",
+   "hex": "3020020301117077198017312e332e362e312e342e312e343230332e312e31312e33"
+  },
+  {
+   "name": "extendedValue",
+   "hex": "300f020102770a8005312e322e33810176"
+  },
+  {
+   "name": "compare",
+   "hex": "301e0201036e19040a7569643d612c64633d78300b04046d61696c0403614078"
+  },
+  {
+   "name": "paged",
+   "hex": "a02430220416312e322e3834302e3131333535362e312e342e33313904083006020203e80400"
+  },
+  {
+   "name": "bindResponse",
+   "hex": "301f020105611a0a013104000413496e76616c69642063726564656e7469616c73"
+  },
+  {
+   "name": "searchDone",
+   "hex": "303202010665070a010004000400a02430220416312e322e3834302e3131333535362e312e342e33313904083006020103040132"
+  },
+  {
+   "name": "searchDoneMatched",
+   "hex": "302902010665240a0120040f64633d61636d652c64633d74657374040e4e6f2073756368206f626a656374"
+  },
+  {
+   "name": "compareResponse",
+   "hex": "300c0201086f070a010604000400"
+  },
+  {
+   "name": "generic",
+   "hex": "30270201096b220a01350400041b54686973206469726563746f727920697320726561642d6f6e6c79"
+  },
+  {
+   "name": "extendedResponse",
+   "hex": "301602010a78110a0100040004008b08646e3a7569643d61"
+  },
+  {
+   "name": "extendedResponseEmpty",
+   "hex": "300e02010a78090a0100040004008b00"
+  },
+  {
+   "name": "notice",
+   "hex": "3030020100782b0a01340400040c49646c652074696d656f75748a16312e332e362e312e342e312e313436362e3230303336"
+  },
+  {
+   "name": "entry",
+   "hex": "304b02010b6446040a7569643d612c64633d783038301c040b6f626a656374436c617373310d0403746f700406706572736f6e300d04046d61696c3105040361407830090405656d7074793100"
+  },
+  {
+   "name": "entryTypes",
+   "hex": "302402010b641f040a7569643d612c64633d783011300f040b6f626a656374436c6173733100"
+  },
+  {
+   "name": "negative",
+   "hex": "302f0202010f632904000a01020a0100020100020100010100a9148108322e352e31332e328202636e8301788401ff3000"
+  }
+ ],
+ "dns": [
+  {
+   "dn": "UID=Alice,  OU=People , DC=Acme,DC=Test",
+   "normalized": "uid=alice,ou=people,dc=acme,dc=test",
+   "parsed": [
+    [
+     {
+      "type": "UID",
+      "value": "Alice"
+     }
+    ],
+    [
+     {
+      "type": "OU",
+      "value": "People"
+     }
+    ],
+    [
+     {
+      "type": "DC",
+      "value": "Acme"
+     }
+    ],
+    [
+     {
+      "type": "DC",
+      "value": "Test"
+     }
+    ]
+   ],
+   "error": null
+  },
+  {
+   "dn": "cn=Smith\\, John+uid=b,dc=x",
+   "normalized": "cn=smith\\, john+uid=b,dc=x",
+   "parsed": [
+    [
+     {
+      "type": "cn",
+      "value": "Smith, John"
+     },
+     {
+      "type": "uid",
+      "value": "b"
+     }
+    ],
+    [
+     {
+      "type": "dc",
+      "value": "x"
+     }
+    ]
+   ],
+   "error": null
+  },
+  {
+   "dn": "cn=\"quoted, value\",dc=x",
+   "normalized": "cn=quoted\\, value,dc=x",
+   "parsed": [
+    [
+     {
+      "type": "cn",
+      "value": "quoted, value"
+     }
+    ],
+    [
+     {
+      "type": "dc",
+      "value": "x"
+     }
+    ]
+   ],
+   "error": null
+  },
+  {
+   "dn": "cn=\\C3\\A9t\\C3\\A9,dc=x",
+   "normalized": "cn=été,dc=x",
+   "parsed": [
+    [
+     {
+      "type": "cn",
+      "value": "été"
+     }
+    ],
+    [
+     {
+      "type": "dc",
+      "value": "x"
+     }
+    ]
+   ],
+   "error": null
+  },
+  {
+   "dn": "cn= padded  ,dc=x",
+   "normalized": "cn=padded,dc=x",
+   "parsed": [
+    [
+     {
+      "type": "cn",
+      "value": "padded"
+     }
+    ],
+    [
+     {
+      "type": "dc",
+      "value": "x"
+     }
+    ]
+   ],
+   "error": null
+  },
+  {
+   "dn": "cn=a\\ ,dc=x",
+   "normalized": "cn=a,dc=x",
+   "parsed": [
+    [
+     {
+      "type": "cn",
+      "value": "a "
+     }
+    ],
+    [
+     {
+      "type": "dc",
+      "value": "x"
+     }
+    ]
+   ],
+   "error": null
+  },
+  {
+   "dn": "cn=#hash,dc=x",
+   "normalized": "cn=\\#hash,dc=x",
+   "parsed": [
+    [
+     {
+      "type": "cn",
+      "value": "#hash"
+     }
+    ],
+    [
+     {
+      "type": "dc",
+      "value": "x"
+     }
+    ]
+   ],
+   "error": null
+  },
+  {
+   "dn": "1.2.3=x",
+   "normalized": "1.2.3=x",
+   "parsed": [
+    [
+     {
+      "type": "1.2.3",
+      "value": "x"
+     }
+    ]
+   ],
+   "error": null
+  },
+  {
+   "dn": "",
+   "normalized": "",
+   "parsed": [],
+   "error": null
+  },
+  {
+   "dn": "cn=a;dc=b",
+   "normalized": "cn=a,dc=b",
+   "parsed": [
+    [
+     {
+      "type": "cn",
+      "value": "a"
+     }
+    ],
+    [
+     {
+      "type": "dc",
+      "value": "b"
+     }
+    ]
+   ],
+   "error": null
+  },
+  {
+   "dn": "cn=A  B\tC,dc=x",
+   "normalized": "cn=a b c,dc=x",
+   "parsed": [
+    [
+     {
+      "type": "cn",
+      "value": "A  B\tC"
+     }
+    ],
+    [
+     {
+      "type": "dc",
+      "value": "x"
+     }
+    ]
+   ],
+   "error": null
+  },
+  {
+   "dn": "cn",
+   "normalized": null,
+   "parsed": null,
+   "error": "Missing = in DN"
+  },
+  {
+   "dn": "c n=x",
+   "normalized": null,
+   "parsed": null,
+   "error": "Invalid attribute type in DN"
+  },
+  {
+   "dn": "cn=a\\",
+   "normalized": null,
+   "parsed": null,
+   "error": "Dangling escape in DN"
+  },
+  {
+   "dn": "cn=\"open",
+   "normalized": null,
+   "parsed": null,
+   "error": "Unterminated quoted value"
+  }
+ ],
+ "filters": [
+  {
+   "text": "(&(objectClass=inetOrgPerson)(mail=ALICE@acme.test))",
+   "match": true,
+   "encoded": "a037a31c040b6f626a656374436c617373040d696e65744f7267506572736f6ea31704046d61696c040f414c4943454061636d652e74657374",
+   "error": null
+  },
+  {
+   "text": "(|(cn=Bob*)(!(mail=*)))",
+   "match": false,
+   "encoded": "a115a40b0402636e30058003426f62a20687046d61696c",
+   "error": null
+  },
+  {
+   "text": "(cn=*Lid*)",
+   "match": true,
+   "encoded": "a40b0402636e300581034c6964",
+   "error": null
+  },
+  {
+   "text": "(title=*)",
+   "match": false,
+   "encoded": "87057469746c65",
+   "error": null
+  },
+  {
+   "text": "(cn=alice liddell)",
+   "match": true,
+   "encoded": "a3130402636e040d616c696365206c696464656c6c",
+   "error": null
+  },
+  {
+   "text": "(cn=a*l*l)",
+   "match": true,
+   "encoded": "a40f0402636e300980016181016c82016c",
+   "error": null
+  },
+  {
+   "text": "(cn=*dell)",
+   "match": true,
+   "encoded": "a40c0402636e3006820464656c6c",
+   "error": null
+  },
+  {
+   "text": "(uid>=b)",
+   "match": false,
+   "encoded": "a5080403756964040162",
+   "error": null
+  },
+  {
+   "text": "(uid<=b)",
+   "match": true,
+   "encoded": "a6080403756964040162",
+   "error": null
+  },
+  {
+   "text": "(cn=al*ice*)",
+   "match": true,
+   "encoded": "a40f0402636e30098002616c8103696365",
+   "error": null
+  },
+  {
+   "text": "cn=Alice*",
+   "match": true,
+   "encoded": "a40d0402636e30078005416c696365",
+   "error": null
+  },
+  {
+   "text": "(objectClass=*)",
+   "match": true,
+   "encoded": "870b6f626a656374436c617373",
+   "error": null
+  },
+  {
+   "text": "(mail=\\61lice@acme.test)",
+   "match": true,
+   "encoded": "a31704046d61696c040f616c6963654061636d652e74657374",
+   "error": null
+  },
+  {
+   "text": "(cn=*)",
+   "match": true,
+   "encoded": "8702636e",
+   "error": null
+  },
+  {
+   "text": "(cn=)",
+   "match": false,
+   "encoded": "a3060402636e0400",
+   "error": null
+  },
+  {
+   "text": "(cn=unbalanced",
+   "match": null,
+   "encoded": null,
+   "error": "Expected )"
+  },
+  {
+   "text": "(cn=a))",
+   "match": null,
+   "encoded": null,
+   "error": "Trailing characters after the filter"
+  },
+  {
+   "text": "(&(cn=a)",
+   "match": null,
+   "encoded": null,
+   "error": "Expected )"
+  },
+  {
+   "text": "x",
+   "match": null,
+   "encoded": null,
+   "error": "Invalid filter item"
+  },
+  {
+   "text": "(cn:dn:=x)",
+   "match": null,
+   "encoded": null,
+   "error": "Invalid filter item"
+  }
+ ],
+ "entries": [
+  {
+   "dn": "dc=acme,dc=test",
+   "normalizedDn": "dc=acme,dc=test",
+   "attributes": [
+    [
+     "objectClass",
+     [
+      "top",
+      "dcObject",
+      "organization"
+     ]
+    ],
+    [
+     "dc",
+     [
+      "acme"
+     ]
+    ],
+    [
+     "o",
+     [
+      "Acme"
+     ]
+    ]
+   ],
+   "operational": [
+    [
+     "entryDN",
+     [
+      "dc=acme,dc=test"
+     ]
+    ]
+   ],
+   "index": [
+    [
+     "objectclass",
+     [
+      "top",
+      "dcObject",
+      "organization"
+     ]
+    ],
+    [
+     "dc",
+     [
+      "acme"
+     ]
+    ],
+    [
+     "o",
+     [
+      "Acme"
+     ]
+    ],
+    [
+     "entrydn",
+     [
+      "dc=acme,dc=test"
+     ]
+    ]
+   ]
+  },
+  {
+   "dn": "ou=people,dc=acme,dc=test",
+   "normalizedDn": "ou=people,dc=acme,dc=test",
+   "attributes": [
+    [
+     "objectClass",
+     [
+      "top",
+      "organizationalUnit"
+     ]
+    ],
+    [
+     "ou",
+     [
+      "people"
+     ]
+    ]
+   ],
+   "operational": [
+    [
+     "entryDN",
+     [
+      "ou=people,dc=acme,dc=test"
+     ]
+    ]
+   ],
+   "index": [
+    [
+     "objectclass",
+     [
+      "top",
+      "organizationalUnit"
+     ]
+    ],
+    [
+     "ou",
+     [
+      "people"
+     ]
+    ],
+    [
+     "entrydn",
+     [
+      "ou=people,dc=acme,dc=test"
+     ]
+    ]
+   ]
+  },
+  {
+   "dn": "ou=groups,dc=acme,dc=test",
+   "normalizedDn": "ou=groups,dc=acme,dc=test",
+   "attributes": [
+    [
+     "objectClass",
+     [
+      "top",
+      "organizationalUnit"
+     ]
+    ],
+    [
+     "ou",
+     [
+      "groups"
+     ]
+    ]
+   ],
+   "operational": [
+    [
+     "entryDN",
+     [
+      "ou=groups,dc=acme,dc=test"
+     ]
+    ]
+   ],
+   "index": [
+    [
+     "objectclass",
+     [
+      "top",
+      "organizationalUnit"
+     ]
+    ],
+    [
+     "ou",
+     [
+      "groups"
+     ]
+    ],
+    [
+     "entrydn",
+     [
+      "ou=groups,dc=acme,dc=test"
+     ]
+    ]
+   ]
+  },
+  {
+   "dn": "ou=services,dc=acme,dc=test",
+   "normalizedDn": "ou=services,dc=acme,dc=test",
+   "attributes": [
+    [
+     "objectClass",
+     [
+      "top",
+      "organizationalUnit"
+     ]
+    ],
+    [
+     "ou",
+     [
+      "services"
+     ]
+    ]
+   ],
+   "operational": [
+    [
+     "entryDN",
+     [
+      "ou=services,dc=acme,dc=test"
+     ]
+    ]
+   ],
+   "index": [
+    [
+     "objectclass",
+     [
+      "top",
+      "organizationalUnit"
+     ]
+    ],
+    [
+     "ou",
+     [
+      "services"
+     ]
+    ],
+    [
+     "entrydn",
+     [
+      "ou=services,dc=acme,dc=test"
+     ]
+    ]
+   ]
+  },
+  {
+   "dn": "uid=alice@acme.test,ou=people,dc=acme,dc=test",
+   "normalizedDn": "uid=alice@acme.test,ou=people,dc=acme,dc=test",
+   "attributes": [
+    [
+     "objectClass",
+     [
+      "top",
+      "person",
+      "organizationalPerson",
+      "inetOrgPerson"
+     ]
+    ],
+    [
+     "uid",
+     [
+      "alice@acme.test"
+     ]
+    ],
+    [
+     "cn",
+     [
+      "Alice  Liddell"
+     ]
+    ],
+    [
+     "sn",
+     [
+      "Liddell"
+     ]
+    ],
+    [
+     "givenName",
+     [
+      "Alice"
+     ]
+    ],
+    [
+     "displayName",
+     [
+      "Alice  Liddell"
+     ]
+    ],
+    [
+     "mail",
+     [
+      "alice@acme.test"
+     ]
+    ],
+    [
+     "memberOf",
+     [
+      "cn=Engineering,ou=groups,dc=acme,dc=test"
+     ]
+    ],
+    [
+     "department",
+     [
+      "eng"
+     ]
+    ],
+    [
+     "level",
+     [
+      "3"
+     ]
+    ],
+    [
+     "tags",
+     [
+      "a",
+      "null"
+     ]
+    ]
+   ],
+   "operational": [
+    [
+     "entryUUID",
+     [
+      "p1"
+     ]
+    ],
+    [
+     "entryDN",
+     [
+      "uid=alice@acme.test,ou=people,dc=acme,dc=test"
+     ]
+    ]
+   ],
+   "index": [
+    [
+     "objectclass",
+     [
+      "top",
+      "person",
+      "organizationalPerson",
+      "inetOrgPerson"
+     ]
+    ],
+    [
+     "uid",
+     [
+      "alice@acme.test"
+     ]
+    ],
+    [
+     "cn",
+     [
+      "Alice  Liddell"
+     ]
+    ],
+    [
+     "sn",
+     [
+      "Liddell"
+     ]
+    ],
+    [
+     "givenname",
+     [
+      "Alice"
+     ]
+    ],
+    [
+     "displayname",
+     [
+      "Alice  Liddell"
+     ]
+    ],
+    [
+     "mail",
+     [
+      "alice@acme.test"
+     ]
+    ],
+    [
+     "memberof",
+     [
+      "cn=Engineering,ou=groups,dc=acme,dc=test"
+     ]
+    ],
+    [
+     "department",
+     [
+      "eng"
+     ]
+    ],
+    [
+     "level",
+     [
+      "3"
+     ]
+    ],
+    [
+     "tags",
+     [
+      "a",
+      "null"
+     ]
+    ],
+    [
+     "entryuuid",
+     [
+      "p1"
+     ]
+    ],
+    [
+     "entrydn",
+     [
+      "uid=alice@acme.test,ou=people,dc=acme,dc=test"
+     ]
+    ]
+   ]
+  },
+  {
+   "dn": "uid=bob\\,\\+,ou=people,dc=acme,dc=test",
+   "normalizedDn": "uid=bob\\,\\+,ou=people,dc=acme,dc=test",
+   "attributes": [
+    [
+     "objectClass",
+     [
+      "top",
+      "person",
+      "organizationalPerson",
+      "inetOrgPerson"
+     ]
+    ],
+    [
+     "uid",
+     [
+      "bob,+"
+     ]
+    ],
+    [
+     "cn",
+     [
+      "bob,+"
+     ]
+    ],
+    [
+     "sn",
+     [
+      "bob,+"
+     ]
+    ]
+   ],
+   "operational": [
+    [
+     "entryUUID",
+     [
+      "p2"
+     ]
+    ],
+    [
+     "entryDN",
+     [
+      "uid=bob\\,\\+,ou=people,dc=acme,dc=test"
+     ]
+    ]
+   ],
+   "index": [
+    [
+     "objectclass",
+     [
+      "top",
+      "person",
+      "organizationalPerson",
+      "inetOrgPerson"
+     ]
+    ],
+    [
+     "uid",
+     [
+      "bob,+"
+     ]
+    ],
+    [
+     "cn",
+     [
+      "bob,+"
+     ]
+    ],
+    [
+     "sn",
+     [
+      "bob,+"
+     ]
+    ],
+    [
+     "entryuuid",
+     [
+      "p2"
+     ]
+    ],
+    [
+     "entrydn",
+     [
+      "uid=bob\\,\\+,ou=people,dc=acme,dc=test"
+     ]
+    ]
+   ]
+  },
+  {
+   "dn": "uid=carol,ou=people,dc=acme,dc=test",
+   "normalizedDn": "uid=carol,ou=people,dc=acme,dc=test",
+   "attributes": [
+    [
+     "objectClass",
+     [
+      "top",
+      "person",
+      "organizationalPerson",
+      "inetOrgPerson"
+     ]
+    ],
+    [
+     "uid",
+     [
+      "carol"
+     ]
+    ],
+    [
+     "cn",
+     [
+      "carol@acme.test"
+     ]
+    ],
+    [
+     "sn",
+     [
+      "carol"
+     ]
+    ],
+    [
+     "mail",
+     [
+      "carol@acme.test"
+     ]
+    ],
+    [
+     "memberOf",
+     [
+      "cn=g2,ou=groups,dc=acme,dc=test"
+     ]
+    ]
+   ],
+   "operational": [
+    [
+     "entryUUID",
+     [
+      "p3"
+     ]
+    ],
+    [
+     "entryDN",
+     [
+      "uid=carol,ou=people,dc=acme,dc=test"
+     ]
+    ]
+   ],
+   "index": [
+    [
+     "objectclass",
+     [
+      "top",
+      "person",
+      "organizationalPerson",
+      "inetOrgPerson"
+     ]
+    ],
+    [
+     "uid",
+     [
+      "carol"
+     ]
+    ],
+    [
+     "cn",
+     [
+      "carol@acme.test"
+     ]
+    ],
+    [
+     "sn",
+     [
+      "carol"
+     ]
+    ],
+    [
+     "mail",
+     [
+      "carol@acme.test"
+     ]
+    ],
+    [
+     "memberof",
+     [
+      "cn=g2,ou=groups,dc=acme,dc=test"
+     ]
+    ],
+    [
+     "entryuuid",
+     [
+      "p3"
+     ]
+    ],
+    [
+     "entrydn",
+     [
+      "uid=carol,ou=people,dc=acme,dc=test"
+     ]
+    ]
+   ]
+  },
+  {
+   "dn": "cn=ci,ou=services,dc=acme,dc=test",
+   "normalizedDn": "cn=ci,ou=services,dc=acme,dc=test",
+   "attributes": [
+    [
+     "objectClass",
+     [
+      "top",
+      "account",
+      "applicationProcess"
+     ]
+    ],
+    [
+     "cn",
+     [
+      "ci"
+     ]
+    ],
+    [
+     "uid",
+     [
+      "ci"
+     ]
+    ],
+    [
+     "description",
+     [
+      "Service account"
+     ]
+    ],
+    [
+     "memberOf",
+     [
+      "cn=Engineering,ou=groups,dc=acme,dc=test"
+     ]
+    ]
+   ],
+   "operational": [
+    [
+     "entryUUID",
+     [
+      "s1"
+     ]
+    ],
+    [
+     "entryDN",
+     [
+      "cn=ci,ou=services,dc=acme,dc=test"
+     ]
+    ]
+   ],
+   "index": [
+    [
+     "objectclass",
+     [
+      "top",
+      "account",
+      "applicationProcess"
+     ]
+    ],
+    [
+     "cn",
+     [
+      "ci"
+     ]
+    ],
+    [
+     "uid",
+     [
+      "ci"
+     ]
+    ],
+    [
+     "description",
+     [
+      "Service account"
+     ]
+    ],
+    [
+     "memberof",
+     [
+      "cn=Engineering,ou=groups,dc=acme,dc=test"
+     ]
+    ],
+    [
+     "entryuuid",
+     [
+      "s1"
+     ]
+    ],
+    [
+     "entrydn",
+     [
+      "cn=ci,ou=services,dc=acme,dc=test"
+     ]
+    ]
+   ]
+  },
+  {
+   "dn": "cn=s2,ou=services,dc=acme,dc=test",
+   "normalizedDn": "cn=s2,ou=services,dc=acme,dc=test",
+   "attributes": [
+    [
+     "objectClass",
+     [
+      "top",
+      "account",
+      "applicationProcess"
+     ]
+    ],
+    [
+     "cn",
+     [
+      "CI"
+     ]
+    ],
+    [
+     "uid",
+     [
+      "s2"
+     ]
+    ],
+    [
+     "description",
+     [
+      "AI agent"
+     ]
+    ]
+   ],
+   "operational": [
+    [
+     "entryUUID",
+     [
+      "s2"
+     ]
+    ],
+    [
+     "entryDN",
+     [
+      "cn=s2,ou=services,dc=acme,dc=test"
+     ]
+    ]
+   ],
+   "index": [
+    [
+     "objectclass",
+     [
+      "top",
+      "account",
+      "applicationProcess"
+     ]
+    ],
+    [
+     "cn",
+     [
+      "CI"
+     ]
+    ],
+    [
+     "uid",
+     [
+      "s2"
+     ]
+    ],
+    [
+     "description",
+     [
+      "AI agent"
+     ]
+    ],
+    [
+     "entryuuid",
+     [
+      "s2"
+     ]
+    ],
+    [
+     "entrydn",
+     [
+      "cn=s2,ou=services,dc=acme,dc=test"
+     ]
+    ]
+   ]
+  },
+  {
+   "dn": "cn=Engineering,ou=groups,dc=acme,dc=test",
+   "normalizedDn": "cn=engineering,ou=groups,dc=acme,dc=test",
+   "attributes": [
+    [
+     "objectClass",
+     [
+      "top",
+      "groupOfNames"
+     ]
+    ],
+    [
+     "cn",
+     [
+      "Engineering"
+     ]
+    ],
+    [
+     "description",
+     [
+      "Eng"
+     ]
+    ],
+    [
+     "member",
+     [
+      "uid=alice@acme.test,ou=people,dc=acme,dc=test",
+      "cn=ci,ou=services,dc=acme,dc=test"
+     ]
+    ]
+   ],
+   "operational": [
+    [
+     "entryUUID",
+     [
+      "g1"
+     ]
+    ],
+    [
+     "entryDN",
+     [
+      "cn=Engineering,ou=groups,dc=acme,dc=test"
+     ]
+    ]
+   ],
+   "index": [
+    [
+     "objectclass",
+     [
+      "top",
+      "groupOfNames"
+     ]
+    ],
+    [
+     "cn",
+     [
+      "Engineering"
+     ]
+    ],
+    [
+     "description",
+     [
+      "Eng"
+     ]
+    ],
+    [
+     "member",
+     [
+      "uid=alice@acme.test,ou=people,dc=acme,dc=test",
+      "cn=ci,ou=services,dc=acme,dc=test"
+     ]
+    ],
+    [
+     "entryuuid",
+     [
+      "g1"
+     ]
+    ],
+    [
+     "entrydn",
+     [
+      "cn=Engineering,ou=groups,dc=acme,dc=test"
+     ]
+    ]
+   ]
+  },
+  {
+   "dn": "cn=g2,ou=groups,dc=acme,dc=test",
+   "normalizedDn": "cn=g2,ou=groups,dc=acme,dc=test",
+   "attributes": [
+    [
+     "objectClass",
+     [
+      "top",
+      "groupOfNames"
+     ]
+    ],
+    [
+     "cn",
+     [
+      "engineering"
+     ]
+    ],
+    [
+     "member",
+     [
+      "uid=carol,ou=people,dc=acme,dc=test"
+     ]
+    ]
+   ],
+   "operational": [
+    [
+     "entryUUID",
+     [
+      "g2"
+     ]
+    ],
+    [
+     "entryDN",
+     [
+      "cn=g2,ou=groups,dc=acme,dc=test"
+     ]
+    ]
+   ],
+   "index": [
+    [
+     "objectclass",
+     [
+      "top",
+      "groupOfNames"
+     ]
+    ],
+    [
+     "cn",
+     [
+      "engineering"
+     ]
+    ],
+    [
+     "member",
+     [
+      "uid=carol,ou=people,dc=acme,dc=test"
+     ]
+    ],
+    [
+     "entryuuid",
+     [
+      "g2"
+     ]
+    ],
+    [
+     "entrydn",
+     [
+      "cn=g2,ou=groups,dc=acme,dc=test"
+     ]
+    ]
+   ]
+  }
+ ],
+ "select": [
+  {
+   "requested": [],
+   "attributes": [
+    [
+     "objectClass",
+     [
+      "top",
+      "organizationalUnit"
+     ]
+    ],
+    [
+     "ou",
+     [
+      "services"
+     ]
+    ]
+   ]
+  },
+  {
+   "requested": [
+    "*"
+   ],
+   "attributes": [
+    [
+     "objectClass",
+     [
+      "top",
+      "organizationalUnit"
+     ]
+    ],
+    [
+     "ou",
+     [
+      "services"
+     ]
+    ]
+   ]
+  },
+  {
+   "requested": [
+    "+"
+   ],
+   "attributes": [
+    [
+     "entryDN",
+     [
+      "ou=services,dc=acme,dc=test"
+     ]
+    ]
+   ]
+  },
+  {
+   "requested": [
+    "MAIL",
+    "entryUUID"
+   ],
+   "attributes": []
+  },
+  {
+   "requested": [
+    "1.1"
+   ],
+   "attributes": []
+  },
+  {
+   "requested": [
+    "*",
+    "+"
+   ],
+   "attributes": [
+    [
+     "objectClass",
+     [
+      "top",
+      "organizationalUnit"
+     ]
+    ],
+    [
+     "ou",
+     [
+      "services"
+     ]
+    ],
+    [
+     "entryDN",
+     [
+      "ou=services,dc=acme,dc=test"
+     ]
+    ]
+   ]
+  }
+ ],
+ "escapes": [
+  {
+   "value": "Smith, John+1",
+   "escaped": "Smith\\, John\\+1"
+  },
+  {
+   "value": " lead",
+   "escaped": "\\ lead"
+  },
+  {
+   "value": "trail ",
+   "escaped": "trail\\ "
+  },
+  {
+   "value": "#x",
+   "escaped": "\\#x"
+  },
+  {
+   "value": "a\u0001b",
+   "escaped": "a\\01b"
+  },
+  {
+   "value": "q\"<>;=\\",
+   "escaped": "q\\\"\\<\\>\\;\\=\\\\"
+  }
+ ],
+ "data": {
+  "tenantId": "t",
+  "tenantName": "Acme",
+  "baseDn": "dc=acme,dc=test",
+  "scope": "full",
+  "people": [
+   {
+    "id": "p1",
+    "uid": "alice@acme.test",
+    "email": "alice@acme.test",
+    "name": "Alice  Liddell",
+    "emailVerified": true,
+    "attributes": {
+     "department": "eng",
+     "level": 3,
+     "tags": [
+      "a",
+      null
+     ],
+     "memberOf": "x",
+     "bad name": "y",
+     "nothing": null
+    },
+    "groupIds": [
+     "g1",
+     "missing"
+    ]
+   },
+   {
+    "id": "p2",
+    "uid": "bob,+",
+    "emailVerified": false,
+    "attributes": {},
+    "groupIds": []
+   },
+   {
+    "id": "p3",
+    "uid": "carol",
+    "email": "carol@acme.test",
+    "emailVerified": true,
+    "attributes": {},
+    "groupIds": [
+     "g2"
+    ]
+   }
+  ],
+  "groups": [
+   {
+    "id": "g1",
+    "name": "Engineering",
+    "description": "Eng",
+    "memberIds": [
+     "p1",
+     "s1",
+     "x"
+    ]
+   },
+   {
+    "id": "g2",
+    "name": "engineering",
+    "memberIds": [
+     "p3"
+    ]
+   }
+  ],
+  "services": [
+   {
+    "id": "s1",
+    "name": "ci",
+    "kind": "service-account",
+    "groupIds": [
+     "g1"
+    ]
+   },
+   {
+    "id": "s2",
+    "name": "CI",
+    "kind": "agent",
+    "groupIds": []
+   }
+  ]
+ }
+}

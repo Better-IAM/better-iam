@@ -84,7 +84,7 @@ type CredentialsRotateOutput struct {
 	Token        string  `json:"token"`
 	CredentialID string  `json:"credentialId"`
 	ExpiresAt    float64 `json:"expiresAt"`
-	Name         string  `json:"name"`
+	Name         *string `json:"name,omitzero"`
 }
 
 // CredentialsUpdateInput is the request body of POST {basePath}/credentials/update (credentials.update).
