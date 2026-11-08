@@ -186,15 +186,13 @@ fn detection_label(identity: &Identity) -> IamResult<String> {
 }
 
 /// The response module's actor for a person responding (`{ principal }`): the principal's identity, session and
-/// device proof, as JSON.
-fn actor_of(principal: &AuthenticatedPrincipal) -> IamResult<Value> {
-    let mut person = Map::new();
-    person.insert("identity".into(), to_json(&principal.identity)?);
-    person.insert("session".into(), to_json(&principal.session)?);
-    if let Some(proof) = &principal.device_proof {
-        person.insert("deviceProof".into(), Value::String(proof.clone()));
-    }
-    Ok(json!({ "principal": Value::Object(person) }))
+/// device proof.
+fn actor_of(
+    principal: &AuthenticatedPrincipal,
+) -> IamResult<crate::threat_response::ResponseActor> {
+    Ok(crate::threat_response::ResponseActor::person(
+        principal.clone(),
+    ))
 }
 
 /// `recordDetection(ctx, tx, tenantId, candidate, settings, now)`: `{ created, detection, incident }`.
@@ -251,9 +249,22 @@ async fn apply_response(
     tx: &Store,
     tenant_id: &str,
     request: Value,
+    actor: &crate::threat_response::ResponseActor,
     settings: &Value,
 ) -> IamResult<Value> {
-    let request: crate::threat_response::ResponseRequest = from_json(request)?;
+    // The actor is a verified principal, so it travels beside the JSON request rather than inside it.
+    let optional = |key: &str| request.get(key).and_then(Value::as_str).map(str::to_owned);
+    let request = crate::threat_response::ResponseRequest {
+        action: from_json(request.get("action").cloned().unwrap_or(Value::Null))?,
+        subject: from_json(request.get("subject").cloned().unwrap_or(Value::Null))?,
+        identity_id: optional("identityId"),
+        network: optional("network"),
+        incident_id: optional("incidentId"),
+        detection_id: optional("detectionId"),
+        playbook_id: optional("playbookId"),
+        reason: optional("reason").unwrap_or_default(),
+        actor: actor.clone(),
+    };
     let response = crate::threat_response::apply_response(
         ctx,
         tx,
@@ -2807,7 +2818,6 @@ impl ThreatsApi {
                         "incidentId": incident_id,
                         "detectionId": detection_id,
                         "reason": "Reported by the account holder",
-                        "actor": actor,
                     })
                 };
                 let revoked = apply_response(
@@ -2815,6 +2825,7 @@ impl ThreatsApi {
                     &tx,
                     &tenant_id,
                     own(json!({ "kind": "revoke-sessions", "keepApiKeys": true })),
+                    &actor,
                     &settings,
                 )
                 .await?;
@@ -2823,6 +2834,7 @@ impl ThreatsApi {
                     &tx,
                     &tenant_id,
                     own(json!({ "kind": "forget-devices" })),
+                    &actor,
                     &settings,
                 )
                 .await?;
@@ -3198,10 +3210,16 @@ impl ThreatsApi {
                             request.insert(key.clone(), value.clone());
                         }
                         request.insert("reason".into(), Value::String(reason.clone()));
-                        request.insert("actor".into(), actor.clone());
                         taken.push(
-                            apply_response(ctx, &tx, &tenant.id, Value::Object(request), &settings)
-                                .await?,
+                            apply_response(
+                                ctx,
+                                &tx,
+                                &tenant.id,
+                                Value::Object(request),
+                                &actor,
+                                &settings,
+                            )
+                            .await?,
                         );
                     }
                     Ok(Value::Array(taken))
