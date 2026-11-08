@@ -7,7 +7,6 @@ package saml
 // leniencies (an unbound prefix, a bare `&`, `]]>` in text) are kept.
 
 import (
-	"errors"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -909,5 +908,3 @@ func serialize(n *Node, out *strings.Builder, visible []nsEntry) {
 		out.WriteString(n.Data)
 	}
 }
-
-var errNoDocument = errors.New("Not a valid XML document")

@@ -11,8 +11,6 @@ import (
 	"strconv"
 	"strings"
 	"unicode/utf16"
-
-	"github.com/Better-IAM/better-iam/go/core"
 )
 
 const (
@@ -543,5 +541,3 @@ func firstElement(doc *Node, keep func(*Node) bool) *Node {
 	}
 	return found[0]
 }
-
-var _ = core.Undefined
