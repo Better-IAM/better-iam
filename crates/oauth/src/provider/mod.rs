@@ -1322,7 +1322,7 @@ impl OAuthProvider {
                 None => "client_secret_basic".to_owned(),
             }
         };
-        if (is_public && requested_method.is_some())
+        if (is_public && input_map.contains_key("tokenEndpointAuthMethod"))
             || ![
                 "none",
                 "client_secret_basic",

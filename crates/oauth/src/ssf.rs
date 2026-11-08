@@ -419,9 +419,10 @@ impl SharedSignalsTransmitter {
         if !enabled.is_boolean() {
             return Err(invalid_input("enabled must be a boolean."));
         }
-        if let Some(Some(authorization)) = &input.authorization {
+        if let Some(authorization) = &input.authorization {
             let ok = authorization
-                .as_str()
+                .as_ref()
+                .and_then(Value::as_str)
                 .is_some_and(|value| js::utf16_len(value) <= 4096 && !value.contains(['\r', '\n']));
             if !ok {
                 return Err(invalid_input("The authorization header value is invalid."));
@@ -1247,8 +1248,11 @@ impl SharedSignalsTransmitter {
             })
             .collect();
         records.sort_by(|a, b| num(b, "createdAt").total_cmp(&num(a, "createdAt")));
-        let count = if limit.is_nan() || limit < 0.0 {
+        // `slice(0, end)`: a negative end counts from the back, NaN is zero.
+        let count = if limit.is_nan() {
             0
+        } else if limit < 0.0 {
+            records.len().saturating_sub((-limit).floor() as usize)
         } else {
             limit.floor() as usize
         };
