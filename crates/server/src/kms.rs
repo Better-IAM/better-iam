@@ -2085,7 +2085,7 @@ fn service_use_of(value: Option<&Value>) -> IamResult<KmsServiceUse> {
 }
 
 /// An `AuthenticatedPrincipal` from `{ identity, session, deviceProof? }`.
-fn principal_from_json(value: &Value) -> IamResult<AuthenticatedPrincipal> {
+pub(crate) fn principal_from_json(value: &Value) -> IamResult<AuthenticatedPrincipal> {
     let identity: Identity =
         serde_json::from_value(value.get("identity").cloned().unwrap_or(Value::Null))
             .map_err(|_| internal_error())?;

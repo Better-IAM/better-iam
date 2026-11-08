@@ -461,6 +461,34 @@ async fn auth_member(
             .await
             .and_then(|result| serde_json::to_value(result).map_err(|_| crate::js::internal_error()))
         }
+        "authenticate" => auth
+            .authenticate(&credential_arg(input.as_ref()))
+            .await
+            .map(|principal| principal_json(&principal)),
+        "requireRecent" => {
+            let principal = match input.as_ref().map(crate::kms::principal_from_json) {
+                Some(Ok(principal)) => principal,
+                _ => return Some(Err(crate::js::internal_error())),
+            };
+            auth.require_recent(&principal).map(|()| undefined())
+        }
+        "verifyStepUpCode" => {
+            let identity = match input.map(serde_json::from_value) {
+                Some(Ok(identity)) => identity,
+                _ => return Some(Err(crate::js::internal_error())),
+            };
+            let code = arg(args, offset + 1).and_then(Value::as_str).unwrap_or_default();
+            auth.verify_step_up_code(&store, &identity, code)
+                .await
+                .and_then(|result| serde_json::to_value(result).map_err(|_| crate::js::internal_error()))
+        }
+        "issuePasswordReset" => {
+            let identity = match input.map(serde_json::from_value) {
+                Some(Ok(identity)) => identity,
+                _ => return Some(Err(crate::js::internal_error())),
+            };
+            auth.issue_password_reset(&store, &identity).await.map(|()| undefined())
+        }
         _ => {
             // The authentication API methods (`auth.signIn(body)`, `auth.getSession(credential)`).
             if !iam.auth_api.has(method) {
@@ -1638,5 +1666,161 @@ mod tests {
         let credential =
             credential_arg(Some(&json!({ "headers": { "authorization": "Bearer x" } })));
         assert_eq!(credential.headers.unwrap()[0].1, "Bearer x");
+    }
+
+    /// `auth.authenticate`, `auth.requireRecent`, and inside a store transaction `auth.verifyStepUpCode` and
+    /// `auth.issuePasswordReset`, resolve to the authentication service instead of answering `Unknown method`.
+    #[test]
+    fn auth_service_members() {
+        std::thread::Builder::new()
+            .stack_size(64 * 1024 * 1024)
+            .spawn(|| {
+                tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .unwrap()
+                    .block_on(auth_service_members_body());
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+
+    async fn auth_service_members_body() {
+        use better_iam_core::IamStoreExt;
+        let store = better_iam_adapter_sqlite::sqlite_adapter(
+            better_iam_adapter_sqlite::SqliteAdapterOptions::new(":memory:"),
+        )
+        .expect("sqlite");
+        let inbox: Arc<Mutex<Vec<DeliveryMessage>>> = Arc::default();
+        let sink = inbox.clone();
+        let mut options = crate::options::BetterIamOptions::new(
+            store,
+            "conformance-auth-test-secret-with-32-chars!!",
+            "https://iam.example.com",
+        );
+        options.authentication = Some(crate::options::ServerAuthOptions {
+            send_email: Some(better_iam_auth::delivery_fn(move |message| {
+                let sink = sink.clone();
+                async move {
+                    sink.lock().unwrap().push(message);
+                    Ok(())
+                }
+            })),
+            ..Default::default()
+        });
+        let iam = better_iam(options).expect("valid options");
+        iam.initialize().await.expect("initialize");
+        let root = iam
+            .bootstrap(&json!({ "email": "root@example.test", "name": "Root", "password": "a strong root test password" }))
+            .await
+            .expect("bootstrap");
+        let identity = root["identity"].clone();
+        let failure = |result: Option<IamResult<Value>>| {
+            let error = result.expect("a known member").expect_err("an error");
+            (error.code, error.status)
+        };
+
+        let tx_args = |rest: Vec<Value>| {
+            let mut args = vec![json!({ "$tx": true })];
+            args.extend(rest);
+            args
+        };
+        let issued = {
+            let (iam, args) = (
+                &iam,
+                tx_args(vec![identity.clone(), json!({ "mfa": true })]),
+            );
+            iam.store
+                .transaction(|tx| async move {
+                    auth_member(iam, "issueSession", &args, Some(&tx))
+                        .await
+                        .expect("a known member")
+                })
+                .await
+                .expect("issueSession")
+        };
+
+        // authenticate({ token }): { identity, session }.
+        let principal = auth_member(
+            &iam,
+            "authenticate",
+            &[json!({ "token": issued["token"] })],
+            None,
+        )
+        .await
+        .expect("a known member")
+        .expect("authenticate");
+        assert_eq!(principal["identity"]["id"], identity["id"]);
+        assert_eq!(principal["session"]["id"], issued["session"]["id"]);
+        assert_eq!(
+            failure(
+                auth_member(
+                    &iam,
+                    "authenticate",
+                    &[json!({ "token": "biam_ses_nope" })],
+                    None
+                )
+                .await
+            ),
+            ("UNAUTHENTICATED".to_owned(), 401)
+        );
+
+        // requireRecent(principal): undefined for a fresh user session, RECENT_AUTH_REQUIRED for a temporary one.
+        assert_eq!(
+            auth_member(
+                &iam,
+                "requireRecent",
+                std::slice::from_ref(&principal),
+                None
+            )
+            .await
+            .expect("a known member")
+            .expect("fresh"),
+            undefined()
+        );
+        let mut temporary = principal.clone();
+        temporary["session"]["kind"] = json!("session-token");
+        assert_eq!(
+            failure(auth_member(&iam, "requireRecent", &[temporary], None).await),
+            ("RECENT_AUTH_REQUIRED".to_owned(), 403)
+        );
+
+        // verifyStepUpCode({ $tx }, identity, code) without an enrolled authenticator.
+        let not_enrolled = {
+            let (iam, args) = (&iam, tx_args(vec![identity.clone(), json!("123456")]));
+            iam.store
+                .transaction(|tx| async move {
+                    Ok(auth_member(iam, "verifyStepUpCode", &args, Some(&tx)).await)
+                })
+                .await
+                .expect("transaction")
+        };
+        assert_eq!(failure(not_enrolled), ("MFA_NOT_ENROLLED".to_owned(), 403));
+
+        // issuePasswordReset({ $tx }, identity): undefined, and a password-reset email goes out.
+        let reset = {
+            let (iam, args) = (&iam, tx_args(vec![identity.clone()]));
+            iam.store
+                .transaction(|tx| async move {
+                    auth_member(iam, "issuePasswordReset", &args, Some(&tx))
+                        .await
+                        .expect("a known member")
+                })
+                .await
+                .expect("issuePasswordReset")
+        };
+        assert_eq!(reset, undefined());
+        auth_member(&iam, "dispatchOutbox", &[], None)
+            .await
+            .expect("a known member")
+            .expect("dispatchOutbox");
+        let sent = inbox.lock().unwrap().clone();
+        assert!(
+            sent.iter()
+                .any(|message| message.template == "password-reset"
+                    && message.to == "root@example.test"),
+            "a password-reset email was delivered: {sent:?}"
+        );
     }
 }
