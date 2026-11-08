@@ -117,13 +117,13 @@ pub const DEFAULT_MAX_GRANTS: f64 = 100.0;
 pub const DEFAULT_MAX_REMOVALS: f64 = 25.0;
 
 /// A copy of a rule with its identity.groups values mapped (IDs to names for export, names to IDs for apply).
-pub fn map_rule_groups(rule: &Value, map: &Callback) -> IamResult<Value> {
+pub fn map_rule_groups(rule: &Value, map: &dyn Fn(&str) -> String) -> IamResult<Value> {
     Err(not_ported("package-rules.ts mapRuleGroups"))
 }
 
 /// A copy of a rule with the values it tests an array key for mapped (IDs to names for export, names to IDs for
 /// apply).
-pub fn map_rule_values(rule: &Value, key: &str, map: &Callback) -> IamResult<Value> {
+pub fn map_rule_values(rule: &Value, key: &str, map: &dyn Fn(&str) -> String) -> IamResult<Value> {
     Err(not_ported("package-rules.ts mapRuleValues"))
 }
 
