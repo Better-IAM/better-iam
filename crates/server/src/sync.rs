@@ -18,7 +18,7 @@ use serde_json::{Map, Value, json};
 
 use crate::access_policy::{MAX_ACTIVATION_MS, tenant_access_policy};
 use crate::ai_sync::{
-    AiPlan, AiState, apply_ai, export_ai, parse_agents_config, parse_budgets_config,
+    AiApplyEnv, AiPlan, AiState, apply_ai, export_ai, parse_agents_config, parse_budgets_config,
     parse_models_config, plan_ai, read_ai_state,
 };
 use crate::api::agreements::{delete_agreement, save_agreement};
@@ -3323,10 +3323,11 @@ async fn apply_plan(
     )
     .await?;
     // AI agents, models and budgets (ai-sync.ts), once groups exist; agents before the budgets that name them.
-    let ai_env = json!({
-        "groupIds": group_ids,
-        "identitiesByEmail": state.identities_by_email,
-    });
+    let ai_env = AiApplyEnv {
+        allow: &allower,
+        group_ids: &group_ids,
+        identities_by_email: &state.identities_by_email,
+    };
     apply_ai(
         ctx,
         tx,
