@@ -169,6 +169,15 @@ pub fn number(value: f64) -> Value {
     core_js::number(value).unwrap_or(Value::Null)
 }
 
+/// `#[serde(serialize_with = "crate::js::serialize_number")]`: writes an `f64` field as [`number`] does, so an
+/// integral double serializes as a JSON integer (`600`, not `600.0`), exactly like a JavaScript number.
+pub fn serialize_number<S: serde::Serializer>(
+    value: &f64,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    serde::Serialize::serialize(&number(*value), serializer)
+}
+
 /// `JSON.parse(text)`; a syntax error is an exception the server answers as INTERNAL_ERROR.
 pub fn parse_json(text: &str) -> Result<Value, IamError> {
     core_js::parse(text).map_err(|_| internal_error())
