@@ -1126,7 +1126,8 @@ func boundedBody(request *http.Request, maxBytes int64) (string, bool, error) {
 func (g *Gate) Serve(request *http.Request, next Next) (*http.Response, error) {
 	ctx := request.Context()
 	if g.options.Card != nil || g.options.CardFunc != nil {
-		path := request.URL.Path
+		// url.pathname is the percent-encoded path.
+		path := request.URL.EscapedPath()
 		if path == "/.well-known/agent-card.json" || path == "/.well-known/agent.json" {
 			if request.Method == http.MethodOptions {
 				header := http.Header{}
