@@ -3,7 +3,7 @@ title: CLI
 metaTitle: Rust better-iam CLI
 description: The better-iam command line built in Rust, with the same 60 commands, flags, output formats, and exit codes as the npm CLI, configured by better-iam.json, and extensible with project commands.
 icon: SquareTerminal
-status: experimental
+status: beta
 sources:
   - crates/cli/README.md
   - crates/cli/src/lib.rs
@@ -182,9 +182,9 @@ cargo run --bin iam -- seed --slug acme
 - `.flag(name, FlagSpec::string(...))`, `FlagSpec::integer`, and `FlagSpec::boolean` declare flags, with `.required()`,
   `.env("NAME")`, `.default_text(...)`, `.choices(...)`, `.min(...)` and `.max(...)`; `.arg(ArgSpec::new(...))`
   declares positional arguments. The `cli.defaults` of `better-iam.json` apply to project commands too.
-- `run_binary` runs the program like the `better-iam` binary does: on a runtime with large stacks, printing
-  `CODE: message` on failure and returning the exit status. `CreateCliOptions { builtins: Some(false), .. }` ships only
-  your commands.
+- `run_binary` runs the program like the `better-iam` binary does: it starts its own tokio runtime, so `main` needs
+  no `#[tokio::main]`, prints `CODE: message` on failure, and returns the exit status.
+  `CreateCliOptions { builtins: Some(false), .. }` ships only your commands.
 
 To run a command from Rust code, such as a test, call `cli.run(&argv, Some(io)).await` on the program, or
 `better_iam_cli::run_cli(&argv, None)` for the built-in commands; both return `CliResult<()>`, whose `CliError`

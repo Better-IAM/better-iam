@@ -3,7 +3,7 @@ title: actix-web
 metaTitle: actix-web middleware for Better IAM
 description: Serve the Better IAM API from an actix-web app with IamActix, read the session with the IamRequest extractor, and guard resources with require_session and authorize.
 icon: Server
-status: experimental
+status: beta
 sources:
   - crates/middleware/README.md
   - crates/middleware/src/actix.rs
@@ -14,7 +14,8 @@ sources:
 
 import { Server, Rust, Globe } from '@/lib/icons';
 
-`IamActix` from `better-iam-middleware` connects a [Rust `BetterIam` instance](/docs/integrations/rust) to an
+`IamActix` from `better_iam::middleware` (the `better-iam-middleware` crate) connects a
+[Rust `BetterIam` instance](/docs/integrations/rust) to an
 actix-web application. Its middleware serves the IAM HTTP API under `/api/iam` and gives every other request an
 `IamRequest` extractor with the caller's <Term id="session">session</Term>, permission checks, and an in-process
 client. Its guards (`require_session`, `authorize`) wrap resources and scopes. It is the same integration as the
@@ -31,16 +32,18 @@ for the current parity status.
 <Steps>
 <Step>
 
-### Add the crates
+### Add the dependency
 
 ```toml title="Cargo.toml"
 [dependencies]
-better-iam = { path = "../better-iam/crates/better-iam" }
-better-iam-middleware = { path = "../better-iam/crates/middleware", features = ["actix-web"] }
+better-iam = { path = "../better-iam/crates/better-iam", features = ["actix-web"] }
 actix-web = "4"
 futures = "0.3"
 serde_json = "1"
 ```
+
+The umbrella's `actix-web` feature turns on its `middleware` module (`better_iam::middleware`, the
+`better-iam-middleware` crate) with the actix-web integration.
 
 </Step>
 <Step>
@@ -53,38 +56,33 @@ route, and wrap individual resources with guards.
 
 ```rust title="src/main.rs"
 use actix_web::{App, HttpServer, web};
-use better_iam_middleware::actix::IamActix;
-use better_iam_middleware::layer::IamLayerOptions;
+use better_iam::middleware::actix::IamActix;
+use better_iam::middleware::layer::IamLayerOptions;
 
 mod iam; // create_iam() from the Rust overview
 mod routes;
 
-fn main() -> std::io::Result<()> {
-    actix_web::rt::System::new().block_on(async {
-        let iam = iam::create_iam().await.expect("Better IAM failed to start");
-        let iam_actix = IamActix::new(
-            iam,
-            IamLayerOptions { login_path: Some("/login".into()), ..IamLayerOptions::default() },
-        );
-        HttpServer::new(move || {
-            App::new()
-                .wrap(iam_actix.middleware())
-                .service(
-                    web::resource("/me")
-                        .wrap(iam_actix.require_session(None))
-                        .route(web::get().to(routes::me)),
-                )
-        })
-        .bind(("127.0.0.1", 3000))?
-        .run()
-        .await
+#[actix_web::main]
+async fn main() -> std::io::Result<()> {
+    let iam = iam::create_iam().await.expect("Better IAM failed to start");
+    let iam_actix = IamActix::new(
+        iam,
+        IamLayerOptions { login_path: Some("/login".into()), ..IamLayerOptions::default() },
+    );
+    HttpServer::new(move || {
+        App::new()
+            .wrap(iam_actix.middleware())
+            .service(
+                web::resource("/me")
+                    .wrap(iam_actix.require_session(None))
+                    .route(web::get().to(routes::me)),
+            )
     })
+    .bind(("127.0.0.1", 3000))?
+    .run()
+    .await
 }
 ```
-
-Start the process with `RUST_MIN_STACK=67108864` (64 MiB). actix-web creates its worker threads itself, with the
-default stack size, which the server's futures overflow in debug builds; see
-[Stack size](/docs/integrations/rust#stack-size).
 
 - **The API mount.** Requests under the base path (`/api/iam`) are answered by the IAM server through its node
   transport before any route matches, including the protocol mounts listed in `serve`.
@@ -103,7 +101,7 @@ default stack size, which the server's futures overflow in debug builds; see
 ```rust title="src/routes.rs"
 use actix_web::HttpResponse;
 use better_iam::BetterIam;
-use better_iam_middleware::{IamRequest, MiddlewareError};
+use better_iam::middleware::{IamRequest, MiddlewareError};
 use serde_json::json;
 
 pub type Iam = IamRequest<BetterIam>;
@@ -127,7 +125,7 @@ receive the actix `HttpRequest`, so route parameters come from `request.match_in
 
 ```rust title="src/main.rs"
 use actix_web::{HttpRequest, HttpResponse, web};
-use better_iam_middleware::{AuthorizeRule, ResourceRef};
+use better_iam::middleware::{AuthorizeRule, ResourceRef};
 use serde_json::json;
 
 async fn project(path: web::Path<String>) -> HttpResponse {
@@ -157,7 +155,7 @@ A denial answers `403 ACCESS_DENIED`. Step-up works as in axum: pass
 
 ```rust title="src/routes.rs"
 use actix_web::{HttpResponse, web};
-use better_iam_middleware::{MiddlewareError, ResourceRef};
+use better_iam::middleware::{MiddlewareError, ResourceRef};
 
 pub async fn delete_document(iam: Iam, path: web::Path<String>) -> Result<HttpResponse, MiddlewareError> {
     let id = path.into_inner();
@@ -186,7 +184,7 @@ for direct `iam.api.*` calls. See [Read the session](/docs/integrations/rust/axu
 
 ```rust title="src/routes.rs"
 use actix_web::{HttpResponse, web};
-use better_iam_middleware::{MiddlewareError, ResourceRef};
+use better_iam::middleware::{MiddlewareError, ResourceRef};
 use serde_json::json;
 
 pub async fn toolbar(iam: Iam, path: web::Path<String>) -> Result<HttpResponse, MiddlewareError> {

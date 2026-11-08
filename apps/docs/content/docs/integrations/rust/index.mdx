@@ -3,7 +3,7 @@ title: Rust
 metaTitle: Better IAM for Rust
 description: Run Better IAM natively in Rust from the better-iam crates. Create the instance from options or better-iam.json, migrate, serve the HTTP API, call it in process, and share one database with TypeScript and Go servers.
 icon: Rust
-status: experimental
+status: beta
 sources:
   - spec/BUILDOUT.md
   - crates/better-iam/src/lib.rs
@@ -13,6 +13,8 @@ sources:
   - crates/server/src/http.rs
   - crates/server/src/standalone_config.rs
   - crates/server/src/conformance.rs
+  - crates/server/tests/small_stack.rs
+  - scripts/conformance/fleet/servers.mjs
   - crates/core/src/lib.rs
   - spec/conformance/CONFIG.md
 ---
@@ -24,11 +26,11 @@ server, not a client of it: the Rust server answers the same HTTP routes with th
 CSRF rules, and it reads and writes the same database. A Rust service can therefore embed Better IAM in process, and a
 Rust replica can run next to Node.js replicas on one database.
 
-<Callout type="warn" title="Status: in progress">
-The Rust port is under active development and is not published to crates.io yet. Depend on it from a checkout of the
-repository (see [Installation](#installation)). Parity is measured by replaying traces recorded from the TypeScript
-test suite against the Rust server: at the time of writing, 1,364 or more of the 1,381 recorded traces replay
-identically, and the number is improving. Pin a commit and run your own tests before you rely on it in production.
+<Callout type="warn" title="Not on crates.io yet">
+The Rust port is in beta and is not published to crates.io yet. Depend on it from a checkout of the repository (see
+[Installation](#installation)). Parity is measured by replaying traces recorded from the TypeScript test suite against
+the Rust server: at the time of writing, it passes all 1,396 replayable recorded traces, as the Go server does. Pin a
+commit and run your own tests before you rely on it in production.
 </Callout>
 
 ## The crates
@@ -44,7 +46,7 @@ Each crate is the counterpart of one npm package, with the same module layout (`
 | `better-iam-adapter-sqlite`, `-postgres`, `-libsql` | `@better-iam/adapter-*` | Storage adapters with the same schema and migrations as the TypeScript adapters |
 | `better-iam-types` | (generated) | Every request, result, and model type of the HTTP API |
 | `better-iam-client` | `@better-iam/client` | The [typed HTTP client](/docs/integrations/rust/client) |
-| `better-iam-middleware` | `@better-iam/middleware` | A tower layer, route guards, and the [axum](/docs/integrations/rust/axum) and [actix-web](/docs/integrations/rust/actix-web) adapters |
+| `better-iam-middleware` | `@better-iam/middleware` | A tower layer, route guards, and the [axum](/docs/integrations/rust/axum) and [actix-web](/docs/integrations/rust/actix-web) adapters (also `better_iam::middleware`) |
 | `better-iam-oauth`, `-saml`, `-scim`, `-ldap` | `@better-iam/oauth`, `saml`, `scim`, `ldap` | Federation protocols |
 | `better-iam-mcp`, `-a2a` | `@better-iam/mcp`, `a2a` | Authorization for MCP servers and Agent2Agent |
 | `better-iam-projects` | `@better-iam/projects` | The reference plugin |
@@ -91,16 +93,22 @@ client and the projects plugin.
 | `client` | `better_iam::client` (with `client::session` and `client::device`) | yes |
 | `projects` | `better_iam::projects` | yes |
 | `types` | `better_iam::types` (enabled by `server` and `client`) | no |
+| `middleware` | `better_iam::middleware`: the tower layer, request helpers, and route guards (enables `server`) | no |
+| `axum` | `better_iam::middleware::axum`: `IamRequest` as an axum extractor, IAM errors as responses (enables `middleware`) | no |
+| `actix-web` | `better_iam::middleware::actix`: actix-web middleware, guards, and an extractor (enables `middleware`) | no |
 | (always) | `better_iam::core` | |
 
 ```toml title="Cargo.toml"
 [dependencies]
 # PostgreSQL instead of SQLite, without the client:
 better-iam = { path = "../better-iam/crates/better-iam", default-features = false, features = ["server", "auth", "postgres"] }
+# The defaults plus the axum adapter:
+# better-iam = { path = "../better-iam/crates/better-iam", features = ["axum"] }
 ```
 
-The framework adapters are not part of the umbrella. Add `better-iam-middleware` with the `axum` or `actix-web`
-feature next to it (see [axum](/docs/integrations/rust/axum) and [actix-web](/docs/integrations/rust/actix-web)).
+The framework adapters come from the same dependency: turn on `axum` or `actix-web` (see
+[axum](/docs/integrations/rust/axum) and [actix-web](/docs/integrations/rust/actix-web)). The
+`better-iam-middleware` crate can also be used on its own, with the same features.
 
 </Step>
 </Steps>
@@ -178,8 +186,10 @@ pub async fn create_iam_from_file() -> Result<Arc<BetterIam>, IamError> {
 }
 ```
 
-Unknown top-level members are refused with `INVALID_CONFIG` (`Invalid better-iam.json: unknown member "x"`), and
-the members are validated exactly as in-process options are. Callbacks have no JSON form (plugins, protocol mounts, a
+A missing file fails with `CONFIG_NOT_FOUND` (`Configuration better-iam.json does not exist`), and a file that exists
+but cannot be read fails with `CONFIG_LOAD_FAILED`, naming the operating system's reason. Unknown top-level members
+are refused with `INVALID_CONFIG` (`Invalid better-iam.json: unknown member "x"`), and the members are validated
+exactly as in-process options are. Callbacks have no JSON form (plugins, protocol mounts, a
 custom rate limiter); build the options in code when you need them. The full member list is in
 [`spec/conformance/CONFIG.md`](https://github.com/Better-IAM/better-iam/blob/main/spec/conformance/CONFIG.md).
 
@@ -218,7 +228,8 @@ endpoints the replay runner drives.
 
 ### A framework adapter
 
-Embed the API in your own axum or actix-web application with `better-iam-middleware`. The adapter serves the API under
+Embed the API in your own axum or actix-web application with the umbrella's `axum` or `actix-web` feature
+(`better_iam::middleware`, the `better-iam-middleware` crate). The adapter serves the API under
 `/api/iam`, adds per-request helpers, and provides route guards.
 
 <Cards>
@@ -275,15 +286,8 @@ async fn handle(iam: Arc<BetterIam>, request: http::Request<Incoming>) -> http::
     iam.http.node_handler(parts.method, &target, parts.headers, body).await.map(Full::new)
 }
 
-fn main() -> std::io::Result<()> {
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .thread_stack_size(64 * 1024 * 1024) // see "Stack size" below
-        .build()?;
-    runtime.block_on(async { tokio::spawn(serve()).await.expect("server task panicked") })
-}
-
-async fn serve() -> std::io::Result<()> {
+#[tokio::main]
+async fn main() -> std::io::Result<()> {
     let iam = iam::create_iam().await.expect("Better IAM failed to start");
     let listener = tokio::net::TcpListener::bind("127.0.0.1:3000").await?;
     loop {
@@ -303,31 +307,10 @@ async fn serve() -> std::io::Result<()> {
 This example also depends on `hyper` (features `server`, `http1`), `hyper-util` (feature `tokio`), `http-body-util`,
 `http`, and `bytes`.
 
-### Stack size
-
-The server's futures are large, especially in debug builds, and overflow the default stacks: tokio's 2 MiB worker
-threads, and the main thread (1 MiB on Windows), where `block_on` and `#[tokio::main]` poll your top-level future.
-The bundled binaries run the server on threads with 64 MiB stacks (`thread_stack_size(64 * 1024 * 1024)`). Do the
-same: build the runtime by hand and `tokio::spawn` the code that uses Better IAM, as the examples on
-these pages do, instead of awaiting it directly in `main`.
-
-```rust title="src/main.rs"
-fn main() -> std::io::Result<()> {
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .thread_stack_size(64 * 1024 * 1024)
-        .build()?;
-    runtime.block_on(async { tokio::spawn(run()).await.expect("task panicked") })
-}
-
-async fn run() -> std::io::Result<()> {
-    // create the instance, serve, call the API ...
-    Ok(())
-}
-```
-
-For threads you do not create (actix-web's workers), set the `RUST_MIN_STACK` environment variable, in bytes, when
-the process starts: `RUST_MIN_STACK=67108864`.
+The API and the HTTP handler run on default stacks, even in debug builds: a plain `#[tokio::main]` application, or an
+axum or actix-web application with default settings, needs no larger thread stacks. The repository's tests run API
+calls, HTTP requests, the typed client, and guarded axum and actix-web requests on 1 MiB stacks (the size of the
+Windows main thread). Plugins or callbacks of your own that await deeply nested futures add their own stack use on top.
 
 ## Call the API in process
 
@@ -454,7 +437,14 @@ The Rust server is held to the same contract as the TypeScript server and the Go
   same record shapes. Password hashes, sealed secrets, token hashes, the audit hash chain, session JWTs, assertions,
   and delegation tokens are byte-compatible.
 - **Same behavior.** The decision engine, validation, and every API group are checked by replaying the traces recorded
-  from the TypeScript test suite against the Rust server and comparing normalized responses.
+  from the TypeScript test suite against the Rust server and comparing normalized responses. The Rust server passes
+  all 1,396 replayable recorded traces, as the Go server does.
+- **Same fleet.** A mixed-fleet check (`scripts/conformance/fleet/servers.mjs`) starts the TypeScript, Rust, and Go
+  servers on one SQLite database and walks one scenario across them over HTTP: bootstrap, MFA enrollment, an
+  organization owner invited from one server and accepted on another, sessions, API keys, and session JWTs issued by
+  one and accepted by the others, concurrent writes from all three, and an audit chain that verifies on every server.
+  See "Running the mixed fleet" in
+  [`spec/BUILDOUT.md`](https://github.com/Better-IAM/better-iam/blob/main/spec/BUILDOUT.md).
 
 In practice, a session a TypeScript replica issued is valid on a Rust replica, an audit chain written by both verifies
 as one chain, and a deployment can move between implementations without converting data. Run every replica on the
@@ -462,8 +452,8 @@ same release (the version numbers move in lockstep) and the same `secret` and `p
 from one of them before the others start.
 
 <Callout type="info">
-Parity is proven per recorded trace, not assumed: the replay result (1,364 or more of 1,381 TypeScript traces at
-the time of writing) is the current measure. Behavior that no trace covers can still differ, so test the flows your
+Parity is proven per recorded trace, not assumed: the replay result (all 1,396 replayable TypeScript traces at the
+time of writing) is the current measure. Behavior that no trace covers can still differ, so test the flows your
 application depends on against a Rust replica before you route production traffic to it.
 </Callout>
 

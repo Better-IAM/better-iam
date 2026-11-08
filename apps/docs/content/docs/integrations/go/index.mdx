@@ -421,12 +421,13 @@ guarantees:
 - **The same database (mixed fleet).** TypeScript, Rust, and Go replicas can run side by side on one SQLite,
   PostgreSQL, or libSQL database, and a deployment can move between them without converting data. Password hashes,
   sealed secrets, token hashes, the audit hash chain, session JWTs, and assertions are byte-compatible: the Go tests
-  reproduce or verify the vectors the TypeScript implementation produces (`spec/vectors`). The automated mixed-fleet
-  check alternates TypeScript and Go writes on one SQLite or libSQL file and compares the records and audit chains
-  byte for byte.
+  reproduce or verify the vectors the TypeScript implementation produces (`spec/vectors`). The store-level
+  mixed-fleet check alternates TypeScript and Go writes on one SQLite or libSQL file and compares the records and
+  audit chains byte for byte, and the server-level check (`scripts/conformance/fleet/servers.mjs`) runs the
+  TypeScript, Rust, and Go servers on one SQLite database and walks one scenario across them over HTTP.
 - **The same behavior.** Traces recorded from the TypeScript test suite (each call's credential, input, answer,
   error, outbox messages, and clock moves) are replayed against the Go server over HTTP. At the time of writing, the
-  Go server passes all 1,396 replayable recorded traces.
+  Go server passes all 1,396 replayable recorded traces, as the Rust server does.
 
 What differs is the host language:
 
