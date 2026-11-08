@@ -1,9 +1,6 @@
 //! Delegation tokens (`delegations.issueToken`, delegation-tokens.ts): the port of tests/delegation-tokens.test.ts,
 //! plus checks of what tokens stand on (`scopeRefusal`, `tokenStillStands`) that run on their own.
 //!
-//! Issuing needs agents with token audiences (`agents.create`, `tokenAudience`, `audienceMatches`,
-//! `assertAgentUsable`: agents unit) and the deployment's card signer (`cardSigner`: a2a unit); live verification is
-//! `iam.a2a.verifyDelegationToken` (a2a unit). Those suites are `#[ignore]`d with that reason until the units land.
 //! The offline verifier and the token cache of the `@better-iam/a2a` package (`verifyDelegationToken`,
 //! `createDelegationTokenCache`) have no Rust crate in this repository, so their assertions are not part of this
 //! port; the in-deployment verifier covers the same refusals.
@@ -438,7 +435,6 @@ async fn live(
 }
 
 #[test]
-#[ignore = "needs agents.create, tokenAudience, audienceMatches, assertAgentUsable (agents unit) and cardSigner, A2aRuntime.verifyDelegationToken (a2a unit)"]
 fn lets_an_agent_show_another_service_with_a_signed_token_that_it_acts_for_a_person() {
     run(|| async {
         let Setup {
@@ -561,7 +557,6 @@ fn lets_an_agent_show_another_service_with_a_signed_token_that_it_acts_for_a_per
 }
 
 #[test]
-#[ignore = "needs agents.create, tokenAudience, audienceMatches, assertAgentUsable (agents unit) and cardSigner (a2a unit)"]
 fn refuses_audiences_scopes_and_callers_outside_every_limit_on_the_session() {
     run(|| async {
         let Setup {
@@ -701,7 +696,6 @@ fn refuses_audiences_scopes_and_callers_outside_every_limit_on_the_session() {
 }
 
 #[test]
-#[ignore = "needs agents.create, agents.update, tokenAudience, audienceMatches, assertAgentUsable (agents unit) and cardSigner, A2aRuntime.verifyDelegationToken (a2a unit)"]
 fn names_every_agent_a_hand_off_passed_through_in_nested_act_claims() {
     run(|| async {
         let Setup {
@@ -816,7 +810,6 @@ fn names_every_agent_a_hand_off_passed_through_in_nested_act_claims() {
 }
 
 #[test]
-#[ignore = "needs agents.create, tokenAudience (agents unit) and cardSigner (a2a unit)"]
 fn needs_the_a2a_signing_keys() {
     run(|| async {
         let Setup {
@@ -834,7 +827,6 @@ fn needs_the_a2a_signing_keys() {
 }
 
 #[test]
-#[ignore = "needs agents.create, tokenAudience, audienceMatches, assertAgentUsable (agents unit) and cardSigner (a2a unit)"]
 fn never_carries_what_the_person_confirms_call_by_call_or_what_their_own_denies_may_touch() {
     run(|| async {
         let Setup {
@@ -897,7 +889,6 @@ fn never_carries_what_the_person_confirms_call_by_call_or_what_their_own_denies_
 }
 
 #[test]
-#[ignore = "needs agents.create, tokenAudience, audienceMatches, assertAgentUsable (agents unit) and cardSigner (a2a unit)"]
 fn keeps_honouring_a_deny_whose_authors_authority_was_revoked() {
     run(|| async {
         let Setup {
@@ -987,7 +978,6 @@ fn keeps_honouring_a_deny_whose_authors_authority_was_revoked() {
 }
 
 #[test]
-#[ignore = "needs agents.create, agents.update, tokenAudience, audienceMatches, assertAgentUsable (agents unit) and cardSigner, A2aRuntime.verifyDelegationToken (a2a unit)"]
 fn matches_audiences_by_url_structure_quickly_and_re_checks_everything_live() {
     run(|| async {
         let Setup {

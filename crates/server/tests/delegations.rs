@@ -1,10 +1,5 @@
 //! Delegations to AI agents: the port of tests/delegations.test.ts, tests/delegation-handoffs.test.ts and
 //! tests/delegation-spend.test.ts, plus checks of the module's helpers (delegations.ts) that run on their own.
-//!
-//! The end-to-end suites create agents with `agents.create` and rely on `agentStanding` / `assertAgentUsable`
-//! (agents unit) for every grant, assume and delegated decision, and the spending suite on the inference gateway
-//! (inference unit); until those land they are `#[ignore]`d with that reason. Everything that works without them
-//! runs.
 
 mod delegation_support;
 mod governance;
@@ -631,7 +626,6 @@ async fn setup(agent_input: Value) -> Setup {
 }
 
 #[test]
-#[ignore = "needs agents.create, agentStanding and assertAgentUsable (agents unit)"]
 fn lets_a_person_delegate_part_of_their_access_to_an_agent() {
     let _ = AGENTS;
     run(|| async {
@@ -740,7 +734,6 @@ fn lets_a_person_delegate_part_of_their_access_to_an_agent() {
 }
 
 #[test]
-#[ignore = "needs agents.create, agentStanding and assertAgentUsable (agents unit)"]
 fn shows_the_person_and_the_sponsor_what_the_agent_did() {
     run(|| async {
         let Setup {
@@ -853,7 +846,6 @@ fn shows_the_person_and_the_sponsor_what_the_agent_did() {
 }
 
 #[test]
-#[ignore = "needs agents.create, agentStanding and assertAgentUsable (agents unit)"]
 fn holds_back_sensitive_actions_until_the_person_confirms_each_one() {
     run(|| async {
         let Setup {
@@ -1045,7 +1037,6 @@ fn holds_back_sensitive_actions_until_the_person_confirms_each_one() {
 }
 
 #[test]
-#[ignore = "needs agents.create, agentStanding and assertAgentUsable (agents unit)"]
 fn keeps_the_agent_keys_own_scopes_on_the_sessions_it_opens() {
     run(|| async {
         let Setup {
@@ -1084,7 +1075,6 @@ fn keeps_the_agent_keys_own_scopes_on_the_sessions_it_opens() {
 }
 
 #[test]
-#[ignore = "needs agents.create, agents.update, agentStanding and assertAgentUsable (agents unit)"]
 fn never_gives_the_agent_more_than_the_person_has() {
     run(|| async {
         let Setup {
@@ -1186,7 +1176,6 @@ fn never_gives_the_agent_more_than_the_person_has() {
 }
 
 #[test]
-#[ignore = "needs agents.create, agentStanding and assertAgentUsable (agents unit)"]
 fn runs_the_request_and_approval_flow() {
     run(|| async {
         let Setup {
@@ -1307,7 +1296,6 @@ fn runs_the_request_and_approval_flow() {
 }
 
 #[test]
-#[ignore = "needs agents.create and agentStanding (agents unit)"]
 fn lets_people_deny_requests_and_requests_lapse() {
     run(|| async {
         let Setup {
@@ -1361,7 +1349,6 @@ fn lets_people_deny_requests_and_requests_lapse() {
 }
 
 #[test]
-#[ignore = "needs agents.create, agents.suspend/resume/update, agentStanding and assertAgentUsable (agents unit)"]
 fn ends_delegated_sessions_the_moment_anything_in_the_chain_goes_away() {
     run(|| async {
         let Setup {
@@ -1508,7 +1495,6 @@ fn ends_delegated_sessions_the_moment_anything_in_the_chain_goes_away() {
 }
 
 #[test]
-#[ignore = "needs agents.create and agentStanding (agents unit)"]
 fn refuses_delegation_to_agents_that_do_not_accept_it_and_to_non_agents() {
     run(|| async {
         let Setup {
@@ -1578,7 +1564,6 @@ fn refuses_delegation_to_agents_that_do_not_accept_it_and_to_non_agents() {
 }
 
 #[test]
-#[ignore = "needs agents.create, agents.get, agents.delete, agentStanding and assertAgentUsable (agents unit)"]
 fn lets_administrators_list_and_revoke_delegations_and_deleting_an_agent_revokes_them() {
     run(|| async {
         let Setup {
@@ -1703,7 +1688,6 @@ async fn handoff_setup(assistant_scopes: Option<Value>) -> HandoffSetup {
 }
 
 #[test]
-#[ignore = "needs agents.create, agentStanding and assertAgentUsable (agents unit)"]
 fn lets_an_agent_acting_for_a_person_hand_part_of_the_work_on_to_another_agent() {
     run(|| async {
         let HandoffSetup {
@@ -1852,7 +1836,6 @@ fn lets_an_agent_acting_for_a_person_hand_part_of_the_work_on_to_another_agent()
 }
 
 #[test]
-#[ignore = "needs agents.create, agents.suspend/resume, agentStanding and assertAgentUsable (agents unit)"]
 fn only_hands_on_what_the_person_allowed_to_whom_they_allowed_as_deep_as_they_allowed() {
     run(|| async {
         let HandoffSetup {
@@ -2034,7 +2017,6 @@ fn only_hands_on_what_the_person_allowed_to_whom_they_allowed_as_deep_as_they_al
 }
 
 #[test]
-#[ignore = "needs agents.create, agentStanding and assertAgentUsable (agents unit)"]
 fn ends_a_hand_off_with_the_key_that_made_it_and_credits_agents_with_what_they_revoke() {
     run(|| async {
         let HandoffSetup {
@@ -2128,7 +2110,6 @@ fn ends_a_hand_off_with_the_key_that_made_it_and_credits_agents_with_what_they_r
 }
 
 #[test]
-#[ignore = "needs agents.create, agentStanding and assertAgentUsable (agents unit)"]
 fn never_hands_on_more_than_the_handing_session_could_do() {
     run(|| async {
         // The assistant's key may only read, even though alice's delegation covers writing.
@@ -2310,7 +2291,6 @@ async fn call(f: &Fixture, credential: &better_iam_core::CredentialInput) -> Val
 }
 
 #[test]
-#[ignore = "needs agents.create, agentStanding and assertAgentUsable (agents unit) and the inference gateway (inference unit)"]
 fn caps_what_an_agent_spends_on_models_on_a_persons_behalf_across_hand_offs() {
     let _ = AGENTS_AND_INFERENCE;
     run(|| async {
@@ -2405,7 +2385,6 @@ fn caps_what_an_agent_spends_on_models_on_a_persons_behalf_across_hand_offs() {
 }
 
 #[test]
-#[ignore = "needs agents.create, agentStanding and assertAgentUsable (agents unit) and the inference gateway (inference unit)"]
 fn meters_gateway_tickets_after_the_session_ends_and_counts_hand_offs_against_the_handing_agents_budget()
  {
     run(|| async {
@@ -2553,7 +2532,6 @@ fn meters_gateway_tickets_after_the_session_ends_and_counts_hand_offs_against_th
 }
 
 #[test]
-#[ignore = "needs agents.create, agentStanding and assertAgentUsable (agents unit) and the inference gateway (inference unit)"]
 fn is_set_changed_or_removed_by_the_person_and_validated() {
     run(|| async {
         let SpendSetup {
