@@ -1812,7 +1812,7 @@ pub async fn owns_inference_response(
     let expires_at = record.get("expiresAt").and_then(js::as_number);
     if string("tenantId") != Some(tenant_id)
         || string("providerId") != Some(provider_id)
-        || expires_at.is_none_or(|expires| expires <= ctx.now())
+        || expires_at.is_some_and(|expires| expires <= ctx.now())
     {
         return Ok(false);
     }
