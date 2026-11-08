@@ -69,6 +69,17 @@ func main() {
 	if err != nil {
 		fail(err)
 	}
+	formatted, err := generate(source)
+	if err != nil {
+		fail(err)
+	}
+	if err := os.WriteFile("client_gen.go", formatted, 0o644); err != nil {
+		fail(err)
+	}
+}
+
+// generate renders client_gen.go from the source of go/apitypes/operations_gen.go.
+func generate(source []byte) ([]byte, error) {
 	var routes []route
 	var pending *route
 	scanner := bufio.NewScanner(bytes.NewReader(source))
@@ -81,7 +92,7 @@ func main() {
 		}
 		if match := declRe.FindStringSubmatch(line); match != nil {
 			if pending == nil || pending.op != "Op"+match[1] {
-				fail(fmt.Errorf("descriptor Op%s has no comment", match[1]))
+				return nil, fmt.Errorf("descriptor Op%s has no comment", match[1])
 			}
 			pending.input, pending.output = match[2], match[3]
 			routes = append(routes, *pending)
@@ -89,7 +100,7 @@ func main() {
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		fail(err)
+		return nil, err
 	}
 	byGroup := map[string][]route{}
 	var groupNames []string
@@ -106,7 +117,7 @@ func main() {
 	}
 	sort.Strings(groupNames)
 	if len(routes) == 0 {
-		fail(fmt.Errorf("no operation descriptors found"))
+		return nil, fmt.Errorf("no operation descriptors found")
 	}
 
 	var b strings.Builder
@@ -154,13 +165,7 @@ func main() {
 			}
 		}
 	}
-	formatted, err := format.Source([]byte(b.String()))
-	if err != nil {
-		fail(err)
-	}
-	if err := os.WriteFile("client_gen.go", formatted, 0o644); err != nil {
-		fail(err)
-	}
+	return format.Source([]byte(b.String()))
 }
 
 func fail(err error) {
