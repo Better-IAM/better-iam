@@ -5,6 +5,7 @@
 use std::sync::{Arc, Weak};
 
 use better_iam_auth::service::{CreateIdentityRaw, IssueSessionOptions};
+use better_iam_core::boxed;
 use better_iam_core::{
     AuditOutcome, AuthMethod, AuthenticatedPrincipal, CredentialInput, Filter, FindOptions,
     IamError, IamResult, IamStoreExt, Identity, IdentityKind, IdentityStatus, Record, Session,
@@ -361,19 +362,19 @@ impl FlowService for Flows {
             .transaction(|tx| async move {
                 let ctx = ctx_ref;
                 let auth = &ctx.auth;
-                let realm = ctx.tenant_of(&tx, input.get("tenantId")).await?;
+                let realm = boxed(|| ctx.tenant_of(&tx, input.get("tenantId"))).await?;
                 if realm.status != TenantStatus::Pending {
                     return Err(invitation_invalid("Invitation is invalid"));
                 }
                 let token = text(input.get("token"), "token", 256)?;
-                let found = tx
+                let found = boxed(|| async { tx
                     .find(
                         "ownerInvitations",
                         &Filter::new()
                             .eq("tenantId", realm.id.clone())
                             .eq("tokenHash", hash(&token)),
                         &find_all(),
-                    )
+                    ).await })
                     .await?
                     .into_iter()
                     .next();
@@ -382,9 +383,9 @@ impl FlowService for Flows {
                 };
                 let invitation: OwnerInvitation = decode(raw_invitation.clone())?;
                 if let Some(parent_id) = realm.parent_id.as_deref().filter(|id| !id.is_empty()) {
-                    let parent = ctx.tenant(&tx, parent_id).await?;
-                    if ctx
-                        .ancestry(&tx, &parent)
+                    let parent = boxed(|| ctx.tenant(&tx, parent_id)).await?;
+                    if boxed(|| ctx
+                        .ancestry(&tx, &parent))
                         .await?
                         .iter()
                         .any(|item| item.status != TenantStatus::Active)
@@ -393,21 +394,21 @@ impl FlowService for Flows {
                     }
                 }
                 let authority: GrantAuthority = decode(
-                    ctx.scoped(
+                    boxed(|| ctx.scoped(
                         &tx,
                         "grantAuthorities",
                         raw_invitation.get("authorityId"),
                         &realm.id,
-                    )
+                    ))
                     .await?,
                 )?;
-                if ctx.authority_chain(&tx, &authority.id).await?.is_none() {
+                if boxed(|| ctx.authority_chain(&tx, &authority.id)).await?.is_none() {
                     return Err(invitation_invalid("Invitation authority revoked"));
                 }
                 let name = Value::String(text(input.get("name"), "name", 256)?);
                 let tenant_id = Value::String(realm.id.clone());
                 let email = Value::String(invitation.email.clone());
-                let identity = auth
+                let identity = boxed(|| auth
                     .create_identity_raw(
                         &tx,
                         CreateIdentityRaw {
@@ -419,23 +420,23 @@ impl FlowService for Flows {
                             root_admin: false,
                             email_verified: true,
                         },
-                    )
+                    ))
                     .await?;
-                ctx.owner_setup(&tx, &realm, &identity, &authority).await?;
+                boxed(|| ctx.owner_setup(&tx, &realm, &identity, &authority)).await?;
                 // The tenant as stored, so members this port does not know survive (`{ ...realm, status }`).
-                let mut activated = match tx.get("tenants", &realm.id).await? {
+                let mut activated = match boxed(|| tx.get("tenants", &realm.id)).await? {
                     Some(stored) => stored,
                     None => encode(&realm),
                 };
                 activated.insert("status".into(), Value::String("active".into()));
-                tx.put("tenants", &activated).await?;
+                boxed(|| tx.put("tenants", &activated)).await?;
                 let mut consumed = raw_invitation.clone();
                 consumed.insert("consumed".into(), Value::Bool(true));
-                tx.put("ownerInvitations", &consumed).await?;
+                boxed(|| tx.put("ownerInvitations", &consumed)).await?;
                 // The owner just set a password: the session is a password sign-in, recorded as one and refused like
                 // one where the organization does not accept passwords.
-                let issued = auth
-                    .complete_authentication(&tx, &identity, Some(AuthMethod::Password), None)
+                let issued = boxed(|| auth
+                    .complete_authentication(&tx, &identity, Some(AuthMethod::Password), None))
                     .await?;
                 if let Some(link) = link_principal {
                     let current = ctx.principals()?.current_principal(&tx, link).await?;
@@ -462,7 +463,7 @@ impl FlowService for Flows {
                     link.insert("leftId".into(), Value::String(pair[0].id.clone()));
                     link.insert("rightId".into(), Value::String(pair[1].id.clone()));
                     link.insert("revoked".into(), Value::Bool(false));
-                    tx.insert("identityLinks", &link).await?;
+                    boxed(|| tx.insert("identityLinks", &link)).await?;
                 }
                 ctx.events()?
                     .record_audit(
@@ -482,26 +483,29 @@ impl FlowService for Flows {
             .transaction(|tx| async move {
                 let ctx = ctx_ref;
                 let auth = &ctx.auth;
-                let realm = ctx.tenant_of(&tx, input.get("tenantId")).await?;
-                auth.assert_tenant_active(&tx, &realm.id).await?;
+                let realm = boxed(|| ctx.tenant_of(&tx, input.get("tenantId"))).await?;
+                boxed(|| auth.assert_tenant_active(&tx, &realm.id)).await?;
                 let token = text(input.get("token"), "token", 256)?;
-                let found = tx
-                    .find(
+                let found = boxed(|| async {
+                    tx.find(
                         "memberInvitations",
                         &Filter::new()
                             .eq("tenantId", realm.id.clone())
                             .eq("tokenHash", hash(&token)),
                         &find_all(),
                     )
-                    .await?
-                    .into_iter()
-                    .next();
+                    .await
+                })
+                .await?
+                .into_iter()
+                .next();
                 let Some(raw_invitation) = found.filter(|record| !invitation_dead(record)) else {
                     return Err(invitation_invalid("Invitation is invalid"));
                 };
                 let invitation: MemberInvitation = decode(raw_invitation.clone())?;
                 // The inviter must still be able to grant what the invitation grants.
-                assert_member_invitation_grantable(ctx, &tx, &invitation, &realm.id).await?;
+                boxed(|| assert_member_invitation_grantable(ctx, &tx, &invitation, &realm.id))
+                    .await?;
                 let name = match input.get("name") {
                     Some(value) => Some(text(Some(value), "name", 256)?),
                     None => invitation.name.clone(),
@@ -512,8 +516,8 @@ impl FlowService for Flows {
                 let tenant_id = Value::String(realm.id.clone());
                 let email = Value::String(invitation.email.clone());
                 let name = Value::String(name);
-                let identity = auth
-                    .create_identity_raw(
+                let identity = boxed(|| {
+                    auth.create_identity_raw(
                         &tx,
                         CreateIdentityRaw {
                             tenant_id: Some(&tenant_id),
@@ -525,9 +529,11 @@ impl FlowService for Flows {
                             email_verified: true,
                         },
                     )
-                    .await?;
+                })
+                .await?;
                 for role_id in &invitation.role_ids {
-                    let role: Role = ctx.scoped_as(&tx, "roles", role_id, &realm.id).await?;
+                    let role: Role =
+                        boxed(|| ctx.scoped_as(&tx, "roles", role_id, &realm.id)).await?;
                     if role.protected {
                         return Err(IamError::with_status(
                             "PROTECTED_RESOURCE",
@@ -554,15 +560,18 @@ impl FlowService for Flows {
                     if let Some(authority) = authority {
                         binding.insert("authorityId".into(), Value::String(authority.to_owned()));
                     }
-                    tx.insert("bindings", &binding).await?;
+                    boxed(|| tx.insert("bindings", &binding)).await?;
                 }
                 for group_id in &invitation.group_ids {
-                    ctx.scoped(
-                        &tx,
-                        "groups",
-                        Some(&Value::String(group_id.clone())),
-                        &realm.id,
-                    )
+                    boxed(|| async {
+                        ctx.scoped(
+                            &tx,
+                            "groups",
+                            Some(&Value::String(group_id.clone())),
+                            &realm.id,
+                        )
+                        .await
+                    })
                     .await?;
                     let mut member = Record::new();
                     member.insert("id".into(), Value::String(id()));
@@ -573,23 +582,27 @@ impl FlowService for Flows {
                     );
                     member.insert("groupId".into(), Value::String(group_id.clone()));
                     member.insert("identityId".into(), Value::String(identity.id.clone()));
-                    tx.insert("groupMembers", &member).await?;
+                    boxed(|| tx.insert("groupMembers", &member)).await?;
                 }
                 // License products assigned to those groups seat the new member at once (licenses.ts).
                 if !invitation.group_ids.is_empty() {
-                    crate::licenses::reconcile_group_licenses(
-                        ctx,
-                        &tx,
-                        &realm.id,
-                        &json!(invitation.group_ids),
-                        &Value::String(invitation.inviter_id.clone()),
-                    )
+                    boxed(|| async {
+                        crate::licenses::reconcile_group_licenses(
+                            ctx,
+                            &tx,
+                            &realm.id,
+                            &json!(invitation.group_ids),
+                            &Value::String(invitation.inviter_id.clone()),
+                        )
+                        .await
+                    })
                     .await?;
                 }
-                crate::sod::sod_assert_identity(ctx, &tx, &realm.id, &identity.id).await?;
+                boxed(|| crate::sod::sod_assert_identity(ctx, &tx, &realm.id, &identity.id))
+                    .await?;
                 let mut consumed = raw_invitation.clone();
                 consumed.insert("consumed".into(), Value::Bool(true));
-                tx.put("memberInvitations", &consumed).await?;
+                boxed(|| tx.put("memberInvitations", &consumed)).await?;
                 ctx.events()?
                     .record_audit(
                         &tx,
@@ -608,9 +621,10 @@ impl FlowService for Flows {
                     .await?;
                 // A password sign-in, like the owner invitation's: METHOD_NOT_ALLOWED applies and `session.method` is
                 // set.
-                let issued = auth
-                    .complete_authentication(&tx, &identity, Some(AuthMethod::Password), None)
-                    .await?;
+                let issued = boxed(|| {
+                    auth.complete_authentication(&tx, &identity, Some(AuthMethod::Password), None)
+                })
+                .await?;
                 enrollment(&identity, &issued)
             })
             .await

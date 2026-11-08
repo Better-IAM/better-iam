@@ -7,6 +7,7 @@ use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 
 use better_iam_auth::crypto::encrypt_secret;
 use better_iam_auth::service::base::CreateIdentityRaw;
+use better_iam_core::boxed;
 use better_iam_core::{
     AuditOutcome, AuthenticatedPrincipal, CredentialInput, Filter, FindOptions, IamError,
     IamResult, Identity, IdentityKind, IdentityStatus, Record, SessionKind, TenantStatus,
@@ -319,24 +320,26 @@ pub async fn delete_identity(
     if identity.id == principal.identity.id {
         return Err(IamError::new("INVALID_INPUT", "An identity cannot delete itself").into());
     }
-    if identity.root_admin && !ctx.root_principal(tx, principal).await? {
+    if identity.root_admin && !boxed(|| ctx.root_principal(tx, principal)).await? {
         return Err(
             IamError::with_status("ACCESS_DENIED", "Root capability is protected", 403).into(),
         );
     }
-    assert_owner_control(
-        ctx,
-        tx,
-        principal,
-        identity,
-        "Only an owner can delete an owner",
-    )
+    boxed(|| {
+        assert_owner_control(
+            ctx,
+            tx,
+            principal,
+            identity,
+            "Only an owner can delete an owner",
+        )
+    })
     .await?;
-    ctx.protect_last_owner(tx, identity).await?;
+    boxed(|| ctx.protect_last_owner(tx, identity)).await?;
     // A legal hold (privacy.ts) keeps the person: no deletion path removes what litigation needs kept.
-    crate::privacy::assert_no_legal_hold(tx, identity, ctx.now()).await?;
-    ctx.revoke_all(tx, &identity.id).await?;
-    revoke_invitations_by(tx, &identity.id).await?;
+    boxed(|| crate::privacy::assert_no_legal_hold(tx, identity, ctx.now())).await?;
+    boxed(|| ctx.revoke_all(tx, &identity.id)).await?;
+    boxed(|| revoke_invitations_by(tx, &identity.id)).await?;
     let tenant_id = identity.tenant_id.as_str();
     let mine = || {
         Filter::new()
@@ -344,138 +347,160 @@ pub async fn delete_identity(
             .eq("identityId", identity.id.clone())
     };
     async fn remove(tx: &Store, collection: &str, filter: Filter) -> IamResult<()> {
-        for row in find(tx, collection, filter).await? {
-            tx.delete(collection, &record_id(&row)).await?;
+        for row in boxed(|| find(tx, collection, filter)).await? {
+            boxed(|| async { tx.delete(collection, &record_id(&row)).await }).await?;
         }
         Ok(())
     }
-    remove(
-        tx,
-        "bindings",
-        Filter::new()
-            .eq("tenantId", tenant_id)
-            .eq("subjectType", "identity")
-            .eq("subjectId", identity.id.clone()),
-    )
+    boxed(|| {
+        remove(
+            tx,
+            "bindings",
+            Filter::new()
+                .eq("tenantId", tenant_id)
+                .eq("subjectType", "identity")
+                .eq("subjectId", identity.id.clone()),
+        )
+    })
     .await?;
-    remove(tx, "groupMembers", mine()).await?;
-    remove(tx, "bindingActivations", mine()).await?;
-    remove(tx, "packageAssignments", mine()).await?;
-    remove(tx, "packageRequests", mine()).await?;
+    boxed(|| remove(tx, "groupMembers", mine())).await?;
+    boxed(|| remove(tx, "bindingActivations", mine())).await?;
+    boxed(|| remove(tx, "packageAssignments", mine())).await?;
+    boxed(|| remove(tx, "packageRequests", mine())).await?;
     // A tombstone is nobody's manager.
-    for mut report in find(
-        tx,
-        "identities",
-        Filter::new()
-            .eq("tenantId", tenant_id)
-            .eq("managerId", identity.id.clone()),
-    )
+    for mut report in boxed(|| {
+        find(
+            tx,
+            "identities",
+            Filter::new()
+                .eq("tenantId", tenant_id)
+                .eq("managerId", identity.id.clone()),
+        )
+    })
     .await?
     {
         report.shift_remove("managerId");
-        tx.put("identities", &report).await?;
+        boxed(|| tx.put("identities", &report)).await?;
     }
-    remove(tx, "principalBoundaries", mine()).await?;
-    remove(tx, "authPasskeys", mine()).await?;
-    remove(tx, "passwordHistory", mine()).await?;
-    remove(tx, "externalIdentities", mine()).await?;
+    boxed(|| remove(tx, "principalBoundaries", mine())).await?;
+    boxed(|| remove(tx, "authPasskeys", mine())).await?;
+    boxed(|| remove(tx, "passwordHistory", mine())).await?;
+    boxed(|| remove(tx, "externalIdentities", mine())).await?;
     // Onboarding progress carries the person's form answers.
-    remove(
-        tx,
-        "onboardingProgress",
-        Filter::new()
-            .eq("tenantId", tenant_id)
-            .eq("subjectId", identity.id.clone()),
-    )
+    boxed(|| {
+        remove(
+            tx,
+            "onboardingProgress",
+            Filter::new()
+                .eq("tenantId", tenant_id)
+                .eq("subjectId", identity.id.clone()),
+        )
+    })
     .await?;
     // Threat detection (threats.ts): the sign-in baseline (networks, user agents) and the risk record go with the
     // person; detections and incidents stay as the investigation record.
-    remove(tx, "threatBaselines", mine()).await?;
-    remove(tx, "identityRisk", mine()).await?;
+    boxed(|| remove(tx, "threatBaselines", mine())).await?;
+    boxed(|| remove(tx, "identityRisk", mine())).await?;
     // Device posture (devices.ts): self-enrolled devices retire with their keys, managed ones lose their owner.
-    crate::devices::release_devices_of(tx, identity, ctx.now()).await?;
+    boxed(|| crate::devices::release_devices_of(tx, identity, ctx.now())).await?;
     // Teams and departments (teams.ts, departments.ts): memberships end, departments they head lose their head.
-    crate::teams::remove_from_all_teams(tx, tenant_id, &identity.id, ctx.now()).await?;
-    crate::departments::release_departments(tx, tenant_id, &identity.id, ctx.now(), None).await?;
-    remove(
-        tx,
-        "relationships",
-        Filter::new()
-            .eq("tenantId", tenant_id)
-            .eq("subjectType", "identity")
-            .eq("subjectId", identity.id.clone()),
-    )
+    boxed(|| crate::teams::remove_from_all_teams(tx, tenant_id, &identity.id, ctx.now())).await?;
+    boxed(|| crate::departments::release_departments(tx, tenant_id, &identity.id, ctx.now(), None))
+        .await?;
+    boxed(|| {
+        remove(
+            tx,
+            "relationships",
+            Filter::new()
+                .eq("tenantId", tenant_id)
+                .eq("subjectType", "identity")
+                .eq("subjectId", identity.id.clone()),
+        )
+    })
     .await?;
     let identity_value = Value::Object(encode(identity));
     // Delegations the person gave AI agents (or an agent held) end with the identity (delegations.ts).
-    crate::delegations::revoke_delegations_of(ctx, tx, &identity_value, &principal.identity.id)
-        .await?;
-    // Current consent decisions and restrictions go; their history stays as proof (privacy.ts).
-    crate::privacy::release_privacy_records(tx, identity).await?;
-    // App assignments and launch history go; apps they owned lose them as an owner (applications.ts).
-    crate::applications::release_app_records_of(tx, identity).await?;
-    // Direct license assignments go and seats are released; waiting people move up (licenses.ts).
-    crate::licenses::release_licenses_of(
-        ctx,
-        tx,
-        identity,
-        &crate::conformance::principal_json(principal),
-    )
+    boxed(|| {
+        crate::delegations::revoke_delegations_of(ctx, tx, &identity_value, &principal.identity.id)
+    })
     .await?;
-    // A deleted guest's account row goes; guests the person sponsored are flagged for a new sponsor (guests.ts).
-    crate::guests::release_guest_records(ctx, tx, principal, &identity_value).await?;
-    // A clearance ends as terminated history, its read-ins released (clearances.ts; only with the `clearances` option).
-    if ctx.options.clearances.is_some() {
-        crate::clearances::release_clearances_of(
+    // Current consent decisions and restrictions go; their history stays as proof (privacy.ts).
+    boxed(|| crate::privacy::release_privacy_records(tx, identity)).await?;
+    // App assignments and launch history go; apps they owned lose them as an owner (applications.ts).
+    boxed(|| crate::applications::release_app_records_of(tx, identity)).await?;
+    // Direct license assignments go and seats are released; waiting people move up (licenses.ts).
+    boxed(|| async {
+        crate::licenses::release_licenses_of(
+            ctx,
             tx,
             identity,
-            Some(ctx.now()),
-            Some(&principal.identity.id),
+            &crate::conformance::principal_json(principal),
         )
+        .await
+    })
+    .await?;
+    // A deleted guest's account row goes; guests the person sponsored are flagged for a new sponsor (guests.ts).
+    boxed(|| crate::guests::release_guest_records(ctx, tx, principal, &identity_value)).await?;
+    // A clearance ends as terminated history, its read-ins released (clearances.ts; only with the `clearances` option).
+    if ctx.options.clearances.is_some() {
+        boxed(|| {
+            crate::clearances::release_clearances_of(
+                tx,
+                identity,
+                Some(ctx.now()),
+                Some(&principal.identity.id),
+            )
+        })
         .await?;
     }
-    if tx.get("authMfa", &identity.id).await?.is_some() {
-        tx.delete("authMfa", &identity.id).await?;
+    if boxed(|| tx.get("authMfa", &identity.id)).await?.is_some() {
+        boxed(|| tx.delete("authMfa", &identity.id)).await?;
     }
-    for mut authority in find(tx, "grantAuthorities", mine()).await? {
+    for mut authority in boxed(|| find(tx, "grantAuthorities", mine())).await? {
         if !truthy(&authority, "revoked") {
             authority.insert("revoked".into(), Value::Bool(true));
-            tx.put("grantAuthorities", &authority).await?;
+            boxed(|| tx.put("grantAuthorities", &authority)).await?;
         }
     }
-    let mut links = find(
-        tx,
-        "identityLinks",
-        Filter::new().eq("leftId", identity.id.clone()),
-    )
-    .await?;
-    links.extend(
+    let mut links = boxed(|| {
         find(
             tx,
             "identityLinks",
-            Filter::new().eq("rightId", identity.id.clone()),
+            Filter::new().eq("leftId", identity.id.clone()),
         )
+    })
+    .await?;
+    links.extend(
+        boxed(|| {
+            find(
+                tx,
+                "identityLinks",
+                Filter::new().eq("rightId", identity.id.clone()),
+            )
+        })
         .await?,
     );
     for mut link in links {
         if !truthy(&link, "revoked") {
             link.insert("revoked".into(), Value::Bool(true));
-            tx.put("identityLinks", &link).await?;
+            boxed(|| tx.put("identityLinks", &link)).await?;
         }
     }
-    for mut request in find(
-        tx,
-        "accessRequests",
-        Filter::new()
-            .eq("tenantId", tenant_id)
-            .eq("requesterId", identity.id.clone())
-            .eq("status", "pending"),
-    )
+    for mut request in boxed(|| {
+        find(
+            tx,
+            "accessRequests",
+            Filter::new()
+                .eq("tenantId", tenant_id)
+                .eq("requesterId", identity.id.clone())
+                .eq("status", "pending"),
+        )
+    })
     .await?
     {
         request.insert("status".into(), Value::String("cancelled".into()));
         request.insert("reviewedAt".into(), crate::js::number(ctx.now()));
-        tx.put("accessRequests", &request).await?;
+        boxed(|| tx.put("accessRequests", &request)).await?;
     }
     let mut tombstone = encode(identity);
     tombstone.shift_remove("passwordHash");
@@ -495,7 +520,7 @@ pub async fn delete_identity(
         tombstone.insert("deletedEmail".into(), deleted_email);
     }
     Ok(Value::Object(public_identity_record(
-        &tx.put("identities", &tombstone).await?,
+        &boxed(|| tx.put("identities", &tombstone)).await?,
     )))
 }
 
@@ -2154,14 +2179,15 @@ impl IdentitiesApi {
             Box::pin(async move {
                 ctx.auth.require_recent(&principal)?;
                 let reason = text(body.get("reason"), "reason", 512)?;
-                let loaded = active_identity(ctx, &tx, body.get("identityId"), tenant).await?;
+                let loaded =
+                    boxed(|| active_identity(ctx, &tx, body.get("identityId"), tenant)).await?;
                 let identity = &loaded.identity;
                 if identity.id == principal.identity.id {
                     return Err(
                         IamError::new("INVALID_INPUT", "You cannot offboard yourself").into(),
                     );
                 }
-                if identity.root_admin && !ctx.root_principal(&tx, &principal).await? {
+                if identity.root_admin && !boxed(|| ctx.root_principal(&tx, &principal)).await? {
                     return Err(IamError::with_status(
                         "ACCESS_DENIED",
                         "Root capability is protected",
@@ -2169,10 +2195,10 @@ impl IdentitiesApi {
                     )
                     .into());
                 }
-                ctx.protect_last_owner(&tx, identity).await?;
+                boxed(|| ctx.protect_last_owner(&tx, identity)).await?;
                 let successor = match body.get("successorId") {
                     Some(successor_id) => {
-                        Some(active_identity(ctx, &tx, Some(successor_id), tenant).await?)
+                        Some(boxed(|| active_identity(ctx, &tx, Some(successor_id), tenant)).await?)
                     }
                     None => None,
                 };
@@ -2187,11 +2213,13 @@ impl IdentitiesApi {
                     .into());
                 }
                 let successor_identity = successor.as_ref().map(|successor| &successor.identity);
-                let sessions = find(
-                    &tx,
-                    "sessions",
-                    Filter::new().eq("identityId", identity.id.clone()),
-                )
+                let sessions = boxed(|| {
+                    find(
+                        &tx,
+                        "sessions",
+                        Filter::new().eq("identityId", identity.id.clone()),
+                    )
+                })
                 .await?
                 .len() as f64;
                 let mut bindings = 0.0;
@@ -2212,7 +2240,7 @@ impl IdentitiesApi {
                 // Ownership goes first: the protected Owner binding is removed like setOwner(false).
                 if identity.owner {
                     if !owns_tenant(&principal, tenant)
-                        && !ctx.root_principal(&tx, &principal).await?
+                        && !boxed(|| ctx.root_principal(&tx, &principal)).await?
                     {
                         return Err(IamError::with_status(
                             "ACCESS_DENIED",
@@ -2221,44 +2249,53 @@ impl IdentitiesApi {
                         )
                         .into());
                     }
-                    let owner_role = find(
-                        &tx,
-                        "roles",
-                        Filter::new()
-                            .eq("tenantId", tenant.as_str())
-                            .eq("uniqueKey", "system:owner"),
-                    )
+                    let owner_role = boxed(|| {
+                        find(
+                            &tx,
+                            "roles",
+                            Filter::new()
+                                .eq("tenantId", tenant.as_str())
+                                .eq("uniqueKey", "system:owner"),
+                        )
+                    })
                     .await?
                     .into_iter()
                     .next();
                     let owner_role_id = owner_role.as_ref().map(record_id).unwrap_or_default();
-                    for binding in find(
-                        &tx,
-                        "bindings",
-                        Filter::new()
-                            .eq("tenantId", tenant.as_str())
-                            .eq("subjectType", "identity")
-                            .eq("subjectId", identity.id.clone())
-                            .eq("roleId", owner_role_id),
-                    )
+                    for binding in boxed(|| {
+                        find(
+                            &tx,
+                            "bindings",
+                            Filter::new()
+                                .eq("tenantId", tenant.as_str())
+                                .eq("subjectType", "identity")
+                                .eq("subjectId", identity.id.clone())
+                                .eq("roleId", owner_role_id),
+                        )
+                    })
                     .await?
                     {
-                        tx.delete("bindings", &record_id(&binding)).await?;
+                        boxed(|| async { tx.delete("bindings", &record_id(&binding)).await })
+                            .await?;
                         bindings += 1.0;
                     }
                 }
                 // Activations are counted before the bindings and memberships that would remove them.
-                for activation in find(&tx, "bindingActivations", mine()).await? {
-                    tx.delete("bindingActivations", &record_id(&activation))
-                        .await?;
+                for activation in boxed(|| find(&tx, "bindingActivations", mine())).await? {
+                    boxed(|| async {
+                        tx.delete("bindingActivations", &record_id(&activation))
+                            .await
+                    })
+                    .await?;
                     activations += 1.0;
                 }
                 // Package assignments are revoked first, under package ownership: their bindings may come from
                 // another administrator's authority, which the generic binding removal below would refuse.
-                for assignment in find(&tx, "packageAssignments", mine()).await? {
+                for assignment in boxed(|| find(&tx, "packageAssignments", mine())).await? {
                     let assignment: crate::models::PackageAssignment = decode(assignment)?;
                     let removed =
-                        crate::api::packages::revoke_assignment(ctx, &tx, &assignment).await?;
+                        boxed(|| crate::api::packages::revoke_assignment(ctx, &tx, &assignment))
+                            .await?;
                     bindings += removed
                         .get("bindings")
                         .and_then(core_js::as_number)
@@ -2269,33 +2306,39 @@ impl IdentitiesApi {
                         .unwrap_or(0.0);
                     packages += 1.0;
                 }
-                for binding in find(
-                    &tx,
-                    "bindings",
-                    Filter::new()
-                        .eq("tenantId", tenant.as_str())
-                        .eq("subjectType", "identity")
-                        .eq("subjectId", identity.id.clone()),
-                )
+                for binding in boxed(|| {
+                    find(
+                        &tx,
+                        "bindings",
+                        Filter::new()
+                            .eq("tenantId", tenant.as_str())
+                            .eq("subjectType", "identity")
+                            .eq("subjectId", identity.id.clone()),
+                    )
+                })
                 .await?
                 {
                     let binding: crate::models::Binding = decode(binding)?;
-                    crate::api::bindings::delete_binding(ctx, &tx, &principal, &binding).await?;
+                    boxed(|| crate::api::bindings::delete_binding(ctx, &tx, &principal, &binding))
+                        .await?;
                     bindings += 1.0;
                 }
                 // Teams and departments (teams.ts, departments.ts): team memberships go first, taking the
                 // team-managed group memberships with them; departments they head pass to the successor. Reported
                 // only when non-zero.
-                let teams_left =
+                let teams_left = boxed(|| {
                     crate::teams::remove_from_all_teams(&tx, tenant, &identity.id, ctx.now())
-                        .await?;
-                let departments = crate::departments::release_departments(
-                    &tx,
-                    tenant,
-                    &identity.id,
-                    ctx.now(),
-                    successor_identity.map(|successor| successor.id.as_str()),
-                )
+                })
+                .await?;
+                let departments = boxed(|| {
+                    crate::departments::release_departments(
+                        &tx,
+                        tenant,
+                        &identity.id,
+                        ctx.now(),
+                        successor_identity.map(|successor| successor.id.as_str()),
+                    )
+                })
                 .await?;
                 let mut org_counts = Map::new();
                 if teams_left != 0.0 && !teams_left.is_nan() {
@@ -2325,16 +2368,18 @@ impl IdentitiesApi {
                         let removed = removed.clone();
                         let future: futures::future::BoxFuture<'static, IamResult<Value>> =
                             Box::pin(async move {
-                                for membership in find(
-                                    &tx,
-                                    "groupMembers",
-                                    Filter::new()
-                                        .eq("tenantId", tenant.clone())
-                                        .eq("identityId", identity_id.clone()),
-                                )
+                                for membership in boxed(|| {
+                                    find(
+                                        &tx,
+                                        "groupMembers",
+                                        Filter::new()
+                                            .eq("tenantId", tenant.clone())
+                                            .eq("identityId", identity_id.clone()),
+                                    )
+                                })
                                 .await?
                                 {
-                                    crate::api::groups::remove_group_member(
+                                    boxed(|| async { crate::api::groups::remove_group_member(
                                     &ctx,
                                     &tx,
                                     &principal,
@@ -2343,7 +2388,7 @@ impl IdentitiesApi {
                                         "groupId": membership.get("groupId").cloned().unwrap_or(Value::Null),
                                         "identityId": identity_id,
                                     }),
-                                )
+                                ).await })
                                 .await?;
                                     removed.fetch_add(1, AtomicOrdering::SeqCst);
                                 }
@@ -2352,48 +2397,53 @@ impl IdentitiesApi {
                         future
                     })
                 };
-                crate::licenses::batch_group_licenses(ctx, &tx, &run).await?;
+                boxed(|| crate::licenses::batch_group_licenses(ctx, &tx, &run)).await?;
                 memberships += removed_memberships.load(AtomicOrdering::SeqCst) as f64;
-                for tuple in find(
-                    &tx,
-                    "relationships",
-                    Filter::new()
-                        .eq("tenantId", tenant.as_str())
-                        .eq("subjectType", "identity")
-                        .eq("subjectId", identity.id.clone()),
-                )
+                for tuple in boxed(|| {
+                    find(
+                        &tx,
+                        "relationships",
+                        Filter::new()
+                            .eq("tenantId", tenant.as_str())
+                            .eq("subjectType", "identity")
+                            .eq("subjectId", identity.id.clone()),
+                    )
+                })
                 .await?
                 {
-                    tx.delete("relationships", &record_id(&tuple)).await?;
+                    boxed(|| async { tx.delete("relationships", &record_id(&tuple)).await })
+                        .await?;
                     relationships += 1.0;
                 }
-                for mut request in find(
-                    &tx,
-                    "accessRequests",
-                    Filter::new()
-                        .eq("tenantId", tenant.as_str())
-                        .eq("requesterId", identity.id.clone())
-                        .eq("status", "pending"),
-                )
+                for mut request in boxed(|| {
+                    find(
+                        &tx,
+                        "accessRequests",
+                        Filter::new()
+                            .eq("tenantId", tenant.as_str())
+                            .eq("requesterId", identity.id.clone())
+                            .eq("status", "pending"),
+                    )
+                })
                 .await?
                 {
                     request.insert("status".into(), Value::String("cancelled".into()));
                     request.insert("reviewedAt".into(), crate::js::number(ctx.now()));
-                    tx.put("accessRequests", &request).await?;
+                    boxed(|| tx.put("accessRequests", &request)).await?;
                     access_requests += 1.0;
                 }
                 for mut request in
-                    find(&tx, "packageRequests", mine().eq("status", "pending")).await?
+                    boxed(|| find(&tx, "packageRequests", mine().eq("status", "pending"))).await?
                 {
                     request.insert("status".into(), Value::String("cancelled".into()));
                     request.insert("decidedAt".into(), crate::js::number(ctx.now()));
-                    tx.put("packageRequests", &request).await?;
+                    boxed(|| tx.put("packageRequests", &request)).await?;
                     access_requests += 1.0;
                 }
-                for mut authority in find(&tx, "grantAuthorities", mine()).await? {
+                for mut authority in boxed(|| find(&tx, "grantAuthorities", mine())).await? {
                     if !truthy(&authority, "revoked") {
                         authority.insert("revoked".into(), Value::Bool(true));
-                        tx.put("grantAuthorities", &authority).await?;
+                        boxed(|| tx.put("grantAuthorities", &authority)).await?;
                         authorities += 1.0;
                     }
                 }
@@ -2414,16 +2464,18 @@ impl IdentitiesApi {
                     }
                     let next = next.to_owned();
                     successor_line.insert(next.clone());
-                    cursor = tx.get("identities", &next).await?;
+                    cursor = boxed(|| tx.get("identities", &next)).await?;
                     depth += 1;
                 }
-                for mut report in find(
-                    &tx,
-                    "identities",
-                    Filter::new()
-                        .eq("tenantId", tenant.as_str())
-                        .eq("managerId", identity.id.clone()),
-                )
+                for mut report in boxed(|| {
+                    find(
+                        &tx,
+                        "identities",
+                        Filter::new()
+                            .eq("tenantId", tenant.as_str())
+                            .eq("managerId", identity.id.clone()),
+                    )
+                })
                 .await?
                 {
                     if str_of(&report, "status") == Some("deleted") {
@@ -2445,22 +2497,24 @@ impl IdentitiesApi {
                     if let Some(manager_id) = manager_id {
                         report.insert("managerId".into(), manager_id);
                     }
-                    tx.put("identities", &report).await?;
+                    boxed(|| tx.put("identities", &report)).await?;
                     reports_reassigned += 1.0;
                 }
-                for mut resource in find(
-                    &tx,
-                    "resources",
-                    Filter::new()
-                        .eq("tenantId", tenant.as_str())
-                        .eq("ownerId", identity.id.clone()),
-                )
+                for mut resource in boxed(|| {
+                    find(
+                        &tx,
+                        "resources",
+                        Filter::new()
+                            .eq("tenantId", tenant.as_str())
+                            .eq("ownerId", identity.id.clone()),
+                    )
+                })
                 .await?
                 {
                     if let Some(successor) = successor_identity {
                         resource.insert("ownerId".into(), Value::String(successor.id.clone()));
                         resource.insert("updatedAt".into(), crate::js::number(ctx.now()));
-                        tx.put("resources", &resource).await?;
+                        boxed(|| tx.put("resources", &resource)).await?;
                         resources_reassigned += 1.0;
                     } else {
                         resources_owned += 1.0;
@@ -2469,36 +2523,45 @@ impl IdentitiesApi {
                 // AI agents (agents.ts): the agents they sponsor move to the successor, and every delegation they
                 // gave (or, for an agent, hold) ends. Reported only when there was something to do, so other results
                 // keep their shape.
-                let handover = crate::agents::hand_over_agents(
-                    ctx,
-                    &tx,
-                    &principal,
-                    identity,
-                    successor_identity,
-                )
+                let handover = boxed(|| {
+                    crate::agents::hand_over_agents(
+                        ctx,
+                        &tx,
+                        &principal,
+                        identity,
+                        successor_identity,
+                    )
+                })
                 .await?;
-                let delegations_revoked = crate::delegations::revoke_delegations_of(
-                    ctx,
-                    &tx,
-                    &Value::Object(loaded.raw.clone()),
-                    &principal.identity.id,
-                )
+                let delegations_revoked = boxed(|| async {
+                    crate::delegations::revoke_delegations_of(
+                        ctx,
+                        &tx,
+                        &Value::Object(loaded.raw.clone()),
+                        &principal.identity.id,
+                    )
+                    .await
+                })
                 .await?;
                 // Guests (guests.ts): the guests they sponsor move to the successor or are flagged for a new
                 // sponsor, and a leaver who is a guest has their guest account closed. Reported only when non-zero.
-                let guest_handover = crate::guests::hand_over_guests(
-                    ctx,
-                    &tx,
-                    &principal,
-                    identity,
-                    successor_identity,
-                )
+                let guest_handover = boxed(|| {
+                    crate::guests::hand_over_guests(
+                        ctx,
+                        &tx,
+                        &principal,
+                        identity,
+                        successor_identity,
+                    )
+                })
                 .await?;
                 // Security clearances (clearances.ts): the leaver's clearance is terminated and every compartment
                 // debriefed.
-                let clearances_terminated = crate::clearances::terminate_clearances_of(
-                    ctx, &tx, &principal, identity, &reason,
-                )
+                let clearances_terminated = boxed(|| {
+                    crate::clearances::terminate_clearances_of(
+                        ctx, &tx, &principal, identity, &reason,
+                    )
+                })
                 .await?;
                 let mut agent_counts = Map::new();
                 let mut count_if = |name: &str, value: Option<&Value>| {
@@ -2518,14 +2581,14 @@ impl IdentitiesApi {
                     "clearancesTerminated",
                     Some(&crate::js::number(clearances_terminated)),
                 );
-                ctx.revoke_all(&tx, &identity.id).await?;
-                revoke_invitations_by(&tx, &identity.id).await?;
+                boxed(|| ctx.revoke_all(&tx, &identity.id)).await?;
+                boxed(|| revoke_invitations_by(&tx, &identity.id)).await?;
                 let mut disabled = loaded.raw.clone();
                 disabled.insert("status".into(), Value::String("disabled".into()));
                 disabled.insert("owner".into(), Value::Bool(false));
-                let disabled = tx.put("identities", &disabled).await?;
+                let disabled = boxed(|| tx.put("identities", &disabled)).await?;
                 // An offboarded identity stays disabled: a threats containment of it can no longer be released.
-                crate::threats::end_containment(&tx, &identity.id, ctx.now()).await?;
+                boxed(|| crate::threats::end_containment(&tx, &identity.id, ctx.now())).await?;
                 let mut counts = Map::new();
                 for (name, value) in [
                     ("sessions", sessions),
@@ -2582,18 +2645,19 @@ impl IdentitiesApi {
             })
         });
         let resource_id = string_member(&input, "identityId");
-        let result = self
-            .run(
+        let result = boxed(|| {
+            self.run(
                 credential,
                 &input,
                 "iam:identities:update",
                 &resource_id,
                 mutation,
             )
-            .await?;
+        })
+        .await?;
         // A disabled identity claims no license seat: reconciling releases its seats (licenses.ts).
         Ok(Reply::json(
-            self.after_change(&input, vec![resource_id], result).await?,
+            boxed(|| self.after_change(&input, vec![resource_id], result)).await?,
         ))
     }
 

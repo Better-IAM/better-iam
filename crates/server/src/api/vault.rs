@@ -12,6 +12,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
+use better_iam_core::boxed;
 use better_iam_core::{
     AuditOutcome, AuthenticatedPrincipal, CredentialInput, Direction, Filter, FindOptions,
     IamError, IamResult, IamStoreExt, Identity, IdentityKind, IdentityStatus, OrderOptions, Record,
@@ -2226,7 +2227,7 @@ impl VaultApi {
                     }
                     let format = store_vault::secret_format(body.get("format"))?;
                     if let Some(existing) =
-                        store_vault::find_secret(&tx, &realm.id, name_ref).await?
+                        boxed(|| store_vault::find_secret(&tx, &realm.id, name_ref)).await?
                     {
                         return Err(IamError::with_status(
                         "CONFLICT",
@@ -2239,14 +2240,16 @@ impl VaultApi {
                     )
                     .into());
                     }
-                    let count = tx
-                        .find(
+                    let count = boxed(|| async {
+                        tx.find(
                             col("secrets"),
                             &Filter::new().eq("tenantId", realm.id.clone()),
                             &FindOptions::default(),
                         )
-                        .await?
-                        .len() as f64;
+                        .await
+                    })
+                    .await?
+                    .len() as f64;
                     if count >= vault.max_secrets_per_tenant {
                         return Err(IamError::with_status(
                             "LIMIT_EXCEEDED",
@@ -2347,24 +2350,27 @@ impl VaultApi {
                         }
                         if let Some(reference) = body.get("kmsKey") {
                             let key_id =
-                                usable_key(ctx, &tx, &principal, &realm, Some(reference)).await?;
+                                boxed(|| usable_key(ctx, &tx, &principal, &realm, Some(reference)))
+                                    .await?;
                             fresh.insert("kmsKeyId".into(), string(key_id));
                         }
                         checkout_fits(&decode::<VaultSecret>(fresh.clone())?)?;
                     }
-                    tx.insert(col("secrets"), &fresh).await?;
+                    boxed(|| tx.insert(col("secrets"), &fresh)).await?;
                     let mut secret: VaultSecret = decode(fresh)?;
                     // Decided again with the new secret's attributes (tags, kind, engine, settings), which the first
                     // decision could not see: a name nobody uses yet has none.
-                    require_still(
-                        ctx,
-                        &tx,
-                        &principal,
-                        &realm,
-                        name_ref,
-                        "iam:vault:manage",
-                        "You may not create a secret with these attributes",
-                    )
+                    boxed(|| {
+                        require_still(
+                            ctx,
+                            &tx,
+                            &principal,
+                            &realm,
+                            name_ref,
+                            "iam:vault:manage",
+                            "You may not create a secret with these attributes",
+                        )
+                    })
                     .await?;
                     let mut initial: Option<f64> = None;
                     let generate = truthy(body.get("generate"));
@@ -2399,28 +2405,40 @@ impl VaultApi {
                             store_vault::secret_value(&vault, &format, &body.value())?
                         };
                         let use_ = value_use(&principal);
-                        let (added_secret, added_version) = add_version(
-                            ctx,
-                            &tx,
-                            &secret,
-                            &value,
-                            if generate { "generated" } else { "put" },
-                            &principal.identity.id,
-                            Some(&use_),
-                        )
+                        let (added_secret, added_version) = boxed(|| {
+                            add_version(
+                                ctx,
+                                &tx,
+                                &secret,
+                                &value,
+                                if generate { "generated" } else { "put" },
+                                &principal.identity.id,
+                                Some(&use_),
+                            )
+                        })
                         .await?;
-                        secret = store_vault::promote_version(
-                            ctx,
-                            &tx,
-                            &added_secret,
-                            added_version.version,
-                            &principal.identity.id,
-                            None,
-                        )
+                        secret = boxed(|| {
+                            store_vault::promote_version(
+                                ctx,
+                                &tx,
+                                &added_secret,
+                                added_version.version,
+                                &principal.identity.id,
+                                None,
+                            )
+                        })
                         .await?;
                         initial = Some(added_version.version);
-                        record_access(ctx, &tx, &secret, &access(&principal, "put", initial, None))
-                            .await?;
+                        boxed(|| async {
+                            record_access(
+                                ctx,
+                                &tx,
+                                &secret,
+                                &access(&principal, "put", initial, None),
+                            )
+                            .await
+                        })
+                        .await?;
                     }
                     let mut metadata = meta(vec![
                         ("name", string(name_ref.clone())),
@@ -2449,7 +2467,7 @@ impl VaultApi {
                             Some(metadata),
                         )
                         .await?;
-                    Ok(views(ctx, &tx, &secret).await?)
+                    Ok(boxed(|| views(ctx, &tx, &secret)).await?)
                 })
             },
         );
@@ -3395,7 +3413,7 @@ impl VaultApi {
                 Box::pin(async move {
                     writable(&realm)?;
                     let mut secret = static_secret(active_secret(
-                        existing_secret(&tx, &realm.id, name_ref).await?,
+                        boxed(|| existing_secret(&tx, &realm.id, name_ref)).await?,
                     )?)?;
                     let generate = truthy(body.get("generate"));
                     // Generating into a json secret reads its current fields, which is a decryption as well.
@@ -3404,7 +3422,8 @@ impl VaultApi {
                     } else {
                         &["iam:kms:encrypt"]
                     };
-                    require_secret_key(ctx, &tx, &principal, &realm, &secret, actions).await?;
+                    boxed(|| require_secret_key(ctx, &tx, &principal, &realm, &secret, actions))
+                        .await?;
                     let use_ = value_use(&principal);
                     let value = if generate {
                         if body.get("value").is_some() || body.get("fields").is_some() {
@@ -3427,15 +3446,22 @@ impl VaultApi {
                             };
                             let current = match secret.stages.get("current") {
                                 Some(number) => {
-                                    store_vault::version_of(&tx, &secret, *number).await?
+                                    boxed(|| store_vault::version_of(&tx, &secret, *number)).await?
                                 }
                                 None => None,
                             };
                             let mut fields = match &current {
                                 Some(current) if current.state == "enabled" => {
                                     store_vault::parse_fields(
-                                        &store_vault::open_version(ctx, &tx, current, Some(&use_))
-                                            .await?,
+                                        &boxed(|| {
+                                            store_vault::open_version(
+                                                ctx,
+                                                &tx,
+                                                current,
+                                                Some(&use_),
+                                            )
+                                        })
+                                        .await?,
                                     )?
                                 }
                                 _ => IndexMap::new(),
@@ -3448,25 +3474,29 @@ impl VaultApi {
                     } else {
                         store_vault::secret_value(&settings(ctx)?, &secret.format, &body.value())?
                     };
-                    let (added_secret, added_version) = add_version(
-                        ctx,
-                        &tx,
-                        &secret,
-                        &value,
-                        if generate { "generated" } else { "put" },
-                        &principal.identity.id,
-                        Some(&use_),
-                    )
-                    .await?;
-                    if stage_ref == "current" {
-                        secret = store_vault::promote_version(
+                    let (added_secret, added_version) = boxed(|| {
+                        add_version(
                             ctx,
                             &tx,
-                            &added_secret,
-                            added_version.version,
+                            &secret,
+                            &value,
+                            if generate { "generated" } else { "put" },
                             &principal.identity.id,
-                            None,
+                            Some(&use_),
                         )
+                    })
+                    .await?;
+                    if stage_ref == "current" {
+                        secret = boxed(|| {
+                            store_vault::promote_version(
+                                ctx,
+                                &tx,
+                                &added_secret,
+                                added_version.version,
+                                &principal.identity.id,
+                                None,
+                            )
+                        })
                         .await?;
                     } else {
                         let mut stages = added_secret.stages.clone();
@@ -3483,15 +3513,18 @@ impl VaultApi {
                         next.stages = stages;
                         next.updated_at = ctx.now();
                         next.updated_by = principal.identity.id.clone();
-                        secret = put_secret(&tx, &next).await?;
-                        store_vault::prune_versions(&tx, &secret).await?;
+                        secret = boxed(|| put_secret(&tx, &next)).await?;
+                        boxed(|| store_vault::prune_versions(&tx, &secret)).await?;
                     }
-                    record_access(
-                        ctx,
-                        &tx,
-                        &secret,
-                        &access(&principal, "put", Some(added_version.version), None),
-                    )
+                    boxed(|| async {
+                        record_access(
+                            ctx,
+                            &tx,
+                            &secret,
+                            &access(&principal, "put", Some(added_version.version), None),
+                        )
+                        .await
+                    })
                     .await?;
                     ctx.events()?
                         .audit(
@@ -4127,8 +4160,9 @@ impl VaultApi {
                   }| {
                 Box::pin(async move {
                     writable(&realm)?;
-                    let secret = active_secret(existing_secret(&tx, &realm.id, name_ref).await?)?;
-                    let before = reach(ctx, &tx, &principal, &realm, name_ref).await?;
+                    let secret =
+                        active_secret(boxed(|| existing_secret(&tx, &realm.id, name_ref)).await?)?;
+                    let before = boxed(|| reach(ctx, &tx, &principal, &realm, name_ref)).await?;
                     let vault = settings(ctx)?;
                     let now = ctx.now();
                     let mut next = secret.clone();
@@ -4209,61 +4243,75 @@ impl VaultApi {
                         target.kms_key_id = None;
                         if !reference.is_null() {
                             target.kms_key_id = Some(
-                                usable_key(ctx, &tx, &principal, &realm, Some(reference)).await?,
+                                boxed(|| usable_key(ctx, &tx, &principal, &realm, Some(reference)))
+                                    .await?,
                             );
                         }
                         if target.kms_key_id != secret.kms_key_id {
                             // Taking values out from under a customer-managed key is a decryption with it.
                             if let Some(previous) = &secret.kms_key_id {
-                                require_key_action(
-                                    ctx,
-                                    &tx,
-                                    &principal,
-                                    &realm,
-                                    previous,
-                                    "iam:kms:decrypt",
-                                )
+                                boxed(|| {
+                                    require_key_action(
+                                        ctx,
+                                        &tx,
+                                        &principal,
+                                        &realm,
+                                        previous,
+                                        "iam:kms:decrypt",
+                                    )
+                                })
                                 .await?;
                             }
                             let use_ = value_use(&principal);
-                            for version in store_vault::secret_versions(&tx, &secret).await? {
+                            for version in
+                                boxed(|| store_vault::secret_versions(&tx, &secret)).await?
+                            {
                                 if version.sealed.is_none() {
                                     continue;
                                 }
-                                let value =
+                                let value = boxed(|| {
                                     store_vault::open_stored(ctx, &tx, &version, Some(&use_))
-                                        .await?;
-                                let encrypted = store_vault::encrypt_version(
-                                    ctx,
-                                    &tx,
-                                    target.kms_key_id.as_deref(),
-                                    &version,
-                                    &value,
-                                    Some(&use_),
-                                )
+                                })
                                 .await?;
-                                tx.put(col("versions"), &record(&encrypted)).await?;
+                                let encrypted = boxed(|| {
+                                    store_vault::encrypt_version(
+                                        ctx,
+                                        &tx,
+                                        target.kms_key_id.as_deref(),
+                                        &version,
+                                        &value,
+                                        Some(&use_),
+                                    )
+                                })
+                                .await?;
+                                boxed(|| async {
+                                    tx.put(col("versions"), &record(&encrypted)).await
+                                })
+                                .await?;
                                 reencrypted += 1.0;
                             }
                         }
                         next = target;
                     }
                     checkout_fits(&next)?;
-                    let stored = put_secret(&tx, &next).await?;
+                    let stored = boxed(|| put_secret(&tx, &next)).await?;
                     // New tags and settings are new attributes: the caller must still be allowed to manage the secret
                     // with them, and may not gain any other action on it by the change.
-                    require_still(
-                        ctx,
-                        &tx,
-                        &principal,
-                        &realm,
-                        name_ref,
-                        "iam:vault:manage",
-                        "The change puts the secret outside what you may manage",
-                    )
+                    boxed(|| {
+                        require_still(
+                            ctx,
+                            &tx,
+                            &principal,
+                            &realm,
+                            name_ref,
+                            "iam:vault:manage",
+                            "The change puts the secret outside what you may manage",
+                        )
+                    })
                     .await?;
-                    require_no_wider(ctx, &tx, &principal, &realm, name_ref, &before).await?;
-                    store_vault::prune_versions(&tx, &stored).await?;
+                    boxed(|| require_no_wider(ctx, &tx, &principal, &realm, name_ref, &before))
+                        .await?;
+                    boxed(|| store_vault::prune_versions(&tx, &stored)).await?;
                     let mut metadata = meta(vec![
                         ("name", string(name_ref.clone())),
                         ("tags", tags_json(&stored.tags)),
@@ -4303,7 +4351,7 @@ impl VaultApi {
                             Some(metadata),
                         )
                         .await?;
-                    Ok(views(ctx, &tx, &stored).await?)
+                    Ok(boxed(|| views(ctx, &tx, &stored)).await?)
                 })
             },
         );

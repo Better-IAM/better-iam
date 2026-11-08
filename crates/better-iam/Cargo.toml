@@ -29,6 +29,12 @@ libsql = ["dep:better-iam-adapter-libsql"]
 client = ["dep:better-iam-client", "types"]
 # The projects reference plugin (`better-iam/projects`).
 projects = ["dep:better-iam-projects"]
+# Framework middleware (`better-iam/middleware`): the tower layer, request helpers and route guards.
+middleware = ["dep:better-iam-middleware", "server"]
+# The middleware's axum integration (`IamRequest` as an extractor, IAM errors as responses).
+axum = ["middleware", "better-iam-middleware?/axum"]
+# The middleware's actix-web integration (middleware, route guards, an extractor, `ResponseError`).
+actix-web = ["middleware", "better-iam-middleware?/actix-web"]
 
 [dependencies]
 better-iam-core.workspace = true
@@ -40,6 +46,7 @@ better-iam-adapter-postgres = { workspace = true, optional = true }
 better-iam-adapter-libsql = { workspace = true, optional = true }
 better-iam-client = { workspace = true, optional = true }
 better-iam-projects = { workspace = true, optional = true }
+better-iam-middleware = { workspace = true, optional = true }
 
 [dev-dependencies]
 serde_json.workspace = true

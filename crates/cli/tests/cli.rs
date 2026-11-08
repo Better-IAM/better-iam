@@ -423,6 +423,40 @@ fn migrates_bootstraps_diagnoses_and_recovers_through_trusted_configuration() {
 
 // --- developer experience (cli-dx.test.ts) ---------------------------------------------------------------------------
 
+/// `better-iam help` lays out its sections as the TypeScript `overviewHelp` does: every built-in command belongs to a
+/// named section, so the only `Commands` heading is the one over the usage lines. (A project command without a
+/// `group` is listed under a `Commands` section of its own, before that heading, in both implementations.)
+#[test]
+fn overview_help_has_one_commands_heading_like_the_typescript_cli() {
+    run(|| async {
+        let r = Recorder::new(None);
+        cli(&["help"], r.io(&[])).await.unwrap();
+        let help = r.raw();
+        let headings: Vec<&str> = help
+            .lines()
+            .filter(|line| !line.is_empty() && !line.starts_with(' '))
+            .collect();
+        assert_eq!(
+            headings,
+            [
+                headings[0],
+                "Usage",
+                "Setup",
+                "Operations",
+                "Audit",
+                "Storage",
+                "Access",
+                "API",
+                "Session",
+                "Shell",
+                "Commands",
+                "Environment",
+            ]
+        );
+        assert!(headings[0].starts_with("Better IAM "), "{}", headings[0]);
+    });
+}
+
 #[test]
 fn describes_every_command_in_help_per_command_help_and_a_json_manifest() {
     run(|| async {

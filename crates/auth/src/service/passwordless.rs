@@ -1,6 +1,7 @@
 //! Magic links and one-time codes over email or SMS (`service/passwordless.ts`, class `PasswordlessAuth`).
 //! Passwordless sign-in never links accounts by matching email.
 
+use better_iam_core::boxed;
 use better_iam_core::{AuthMethod, Filter, IamError, IamResult, IamStoreExt, Identity, OutboxKind};
 use serde_json::{Map, Value};
 
@@ -141,28 +142,33 @@ impl AuthService {
             // `input.destination?.startsWith` is not a function for other values.
             Some(_) => return Err(internal_error()),
         };
-        self.rate(
-            &tenant_id,
-            &format!("passwordless-finish:{destination}"),
-            RateTier::Sensitive,
-        )
+        boxed(|| async {
+            self.rate(
+                &tenant_id,
+                &format!("passwordless-finish:{destination}"),
+                RateTier::Sensitive,
+            )
+            .await
+        })
         .await?;
         self.store()
             .transaction(|tx| async move {
                 let sms = destination.starts_with('+');
-                self.method_allowed(
-                    &tx,
-                    &tenant_id,
-                    if sms {
-                        AuthMethod::PasswordlessSms
-                    } else {
-                        AuthMethod::PasswordlessEmail
-                    },
-                )
+                boxed(|| {
+                    self.method_allowed(
+                        &tx,
+                        &tenant_id,
+                        if sms {
+                            AuthMethod::PasswordlessSms
+                        } else {
+                            AuthMethod::PasswordlessEmail
+                        },
+                    )
+                })
                 .await?;
                 let token = text(prop(input, "token"), "token", 512)?;
-                let challenge = self
-                    .read_challenge(
+                let challenge = boxed(|| {
+                    self.read_challenge(
                         &tx,
                         &tenant_id,
                         &token,
@@ -172,7 +178,8 @@ impl AuthService {
                             destination: Some(&destination),
                         },
                     )
-                    .await?;
+                })
+                .await?;
                 let email_channel = challenge.payload_str("channel") == Some("email");
                 let enabled = if email_channel {
                     self.options.passwordless_email
@@ -192,9 +199,8 @@ impl AuthService {
                         401,
                     ));
                 }
-                let mut identity = self
-                    .user(&tx, &challenge.identity_id, Some(&tenant_id))
-                    .await?;
+                let mut identity =
+                    boxed(|| self.user(&tx, &challenge.identity_id, Some(&tenant_id))).await?;
                 let mut squatted = false;
                 if email_channel {
                     if identity.email.as_deref() != Some(destination.as_str()) {
@@ -216,35 +222,37 @@ impl AuthService {
                         401,
                     ));
                 }
-                tx.delete("authChallenges", &challenge.id).await?;
+                boxed(|| tx.delete("authChallenges", &challenge.id)).await?;
                 if squatted {
                     // The first proof that someone controls this address, on an account whose password was chosen at
                     // self sign-up before anyone proved it: that password, and the sessions and remembered devices it
                     // produced, go. The owner sets a password through reset.
-                    self.revoke_identity(&tx, &identity.id).await?;
+                    boxed(|| self.revoke_identity(&tx, &identity.id)).await?;
                     if identity
                         .password_hash
                         .as_deref()
                         .is_some_and(|hash| !hash.is_empty())
                     {
                         identity.password_hash = None;
-                        self.audit(&tx, &identity, "auth:password:clear", None, None)
+                        boxed(|| self.audit(&tx, &identity, "auth:password:clear", None, None))
                             .await?;
                     }
                 }
                 if email_channel {
-                    put(tx.as_ref(), "identities", &identity).await?;
+                    boxed(|| put(tx.as_ref(), "identities", &identity)).await?;
                 }
-                self.complete_authentication(
-                    &tx,
-                    &identity,
-                    Some(if email_channel {
-                        AuthMethod::PasswordlessEmail
-                    } else {
-                        AuthMethod::PasswordlessSms
-                    }),
-                    device_token.as_deref(),
-                )
+                boxed(|| {
+                    self.complete_authentication(
+                        &tx,
+                        &identity,
+                        Some(if email_channel {
+                            AuthMethod::PasswordlessEmail
+                        } else {
+                            AuthMethod::PasswordlessSms
+                        }),
+                        device_token.as_deref(),
+                    )
+                })
                 .await
             })
             .await

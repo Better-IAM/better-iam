@@ -14,6 +14,7 @@ use std::sync::Arc;
 use better_iam_auth::outbox::EnqueueInput;
 use better_iam_auth::service::LimitAttemptOptions;
 use better_iam_auth::service::base::CreateIdentityInput;
+use better_iam_core::boxed;
 use better_iam_core::js::{cmp_utf16, number_to_string, trim};
 use better_iam_core::{
     AuditOutcome, AuthMethod, AuthenticatedPrincipal, CredentialInput, Filter, FindOptions,
@@ -1489,15 +1490,17 @@ async fn redeem_transaction(
     password: &str,
 ) -> IamResult<Value> {
     let auth = &ctx.auth;
-    let realm = ctx.tenant(tx, tenant_id).await?;
-    auth.assert_tenant_active(tx, &realm.id).await?;
-    let invitation = find(
-        tx,
-        INVITATIONS,
-        Filter::new()
-            .eq("tenantId", realm.id.clone())
-            .eq("tokenHash", hash(presented)),
-    )
+    let realm = boxed(|| ctx.tenant(tx, tenant_id)).await?;
+    boxed(|| auth.assert_tenant_active(tx, &realm.id)).await?;
+    let invitation = boxed(|| {
+        find(
+            tx,
+            INVITATIONS,
+            Filter::new()
+                .eq("tenantId", realm.id.clone())
+                .eq("tokenHash", hash(presented)),
+        )
+    })
     .await?
     .into_iter()
     .next();
@@ -1509,23 +1512,26 @@ async fn redeem_transaction(
         return Err(IamError::new("INVITATION_INVALID", "Invitation is invalid"));
     };
     // Either side may have changed its settings (or verified the domain) since the invitation was sent.
-    let settings = guest_settings(tx, &realm.id).await?;
-    let origin: GuestOrigin = guest_origin(tx, &realm.id, s(&invitation, "email")).await?;
-    assert_guest_admitted(tx, &settings, &realm.id, &origin).await?;
-    let as_inviter = inviter_still_grants(ctx, tx, &invitation, &realm.id).await?;
-    let sponsor: Option<Identity> = match tx.get("identities", s(&invitation, "sponsorId")).await? {
-        Some(record) => Some(decode(record)?),
-        None => None,
-    };
+    let settings = boxed(|| guest_settings(tx, &realm.id)).await?;
+    let origin: GuestOrigin =
+        boxed(|| guest_origin(tx, &realm.id, s(&invitation, "email"))).await?;
+    boxed(|| assert_guest_admitted(tx, &settings, &realm.id, &origin)).await?;
+    let as_inviter = boxed(|| inviter_still_grants(ctx, tx, &invitation, &realm.id)).await?;
+    let sponsor: Option<Identity> =
+        match boxed(|| tx.get("identities", s(&invitation, "sponsorId"))).await? {
+            Some(record) => Some(decode(record)?),
+            None => None,
+        };
     let Some(sponsor) = sponsor.filter(|sponsor| can_sponsor(ctx, Some(sponsor), &realm.id)) else {
         return Err(IamError::new(
             "INVITATION_INVALID",
             "The sponsor can no longer sponsor guests",
         ));
     };
-    let guardrails = invariant_snapshot(ctx, tx, &realm.id, "iam:identities:create").await?;
-    let created = auth
-        .create_identity(
+    let guardrails =
+        boxed(|| invariant_snapshot(ctx, tx, &realm.id, "iam:identities:create")).await?;
+    let created = boxed(|| {
+        auth.create_identity(
             tx,
             CreateIdentityInput {
                 tenant_id: realm.id.clone(),
@@ -1537,7 +1543,8 @@ async fn redeem_transaction(
                 email_verified: Some(true),
             },
         )
-        .await?;
+    })
+    .await?;
     let access_days = num(&invitation, "accessDays").unwrap_or(f64::NAN);
     let expires_at = now + access_days * GUEST_DAY_MS;
     let mut marker = Map::new();
@@ -1551,13 +1558,13 @@ async fn redeem_transaction(
     {
         marker.insert("homeTenantId".into(), Value::String(home.clone()));
     }
-    let mut identity = match tx.get("identities", &created.id).await? {
+    let mut identity = match boxed(|| tx.get("identities", &created.id)).await? {
         Some(record) => record,
         None => crate::port::encode(&created),
     };
     identity.insert("expiresAt".into(), number(expires_at));
     identity.insert("guest".into(), Value::Object(marker));
-    let identity = tx.put("identities", &identity).await?;
+    let identity = boxed(|| tx.put("identities", &identity)).await?;
     let identity_id = s(&identity, "id").to_owned();
     let mut binding_ids = Vec::new();
     let mut membership_ids = Vec::new();
@@ -1579,7 +1586,7 @@ async fn redeem_transaction(
         binding.insert("roleId".into(), Value::String(role_id.clone()));
         copy(&mut binding, &invitation, "authorityId");
         binding.insert("expiresAt".into(), number(expires_at));
-        let binding = tx.insert("bindings", &binding).await?;
+        let binding = boxed(|| tx.insert("bindings", &binding)).await?;
         binding_ids.push(js_string(binding.get("id")));
     }
     let invited_by = js_string(invitation.get("invitedBy"));
@@ -1594,24 +1601,30 @@ async fn redeem_transaction(
         member.insert("groupId".into(), Value::String(group_id.clone()));
         member.insert("identityId".into(), Value::String(identity_id.clone()));
         member.insert("expiresAt".into(), number(expires_at));
-        let member = tx.insert("groupMembers", &member).await?;
+        let member = boxed(|| tx.insert("groupMembers", &member)).await?;
         membership_ids.push(js_string(member.get("id")));
-        sync_teams_from_groups(
-            ctx,
-            tx,
-            &realm.id,
-            &json!({ "groupId": group_id, "actorId": invited_by }),
-        )
+        boxed(|| async {
+            sync_teams_from_groups(
+                ctx,
+                tx,
+                &realm.id,
+                &json!({ "groupId": group_id, "actorId": invited_by }),
+            )
+            .await
+        })
         .await?;
     }
     for package_id in list(invitation.get("packageIds")) {
         let pkg: AccessPackage = decode(
-            ctx.scoped(
-                tx,
-                "accessPackages",
-                Some(&Value::String(package_id.clone())),
-                &realm.id,
-            )
+            boxed(|| async {
+                ctx.scoped(
+                    tx,
+                    "accessPackages",
+                    Some(&Value::String(package_id.clone())),
+                    &realm.id,
+                )
+                .await
+            })
             .await?,
         )?;
         // A package's maximum duration can end its assignment before the guest's access.
@@ -1619,25 +1632,28 @@ async fn redeem_transaction(
             Some(max) => expires_at.min(now + max),
             None => expires_at,
         };
-        let assigned = assign_package(
-            ctx,
-            tx,
-            &as_inviter,
-            &pkg,
-            &json!({
-                "identityId": identity_id,
-                "expiresAt": number(assignment_end),
-                "justification": format!("Guest invitation {}", s(&invitation, "id")),
-            }),
-            None,
-        )
+        let assigned = boxed(|| async {
+            assign_package(
+                ctx,
+                tx,
+                &as_inviter,
+                &pkg,
+                &json!({
+                    "identityId": identity_id,
+                    "expiresAt": number(assignment_end),
+                    "justification": format!("Guest invitation {}", s(&invitation, "id")),
+                }),
+                None,
+            )
+            .await
+        })
         .await?;
         let assignment = assigned.get("assignment");
         package_assignment_ids.push(js_string(assignment.and_then(|a| a.get("id"))));
         package_membership_ids.extend(list(assignment.and_then(|a| a.get("membershipIds"))));
     }
-    sod_assert_identity(ctx, tx, &realm.id, &identity_id).await?;
-    invariant_verify(ctx, tx, &realm.id, guardrails.as_ref()).await?;
+    boxed(|| sod_assert_identity(ctx, tx, &realm.id, &identity_id)).await?;
+    boxed(|| invariant_verify(ctx, tx, &realm.id, guardrails.as_ref())).await?;
     let mut account = Record::new();
     account.insert("id".into(), Value::String(identity_id.clone()));
     account.insert("tenantId".into(), Value::String(realm.id.clone()));
@@ -1672,13 +1688,13 @@ async fn redeem_transaction(
         }),
     );
     account.insert("grantsEndAt".into(), number(expires_at));
-    tx.insert(ACCOUNTS, &account).await?;
+    boxed(|| tx.insert(ACCOUNTS, &account)).await?;
     let mut redeemed = invitation.clone();
     redeemed.shift_remove("uniqueKey");
     redeemed.insert("status".into(), Value::String("redeemed".into()));
     redeemed.insert("redeemedAt".into(), number(now));
     redeemed.insert("identityId".into(), Value::String(identity_id.clone()));
-    tx.put(INVITATIONS, &redeemed).await?;
+    boxed(|| tx.put(INVITATIONS, &redeemed)).await?;
     let mut metadata = Map::new();
     if let Some(invitation_id) = invitation.get("id") {
         metadata.insert("invitationId".into(), invitation_id.clone());
@@ -1708,9 +1724,9 @@ async fn redeem_transaction(
     ctx.events()?.record_audit(tx, &event).await?;
     // The guest just set a password: a password sign-in, refused like one where the tenant does not accept them.
     let typed: Identity = decode(identity.clone())?;
-    let issued = auth
-        .complete_authentication(tx, &typed, Some(AuthMethod::Password), None)
-        .await?;
+    let issued =
+        boxed(|| auth.complete_authentication(tx, &typed, Some(AuthMethod::Password), None))
+            .await?;
     let mut result = Map::new();
     result.insert(
         "identity".into(),
@@ -1736,7 +1752,7 @@ async fn remove_mutation(
     let reason = trim(&text(input.get("reason"), "reason", 512)?).to_owned();
     let LoadedGuest {
         account, identity, ..
-    } = load_guest(tx, &tenant.id, identity_id).await?;
+    } = boxed(|| load_guest(tx, &tenant.id, identity_id)).await?;
     let status = s(&account, "status");
     if status == "removed" || status == "converted" {
         return Err(IamError::with_status(
@@ -1755,28 +1771,32 @@ async fn remove_mutation(
     }
     let tenant_id = tenant.id.as_str();
     let now = ctx.now();
-    let sessions = find(
-        tx,
-        "sessions",
-        Filter::new().eq("identityId", guest_id.clone()),
-    )
+    let sessions = boxed(|| {
+        find(
+            tx,
+            "sessions",
+            Filter::new().eq("identityId", guest_id.clone()),
+        )
+    })
     .await?
     .len() as f64;
     let mut bindings = 0.0;
     let mut memberships = 0.0;
     let mut packages = 0.0;
     // Package assignments first: they own their bindings and memberships, whichever authority issued them.
-    for assignment in find(
-        tx,
-        "packageAssignments",
-        Filter::new()
-            .eq("tenantId", tenant_id)
-            .eq("identityId", guest_id.clone()),
-    )
+    for assignment in boxed(|| {
+        find(
+            tx,
+            "packageAssignments",
+            Filter::new()
+                .eq("tenantId", tenant_id)
+                .eq("identityId", guest_id.clone()),
+        )
+    })
     .await?
     {
         let assignment: PackageAssignment = decode(assignment)?;
-        let removed = revoke_assignment(ctx, tx, &assignment).await?;
+        let removed = boxed(|| revoke_assignment(ctx, tx, &assignment)).await?;
         bindings += removed
             .get("bindings")
             .and_then(Value::as_f64)
@@ -1787,125 +1807,144 @@ async fn remove_mutation(
             .unwrap_or(f64::NAN);
         packages += 1.0;
     }
-    for activation in find(
-        tx,
-        "bindingActivations",
-        Filter::new()
-            .eq("tenantId", tenant_id)
-            .eq("identityId", guest_id.clone()),
-    )
+    for activation in boxed(|| {
+        find(
+            tx,
+            "bindingActivations",
+            Filter::new()
+                .eq("tenantId", tenant_id)
+                .eq("identityId", guest_id.clone()),
+        )
+    })
     .await?
     {
-        tx.delete("bindingActivations", s(&activation, "id"))
-            .await?;
+        boxed(|| tx.delete("bindingActivations", s(&activation, "id"))).await?;
     }
-    for binding in find(
-        tx,
-        "bindings",
-        Filter::new()
-            .eq("tenantId", tenant_id)
-            .eq("subjectType", "identity")
-            .eq("subjectId", guest_id.clone()),
-    )
+    for binding in boxed(|| {
+        find(
+            tx,
+            "bindings",
+            Filter::new()
+                .eq("tenantId", tenant_id)
+                .eq("subjectType", "identity")
+                .eq("subjectId", guest_id.clone()),
+        )
+    })
     .await?
     {
-        tx.delete("bindings", s(&binding, "id")).await?;
+        boxed(|| tx.delete("bindings", s(&binding, "id"))).await?;
         bindings += 1.0;
     }
     // Team memberships go first, taking the team-managed group memberships with them (teams.ts).
-    remove_from_all_teams(tx, tenant_id, &guest_id, now).await?;
-    release_departments(tx, tenant_id, &guest_id, now, None).await?;
+    boxed(|| remove_from_all_teams(tx, tenant_id, &guest_id, now)).await?;
+    boxed(|| release_departments(tx, tenant_id, &guest_id, now, None)).await?;
     let mut groups: IndexSet<String> = IndexSet::new();
-    for membership in find(
-        tx,
-        "groupMembers",
-        Filter::new()
-            .eq("tenantId", tenant_id)
-            .eq("identityId", guest_id.clone()),
-    )
+    for membership in boxed(|| {
+        find(
+            tx,
+            "groupMembers",
+            Filter::new()
+                .eq("tenantId", tenant_id)
+                .eq("identityId", guest_id.clone()),
+        )
+    })
     .await?
     {
-        tx.delete("groupMembers", s(&membership, "id")).await?;
+        boxed(|| tx.delete("groupMembers", s(&membership, "id"))).await?;
         groups.insert(js_string(membership.get("groupId")));
         memberships += 1.0;
     }
     for group_id in groups {
-        sync_teams_from_groups(
-            ctx,
-            tx,
-            tenant_id,
-            &json!({ "groupId": group_id, "actorId": principal.identity.id }),
-        )
+        boxed(|| async {
+            sync_teams_from_groups(
+                ctx,
+                tx,
+                tenant_id,
+                &json!({ "groupId": group_id, "actorId": principal.identity.id }),
+            )
+            .await
+        })
         .await?;
     }
-    for tuple in find(
-        tx,
-        "relationships",
-        Filter::new()
-            .eq("tenantId", tenant_id)
-            .eq("subjectType", "identity")
-            .eq("subjectId", guest_id.clone()),
-    )
+    for tuple in boxed(|| {
+        find(
+            tx,
+            "relationships",
+            Filter::new()
+                .eq("tenantId", tenant_id)
+                .eq("subjectType", "identity")
+                .eq("subjectId", guest_id.clone()),
+        )
+    })
     .await?
     {
-        tx.delete("relationships", s(&tuple, "id")).await?;
+        boxed(|| tx.delete("relationships", s(&tuple, "id"))).await?;
     }
-    for mut request in find(
-        tx,
-        "accessRequests",
-        Filter::new()
-            .eq("tenantId", tenant_id)
-            .eq("requesterId", guest_id.clone())
-            .eq("status", "pending"),
-    )
+    for mut request in boxed(|| {
+        find(
+            tx,
+            "accessRequests",
+            Filter::new()
+                .eq("tenantId", tenant_id)
+                .eq("requesterId", guest_id.clone())
+                .eq("status", "pending"),
+        )
+    })
     .await?
     {
         request.insert("status".into(), Value::String("cancelled".into()));
         request.insert("reviewedAt".into(), number(now));
-        tx.put("accessRequests", &request).await?;
+        boxed(|| tx.put("accessRequests", &request)).await?;
     }
-    for mut request in find(
-        tx,
-        "packageRequests",
-        Filter::new()
-            .eq("tenantId", tenant_id)
-            .eq("identityId", guest_id.clone())
-            .eq("status", "pending"),
-    )
+    for mut request in boxed(|| {
+        find(
+            tx,
+            "packageRequests",
+            Filter::new()
+                .eq("tenantId", tenant_id)
+                .eq("identityId", guest_id.clone())
+                .eq("status", "pending"),
+        )
+    })
     .await?
     {
         request.insert("status".into(), Value::String("cancelled".into()));
         request.insert("decidedAt".into(), number(now));
-        tx.put("packageRequests", &request).await?;
+        boxed(|| tx.put("packageRequests", &request)).await?;
     }
-    for mut authority in find(
-        tx,
-        "grantAuthorities",
-        Filter::new()
-            .eq("tenantId", tenant_id)
-            .eq("identityId", guest_id.clone()),
-    )
+    for mut authority in boxed(|| {
+        find(
+            tx,
+            "grantAuthorities",
+            Filter::new()
+                .eq("tenantId", tenant_id)
+                .eq("identityId", guest_id.clone()),
+        )
+    })
     .await?
     {
         if !truthy(authority.get("revoked")) {
             authority.insert("revoked".into(), Value::Bool(true));
-            tx.put("grantAuthorities", &authority).await?;
+            boxed(|| tx.put("grantAuthorities", &authority)).await?;
         }
     }
-    revoke_delegations_of(
-        ctx,
-        tx,
-        &Value::Object(identity.clone()),
-        &principal.identity.id,
-    )
+    boxed(|| async {
+        revoke_delegations_of(
+            ctx,
+            tx,
+            &Value::Object(identity.clone()),
+            &principal.identity.id,
+        )
+        .await
+    })
     .await?;
-    ctx.revoke_all(tx, &guest_id).await?;
-    revoke_invitations_by(tx, &guest_id).await?;
+    boxed(|| ctx.revoke_all(tx, &guest_id)).await?;
+    boxed(|| revoke_invitations_by(tx, &guest_id)).await?;
     let mut disabled = identity.clone();
     disabled.insert("status".into(), Value::String("disabled".into()));
-    let disabled = tx.put("identities", &disabled).await?;
+    let disabled = boxed(|| tx.put("identities", &disabled)).await?;
     // A removed guest stays disabled: a threats containment of it can no longer be released.
-    end_containment(tx, &guest_id, now).await?;
+    boxed(|| end_containment(tx, &guest_id, now)).await?;
     let mut removed = account.clone();
     removed.insert("status".into(), Value::String("removed".into()));
     removed.insert("endedAt".into(), number(now));
@@ -1914,7 +1953,7 @@ async fn remove_mutation(
         Value::String(principal.identity.id.clone()),
     );
     removed.insert("removalReason".into(), Value::String(reason.clone()));
-    let removed = tx.put(ACCOUNTS, &removed).await?;
+    let removed = boxed(|| tx.put(ACCOUNTS, &removed)).await?;
     let mut metadata = Map::new();
     metadata.insert("reason".into(), Value::String(reason));
     copy(&mut metadata, &account, "sponsorId");
@@ -1934,7 +1973,10 @@ async fn remove_mutation(
             Some(metadata),
         )
         .await?;
-    let guest = guest_view(ctx, tx, &removed, &disabled, &mut NameReader::new(tx)).await?;
+    let guest = boxed(|| async {
+        guest_view(ctx, tx, &removed, &disabled, &mut NameReader::new(tx)).await
+    })
+    .await?;
     Ok(json!({
         "guest": guest,
         "sessions": number(sessions),

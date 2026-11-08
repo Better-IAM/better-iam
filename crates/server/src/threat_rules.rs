@@ -16,6 +16,7 @@
 
 use std::collections::{HashMap, HashSet};
 
+use better_iam_core::boxed;
 use better_iam_core::{
     AuditEvent, IamResult, Identity, IdentityKind, Record, ip_counter_key, ip_matches,
     js as core_js,
@@ -2030,7 +2031,7 @@ async fn evaluate_counting(
             },
         );
         for burst in bursts {
-            let who = identity_subject(run, &burst.key).await?;
+            let who = boxed(|| identity_subject(run, &burst.key)).await?;
             let networks = reportable_networks(&settings, &burst.events);
             let place = if networks.len() == 1 {
                 format!(" from {}", networks[0])
@@ -2092,7 +2093,7 @@ async fn evaluate_counting(
             },
         );
         for burst in bursts {
-            let who = identity_subject(run, &burst.key).await?;
+            let who = boxed(|| identity_subject(run, &burst.key)).await?;
             let identities = distinct_values(
                 burst
                     .events
@@ -2221,7 +2222,7 @@ async fn evaluate_counting(
             },
         );
         for burst in bursts {
-            let who = identity_subject(run, &burst.key).await?;
+            let who = boxed(|| identity_subject(run, &burst.key)).await?;
             let targets = distinct_values(
                 burst
                     .events
@@ -2280,7 +2281,7 @@ async fn evaluate_counting(
             },
         );
         for burst in bursts {
-            let who = identity_subject(run, &burst.key).await?;
+            let who = boxed(|| identity_subject(run, &burst.key)).await?;
             let actions = distinct_values(
                 burst
                     .events
@@ -2341,7 +2342,7 @@ async fn evaluate_counting(
             },
         );
         for burst in bursts {
-            let who = identity_subject(run, &burst.key).await?;
+            let who = boxed(|| identity_subject(run, &burst.key)).await?;
             let resources = distinct_values(
                 burst
                     .events
@@ -2407,7 +2408,7 @@ async fn evaluate_counting(
             },
         );
         for burst in reads {
-            let who = identity_subject(run, &burst.key).await?;
+            let who = boxed(|| identity_subject(run, &burst.key)).await?;
             let (clause, viewed) = viewing(&burst.events);
             let mut extra = meta_map([("kind", json!("reads"))]);
             extra.extend(viewed);
@@ -2463,7 +2464,7 @@ async fn evaluate_counting(
             },
         );
         for burst in exports {
-            let who = identity_subject(run, &burst.key).await?;
+            let who = boxed(|| identity_subject(run, &burst.key)).await?;
             let exported = distinct_values(
                 burst
                     .events

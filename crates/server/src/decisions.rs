@@ -8,6 +8,7 @@
 use std::sync::{Arc, Weak};
 
 use async_trait::async_trait;
+use better_iam_core::boxed;
 use better_iam_core::{
     AuthenticatedPrincipal, Decision, EvaluationInput, Filter, FindOptions, IamError, IamResult,
     Identity, IdentityKind, IdentityStatus, PolicyDocument, PolicyStatement, ResourceRef, Session,
@@ -884,7 +885,7 @@ impl Decisions {
         action: &str,
     ) -> IamResult<PreparedDecision> {
         let clearances = ctx.config.clearances.is_some();
-        let chain = ctx.ancestry(tx, target).await?;
+        let chain = boxed(|| ctx.ancestry(tx, target)).await?;
         if chain
             .iter()
             .any(|realm| realm.status != TenantStatus::Active)
@@ -899,8 +900,7 @@ impl Decisions {
         let sources = if role_session {
             GrantSources::default()
         } else {
-            self.grant_sources_in(ctx, tx, &principal.identity.id, &target.id)
-                .await?
+            boxed(|| self.grant_sources_in(ctx, tx, &principal.identity.id, &target.id)).await?
         };
         let role_ids: Vec<String> = if role_session {
             vec![session.role_id.clone().unwrap_or_default()]
@@ -918,21 +918,27 @@ impl Decisions {
         // A role session's role and trust, read once: the trust decides whether source attributes pass and bounds the
         // role's grants below.
         let role: Option<Role> = match (role_session, &session.role_id) {
-            (true, Some(role_id)) => get(tx, "roles", role_id).await?,
+            (true, Some(role_id)) => boxed(|| get(tx, "roles", role_id)).await?,
             _ => None,
         };
         let trust: Option<Trust> = match (role_session, &session.trust_id) {
-            (true, Some(trust_id)) => get(tx, "trusts", trust_id).await?,
+            (true, Some(trust_id)) => boxed(|| get(tx, "trusts", trust_id)).await?,
             _ => None,
         };
         // Untrusted or lower-precedence keys first: application context, plugin context, declared identity
         // attributes; the server-derived principal and request keys always win.
         let mut base: Map<String, Value> = Map::new();
         if let Some(resolve_context) = &ctx.options.resolve_context {
-            assign(&mut base, resolve_context(principal.clone()).await?);
+            assign(
+                &mut base,
+                boxed(|| resolve_context(principal.clone())).await?,
+            );
         }
         for plugin in &ctx.plugins {
-            assign(&mut base, plugin.resolve_context(principal).await?);
+            assign(
+                &mut base,
+                boxed(|| plugin.resolve_context(principal)).await?,
+            );
         }
         // Keys only the server may set are removed, including the optional ones it leaves absent, so an application
         // or plugin value can never stand in for them (the bare `principal.sessionTags` too).
@@ -1019,13 +1025,15 @@ impl Decisions {
         if own_tenant {
             assign(
                 &mut principal_keys,
-                agreement_context(
-                    tx,
-                    &target.id,
-                    &principal.identity.id,
-                    principal.identity.kind,
-                    now,
-                )
+                boxed(|| {
+                    agreement_context(
+                        tx,
+                        &target.id,
+                        &principal.identity.id,
+                        principal.identity.kind,
+                        now,
+                    )
+                })
                 .await?,
             );
         } else {
@@ -1045,23 +1053,26 @@ impl Decisions {
         // AI agents (agents.ts): `principal.delegated` always, and for an agent's own credential or a delegated
         // session the agent's keys plus its ceiling and the delegation's scope. A delegated session whose agent or
         // delegation cannot be read is refused.
-        let Some(agent_scope) = agent_decision_scope(tx, principal, Some(now)).await? else {
+        let Some(agent_scope) = boxed(|| agent_decision_scope(tx, principal, Some(now))).await?
+        else {
             return Ok(fixed(false, "DELEGATION_REVOKED"));
         };
         assign(&mut base, agent_scope.keys.clone());
         // Mandatory access control (security clearances): every party of the session must dominate a labeled
         // resource's label. Read whenever clearances are on, never lazily. None without a scheme.
         let mandatory = if clearances {
-            clearance_scope(
-                ctx,
-                tx,
-                principal,
-                target,
-                &chain,
-                Some(&agent_scope),
-                now,
-                Some(false),
-            )
+            boxed(|| {
+                clearance_scope(
+                    ctx,
+                    tx,
+                    principal,
+                    target,
+                    &chain,
+                    Some(&agent_scope),
+                    now,
+                    Some(false),
+                )
+            })
             .await?
         } else {
             None
@@ -1079,18 +1090,20 @@ impl Decisions {
         boundaries.extend(agent_scope.boundaries.iter().cloned());
         // Hand-offs (delegations.ts): the key issuers behind the sessions that handed the work on bound it too.
         for authority_id in agent_scope.authorities.iter().flatten() {
-            let Some(ceilings) = ctx.authority_chain(tx, authority_id).await? else {
+            let Some(ceilings) = boxed(|| ctx.authority_chain(tx, authority_id)).await? else {
                 return Ok(fixed(false, "CREDENTIAL_AUTHORITY_REVOKED"));
             };
             boundaries.extend(ceilings);
         }
-        let principal_boundary: Option<crate::models::PrincipalBoundary> = find(
-            tx,
-            "principalBoundaries",
-            Filter::new()
-                .eq("tenantId", target.id.clone())
-                .eq("identityId", principal.identity.id.clone()),
-        )
+        let principal_boundary: Option<crate::models::PrincipalBoundary> = boxed(|| {
+            find(
+                tx,
+                "principalBoundaries",
+                Filter::new()
+                    .eq("tenantId", target.id.clone())
+                    .eq("identityId", principal.identity.id.clone()),
+            )
+        })
         .await?
         .into_iter()
         .next();
@@ -1100,7 +1113,7 @@ impl Decisions {
         // A guest stays within the tenant's guest ceiling (`crossTenantAccess.guestBoundary`, guests.ts).
         if own_tenant
             && principal.identity.guest.is_some()
-            && let Some(ceiling) = guest_boundary(tx, &target.id).await?
+            && let Some(ceiling) = boxed(|| guest_boundary(tx, &target.id)).await?
         {
             boundaries.push(ceiling);
         }
@@ -1112,17 +1125,18 @@ impl Decisions {
             boundaries.push(policy.clone());
         }
         if let Some(authority_id) = &session.credential_authority_id {
-            let Some(ceilings) = ctx.authority_chain(tx, authority_id).await? else {
+            let Some(ceilings) = boxed(|| ctx.authority_chain(tx, authority_id)).await? else {
                 return Ok(fixed(false, "CREDENTIAL_AUTHORITY_REVOKED"));
             };
             boundaries.extend(ceilings);
         }
         // A web-identity session is bounded by the authority of whoever registered its OIDC provider as well.
         if let Some(web) = &session.web_identity {
-            let provider: Option<OidcProvider> = get(tx, "oidcProviders", &web.provider_id).await?;
+            let provider: Option<OidcProvider> =
+                boxed(|| get(tx, "oidcProviders", &web.provider_id)).await?;
             let ceilings = match provider.filter(|provider| provider.tenant_id == session.tenant_id)
             {
-                Some(provider) => ctx.authority_chain(tx, &provider.authority_id).await?,
+                Some(provider) => boxed(|| ctx.authority_chain(tx, &provider.authority_id)).await?,
                 None => None,
             };
             let Some(ceilings) = ceilings else {
@@ -1138,23 +1152,27 @@ impl Decisions {
                 (Some(role), Some(trust)) if !trust.revoked => {
                     let ceilings: Vec<PolicyDocument> = trust.ceiling.iter().cloned().collect();
                     let mut seen = IndexSet::new();
-                    self.role_grants_in(
-                        ctx,
-                        tx,
-                        role,
-                        &target.id,
-                        &ceilings,
-                        "",
-                        &mut seen,
-                        Some(&mut lapsed),
-                    )
+                    boxed(|| {
+                        self.role_grants_in(
+                            ctx,
+                            tx,
+                            role,
+                            &target.id,
+                            &ceilings,
+                            "",
+                            &mut seen,
+                            Some(&mut lapsed),
+                        )
+                    })
                     .await?
                 }
                 _ => Vec::new(),
             }
         } else {
-            self.identity_grants_in(ctx, tx, &target.id, &sources.bindings, Some(&mut lapsed))
-                .await?
+            boxed(|| {
+                self.identity_grants_in(ctx, tx, &target.id, &sources.bindings, Some(&mut lapsed))
+            })
+            .await?
         };
         paths.extend(lapsed);
         let documents: Vec<&PolicyDocument> = boundaries
@@ -1167,7 +1185,7 @@ impl Decisions {
             .collect();
         // Feature flags that are on for the tenant, as `tenant.features`: read only when a condition names the key.
         if mentions_features(&documents) {
-            let state = feature_state(tx, &chain, now).await?;
+            let state = boxed(|| feature_state(tx, &chain, now)).await?;
             base.insert(
                 FEATURE_CONTEXT_KEY.into(),
                 Value::Array(
@@ -1183,7 +1201,7 @@ impl Decisions {
             if own_tenant {
                 assign(
                     &mut base,
-                    onboarding_context(tx, &chain, &principal.identity, now).await?,
+                    boxed(|| onboarding_context(tx, &chain, &principal.identity, now)).await?,
                 );
             } else {
                 base.insert("principal.onboarding".into(), json!([]));
@@ -1196,7 +1214,7 @@ impl Decisions {
             if own_tenant {
                 assign(
                     &mut base,
-                    team_context(tx, &target.id, &principal.identity.id, now).await?,
+                    boxed(|| team_context(tx, &target.id, &principal.identity.id, now)).await?,
                 );
             } else {
                 base.insert("principal.teams".into(), json!([]));
@@ -1206,7 +1224,10 @@ impl Decisions {
             if own_tenant {
                 assign(
                     &mut base,
-                    departments::department_context(tx, &target.id, &principal.identity.id).await?,
+                    boxed(|| {
+                        departments::department_context(tx, &target.id, &principal.identity.id)
+                    })
+                    .await?,
                 );
             } else {
                 base.insert("principal.departments".into(), json!([]));
@@ -1217,13 +1238,14 @@ impl Decisions {
             let service = billing_service::billing_service_of(ctx)?;
             assign(
                 &mut base,
-                service
-                    .spend_context(
+                boxed(|| {
+                    service.spend_context(
                         tx,
                         target,
                         own_tenant.then_some(principal.identity.id.as_str()),
                     )
-                    .await?,
+                })
+                .await?,
             );
         }
         // Privacy (privacy.ts): `principal.consents`, read only when a document names it; nothing for assumed roles.
@@ -1231,7 +1253,7 @@ impl Decisions {
             if own_tenant {
                 assign(
                     &mut base,
-                    consent_context(tx, &target.id, &principal.identity, now).await?,
+                    boxed(|| consent_context(tx, &target.id, &principal.identity, now)).await?,
                 );
             } else {
                 base.insert("principal.consents".into(), json!([]));
@@ -1719,23 +1741,17 @@ impl DecisionService for Decisions {
         internal_resource: bool,
     ) -> IamResult<Decision> {
         let ctx = self.context()?;
-        let target = ctx.tenant(tx, &request.tenant_id).await?;
+        let target = boxed(|| ctx.tenant(tx, &request.tenant_id)).await?;
         let action = text_str(&request.action, "action", 256)?;
         // Refusals that do not depend on the resource (a principal of another tenant, an inactive tenant) come first,
         // so an outsider learns nothing about the tenant's actions or resources and its resolver never runs for them.
-        let prepared = self
-            .prepare_decision(tx, principal, &target, &action)
-            .await?;
+        let prepared = boxed(|| self.prepare_decision(tx, principal, &target, &action)).await?;
         if let PreparedDecision::Fixed(decision) = &prepared
             && !decision.allowed
         {
             return Ok(decision.clone());
         }
-        if !ctx
-            .catalog
-            .known_action(tx.as_ref(), &target.id, &action)
-            .await?
-        {
+        if !boxed(|| ctx.catalog.known_action(tx.as_ref(), &target.id, &action)).await? {
             return Ok(Decision {
                 allowed: false,
                 reason: "UNKNOWN_ACTION".into(),
@@ -1747,19 +1763,21 @@ impl DecisionService for Decisions {
             kind: request.resource.kind.clone(),
             id: request.resource.id.clone(),
         };
-        let resource = self
-            .resolve(
+        let labeling = prepared_labeling(&prepared);
+        let resource = boxed(|| {
+            self.resolve(
                 tx,
                 &reference,
                 internal_resource || action.starts_with("iam:"),
                 Some(&action),
-                prepared_labeling(&prepared).as_ref(),
+                labeling.as_ref(),
             )
-            .await?;
+        })
+        .await?;
         let decision = decide_on(&prepared, &resource, None)?;
         // "View as" never exceeds the administrator behind it: every check must pass for both of them.
         let actor = if decision.allowed {
-            impersonating_actor(tx, principal).await?
+            boxed(|| impersonating_actor(tx, principal)).await?
         } else {
             None
         };
@@ -1767,7 +1785,7 @@ impl DecisionService for Decisions {
             return Ok(decision);
         };
         let own = decide_on(
-            &self.prepare_decision(tx, &actor, &target, &action).await?,
+            &boxed(|| self.prepare_decision(tx, &actor, &target, &action)).await?,
             &resource,
             None,
         )?;

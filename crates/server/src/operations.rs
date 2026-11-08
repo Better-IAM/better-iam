@@ -7,6 +7,7 @@ use std::sync::{Arc, Mutex, Weak};
 
 use async_trait::async_trait;
 use better_iam_auth::outbox::EnqueueInput;
+use better_iam_core::boxed;
 use better_iam_core::{
     AuditOutcome, AuthenticatedPrincipal, CredentialInput, Decision, Filter, FindOptions, IamError,
     IamResult, IamStoreExt, OperationHookInput, OutboxKind, PluginDeliveryKind,
@@ -116,8 +117,8 @@ impl Operations {
         if decision.reason == "TENANT_MISMATCH" {
             let mut metadata = Map::new();
             metadata.insert("targetTenantId".into(), Value::String(tenant_id.to_owned()));
-            return events
-                .audit(
+            return boxed(|| {
+                events.audit(
                     tx,
                     principal,
                     action,
@@ -127,13 +128,14 @@ impl Operations {
                     false,
                     Some(metadata),
                 )
-                .await;
+            })
+            .await;
         }
         if decision.reason == "CLEARANCE_REQUIRED" {
             let mut metadata = Map::new();
             metadata.insert("mandatory".into(), Value::String("clearance".into()));
-            return events
-                .audit(
+            return boxed(|| {
+                events.audit(
                     tx,
                     principal,
                     action,
@@ -143,10 +145,11 @@ impl Operations {
                     false,
                     Some(metadata),
                 )
-                .await;
+            })
+            .await;
         }
-        events
-            .audit(
+        boxed(|| {
+            events.audit(
                 tx,
                 principal,
                 action,
@@ -156,7 +159,8 @@ impl Operations {
                 false,
                 None,
             )
-            .await
+        })
+        .await
     }
 
     /// The body of `operation` inside its span.
@@ -191,7 +195,7 @@ impl Operations {
                         .principals()?
                         .current_principal(&tx, authenticated)
                         .await?;
-                    let target: Tenant = ctx.tenant_of(&tx, tenant_id).await?;
+                    let target: Tenant = boxed(|| ctx.tenant_of(&tx, tenant_id)).await?;
                     let decision = ctx
                         .decisions()?
                         .decide(
@@ -210,17 +214,19 @@ impl Operations {
                         )
                         .await?;
                     if !decision.allowed
-                        || (root_only && !ctx.root_principal(&tx, &principal).await?)
+                        || (root_only && !boxed(|| ctx.root_principal(&tx, &principal)).await?)
                     {
-                        Self::audit_refusal(
-                            ctx,
-                            &tx,
-                            &principal,
-                            action,
-                            &target.id,
-                            resource_id,
-                            &decision,
-                        )
+                        boxed(|| {
+                            Self::audit_refusal(
+                                ctx,
+                                &tx,
+                                &principal,
+                                action,
+                                &target.id,
+                                resource_id,
+                                &decision,
+                            )
+                        })
                         .await?;
                         return Ok(Outcome::Denied);
                     }
@@ -236,20 +242,23 @@ impl Operations {
                     };
                     for plugin in &ctx.plugins {
                         if let Some(hooks) = plugin.hooks() {
-                            hooks.before_operation(&hook).await?;
+                            boxed(|| hooks.before_operation(&hook)).await?;
                         }
                     }
-                    let separation = sod_snapshot(ctx, &tx, &target.id, action).await?;
-                    let guardrails = invariant_snapshot(ctx, &tx, &target.id, action).await?;
+                    let separation = boxed(|| sod_snapshot(ctx, &tx, &target.id, action)).await?;
+                    let guardrails =
+                        boxed(|| invariant_snapshot(ctx, &tx, &target.id, action)).await?;
                     let run = mutation
                         .lock()
                         .unwrap_or_else(|poisoned| poisoned.into_inner())
                         .take()
                         .ok_or_else(crate::js::internal_error)?;
-                    let value = match run(MutationContext {
-                        tx: tx.clone(),
-                        principal: principal.clone(),
-                        tenant: target.clone(),
+                    let value = match boxed(|| {
+                        run(MutationContext {
+                            tx: tx.clone(),
+                            principal: principal.clone(),
+                            tenant: target.clone(),
+                        })
                     })
                     .await
                     {
@@ -259,11 +268,11 @@ impl Operations {
                             return Err(failure.error);
                         }
                     };
-                    sod_verify(ctx, &tx, &target.id, separation.as_ref(), None).await?;
-                    invariant_verify(ctx, &tx, &target.id, guardrails.as_ref()).await?;
+                    boxed(|| sod_verify(ctx, &tx, &target.id, separation.as_ref(), None)).await?;
+                    boxed(|| invariant_verify(ctx, &tx, &target.id, guardrails.as_ref())).await?;
                     for plugin in &ctx.plugins {
                         if let Some(hooks) = plugin.hooks() {
-                            hooks.after_operation(&hook, &value).await?;
+                            boxed(|| hooks.after_operation(&hook, &value)).await?;
                         }
                     }
                     let root_override = decision.reason == "ROOT_OVERRIDE";
@@ -352,24 +361,27 @@ impl OperationService for Operations {
     ) -> IamResult<Value> {
         let ctx = self.context()?;
         let span_tenant = tenant_id.and_then(Value::as_str);
-        ctx.observe
-            .span(
+        boxed(|| {
+            ctx.observe.span(
                 SpanKind::Operation,
                 action,
                 span_tenant,
-                self.run_operation(
-                    &ctx,
-                    credential,
-                    tenant_id,
-                    action,
-                    resource_id,
-                    mutation,
-                    root_only,
-                ),
+                boxed(|| {
+                    self.run_operation(
+                        &ctx,
+                        credential,
+                        tenant_id,
+                        action,
+                        resource_id,
+                        mutation,
+                        root_only,
+                    )
+                }),
                 None,
                 None,
             )
-            .await
+        })
+        .await
     }
 
     async fn recorded_decision(
@@ -390,15 +402,17 @@ impl OperationService for Operations {
                 .record(&request.tenant_id, &current.identity.id, &request.action);
         }
         if !decision.allowed {
-            Self::audit_refusal(
-                &ctx,
-                tx,
-                current,
-                &request.action,
-                &request.tenant_id,
-                &request.resource.id,
-                &decision,
-            )
+            boxed(|| {
+                Self::audit_refusal(
+                    &ctx,
+                    tx,
+                    current,
+                    &request.action,
+                    &request.tenant_id,
+                    &request.resource.id,
+                    &decision,
+                )
+            })
             .await?;
         } else if decision.reason == "ROOT_OVERRIDE" {
             ctx.events()?

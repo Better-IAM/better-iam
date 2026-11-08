@@ -10,6 +10,7 @@
 
 use std::sync::Arc;
 
+use better_iam_core::boxed;
 use better_iam_core::js as core_js;
 use better_iam_core::{
     AuthenticatedPrincipal, CredentialInput, Filter, FindOptions, IamError, IamResult, IamStoreExt,
@@ -656,12 +657,12 @@ impl PkiApi {
                         let (tx, principal, tenant) =
                             (call.tx.clone(), call.principal.clone(), call.tenant.clone());
                         ctx.auth.require_recent(&principal)?;
-                        let existing = tx
+                        let existing = boxed(|| async { tx
                             .find(
                                 "pkiAuthorities",
                                 &Filter::new().eq("tenantId", tenant.id.clone()),
                                 &FindOptions::default(),
-                            )
+                            ).await })
                             .await?;
                         if existing.len() as f64 >= MAX_AUTHORITIES_PER_TENANT {
                             return Err(IamError::with_status(
@@ -672,14 +673,14 @@ impl PkiApi {
                             .into());
                         }
                         let unique_key = format!("name:{}", core_js::to_lower(&name));
-                        if !tx
+                        if !boxed(|| async { tx
                             .find(
                                 "pkiAuthorities",
                                 &Filter::new()
                                     .eq("tenantId", tenant.id.clone())
                                     .eq("uniqueKey", unique_key.clone()),
                                 &FindOptions::default(),
-                            )
+                            ).await })
                             .await?
                             .is_empty()
                         {
@@ -692,12 +693,12 @@ impl PkiApi {
                         }
                         // A SPIFFE trust domain names one organization's workloads: no other tenant may claim it.
                         if let Some(domain) = &domain {
-                            let claimed = tx
+                            let claimed = boxed(|| async { tx
                                 .find(
                                     "pkiAuthorities",
                                     &Filter::new().eq("trustDomain", domain.clone()),
                                     &FindOptions::default(),
-                                )
+                                ).await })
                                 .await?
                                 .iter()
                                 .any(|other| {
@@ -718,8 +719,8 @@ impl PkiApi {
                         let mut parent: Option<PkiAuthority> = None;
                         let mut child_path_length = path_length;
                         if kind == "intermediate" {
-                            let found = find_authority(&tx, &tenant.id, body.get("parentId")).await?;
-                            let parent_chain = authority_chain(&tx, &found).await?;
+                            let found = boxed(|| find_authority(&tx, &tenant.id, body.get("parentId"))).await?;
+                            let parent_chain = boxed(|| authority_chain(&tx, &found)).await?;
                             assert_authority_usable(&parent_chain, now)?;
                             // Every authority above bounds how many authorities may sit below it: the new one is the
                             // (i+1)-th below the ancestor at index i, which leaves `pathLength - (i + 1)` levels for
@@ -751,7 +752,7 @@ impl PkiApi {
                                 resource_id: format!("pki/{}", found.id),
                                 attributes: authority_attributes(&found),
                             };
-                            if !call.allowed(actions::UPDATE, &target).await? {
+                            if !boxed(|| call.allowed(actions::UPDATE, &target)).await? {
                                 return Err(OperationDenied::new(Some(
                                     "You may not add authorities under that parent",
                                 )));
@@ -761,7 +762,7 @@ impl PkiApi {
                         // The signing key: a new KMS key, or an existing one the caller may sign with.
                         let key = match body.get("keyId") {
                             Some(reference) => {
-                                let key = find_key(&tx, &tenant.id, Some(reference)).await?;
+                                let key = boxed(|| find_key(&tx, &tenant.id, Some(reference))).await?;
                                 assert_usable(&key, &json!("sign"))?;
                                 // One key, one authority; and a key others use cannot become a CA key without their
                                 // knowing.
@@ -769,7 +770,7 @@ impl PkiApi {
                                 assert_unmanaged(&key_json)?;
                                 let algorithm =
                                     algorithm_for_spec(&js_string(Some(&key.key_spec)))?;
-                                let aliases = alias_names(&tx, &key_json).await?;
+                                let aliases = boxed(|| alias_names(&tx, &key_json)).await?;
                                 let target = Target {
                                     resource_id: format!("kms/{}", key.id),
                                     attributes: key_attributes(
@@ -779,21 +780,21 @@ impl PkiApi {
                                     )?,
                                 };
                                 let sign = js_string(kms_actions()?.get("sign"));
-                                if !call.allowed(&sign, &target).await? {
+                                if !boxed(|| call.allowed(&sign, &target)).await? {
                                     return Err(OperationDenied::new(Some(
                                         "You may not sign with that key",
                                     )));
                                 }
                                 // From now on the key signs only through this authority: raw KMS signatures could
                                 // forge certificates.
-                                let mut record = tx
-                                    .get("kmsKeys", &key.id)
+                                let mut record = boxed(|| tx
+                                    .get("kmsKeys", &key.id))
                                     .await?
                                     .unwrap_or_else(|| crate::port::encode(&key));
                                 record.insert("managedBy".into(), json!("pki"));
                                 record.insert("managedId".into(), json!(authority_id));
                                 record.insert("updatedAt".into(), number(now));
-                                tx.put("kmsKeys", &record).await?;
+                                boxed(|| tx.put("kmsKeys", &record)).await?;
                                 let mut key = key;
                                 key.managed_by = Some("pki".into());
                                 key.managed_id = Some(authority_id.clone());
@@ -803,7 +804,7 @@ impl PkiApi {
                             // `Certificate authority: ${name}` and the tag value stay within their 512 and 256
                             // character limits: a name has at most 128.
                             None => {
-                                create_service_key(
+                                boxed(|| async { create_service_key(
                                     &ctx,
                                     &tx,
                                     &json!({
@@ -816,12 +817,12 @@ impl PkiApi {
                                         "managedBy": "pki",
                                         "managedId": authority_id,
                                     }),
-                                )
+                                ).await })
                                 .await?
                             }
                         };
                         let key_json = value_of(&key);
-                        let version = key_version(&tx, &key_json, key.current_version).await?;
+                        let version = boxed(|| key_version(&tx, &key_json, key.current_version)).await?;
                         let key_spec = js_string(Some(&key.key_spec));
                         let algorithm = algorithm_for_spec(&key_spec)?;
                         let spki = spki_of(version.public_key_pem.as_deref().ok_or_else(internal_error)?)?;
@@ -877,19 +878,22 @@ impl PkiApi {
                                     .await?
                             }
                             None => {
-                                kms_sign_for(
-                                    &ctx,
-                                    &tx,
-                                    &tenant.id,
-                                    &key.id,
-                                    version.version,
-                                    &algorithm,
-                                    &tbs,
-                                    &KmsServiceUse {
-                                        via: "pki".into(),
-                                        principal: Some(principal.clone()),
-                                    },
-                                )
+                                boxed(|| async {
+                                    kms_sign_for(
+                                        &ctx,
+                                        &tx,
+                                        &tenant.id,
+                                        &key.id,
+                                        version.version,
+                                        &algorithm,
+                                        &tbs,
+                                        &KmsServiceUse {
+                                            via: "pki".into(),
+                                            principal: Some(principal.clone()),
+                                        },
+                                    )
+                                    .await
+                                })
                                 .await?
                             }
                         };
@@ -951,7 +955,7 @@ impl PkiApi {
                         if let Some(permitted) = &permitted {
                             record.insert("permitted".into(), value_of(permitted));
                         }
-                        let stored = tx.insert("pkiAuthorities", &record).await?;
+                        let stored = boxed(|| tx.insert("pkiAuthorities", &record)).await?;
                         let authority = PkiAuthority::from_record(stored)?;
                         if let Some(parent) = &parent {
                             let mut certificate = Record::new();
@@ -981,7 +985,7 @@ impl PkiApi {
                             certificate.insert("status".into(), json!("valid"));
                             certificate.insert("issuedAt".into(), number(now));
                             certificate.insert("issuedBy".into(), json!(principal.identity.id));
-                            tx.insert("pkiCertificates", &certificate).await?;
+                            boxed(|| tx.insert("pkiCertificates", &certificate)).await?;
                         }
                         call.note("authorityId", json!(authority.id));
                         call.note("name", json!(name));

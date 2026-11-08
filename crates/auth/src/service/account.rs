@@ -3,6 +3,7 @@
 
 use std::sync::Mutex;
 
+use better_iam_core::boxed;
 use better_iam_core::{
     AuthMethod, CredentialInput, Filter, IamError, IamResult, IamStoreExt, Identity, IdentityKind,
     IdentityStatus, OutboxKind, Session, Tenant,
@@ -366,7 +367,7 @@ impl AuthService {
             ));
         }
         let password = text(prop(input, "password"), "password", 1024)?;
-        let initial = self.authenticate(credentials).await?;
+        let initial = boxed(|| self.authenticate(credentials)).await?;
         if initial
             .session
             .impersonator_id
@@ -379,11 +380,14 @@ impl AuthService {
                 403,
             ));
         }
-        self.rate(
-            &initial.identity.tenant_id,
-            &format!("reauth:{}", initial.identity.id),
-            RateTier::Default,
-        )
+        boxed(|| async {
+            self.rate(
+                &initial.identity.tenant_id,
+                &format!("reauth:{}", initial.identity.id),
+                RateTier::Default,
+            )
+            .await
+        })
         .await?;
         // Reauthentication is a sign-in, so a wrong password here is recorded like one at sign-in.
         let failed: Mutex<Option<Identity>> = Mutex::new(None);
@@ -392,16 +396,22 @@ impl AuthService {
             .transaction(|tx| {
                 let failed = &failed;
                 async move {
-                    let principal = self.authenticate(credentials).await?;
-                    self.method_allowed(&tx, &principal.identity.tenant_id, AuthMethod::Password)
-                        .await?;
+                    let principal = boxed(|| self.authenticate(credentials)).await?;
+                    boxed(|| {
+                        self.method_allowed(
+                            &tx,
+                            &principal.identity.tenant_id,
+                            AuthMethod::Password,
+                        )
+                    })
+                    .await?;
                     let valid = match principal
                         .identity
                         .password_hash
                         .clone()
                         .filter(|hash| !hash.is_empty())
                     {
-                        Some(hash) => passwords::verify(&hash, &password).await?,
+                        Some(hash) => boxed(|| passwords::verify(&hash, &password)).await?,
                         None => false,
                     };
                     if !valid {
@@ -416,14 +426,15 @@ impl AuthService {
                         ));
                     }
                     // As at sign-in: an expired password is refused once verified.
-                    self.assert_password_current(&tx, &principal.identity)
-                        .await?;
-                    self.complete_authentication(
-                        &tx,
-                        &principal.identity,
-                        Some(AuthMethod::Password),
-                        None,
-                    )
+                    boxed(|| self.assert_password_current(&tx, &principal.identity)).await?;
+                    boxed(|| {
+                        self.complete_authentication(
+                            &tx,
+                            &principal.identity,
+                            Some(AuthMethod::Password),
+                            None,
+                        )
+                    })
                     .await
                 }
             })
@@ -605,19 +616,22 @@ impl AuthService {
     ) -> IamResult<Success> {
         let normalized = phone(prop(input, "phone"))?;
         let code = text(prop(input, "code"), "code", 6)?;
-        let initial = self.authenticate(credentials).await?;
-        self.rate(
-            &initial.identity.tenant_id,
-            &format!("phone-code:{}", initial.identity.id),
-            RateTier::Sensitive,
-        )
+        let initial = boxed(|| self.authenticate(credentials)).await?;
+        boxed(|| async {
+            self.rate(
+                &initial.identity.tenant_id,
+                &format!("phone-code:{}", initial.identity.id),
+                RateTier::Sensitive,
+            )
+            .await
+        })
         .await?;
         self.store()
             .transaction(|tx| async move {
-                let mut principal = self.authenticate(credentials).await?;
+                let mut principal = boxed(|| self.authenticate(credentials)).await?;
                 self.require_recent(&principal)?;
-                let challenge = self
-                    .read_challenge(
+                let challenge = boxed(|| {
+                    self.read_challenge(
                         &tx,
                         &principal.identity.tenant_id,
                         &code,
@@ -627,7 +641,8 @@ impl AuthService {
                             destination: None,
                         },
                     )
-                    .await?;
+                })
+                .await?;
                 if challenge.identity_id != principal.identity.id
                     || challenge.session_id.as_deref() != Some(principal.session.id.as_str())
                     || challenge.payload_str("phone") != Some(normalized.as_str())
@@ -638,14 +653,17 @@ impl AuthService {
                         401,
                     ));
                 }
-                let existing = find::<Identity>(
-                    tx.as_ref(),
-                    "identities",
-                    &Filter::new()
-                        .eq("tenantId", principal.identity.tenant_id.clone())
-                        .eq("phone", normalized.clone())
-                        .eq("phoneVerified", true),
-                )
+                let existing = boxed(|| async {
+                    find::<Identity>(
+                        tx.as_ref(),
+                        "identities",
+                        &Filter::new()
+                            .eq("tenantId", principal.identity.tenant_id.clone())
+                            .eq("phone", normalized.clone())
+                            .eq("phoneVerified", true),
+                    )
+                    .await
+                })
                 .await?;
                 if existing
                     .iter()
@@ -659,9 +677,9 @@ impl AuthService {
                 }
                 principal.identity.phone = Some(normalized.clone());
                 principal.identity.phone_verified = Some(true);
-                put(tx.as_ref(), "identities", &principal.identity).await?;
-                tx.delete("authChallenges", &challenge.id).await?;
-                self.audit(&tx, &principal.identity, "auth:phone:verify", None, None)
+                boxed(|| put(tx.as_ref(), "identities", &principal.identity)).await?;
+                boxed(|| tx.delete("authChallenges", &challenge.id)).await?;
+                boxed(|| self.audit(&tx, &principal.identity, "auth:phone:verify", None, None))
                     .await?;
                 Ok(Success::TRUE)
             })

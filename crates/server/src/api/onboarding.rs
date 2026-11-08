@@ -11,6 +11,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use better_iam_core::boxed;
 use better_iam_core::{
     AuditOutcome, AuthenticatedPrincipal, CredentialInput, Filter, FindOptions, IamError,
     IamResult, IamStoreExt, Identity, IdentityKind, IdentityStatus, Record, Tenant, TenantStatus,
@@ -2324,14 +2325,15 @@ impl OnboardingApi {
                             "Only people complete onboarding",
                         ));
                     }
-                    let tenant = ctx.tenant(&tx, &tenant_id).await?;
-                    let chain = ctx.ancestry(&tx, &tenant).await?;
+                    let tenant = boxed(|| ctx.tenant(&tx, &tenant_id)).await?;
+                    let chain = boxed(|| ctx.ancestry(&tx, &tenant)).await?;
                     let now = ctx.now();
-                    let candidate = flows_for_identity(&tx, &chain, &principal.identity, now, None)
-                        .await?
-                        .into_iter()
-                        .find(|item| str_of(&item.flow, "id") == Some(flow_id.as_str()))
-                        .ok_or_else(flow_not_found)?;
+                    let candidate =
+                        boxed(|| flows_for_identity(&tx, &chain, &principal.identity, now, None))
+                            .await?
+                            .into_iter()
+                            .find(|item| str_of(&item.flow, "id") == Some(flow_id.as_str()))
+                            .ok_or_else(flow_not_found)?;
                     let step = find_step(&candidate.flow, &Value::String(step_id.clone()))
                         .ok_or_else(step_not_found)?
                         .clone();
@@ -2386,15 +2388,15 @@ impl OnboardingApi {
                             filled.push(attribute);
                         }
                         if !filled.is_empty() {
-                            let mut raw = tx
-                                .get("identities", &identity.id)
+                            let mut raw = boxed(|| tx.get("identities", &identity.id))
                                 .await?
                                 .ok_or_else(internal_error)?;
                             raw.insert("attributes".into(), Value::Object(attributes));
-                            identity = decode(tx.put("identities", &raw).await?)?;
+                            identity = decode(boxed(|| tx.put("identities", &raw)).await?)?;
                         }
                     }
-                    let mut progress = progress_for(&tx, &tenant_id, &identity.id).await?;
+                    let mut progress =
+                        boxed(|| progress_for(&tx, &tenant_id, &identity.id)).await?;
                     let existing = progress.get(&flow_id).cloned();
                     let subject = Subject {
                         kind: "identity",
@@ -2409,7 +2411,7 @@ impl OnboardingApi {
                         record,
                     );
                     next.insert("updatedAt".into(), number(now));
-                    let saved = upsert_progress(&tx, &next, existing.is_some()).await?;
+                    let saved = boxed(|| upsert_progress(&tx, &next, existing.is_some())).await?;
                     progress.insert(flow_id.clone(), saved);
                     let mut metadata = Map::new();
                     metadata.insert("flowId".into(), Value::String(flow_id.clone()));
@@ -2443,7 +2445,10 @@ impl OnboardingApi {
                             Some(metadata),
                         )
                         .await?;
-                    let facts = member_facts(&tx, &identity, &[&candidate.flow], now).await?;
+                    let facts = boxed(|| async {
+                        member_facts(&tx, &identity, &[&candidate.flow], now).await
+                    })
+                    .await?;
                     let status = evaluate_flow(
                         &candidate,
                         progress.get(&flow_id),
@@ -2458,14 +2463,16 @@ impl OnboardingApi {
                         identity: identity.clone(),
                         ..principal.clone()
                     };
-                    let pending_groups = record_completions(
-                        &ctx,
-                        &tx,
-                        &acting,
-                        &subject,
-                        &mut statuses,
-                        &mut progress,
-                    )
+                    let pending_groups = boxed(|| {
+                        record_completions(
+                            &ctx,
+                            &tx,
+                            &acting,
+                            &subject,
+                            &mut statuses,
+                            &mut progress,
+                        )
+                    })
                     .await?;
                     let (_, status) = statuses.pop().ok_or_else(internal_error)?;
                     Ok((status, filled, pending_groups, identity.id.clone()))
@@ -2473,14 +2480,18 @@ impl OnboardingApi {
                 .await?
         };
         if !pending_groups.is_empty() {
-            apply_completion_groups(&ctx, &tenant_id, &identity_id, &pending_groups).await?;
+            boxed(|| apply_completion_groups(&ctx, &tenant_id, &identity_id, &pending_groups))
+                .await?;
         } else if !filled.is_empty() {
-            crate::api::package_automation::after_identity_change(
-                &ctx,
-                &tenant_id,
-                &[identity_id],
-                &Value::Null,
-            )
+            boxed(|| async {
+                crate::api::package_automation::after_identity_change(
+                    &ctx,
+                    &tenant_id,
+                    &[identity_id],
+                    &Value::Null,
+                )
+                .await
+            })
             .await?;
         }
         Ok(Reply::json(json!({
@@ -2593,13 +2604,15 @@ async fn verify(
         Some(Value::String(note)) if note.is_empty() => None,
         Some(value) => Some(core_js::trim(&text(Some(value), "note", 500)?).to_owned()),
     };
-    let flow = flow_record(tx, body.get("flowId")).await?;
+    let flow = boxed(|| flow_record(tx, body.get("flowId"))).await?;
     let flow_id = str_of(&flow, "id").unwrap_or("").to_owned();
     let now = ctx.now();
     let (candidate, subject, verified) = if str_of(&flow, "audience") == Some("member") {
-        let identity = ctx
-            .active_identity(tx, &string_member(body, "subjectId"), &tenant.id)
-            .await?;
+        let identity = boxed(|| async {
+            ctx.active_identity(tx, &string_member(body, "subjectId"), &tenant.id)
+                .await
+        })
+        .await?;
         if identity.id == principal.identity.id {
             return Err(IamError::new(
                 "INVALID_INPUT",
@@ -2607,8 +2620,8 @@ async fn verify(
             )
             .into());
         }
-        let chain = ctx.ancestry(tx, tenant).await?;
-        let candidate = flows_for_identity(tx, &chain, &identity, now, None)
+        let chain = boxed(|| ctx.ancestry(tx, tenant)).await?;
+        let candidate = boxed(|| flows_for_identity(tx, &chain, &identity, now, None))
             .await?
             .into_iter()
             .find(|item| str_of(&item.flow, "id") == Some(flow_id.as_str()));
@@ -2625,11 +2638,11 @@ async fn verify(
         let target = ctx
             .tenant(tx, &text(body.get("subjectId"), "subjectId", 128)?)
             .await?;
-        let target_chain = ctx.ancestry(tx, &target).await?;
+        let target_chain = boxed(|| ctx.ancestry(tx, &target)).await?;
         if !target_chain.iter().skip(1).any(|item| item.id == tenant.id) {
             return Err(IamError::with_status("NOT_FOUND", "Tenant not found", 404).into());
         }
-        let candidate = candidate_flows(tx, &target_chain, "tenant", None)
+        let candidate = boxed(|| candidate_flows(tx, &target_chain, "tenant", None))
             .await?
             .into_iter()
             .find(|item| {
@@ -2656,7 +2669,7 @@ async fn verify(
             )
         })?
         .clone();
-    let mut progress = progress_for(tx, &subject.tenant_id, &subject.id).await?;
+    let mut progress = boxed(|| progress_for(tx, &subject.tenant_id, &subject.id)).await?;
     let existing = progress.get(&flow_id).cloned();
     let mut record = Map::new();
     record.insert(
@@ -2683,7 +2696,7 @@ async fn verify(
         record,
     );
     next.insert("updatedAt".into(), number(now));
-    let saved = upsert_progress(tx, &next, existing.is_some()).await?;
+    let saved = boxed(|| upsert_progress(tx, &next, existing.is_some())).await?;
     progress.insert(flow_id.clone(), saved);
     let mut metadata = Map::new();
     metadata.insert("flowId".into(), Value::String(flow_id.clone()));
@@ -2717,7 +2730,7 @@ async fn verify(
         .await?;
     let status = match &verified {
         Verified::Member(identity) => {
-            let facts = member_facts(tx, identity, &[&flow], now).await?;
+            let facts = boxed(|| async { member_facts(tx, identity, &[&flow], now).await }).await?;
             evaluate_flow(
                 &candidate,
                 progress.get(&flow_id),
@@ -2729,7 +2742,7 @@ async fn verify(
             )
         }
         Verified::Tenant(target) => {
-            let facts = tenant_facts(tx, target, &[&flow]).await?;
+            let facts = boxed(|| async { tenant_facts(tx, target, &[&flow]).await }).await?;
             evaluate_flow(
                 &candidate,
                 progress.get(&flow_id),
@@ -2743,7 +2756,8 @@ async fn verify(
     };
     // Completion is recorded here; completion groups are applied the next time the person reads their onboarding.
     let mut statuses = vec![(candidate, status)];
-    record_completions(ctx, tx, principal, &subject, &mut statuses, &mut progress).await?;
+    boxed(|| record_completions(ctx, tx, principal, &subject, &mut statuses, &mut progress))
+        .await?;
     let (_, status) = statuses.pop().ok_or_else(internal_error)?;
     Ok(json!({ "flow": Value::Object(status) }))
 }
@@ -2755,11 +2769,11 @@ async fn progress_report(
     tenant: &Tenant,
     body: &Map<String, Value>,
 ) -> OperationResult<Value> {
-    let flow = flow_record(tx, body.get("flowId")).await?;
+    let flow = boxed(|| flow_record(tx, body.get("flowId"))).await?;
     let flow_id = str_of(&flow, "id").unwrap_or("").to_owned();
     let audience = str_of(&flow, "audience").unwrap_or("").to_owned();
     let defined_here = str_of(&flow, "tenantId") == Some(tenant.id.as_str());
-    let chain = ctx.ancestry(tx, tenant).await?;
+    let chain = boxed(|| ctx.ancestry(tx, tenant)).await?;
     let settings = SettingsReader::new(tx);
     let now = ctx.now();
     let candidate = if defined_here {
@@ -2771,7 +2785,7 @@ async fn progress_report(
             disabled_by: None,
         })
     } else {
-        candidate_flows(tx, &chain, &audience, Some(&settings))
+        boxed(|| candidate_flows(tx, &chain, &audience, Some(&settings)))
             .await?
             .into_iter()
             .find(|item| str_of(&item.flow, "id") == Some(flow_id.as_str()))
@@ -2806,26 +2820,27 @@ async fn progress_report(
         json!({ "subjects": number(rows.len() as f64), "complete": number(complete as f64) })
     };
     if audience == "tenant" {
-        let (tenants, truncated) = descendants_of(tx, tenant).await?;
+        let (tenants, truncated) = boxed(|| descendants_of(tx, tenant)).await?;
         let mut rows: Vec<Value> = Vec::new();
         report.insert("tenants".into(), Value::Array(Vec::new()));
         for target in tenants {
             if target.status == TenantStatus::Deleted {
                 continue;
             }
-            let target_chain = ctx.ancestry(tx, &target).await?;
-            let Some(found) = candidate_flows(tx, &target_chain, "tenant", Some(&settings))
-                .await?
-                .into_iter()
-                .find(|item| {
-                    str_of(&item.flow, "id") == Some(flow_id.as_str())
-                        && tenant_flow_applies(&item.flow, &target)
-                })
+            let target_chain = boxed(|| ctx.ancestry(tx, &target)).await?;
+            let Some(found) =
+                boxed(|| candidate_flows(tx, &target_chain, "tenant", Some(&settings)))
+                    .await?
+                    .into_iter()
+                    .find(|item| {
+                        str_of(&item.flow, "id") == Some(flow_id.as_str())
+                            && tenant_flow_applies(&item.flow, &target)
+                    })
             else {
                 continue;
             };
             let (statuses, progress) =
-                tenant_statuses(tx, &target_chain, Some(vec![found])).await?;
+                boxed(|| tenant_statuses(tx, &target_chain, Some(vec![found]))).await?;
             let (_, status) = statuses.first().ok_or_else(internal_error)?;
             let mut source = match source_of(&target) {
                 Value::Object(map) => map,
@@ -2858,13 +2873,15 @@ async fn progress_report(
     };
     if reaches_here {
         let mut people: Vec<Identity> = Vec::new();
-        for record in tx
-            .find(
+        for record in boxed(|| async {
+            tx.find(
                 "identities",
                 &Filter::new().eq("tenantId", tenant.id.clone()),
                 &FindOptions::default(),
             )
-            .await?
+            .await
+        })
+        .await?
         {
             let identity: Identity = decode(record)?;
             if identity.kind == IdentityKind::User && identity.status == IdentityStatus::Active {
@@ -2880,21 +2897,23 @@ async fn progress_report(
         let has_rule = flag_of(&flow, "rule");
         for identity in &people {
             let group_ids = if has_rule {
-                Some(live_group_ids(tx, identity, now).await?)
+                Some(boxed(|| live_group_ids(tx, identity, now)).await?)
             } else {
                 None
             };
             if !flow_applies_to(&flow, identity, group_ids.as_deref())? {
                 continue;
             }
-            let (statuses, progress) = member_statuses(
-                ctx,
-                tx,
-                &chain,
-                identity,
-                true,
-                Some(vec![candidate.clone()]),
-            )
+            let (statuses, progress) = boxed(|| {
+                member_statuses(
+                    ctx,
+                    tx,
+                    &chain,
+                    identity,
+                    true,
+                    Some(vec![candidate.clone()]),
+                )
+            })
             .await?;
             let Some((_, status)) = statuses.first() else {
                 continue;
@@ -2910,45 +2929,51 @@ async fn progress_report(
     report.insert("summary".into(), summary(&rows));
     report.insert("members".into(), Value::Array(rows));
     if defined_here && str_of(&flow, "appliesTo") != Some("tenant") {
-        let (tenants, truncated) = descendants_of(tx, tenant).await?;
+        let (tenants, truncated) = boxed(|| descendants_of(tx, tenant)).await?;
         let mut descendants: Vec<Value> = Vec::new();
         for target in tenants {
             if target.status != TenantStatus::Active {
                 continue;
             }
-            let target_chain = ctx.ancestry(tx, &target).await?;
-            let Some(found) = candidate_flows(tx, &target_chain, "member", Some(&settings))
-                .await?
-                .into_iter()
-                .find(|item| {
-                    str_of(&item.flow, "id") == Some(flow_id.as_str()) && item.disabled_by.is_none()
-                })
+            let target_chain = boxed(|| ctx.ancestry(tx, &target)).await?;
+            let Some(found) =
+                boxed(|| candidate_flows(tx, &target_chain, "member", Some(&settings)))
+                    .await?
+                    .into_iter()
+                    .find(|item| {
+                        str_of(&item.flow, "id") == Some(flow_id.as_str())
+                            && item.disabled_by.is_none()
+                    })
             else {
                 continue;
             };
             let mut people = 0;
             let mut complete = 0;
-            for record in tx
-                .find(
+            for record in boxed(|| async {
+                tx.find(
                     "identities",
                     &Filter::new().eq("tenantId", target.id.clone()),
                     &FindOptions::default(),
                 )
-                .await?
+                .await
+            })
+            .await?
             {
                 let identity: Identity = decode(record)?;
                 if identity.kind != IdentityKind::User || identity.status != IdentityStatus::Active
                 {
                     continue;
                 }
-                let (statuses, _) = member_statuses(
-                    ctx,
-                    tx,
-                    &target_chain,
-                    &identity,
-                    false,
-                    Some(vec![found.clone()]),
-                )
+                let (statuses, _) = boxed(|| {
+                    member_statuses(
+                        ctx,
+                        tx,
+                        &target_chain,
+                        &identity,
+                        false,
+                        Some(vec![found.clone()]),
+                    )
+                })
                 .await?;
                 let Some((_, status)) = statuses.first() else {
                     continue;

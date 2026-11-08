@@ -10,6 +10,7 @@
 #![forbid(unsafe_code)]
 
 pub mod audit;
+pub mod boxing;
 pub mod classification;
 #[cfg(feature = "conformance")]
 pub mod conformance;
@@ -36,6 +37,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 pub use audit::*;
+pub use boxing::boxed;
 pub use classification::*;
 pub use delegation_tokens::*;
 pub use filter_compilers::*;
@@ -323,12 +325,11 @@ pub trait IamStoreExt: IamStore {
         Fut: Future<Output = IamResult<T>> + Send + 'a,
     {
         async move {
+            // The callback's future is created in this closure, not inside the boxed future's poll, so it never
+            // occupies an unoptimized build's stack frame on the way to the heap.
             let erased: TransactionFn<'a> = Box::new(move |tx| {
-                Box::pin(async move {
-                    run(tx)
-                        .await
-                        .map(|value| Box::new(value) as TransactionValue)
-                })
+                let work = run(tx);
+                Box::pin(async move { work.await.map(|value| Box::new(value) as TransactionValue) })
             });
             let value = self.transaction_dyn(erased).await?;
             match value.downcast::<T>() {

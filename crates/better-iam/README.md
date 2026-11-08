@@ -3,8 +3,8 @@
 [Better IAM](https://github.com/Better-IAM/better-iam) for Rust in one dependency, the port of the `better-iam`
 umbrella package: the server, core, authentication, the storage adapters, the typed HTTP client and the projects
 plugin, each re-exported as a module behind a feature (`server`, `auth`, `sqlite`, `client` and `projects` by
-default; `postgres`, `libsql` and `types` on request). The crate root re-exports what the TypeScript umbrella's
-index exports.
+default; `postgres`, `libsql`, `types` and `middleware` on request, with `axum` or `actix-web` adding the
+middleware's framework integration). The crate root re-exports what the TypeScript umbrella's index exports.
 
 ```rust,ignore
 use better_iam::{better_iam, define_policy, BetterIamOptions};

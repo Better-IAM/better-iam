@@ -7,6 +7,7 @@
 
 use std::sync::Arc;
 
+use better_iam_core::boxed;
 use better_iam_core::{
     AuditOutcome, AuthenticatedPrincipal, Filter, FindOptions, IamError, IamResult, Identity,
     IdentityKind, Record, Tenant, js as core_js,
@@ -1161,10 +1162,10 @@ pub async fn apply_org(
         env,
     };
     if phase != "delete" {
-        apply.upsert().await?;
+        boxed(|| apply.upsert()).await?;
     }
     if phase != "upsert" {
-        apply.delete().await?;
+        boxed(|| apply.delete()).await?;
     }
     Ok(())
 }
@@ -1209,7 +1210,7 @@ impl OrgApply<'_> {
 
         // Departments: creates top-down, then updates, then people.
         let mut department_ids: IndexMap<String, String> =
-            find(tx, DEPARTMENTS, in_tenant(tenant_id))
+            boxed(|| find(tx, DEPARTMENTS, in_tenant(tenant_id)))
                 .await?
                 .into_iter()
                 .map(|record| {
@@ -1240,14 +1241,17 @@ impl OrgApply<'_> {
             .collect();
         creates.sort_by_key(|desired| depth_of(&department_parents, &lower(&desired.name)));
         for desired in creates {
-            self.env
-                .allow
-                .allow(
-                    "iam:departments:manage",
-                    tenant_id,
-                    &format!("create department {}", desired.name),
-                )
-                .await?;
+            boxed(|| async {
+                self.env
+                    .allow
+                    .allow(
+                        "iam:departments:manage",
+                        tenant_id,
+                        &format!("create department {}", desired.name),
+                    )
+                    .await
+            })
+            .await?;
             let mut input = Map::new();
             input.insert("tenantId".into(), json!(tenant_id));
             input.insert("name".into(), json!(desired.name));
@@ -1268,9 +1272,8 @@ impl OrgApply<'_> {
             if let Some(cost_center) = &desired.cost_center {
                 input.insert("costCenter".into(), json!(cost_center));
             }
-            let created = departments
-                .create_department(tx, principal, tenant, &input)
-                .await?;
+            let created =
+                boxed(|| departments.create_department(tx, principal, tenant, &input)).await?;
             department_ids.insert(lower(&created.name), created.id.clone());
         }
         for item in &self.plan.departments {
@@ -1290,14 +1293,17 @@ impl OrgApply<'_> {
             if settings == 0 {
                 continue;
             }
-            self.env
-                .allow
-                .allow(
-                    "iam:departments:manage",
-                    &record.id,
-                    &format!("update department {}", item.change.name),
-                )
-                .await?;
+            boxed(|| async {
+                self.env
+                    .allow
+                    .allow(
+                        "iam:departments:manage",
+                        &record.id,
+                        &format!("update department {}", item.change.name),
+                    )
+                    .await
+            })
+            .await?;
             let or_null = |value: &Option<String>| value.clone().map_or(Value::Null, Value::String);
             let mut input = Map::new();
             input.insert("tenantId".into(), json!(tenant_id));
@@ -1321,9 +1327,7 @@ impl OrgApply<'_> {
             };
             input.insert("headId".into(), head);
             input.insert("costCenter".into(), or_null(&desired.cost_center));
-            departments
-                .update_department(tx, principal, tenant, &input)
-                .await?;
+            boxed(|| departments.update_department(tx, principal, tenant, &input)).await?;
         }
         for item in &self.plan.departments {
             let change = &item.change;
@@ -1348,33 +1352,38 @@ impl OrgApply<'_> {
                 .get(&lower(&desired.name))
                 .cloned()
                 .ok_or_else(internal_error)?;
-            let department: Department = match tx.get(DEPARTMENTS, &department_id).await? {
+            let department: Department = match boxed(|| tx.get(DEPARTMENTS, &department_id)).await?
+            {
                 Some(record) => decode(record)?,
                 None => return Err(internal_error().into()),
             };
-            self.env
-                .allow
-                .allow(
-                    "iam:departments:manage",
-                    &department_id,
-                    &format!("place people in {}", change.name),
-                )
-                .await?;
+            boxed(|| async {
+                self.env
+                    .allow
+                    .allow(
+                        "iam:departments:manage",
+                        &department_id,
+                        &format!("place people in {}", change.name),
+                    )
+                    .await
+            })
+            .await?;
             let mut wanted: IndexSet<String> = IndexSet::new();
             for email in members {
                 wanted.insert(self.person_id(email)?);
             }
-            for placement in find(
-                tx,
-                DEPARTMENT_MEMBERS,
-                in_tenant(tenant_id).eq("departmentId", department_id.clone()),
-            )
+            for placement in boxed(|| {
+                find(
+                    tx,
+                    DEPARTMENT_MEMBERS,
+                    in_tenant(tenant_id).eq("departmentId", department_id.clone()),
+                )
+            })
             .await?
             {
                 let identity_id = member_str(&placement, "identityId").to_owned();
                 if !wanted.contains(&identity_id) {
-                    tx.delete(DEPARTMENT_MEMBERS, member_str(&placement, "id"))
-                        .await?;
+                    boxed(|| tx.delete(DEPARTMENT_MEMBERS, member_str(&placement, "id"))).await?;
                     let mut metadata = Map::new();
                     metadata.insert(
                         "identityId".into(),
@@ -1395,14 +1404,19 @@ impl OrgApply<'_> {
                 }
             }
             for identity_id in &wanted {
-                let identity = departments
-                    .department_person(tx, tenant_id, Some(&Value::String(identity_id.clone())))
-                    .await?;
-                let current = find(
-                    tx,
-                    DEPARTMENT_MEMBERS,
-                    in_tenant(tenant_id).eq("uniqueKey", format!("identity:{identity_id}")),
-                )
+                let identity = boxed(|| async {
+                    departments
+                        .department_person(tx, tenant_id, Some(&Value::String(identity_id.clone())))
+                        .await
+                })
+                .await?;
+                let current = boxed(|| {
+                    find(
+                        tx,
+                        DEPARTMENT_MEMBERS,
+                        in_tenant(tenant_id).eq("uniqueKey", format!("identity:{identity_id}")),
+                    )
+                })
                 .await?
                 .into_iter()
                 .next();
@@ -1411,24 +1425,24 @@ impl OrgApply<'_> {
                     .and_then(|record| record.get("departmentId"))
                     .and_then(Value::as_str);
                 if current_department != Some(department_id.as_str()) {
-                    departments
-                        .place(tx, principal, &department, &identity.id, None)
+                    boxed(|| departments.place(tx, principal, &department, &identity.id, None))
                         .await?;
                 }
             }
         }
 
         // Teams: creates top-down, then settings, then members and roles.
-        let mut team_ids: IndexMap<String, String> = find(tx, TEAMS, in_tenant(tenant_id))
-            .await?
-            .into_iter()
-            .map(|record| {
-                (
-                    member_str(&record, "slug").to_owned(),
-                    member_str(&record, "id").to_owned(),
-                )
-            })
-            .collect();
+        let mut team_ids: IndexMap<String, String> =
+            boxed(|| find(tx, TEAMS, in_tenant(tenant_id)))
+                .await?
+                .into_iter()
+                .map(|record| {
+                    (
+                        member_str(&record, "slug").to_owned(),
+                        member_str(&record, "id").to_owned(),
+                    )
+                })
+                .collect();
         let team_parents: IndexMap<String, Option<String>> = self
             .plan
             .teams
@@ -1445,14 +1459,17 @@ impl OrgApply<'_> {
             .collect();
         team_creates.sort_by_key(|desired| depth_of(&team_parents, &desired.slug));
         for desired in team_creates {
-            self.env
-                .allow
-                .allow(
-                    "iam:teams:create",
-                    tenant_id,
-                    &format!("create team {}", desired.slug),
-                )
-                .await?;
+            boxed(|| async {
+                self.env
+                    .allow
+                    .allow(
+                        "iam:teams:create",
+                        tenant_id,
+                        &format!("create team {}", desired.slug),
+                    )
+                    .await
+            })
+            .await?;
             let mut input = Map::new();
             input.insert("tenantId".into(), json!(tenant_id));
             input.insert("name".into(), json!(desired.name));
@@ -1483,7 +1500,7 @@ impl OrgApply<'_> {
             {
                 input.insert("syncGroupIds".into(), json!(self.group_ids_of(groups)?));
             }
-            let created = teams.create_team(tx, principal, tenant, &input).await?;
+            let created = boxed(|| teams.create_team(tx, principal, tenant, &input)).await?;
             team_ids.insert(
                 member_str(&created, "slug").to_owned(),
                 member_str(&created, "id").to_owned(),
@@ -1493,7 +1510,9 @@ impl OrgApply<'_> {
             let team_ids = &team_ids;
             async move {
                 let team_id = team_ids.get(&slug).ok_or_else(internal_error)?;
-                tx.get(TEAMS, team_id).await?.ok_or_else(internal_error)
+                boxed(|| tx.get(TEAMS, team_id))
+                    .await?
+                    .ok_or_else(internal_error)
             }
         };
         for item in &self.plan.teams {
@@ -1505,7 +1524,7 @@ impl OrgApply<'_> {
             };
             let fields: &[String] = item.change.fields.as_deref().unwrap_or_default();
             let has = |field: &str| fields.iter().any(|item| item == field);
-            let team = current(desired.slug.clone()).await?;
+            let team = boxed(|| current(desired.slug.clone())).await?;
             let team_id = member_str(&team, "id").to_owned();
             let mut update = Map::new();
             update.insert("tenantId".into(), json!(tenant_id));
@@ -1573,15 +1592,18 @@ impl OrgApply<'_> {
             if update.len() == 2 {
                 continue;
             }
-            self.env
-                .allow
-                .allow(
-                    "iam:teams:update",
-                    &team_id,
-                    &format!("update team {}", item.change.name),
-                )
-                .await?;
-            teams.update_team(tx, principal, &team, &update).await?;
+            boxed(|| async {
+                self.env
+                    .allow
+                    .allow(
+                        "iam:teams:update",
+                        &team_id,
+                        &format!("update team {}", item.change.name),
+                    )
+                    .await
+            })
+            .await?;
+            boxed(|| teams.update_team(tx, principal, &team, &update)).await?;
         }
         for item in &self.plan.teams {
             let change = &item.change;
@@ -1593,26 +1615,30 @@ impl OrgApply<'_> {
             };
             let fields: &[String] = change.fields.as_deref().unwrap_or_default();
             let has = |field: &str| fields.iter().any(|item| item == field);
-            let team = current(desired.slug.clone()).await?;
+            let team = boxed(|| current(desired.slug.clone())).await?;
             let team_id = member_str(&team, "id").to_owned();
             let team_slug_text = member_str(&team, "slug").to_owned();
             let group_id = member_str(&team, "groupId").to_owned();
             let membership = (desired.maintainers.is_some() || desired.members.is_some())
                 && (change.action == "create" || has("maintainers") || has("members"));
             if membership {
-                self.env
-                    .allow
-                    .allow(
-                        "iam:teams:update",
-                        &team_id,
-                        &format!("set the members of team {}", change.name),
-                    )
-                    .await?;
-                let all_records: IndexMap<String, Record> = find(tx, TEAMS, in_tenant(tenant_id))
-                    .await?
-                    .into_iter()
-                    .map(|record| (member_str(&record, "id").to_owned(), record))
-                    .collect();
+                boxed(|| async {
+                    self.env
+                        .allow
+                        .allow(
+                            "iam:teams:update",
+                            &team_id,
+                            &format!("set the members of team {}", change.name),
+                        )
+                        .await
+                })
+                .await?;
+                let all_records: IndexMap<String, Record> =
+                    boxed(|| find(tx, TEAMS, in_tenant(tenant_id)))
+                        .await?
+                        .into_iter()
+                        .map(|record| (member_str(&record, "id").to_owned(), record))
+                        .collect();
                 let all: IndexMap<String, Team> = all_records
                     .iter()
                     .map(|(id, record)| Ok((id.clone(), decode::<Team>(record.clone())?)))
@@ -1622,8 +1648,7 @@ impl OrgApply<'_> {
                     .iter()
                     .filter_map(|item| all_records.get(&item.id).cloned())
                     .collect();
-                teams
-                    .assert_authority_over(tx, principal, tenant_id, &chain_records)
+                boxed(|| teams.assert_authority_over(tx, principal, tenant_id, &chain_records))
                     .await?;
                 let mut wanted: IndexMap<String, &str> = IndexMap::new();
                 for email in desired.members.iter().flatten() {
@@ -1633,11 +1658,13 @@ impl OrgApply<'_> {
                     wanted.insert(self.person_id(email)?, "maintainer");
                 }
                 let now = ctx.now();
-                let live: Vec<Record> = find(
-                    tx,
-                    TEAM_MEMBERS,
-                    in_tenant(tenant_id).eq("teamId", team_id.clone()),
-                )
+                let live: Vec<Record> = boxed(|| {
+                    find(
+                        tx,
+                        TEAM_MEMBERS,
+                        in_tenant(tenant_id).eq("teamId", team_id.clone()),
+                    )
+                })
                 .await?
                 .into_iter()
                 .filter(|member| {
@@ -1661,8 +1688,8 @@ impl OrgApply<'_> {
                     let Some(role) = wanted.get(&identity_id).copied() else {
                         // Temporary and synced memberships are runtime state: only permanent manual ones are removed.
                         if !temporary && !synced {
-                            teams
-                                .remove_member(
+                            boxed(|| {
+                                teams.remove_member(
                                     tx,
                                     principal,
                                     &team,
@@ -1670,7 +1697,8 @@ impl OrgApply<'_> {
                                     "team:member:remove",
                                     None,
                                 )
-                                .await?;
+                            })
+                            .await?;
                         }
                         continue;
                     };
@@ -1687,21 +1715,25 @@ impl OrgApply<'_> {
                         || synced
                         || (role == "maintainer" && member_role != Some("maintainer"))
                     {
-                        teams
-                            .assert_may_claim_team_licenses(
+                        boxed(|| {
+                            teams.assert_may_claim_team_licenses(
                                 tx,
                                 principal,
                                 tenant_id,
                                 &chain_records,
                             )
-                            .await?;
+                        })
+                        .await?;
                     }
                     let mut rest = member.clone();
                     rest.shift_remove("expiresAt");
                     rest.shift_remove("source");
                     rest.insert("role".into(), json!(role));
-                    tx.put(TEAM_MEMBERS, &rest).await?;
-                    sync_team_groups_of(tx, tenant_id, std::slice::from_ref(&team_id), now).await?;
+                    boxed(|| tx.put(TEAM_MEMBERS, &rest)).await?;
+                    boxed(|| {
+                        sync_team_groups_of(tx, tenant_id, std::slice::from_ref(&team_id), now)
+                    })
+                    .await?;
                     let mut metadata = Map::new();
                     metadata.insert("team".into(), json!(team_slug_text));
                     metadata.insert("identityId".into(), json!(identity_id));
@@ -1724,19 +1756,22 @@ impl OrgApply<'_> {
                     let mut input = Map::new();
                     input.insert("identityId".into(), json!(identity_id));
                     input.insert("role".into(), json!(role));
-                    teams.put_member(&mutation, &input, "config").await?;
+                    boxed(|| teams.put_member(&mutation, &input, "config")).await?;
                 }
                 // License seats of the team's chain follow its members in this transaction, as with groups
                 // (licenses.ts).
                 let group_ids: Vec<String> =
                     chain.iter().map(|item| item.group_id.clone()).collect();
-                reconcile_group_licenses(
-                    ctx,
-                    tx,
-                    tenant_id,
-                    &json!(group_ids),
-                    &crate::conformance::principal_json(principal),
-                )
+                boxed(|| async {
+                    reconcile_group_licenses(
+                        ctx,
+                        tx,
+                        tenant_id,
+                        &json!(group_ids),
+                        &crate::conformance::principal_json(principal),
+                    )
+                    .await
+                })
                 .await?;
             }
             let roles = desired.roles.is_some() && (change.action == "create" || has("roles"));
@@ -1751,13 +1786,15 @@ impl OrgApply<'_> {
                     })?;
                     wanted_roles.insert(role_id.clone());
                 }
-                let held: Vec<Record> = find(
-                    tx,
-                    "bindings",
-                    in_tenant(tenant_id)
-                        .eq("subjectType", "group")
-                        .eq("subjectId", group_id.clone()),
-                )
+                let held: Vec<Record> = boxed(|| {
+                    find(
+                        tx,
+                        "bindings",
+                        in_tenant(tenant_id)
+                            .eq("subjectType", "group")
+                            .eq("subjectId", group_id.clone()),
+                    )
+                })
                 .await?
                 .into_iter()
                 .filter(standing_record)
@@ -1766,38 +1803,47 @@ impl OrgApply<'_> {
                     if wanted_roles.shift_remove(member_str(&binding, "roleId")) {
                         continue;
                     }
-                    self.env
-                        .allow
-                        .allow(
-                            "iam:bindings:delete",
-                            member_str(&binding, "id"),
-                            &format!("remove a role from team {}", change.name),
-                        )
-                        .await?;
+                    boxed(|| async {
+                        self.env
+                            .allow
+                            .allow(
+                                "iam:bindings:delete",
+                                member_str(&binding, "id"),
+                                &format!("remove a role from team {}", change.name),
+                            )
+                            .await
+                    })
+                    .await?;
                     let binding: Binding = decode(binding)?;
-                    delete_binding(ctx, tx, principal, &binding).await?;
+                    boxed(|| delete_binding(ctx, tx, principal, &binding)).await?;
                 }
                 for role_id in wanted_roles {
-                    self.env
-                        .allow
-                        .allow(
-                            "iam:bindings:create",
-                            &role_id,
-                            &format!("give team {} a role", change.name),
+                    boxed(|| async {
+                        self.env
+                            .allow
+                            .allow(
+                                "iam:bindings:create",
+                                &role_id,
+                                &format!("give team {} a role", change.name),
+                            )
+                            .await
+                    })
+                    .await?;
+                    boxed(|| async {
+                        create_binding(
+                            ctx,
+                            tx,
+                            principal,
+                            &json!({
+                                "tenantId": tenant_id,
+                                "roleId": role_id,
+                                "subjectType": "group",
+                                "subjectId": group_id,
+                            }),
+                            None,
                         )
-                        .await?;
-                    create_binding(
-                        ctx,
-                        tx,
-                        principal,
-                        &json!({
-                            "tenantId": tenant_id,
-                            "roleId": role_id,
-                            "subjectType": "group",
-                            "subjectId": group_id,
-                        }),
-                        None,
-                    )
+                        .await
+                    })
                     .await?;
                 }
             }

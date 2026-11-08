@@ -11,6 +11,7 @@
 use std::sync::Arc;
 
 use better_iam_auth::outbox::EnqueueInput;
+use better_iam_core::boxed;
 use better_iam_core::js as core_js;
 use better_iam_core::{
     AuditOutcome, AuthenticatedPrincipal, CredentialInput, Filter, FindOptions, IamError,
@@ -397,15 +398,15 @@ pub async fn apply_response(
 
     match kind {
         "revoke-sessions" => {
-            let identity = match target(ctx, tx, tenant_id, request).await? {
+            let identity = match boxed(|| target(ctx, tx, tenant_id, request)).await? {
                 Ok(identity) => identity,
-                Err(why) => return Ok(responses.skip(why, &request.subject).await?),
+                Err(why) => return Ok(boxed(|| responses.skip(why, &request.subject)).await?),
             };
             // As identities.revokeSessions: a root administrator's sessions are ended by root (or by themselves).
             if let Some(principal) = principal
                 && identity.root_admin
                 && principal.identity.id != identity.id
-                && !ctx.root_principal(tx, principal).await?
+                && !boxed(|| ctx.root_principal(tx, principal)).await?
             {
                 return Err(OperationDenied::new(Some("Root capability is protected")));
             }
@@ -418,112 +419,134 @@ pub async fn apply_response(
                     || (keep_api_keys && str_member(session, "kind") == Some("api-key"))
             };
             let mut revoked = 0.0;
-            for session in find(
-                tx,
-                "sessions",
-                Filter::new().eq("identityId", identity.id.clone()),
-            )
+            for session in boxed(|| {
+                find(
+                    tx,
+                    "sessions",
+                    Filter::new().eq("identityId", identity.id.clone()),
+                )
+            })
             .await?
             {
                 if skipped(&session) {
                     continue;
                 }
-                ctx.auth
-                    .end_session(tx, str_member(&session, "id").unwrap_or_default())
-                    .await?;
+                boxed(|| {
+                    ctx.auth
+                        .end_session(tx, str_member(&session, "id").unwrap_or_default())
+                })
+                .await?;
                 revoked += 1.0;
             }
             // Role sessions the identity assumed in other tenants, then delegated sessions acting as an agent.
-            for session in find(
-                tx,
-                "sessions",
-                Filter::new().eq("originalIdentityId", identity.id.clone()),
-            )
+            for session in boxed(|| {
+                find(
+                    tx,
+                    "sessions",
+                    Filter::new().eq("originalIdentityId", identity.id.clone()),
+                )
+            })
             .await?
             {
                 if skipped(&session) {
                     continue;
                 }
-                tx.delete("sessions", str_member(&session, "id").unwrap_or_default())
+                boxed(|| tx.delete("sessions", str_member(&session, "id").unwrap_or_default()))
                     .await?;
                 revoked += 1.0;
             }
             if identity.kind == IdentityKind::Agent {
-                revoked +=
-                    delete_delegated_sessions(tx, &json!({ "agentId": identity.id })).await?;
+                revoked += boxed(|| async {
+                    delete_delegated_sessions(tx, &json!({ "agentId": identity.id })).await
+                })
+                .await?;
             }
-            delete_challenges(tx, &identity.id).await?;
-            threat_audit(
-                ctx,
-                tx,
-                tenant_id,
-                &request.actor,
-                "threat:revoke-sessions",
-                &identity.id,
-                &Metadata::default()
-                    .with("revoked", number(revoked))
-                    .with("keptApiKeys", Value::Bool(keep_api_keys))
-                    .with("reason", Value::String(reason.clone()))
-                    .refs(&refs)
-                    .0,
-            )
-            .await?;
-            Ok(responses
-                .save(
-                    &identity_subject(&identity),
-                    "applied",
-                    None,
-                    Some(details(&[
-                        ("revoked", number(revoked)),
-                        ("keptApiKeys", Value::Bool(keep_api_keys)),
-                    ])),
+            boxed(|| delete_challenges(tx, &identity.id)).await?;
+            boxed(|| async {
+                threat_audit(
+                    ctx,
+                    tx,
+                    tenant_id,
+                    &request.actor,
+                    "threat:revoke-sessions",
+                    &identity.id,
+                    &Metadata::default()
+                        .with("revoked", number(revoked))
+                        .with("keptApiKeys", Value::Bool(keep_api_keys))
+                        .with("reason", Value::String(reason.clone()))
+                        .refs(&refs)
+                        .0,
                 )
-                .await?)
+                .await
+            })
+            .await?;
+            Ok(boxed(|| async {
+                responses
+                    .save(
+                        &identity_subject(&identity),
+                        "applied",
+                        None,
+                        Some(details(&[
+                            ("revoked", number(revoked)),
+                            ("keptApiKeys", Value::Bool(keep_api_keys)),
+                        ])),
+                    )
+                    .await
+            })
+            .await?)
         }
         "forget-devices" => {
-            let identity = match target(ctx, tx, tenant_id, request).await? {
+            let identity = match boxed(|| target(ctx, tx, tenant_id, request)).await? {
                 Ok(identity) => identity,
-                Err(why) => return Ok(responses.skip(why, &request.subject).await?),
+                Err(why) => return Ok(boxed(|| responses.skip(why, &request.subject)).await?),
             };
             let mut removed = 0.0;
-            for device in find(
-                tx,
-                "authDevices",
-                Filter::new().eq("identityId", identity.id.clone()),
-            )
+            for device in boxed(|| {
+                find(
+                    tx,
+                    "authDevices",
+                    Filter::new().eq("identityId", identity.id.clone()),
+                )
+            })
             .await?
             {
-                tx.delete("authDevices", str_member(&device, "id").unwrap_or_default())
+                boxed(|| tx.delete("authDevices", str_member(&device, "id").unwrap_or_default()))
                     .await?;
                 removed += 1.0;
             }
-            threat_audit(
-                ctx,
-                tx,
-                tenant_id,
-                &request.actor,
-                "threat:forget-devices",
-                &identity.id,
-                &Metadata::default()
-                    .with("removed", number(removed))
-                    .with("reason", Value::String(reason.clone()))
-                    .refs(&refs)
-                    .0,
-            )
-            .await?;
-            Ok(responses
-                .save(
-                    &identity_subject(&identity),
-                    "applied",
-                    None,
-                    Some(details(&[("removed", number(removed))])),
+            boxed(|| async {
+                threat_audit(
+                    ctx,
+                    tx,
+                    tenant_id,
+                    &request.actor,
+                    "threat:forget-devices",
+                    &identity.id,
+                    &Metadata::default()
+                        .with("removed", number(removed))
+                        .with("reason", Value::String(reason.clone()))
+                        .refs(&refs)
+                        .0,
                 )
-                .await?)
+                .await
+            })
+            .await?;
+            Ok(boxed(|| async {
+                responses
+                    .save(
+                        &identity_subject(&identity),
+                        "applied",
+                        None,
+                        Some(details(&[("removed", number(removed))])),
+                    )
+                    .await
+            })
+            .await?)
         }
         "contain" => {
-            let identity = match target(ctx, tx, tenant_id, request).await? {
+            let identity = match boxed(|| target(ctx, tx, tenant_id, request)).await? {
                 Ok(identity) => identity,
-                Err(why) => return Ok(responses.skip(why, &request.subject).await?),
+                Err(why) => return Ok(boxed(|| responses.skip(why, &request.subject)).await?),
             };
             let subject = identity_subject(&identity);
             if let Some(principal) = principal
@@ -531,8 +554,7 @@ pub async fn apply_response(
             {
                 return Err(IamError::new("INVALID_INPUT", "You cannot contain yourself").into());
             }
-            let risk = tx
-                .get(RISK, &identity.id)
+            let risk = boxed(|| tx.get(RISK, &identity.id))
                 .await?
                 .filter(|stored| str_member(stored, "tenantId") == Some(tenant_id));
             if identity.status != IdentityStatus::Active {
@@ -544,31 +566,33 @@ pub async fn apply_response(
                 } else {
                     "inactive"
                 };
-                return Ok(responses.skip(why, &subject).await?);
+                return Ok(boxed(|| responses.skip(why, &subject)).await?);
             }
             if identity.root_admin {
                 let Some(principal) = principal else {
-                    return Ok(responses.skip("protected", &subject).await?);
+                    return Ok(boxed(|| responses.skip("protected", &subject)).await?);
                 };
-                if !ctx.root_principal(tx, principal).await? {
+                if !boxed(|| ctx.root_principal(tx, principal)).await? {
                     return Err(OperationDenied::new(Some("Root capability is protected")));
                 }
             }
             if identity.owner && principal.is_none() {
-                return Ok(responses.skip("protected", &subject).await?);
+                return Ok(boxed(|| responses.skip("protected", &subject)).await?);
             }
             if let Some(principal) = principal {
                 // As identities.setStatus: disabling an owner takes an owner of the tenant in person or a root
                 // principal, never a permission alone.
-                assert_owner_control(
-                    ctx,
-                    tx,
-                    principal,
-                    &identity,
-                    "Only an owner can contain an owner",
-                )
+                boxed(|| {
+                    assert_owner_control(
+                        ctx,
+                        tx,
+                        principal,
+                        &identity,
+                        "Only an owner can contain an owner",
+                    )
+                })
                 .await?;
-                ctx.protect_last_owner(tx, &identity).await?;
+                boxed(|| ctx.protect_last_owner(tx, &identity)).await?;
             }
             if let Some(brake) = brake.as_deref_mut()
                 && brake.contained >= settings.max_automatic_containments
@@ -584,74 +608,87 @@ pub async fn apply_response(
                         }
                         _ => "threats/playbooks".to_owned(),
                     };
-                    threat_audit(
-                        ctx,
-                        tx,
-                        tenant_id,
-                        &request.actor,
-                        "threat:response-braked",
-                        &resource,
-                        &Metadata::default()
-                            .with("threshold", number(settings.max_automatic_containments))
-                            .with("identityId", Value::String(identity.id.clone()))
-                            .refs(&refs)
-                            .0,
-                    )
+                    boxed(|| async {
+                        threat_audit(
+                            ctx,
+                            tx,
+                            tenant_id,
+                            &request.actor,
+                            "threat:response-braked",
+                            &resource,
+                            &Metadata::default()
+                                .with("threshold", number(settings.max_automatic_containments))
+                                .with("identityId", Value::String(identity.id.clone()))
+                                .refs(&refs)
+                                .0,
+                        )
+                        .await
+                    })
                     .await?;
                 }
-                return Ok(responses.skip("braked", &subject).await?);
+                return Ok(boxed(|| responses.skip("braked", &subject)).await?);
             }
-            put_status(tx, &identity, "disabled").await?;
+            boxed(|| put_status(tx, &identity, "disabled")).await?;
             // Every credential but the API keys ends now; the keys are refused while the identity is disabled and
             // work again after a release, so containment is reversible without reissuing them.
             let mut sessions_ended = 0.0;
-            for session in find(
-                tx,
-                "sessions",
-                Filter::new().eq("identityId", identity.id.clone()),
-            )
+            for session in boxed(|| {
+                find(
+                    tx,
+                    "sessions",
+                    Filter::new().eq("identityId", identity.id.clone()),
+                )
+            })
             .await?
             {
                 if str_member(&session, "kind") == Some(SessionKind::ApiKey.as_str()) {
                     continue;
                 }
-                ctx.auth
-                    .end_session(tx, str_member(&session, "id").unwrap_or_default())
-                    .await?;
+                boxed(|| {
+                    ctx.auth
+                        .end_session(tx, str_member(&session, "id").unwrap_or_default())
+                })
+                .await?;
                 sessions_ended += 1.0;
             }
-            for session in find(
-                tx,
-                "sessions",
-                Filter::new().eq("originalIdentityId", identity.id.clone()),
-            )
+            for session in boxed(|| {
+                find(
+                    tx,
+                    "sessions",
+                    Filter::new().eq("originalIdentityId", identity.id.clone()),
+                )
+            })
             .await?
             {
                 if str_member(&session, "kind") == Some(SessionKind::ApiKey.as_str()) {
                     continue;
                 }
-                tx.delete("sessions", str_member(&session, "id").unwrap_or_default())
+                boxed(|| tx.delete("sessions", str_member(&session, "id").unwrap_or_default()))
                     .await?;
                 sessions_ended += 1.0;
             }
             if identity.kind == IdentityKind::Agent {
-                sessions_ended +=
-                    delete_delegated_sessions(tx, &json!({ "agentId": identity.id })).await?;
+                sessions_ended += boxed(|| async {
+                    delete_delegated_sessions(tx, &json!({ "agentId": identity.id })).await
+                })
+                .await?;
             }
-            for device in find(
-                tx,
-                "authDevices",
-                Filter::new().eq("identityId", identity.id.clone()),
-            )
+            for device in boxed(|| {
+                find(
+                    tx,
+                    "authDevices",
+                    Filter::new().eq("identityId", identity.id.clone()),
+                )
+            })
             .await?
             {
-                tx.delete("authDevices", str_member(&device, "id").unwrap_or_default())
+                boxed(|| tx.delete("authDevices", str_member(&device, "id").unwrap_or_default()))
                     .await?;
             }
-            delete_challenges(tx, &identity.id).await?;
+            boxed(|| delete_challenges(tx, &identity.id)).await?;
             // As when an identity is disabled: invitations it sent (an intruder's among them) stay dead after a
             // release.
-            revoke_invitations_by(tx, &identity.id).await?;
+            boxed(|| revoke_invitations_by(tx, &identity.id)).await?;
             let mut contained = Map::new();
             contained.insert("at".into(), number(now));
             contained.insert("by".into(), Value::String(actor_id.clone()));
@@ -662,7 +699,7 @@ pub async fn apply_response(
             if let Some(mut risk) = risk {
                 risk.insert("contained".into(), Value::Object(contained));
                 risk.insert("updatedAt".into(), number(now));
-                tx.put(RISK, &risk).await?;
+                boxed(|| tx.put(RISK, &risk)).await?;
             } else {
                 let mut record = Record::new();
                 record.insert("id".into(), Value::String(identity.id.clone()));
@@ -673,38 +710,44 @@ pub async fn apply_response(
                 record.insert("level".into(), Value::String("none".into()));
                 record.insert("contained".into(), Value::Object(contained));
                 record.insert("updatedAt".into(), number(now));
-                tx.insert(RISK, &record).await?;
+                boxed(|| tx.insert(RISK, &record)).await?;
             }
             if let Some(brake) = brake {
                 brake.contained += 1.0;
             }
-            threat_audit(
-                ctx,
-                tx,
-                tenant_id,
-                &request.actor,
-                "threat:contain",
-                &identity.id,
-                &Metadata::default()
-                    .with("reason", Value::String(reason.clone()))
-                    .with("sessionsEnded", number(sessions_ended))
-                    .refs(&refs)
-                    .0,
-            )
-            .await?;
-            Ok(responses
-                .save(
-                    &subject,
-                    "applied",
-                    None,
-                    Some(details(&[("sessionsEnded", number(sessions_ended))])),
+            boxed(|| async {
+                threat_audit(
+                    ctx,
+                    tx,
+                    tenant_id,
+                    &request.actor,
+                    "threat:contain",
+                    &identity.id,
+                    &Metadata::default()
+                        .with("reason", Value::String(reason.clone()))
+                        .with("sessionsEnded", number(sessions_ended))
+                        .refs(&refs)
+                        .0,
                 )
-                .await?)
+                .await
+            })
+            .await?;
+            Ok(boxed(|| async {
+                responses
+                    .save(
+                        &subject,
+                        "applied",
+                        None,
+                        Some(details(&[("sessionsEnded", number(sessions_ended))])),
+                    )
+                    .await
+            })
+            .await?)
         }
         "suspend-clearance" => {
-            let identity = match target(ctx, tx, tenant_id, request).await? {
+            let identity = match boxed(|| target(ctx, tx, tenant_id, request)).await? {
                 Ok(identity) => identity,
-                Err(why) => return Ok(responses.skip(why, &request.subject).await?),
+                Err(why) => return Ok(boxed(|| responses.skip(why, &request.subject)).await?),
             };
             let subject = identity_subject(&identity);
             if let Some(principal) = principal {
@@ -750,12 +793,12 @@ pub async fn apply_response(
                 }
             } else {
                 if ctx.options.clearances.is_none() {
-                    return Ok(responses.skip("feature-disabled", &subject).await?);
+                    return Ok(boxed(|| responses.skip("feature-disabled", &subject)).await?);
                 }
                 // As with containment, automatic responses never touch an owner's or a root administrator's
                 // clearance.
                 if identity.owner || identity.root_admin {
-                    return Ok(responses.skip("protected", &subject).await?);
+                    return Ok(boxed(|| responses.skip("protected", &subject)).await?);
                 }
             }
             // Lifted only by an officer's clearances.reinstate; threats.release never touches it.
@@ -766,15 +809,17 @@ pub async fn apply_response(
             if let Some(incident_id) = &request.incident_id {
                 input.insert("incidentId".into(), Value::String(incident_id.clone()));
             }
-            let result =
+            let result = boxed(|| async {
                 suspend_clearance(tx, &Value::Object(encode(&identity)), &Value::Object(input))
-                    .await?;
+                    .await
+            })
+            .await?;
             let outcome = result
                 .get("outcome")
                 .and_then(Value::as_str)
                 .unwrap_or_default();
             if outcome != "suspended" {
-                return Ok(responses.skip(outcome, &subject).await?);
+                return Ok(boxed(|| responses.skip(outcome, &subject)).await?);
             }
             let level = result
                 .get("record")
@@ -788,31 +833,36 @@ pub async fn apply_response(
             if let Some(incident_id) = &request.incident_id {
                 history = history.with("incidentId", Value::String(incident_id.clone()));
             }
-            threat_audit(
-                ctx,
-                tx,
-                tenant_id,
-                &request.actor,
-                "clearance:suspend",
-                &identity.id,
-                &history.0,
-            )
+            boxed(|| {
+                threat_audit(
+                    ctx,
+                    tx,
+                    tenant_id,
+                    &request.actor,
+                    "clearance:suspend",
+                    &identity.id,
+                    &history.0,
+                )
+            })
             .await?;
-            threat_audit(
-                ctx,
-                tx,
-                tenant_id,
-                &request.actor,
-                "threat:suspend-clearance",
-                &identity.id,
-                &Metadata::default()
-                    .with("level", level)
-                    .with("reason", Value::String(reason.clone()))
-                    .refs(&refs)
-                    .0,
-            )
+            boxed(|| async {
+                threat_audit(
+                    ctx,
+                    tx,
+                    tenant_id,
+                    &request.actor,
+                    "threat:suspend-clearance",
+                    &identity.id,
+                    &Metadata::default()
+                        .with("level", level)
+                        .with("reason", Value::String(reason.clone()))
+                        .refs(&refs)
+                        .0,
+                )
+                .await
+            })
             .await?;
-            Ok(responses.save(&subject, "applied", None, None).await?)
+            Ok(boxed(|| responses.save(&subject, "applied", None, None)).await?)
         }
         "block-network" => {
             let source = if request.subject.r#type == "network" {
@@ -822,7 +872,7 @@ pub async fn apply_response(
             };
             let network = source.map(core_js::trim).unwrap_or_default().to_owned();
             if network.is_empty() {
-                return Ok(responses.skip("no-network", &request.subject).await?);
+                return Ok(boxed(|| responses.skip("no-network", &request.subject)).await?);
             }
             let subject = ThreatSubject {
                 r#type: Value::String("network".into()),
@@ -838,15 +888,19 @@ pub async fn apply_response(
                     )
                     .into());
                 }
-                return Ok(responses.skip("invalid-network", &subject).await?);
+                return Ok(boxed(|| responses.skip("invalid-network", &subject)).await?);
             }
             // As security.blockNetwork: the root tenant's blocks decide whether root administrators can sign in, so
             // only root sets them. Playbooks, which any iam:threats:manage holder may write, never do.
-            if ctx.tenant(tx, tenant_id).await?.parent_id.is_none() {
+            if boxed(|| ctx.tenant(tx, tenant_id))
+                .await?
+                .parent_id
+                .is_none()
+            {
                 let Some(principal) = principal else {
-                    return Ok(responses.skip("protected", &subject).await?);
+                    return Ok(boxed(|| responses.skip("protected", &subject)).await?);
                 };
-                if !ctx.root_principal(tx, principal).await? {
+                if !boxed(|| ctx.root_principal(tx, principal)).await? {
                     return Err(OperationDenied::new(Some(
                         "Blocks on the root tenant are set by root administrators",
                     )));
@@ -857,7 +911,7 @@ pub async fn apply_response(
                 .iter()
                 .any(|trusted| overlaps(&network, trusted))
             {
-                return Ok(responses.skip("trusted-network", &subject).await?);
+                return Ok(boxed(|| responses.skip("trusted-network", &subject)).await?);
             }
             if let Some(principal) = principal {
                 // As security.blockNetwork: never the address the responder's session came from or this request
@@ -901,13 +955,17 @@ pub async fn apply_response(
             };
             let expires_at = now + duration_ms;
             // The tenant's own blocks plus the platform-wide ones, which apply to every tenant.
-            let mut blocks = find(
-                tx,
-                "authBlocks",
-                Filter::new().eq("tenantId", tenant_id.to_owned()),
-            )
+            let mut blocks = boxed(|| {
+                find(
+                    tx,
+                    "authBlocks",
+                    Filter::new().eq("tenantId", tenant_id.to_owned()),
+                )
+            })
             .await?;
-            blocks.extend(find(tx, "authBlocks", Filter::new().eq("platform", true)).await?);
+            blocks.extend(
+                boxed(|| find(tx, "authBlocks", Filter::new().eq("platform", true))).await?,
+            );
             // A block that already covers the network for at least as long makes this one redundant.
             let lasting = |block: &Record| match block.get("expiresAt") {
                 None => true,
@@ -918,7 +976,7 @@ pub async fn apply_response(
                     is_ip_range(block_network) && lasting(block) && covers(block_network, &network)
                 })
             }) {
-                return Ok(responses.skip("already-applied", &subject).await?);
+                return Ok(boxed(|| responses.skip("already-applied", &subject)).await?);
             }
             let existing = blocks.iter().find(|block| {
                 str_member(block, "tenantId") == Some(tenant_id)
@@ -942,70 +1000,78 @@ pub async fn apply_response(
             block.insert("createdBy".into(), Value::String(actor_id.clone()));
             block.insert("expiresAt".into(), number(expires_at));
             if renewed {
-                tx.put("authBlocks", &block).await?;
+                boxed(|| tx.put("authBlocks", &block)).await?;
             } else {
-                tx.insert("authBlocks", &block).await?;
+                boxed(|| tx.insert("authBlocks", &block)).await?;
             }
             ctx.auth.invalidate_network_blocks();
-            threat_audit(
-                ctx,
-                tx,
-                tenant_id,
-                &request.actor,
-                "threat:block-network",
-                &format!("threats/networks/{network}"),
-                &Metadata::default()
-                    .with("network", Value::String(network.clone()))
-                    .with("expiresAt", number(expires_at))
-                    .with("renewed", Value::Bool(renewed))
-                    .with("reason", Value::String(reason.clone()))
-                    .refs(&refs)
-                    .0,
-            )
-            .await?;
-            Ok(responses
-                .save(
-                    &subject,
-                    "applied",
-                    None,
-                    Some(details(&[
-                        ("network", Value::String(network.clone())),
-                        ("blockId", Value::String(block_id)),
-                        ("expiresAt", number(expires_at)),
-                        ("renewed", Value::Bool(renewed)),
-                    ])),
+            boxed(|| async {
+                threat_audit(
+                    ctx,
+                    tx,
+                    tenant_id,
+                    &request.actor,
+                    "threat:block-network",
+                    &format!("threats/networks/{network}"),
+                    &Metadata::default()
+                        .with("network", Value::String(network.clone()))
+                        .with("expiresAt", number(expires_at))
+                        .with("renewed", Value::Bool(renewed))
+                        .with("reason", Value::String(reason.clone()))
+                        .refs(&refs)
+                        .0,
                 )
-                .await?)
+                .await
+            })
+            .await?;
+            Ok(boxed(|| async {
+                responses
+                    .save(
+                        &subject,
+                        "applied",
+                        None,
+                        Some(details(&[
+                            ("network", Value::String(network.clone())),
+                            ("blockId", Value::String(block_id)),
+                            ("expiresAt", number(expires_at)),
+                            ("renewed", Value::Bool(renewed)),
+                        ])),
+                    )
+                    .await
+            })
+            .await?)
         }
         "notify" => {
             let stored = match &request.incident_id {
-                Some(incident_id) => tx.get(INCIDENTS, incident_id).await?,
+                Some(incident_id) => boxed(|| tx.get(INCIDENTS, incident_id)).await?,
                 None => None,
             };
             let incident =
                 stored.filter(|stored| str_member(stored, "tenantId") == Some(tenant_id));
             let Some(incident) = incident else {
-                return Ok(responses.skip("no-incident", &request.subject).await?);
+                return Ok(boxed(|| responses.skip("no-incident", &request.subject)).await?);
             };
             let incident: ThreatIncident = decode(incident)?;
             if !sends_email(ctx) {
-                return Ok(responses.skip("no-transport", &request.subject).await?);
+                return Ok(boxed(|| responses.skip("no-transport", &request.subject)).await?);
             }
-            let recipients = incident_recipients(tx, tenant_id, settings).await?;
+            let recipients = boxed(|| incident_recipients(tx, tenant_id, settings)).await?;
             if recipients.is_empty() {
-                return Ok(responses.skip("no-recipients", &request.subject).await?);
+                return Ok(boxed(|| responses.skip("no-recipients", &request.subject)).await?);
             }
             if principal.is_none() {
                 // Playbooks email an incident once, and again only when its severity has risen since.
-                let earlier = find(
-                    tx,
-                    RESPONSES,
-                    Filter::new()
-                        .eq("tenantId", tenant_id.to_owned())
-                        .eq("incidentId", incident.id.clone())
-                        .eq("action", "notify")
-                        .eq("outcome", "applied"),
-                )
+                let earlier = boxed(|| {
+                    find(
+                        tx,
+                        RESPONSES,
+                        Filter::new()
+                            .eq("tenantId", tenant_id.to_owned())
+                            .eq("incidentId", incident.id.clone())
+                            .eq("action", "notify")
+                            .eq("outcome", "applied"),
+                    )
+                })
                 .await?;
                 let mut notified = false;
                 for response in &earlier {
@@ -1021,22 +1087,29 @@ pub async fn apply_response(
                     }
                 }
                 if notified {
-                    return Ok(responses.skip("already-applied", &request.subject).await?);
+                    return Ok(
+                        boxed(|| responses.skip("already-applied", &request.subject)).await?,
+                    );
                 }
             }
-            let sent = deliver_incident(ctx, tx, tenant_id, &incident, &recipients, &request.actor)
-                .await?;
-            Ok(responses
-                .save(
-                    &request.subject,
-                    "applied",
-                    None,
-                    Some(details(&[
-                        ("recipients", number(sent)),
-                        ("severity", incident.severity.clone()),
-                    ])),
-                )
-                .await?)
+            let sent = boxed(|| {
+                deliver_incident(ctx, tx, tenant_id, &incident, &recipients, &request.actor)
+            })
+            .await?;
+            Ok(boxed(|| async {
+                responses
+                    .save(
+                        &request.subject,
+                        "applied",
+                        None,
+                        Some(details(&[
+                            ("recipients", number(sent)),
+                            ("severity", incident.severity.clone()),
+                        ])),
+                    )
+                    .await
+            })
+            .await?)
         }
         _ => Err(IamError::new("INVALID_INPUT", "Unknown response action").into()),
     }

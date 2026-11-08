@@ -14,6 +14,7 @@
 use std::cmp::Ordering;
 use std::sync::Arc;
 
+use better_iam_core::boxed;
 use better_iam_core::{
     AuditOutcome, AuthenticatedPrincipal, Filter, FindOptions, IamError, IamResult, IamStoreExt,
     Identity, IdentityStatus, PolicyDocument, Record, Tenant,
@@ -911,7 +912,7 @@ async fn apply_step(
     ctx.store
         .transaction(|tx| async move {
             let Some(pkg) =
-                get_as::<AccessPackage>(&tx, "accessPackages", &step.package_id).await?
+                boxed(|| get_as::<AccessPackage>(&tx, "accessPackages", &step.package_id)).await?
             else {
                 return Ok("stale");
             };
@@ -919,36 +920,43 @@ async fn apply_step(
             {
                 return Ok("stale");
             }
-            let Some(identity) = get_as::<Identity>(&tx, "identities", &step.identity_id).await?
+            let Some(identity) =
+                boxed(|| get_as::<Identity>(&tx, "identities", &step.identity_id)).await?
             else {
                 return Ok("stale");
             };
             if identity.tenant_id != tenant_id || identity.status == IdentityStatus::Deleted {
                 return Ok("stale");
             }
-            let memberships: Vec<GroupMember> = find_as(
-                &tx,
-                "groupMembers",
-                by_tenant(tenant_id).eq("identityId", identity.id.as_str()),
-            )
+            let memberships: Vec<GroupMember> = boxed(|| {
+                find_as(
+                    &tx,
+                    "groupMembers",
+                    by_tenant(tenant_id).eq("identityId", identity.id.as_str()),
+                )
+            })
             .await?;
-            let bindings: Vec<Binding> = find_as(
-                &tx,
-                "bindings",
-                by_tenant(tenant_id)
-                    .eq("subjectType", "identity")
-                    .eq("subjectId", identity.id.as_str()),
-            )
+            let bindings: Vec<Binding> = boxed(|| {
+                find_as(
+                    &tx,
+                    "bindings",
+                    by_tenant(tenant_id)
+                        .eq("subjectType", "identity")
+                        .eq("subjectId", identity.id.as_str()),
+                )
+            })
             .await?;
-            let assignment: Option<PackageAssignment> = find_as::<PackageAssignment>(
-                &tx,
-                "packageAssignments",
-                by_tenant(tenant_id).eq("uniqueKey", format!("{}:{}", pkg.id, identity.id)),
-            )
+            let assignment: Option<PackageAssignment> = boxed(|| {
+                find_as::<PackageAssignment>(
+                    &tx,
+                    "packageAssignments",
+                    by_tenant(tenant_id).eq("uniqueKey", format!("{}:{}", pkg.id, identity.id)),
+                )
+            })
             .await?
             .into_iter()
             .next();
-            let org = load_org_facts(&tx, tenant_id, ctx.now()).await?;
+            let org = boxed(|| load_org_facts(&tx, tenant_id, ctx.now())).await?;
             // The assignment of this package: the facts are keyed by `{packageId}:{identityId}`.
             let f = identity_facts(
                 ctx,
@@ -972,20 +980,23 @@ async fn apply_step(
             let rule = pkg.auto_assign.as_ref();
             let mut snapshot: Option<SodSnapshot> = None;
             if additive(step.change) {
-                let rules: Vec<SodRule> = find_as::<SodRule>(&tx, "sodRules", by_tenant(tenant_id))
-                    .await?
-                    .into_iter()
-                    .filter(|candidate| candidate.mode == "prevent")
-                    .collect();
+                let rules: Vec<SodRule> =
+                    boxed(|| find_as::<SodRule>(&tx, "sodRules", by_tenant(tenant_id)))
+                        .await?
+                        .into_iter()
+                        .filter(|candidate| candidate.mode == "prevent")
+                        .collect();
                 let mut closure: IndexSet<String> = pkg.role_ids.iter().cloned().collect();
                 for group_id in &pkg.group_ids {
-                    for binding in find_as::<Binding>(
-                        &tx,
-                        "bindings",
-                        by_tenant(tenant_id)
-                            .eq("subjectType", "group")
-                            .eq("subjectId", group_id.as_str()),
-                    )
+                    for binding in boxed(|| {
+                        find_as::<Binding>(
+                            &tx,
+                            "bindings",
+                            by_tenant(tenant_id)
+                                .eq("subjectType", "group")
+                                .eq("subjectId", group_id.as_str()),
+                        )
+                    })
                     .await?
                     {
                         if !ctx.expired_binding(&binding) {
@@ -999,13 +1010,15 @@ async fn apply_step(
                         .iter()
                         .any(|role_id| closure.contains(role_id))
                 }) {
-                    let violations = sod_violations(
-                        ctx,
-                        &tx,
-                        tenant_id,
-                        Some(&rules),
-                        Some(std::slice::from_ref(&identity.id)),
-                    )
+                    let violations = boxed(|| {
+                        sod_violations(
+                            ctx,
+                            &tx,
+                            tenant_id,
+                            Some(&rules),
+                            Some(std::slice::from_ref(&identity.id)),
+                        )
+                    })
                     .await?;
                     let existing: IndexSet<String> = violations
                         .iter()
@@ -1023,7 +1036,7 @@ async fn apply_step(
             // Enforced access invariants bind automatic grants as they bind a manual assign (whose operation checks
             // them): this reconcile runs outside any operation, so it checks them itself.
             let guardrails = if additive(step.change) {
-                invariant_snapshot(ctx, &tx, tenant_id, "iam:packages:assign").await?
+                boxed(|| invariant_snapshot(ctx, &tx, tenant_id, "iam:packages:assign")).await?
             } else {
                 None
             };
@@ -1035,17 +1048,20 @@ async fn apply_step(
                     let principal = state.principal.as_ref().expect("the rule owner");
                     let authority = state.authority.as_ref().expect("the rule authority");
                     let rule = rule.expect("a rule");
-                    let created = assign_package(
-                        ctx,
-                        &tx,
-                        principal,
-                        &pkg,
-                        &json!({ "identityId": identity.id }),
-                        Some(&json!({
-                            "authority": Value::Object(encode(authority.as_ref())),
-                            "ruleRevision": number(rule.revision),
-                        })),
-                    )
+                    let created = boxed(|| async {
+                        assign_package(
+                            ctx,
+                            &tx,
+                            principal,
+                            &pkg,
+                            &json!({ "identityId": identity.id }),
+                            Some(&json!({
+                                "authority": Value::Object(encode(authority.as_ref())),
+                                "ruleRevision": number(rule.revision),
+                            })),
+                        )
+                        .await
+                    })
                     .await?;
                     let assignment = created.get("assignment").cloned().unwrap_or(Value::Null);
                     action = "package:auto-assign";
@@ -1070,10 +1086,13 @@ async fn apply_step(
                     let authority = state.authority.as_ref().expect("the rule authority");
                     let mut current = assignment.clone().expect("an assignment");
                     if step.change == "restore" {
-                        current = retime_assignment(ctx, &tx, &pkg, &current, None, None).await?;
+                        current = boxed(|| retime_assignment(ctx, &tx, &pkg, &current, None, None))
+                            .await?;
                     }
-                    let refreshed =
-                        refresh_assignment(ctx, &tx, principal, &pkg, &current, authority).await?;
+                    let refreshed = boxed(|| {
+                        refresh_assignment(ctx, &tx, principal, &pkg, &current, authority)
+                    })
+                    .await?;
                     let member = |key: &str| refreshed.get(key).cloned().unwrap_or(Value::Null);
                     action = "package:auto-assign";
                     metadata.insert("mode".into(), json!(step.change));
@@ -1088,23 +1107,26 @@ async fn apply_step(
                 "ending" => {
                     let grace_ms = rule.and_then(|rule| rule.grace_ms).unwrap_or(f64::NAN);
                     let ends_at = now + grace_ms;
-                    retime_assignment(
-                        ctx,
-                        &tx,
-                        &pkg,
-                        assignment.as_ref().expect("an assignment"),
-                        Some(ends_at),
-                        None,
-                    )
+                    boxed(|| {
+                        retime_assignment(
+                            ctx,
+                            &tx,
+                            &pkg,
+                            assignment.as_ref().expect("an assignment"),
+                            Some(ends_at),
+                            None,
+                        )
+                    })
                     .await?;
                     action = "package:auto-ending";
                     metadata.insert("endsAt".into(), number(ends_at));
                     metadata.insert("graceMs".into(), number(grace_ms));
                 }
                 _ => {
-                    let counts =
+                    let counts = boxed(|| {
                         revoke_assignment(ctx, &tx, assignment.as_ref().expect("an assignment"))
-                            .await?;
+                    })
+                    .await?;
                     action = "package:auto-revoke";
                     metadata.insert("reason".into(), json!(step.reason));
                     if let Value::Object(counts) = counts {
@@ -1114,26 +1136,30 @@ async fn apply_step(
                     }
                 }
             }
-            sod_verify(
-                ctx,
-                &tx,
-                tenant_id,
-                snapshot.as_ref(),
-                Some(std::slice::from_ref(&identity.id)),
-            )
+            boxed(|| {
+                sod_verify(
+                    ctx,
+                    &tx,
+                    tenant_id,
+                    snapshot.as_ref(),
+                    Some(std::slice::from_ref(&identity.id)),
+                )
+            })
             .await?;
-            invariant_verify(ctx, &tx, tenant_id, guardrails.as_ref()).await?;
-            let issue = tx
-                .find(
+            boxed(|| invariant_verify(ctx, &tx, tenant_id, guardrails.as_ref())).await?;
+            let issue = boxed(|| async {
+                tx.find(
                     "packageRuleIssues",
                     &by_tenant(tenant_id).eq("uniqueKey", issue_key_failed(&pkg.id, &identity.id)),
                     &all(),
                 )
-                .await?
-                .into_iter()
-                .next();
+                .await
+            })
+            .await?
+            .into_iter()
+            .next();
             if let Some(issue) = issue {
-                tx.delete("packageRuleIssues", better_iam_core::record_id(&issue))
+                boxed(|| tx.delete("packageRuleIssues", better_iam_core::record_id(&issue)))
                     .await?;
             }
             let mut audit = base.clone();
