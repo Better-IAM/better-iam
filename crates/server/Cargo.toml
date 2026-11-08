@@ -56,11 +56,13 @@ uuid = { version = "1", features = ["v4"] }
 jiff = { version = "0.2", default-features = false, features = ["std", "tz-system", "tzdb-bundle-always"] }
 icu_collator = "2"
 # JOSE for session JWTs (EdDSA, ES256) and external web-identity tokens (RS*, PS*, ES256, ES384, EdDSA).
-ed25519-dalek = "2"
-p256 = { version = "0.13", default-features = false, features = ["ecdsa", "std"] }
-p384 = { version = "0.13", default-features = false, features = ["ecdsa", "std"] }
+ed25519-dalek = { version = "2", features = ["pkcs8"] }
+p256 = { version = "0.13", default-features = false, features = ["ecdsa", "std", "pkcs8"] }
+p384 = { version = "0.13", default-features = false, features = ["ecdsa", "std", "pkcs8"] }
 p521 = { version = "0.13", default-features = false, features = ["ecdsa", "std"] }
 rsa = { version = "0.9", default-features = false, features = ["std", "sha2"] }
+# Key management (kms.ts): randomness for key generation and RSA padding (AES-256-GCM above).
+rand = "0.8"
 # NFKD decomposition for team slugs derived from names (String#normalize).
 unicode-normalization = "0.1"
 
