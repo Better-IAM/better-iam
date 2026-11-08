@@ -1312,7 +1312,7 @@ fn issues_against_the_trust_and_provider_as_they_stand_at_issuance_not_at_verifi
             f.get("oidcProviders", str_of(&s.provider, "id"))
                 .await
                 .unwrap()["sessionsRevokedBefore"],
-            json!(f.now() + 1.0)
+            better_iam_server::js::number(f.now() + 1.0)
         );
 
         // The trust's conditions tighten while the keys are being fetched.
@@ -1616,7 +1616,10 @@ fn kill_switches_and_revocation_end_live_sessions() {
             &f.owner_credential,
             with(json!({ "enabled": false }))
         ));
-        assert_eq!(disabled["sessionsRevokedBefore"], json!(f.now() + 1.0));
+        assert_eq!(
+            disabled["sessionsRevokedBefore"],
+            better_iam_server::js::number(f.now() + 1.0)
+        );
         assert!(
             f.get("sessions", str_of(&killed["session"], "id"))
                 .await

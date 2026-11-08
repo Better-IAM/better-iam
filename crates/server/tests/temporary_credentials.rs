@@ -564,8 +564,8 @@ fn projections_are_allowlists() {
         caller,
         json!({
             "identityId": "i1", "identityTenantId": "t0", "identityKind": "user", "tenantId": "t1",
-            "sessionId": "s1", "sessionKind": "role", "format": "opaque", "mfa": true, "authenticatedAt": 500.0,
-            "issuedAt": 1000.0, "expiresAt": 61_500.0, "method": "password", "roleId": "r1", "trustId": "tr1",
+            "sessionId": "s1", "sessionKind": "role", "format": "opaque", "mfa": true, "authenticatedAt": 500,
+            "issuedAt": 1000, "expiresAt": 61_500, "method": "password", "roleId": "r1", "trustId": "tr1",
             "sourceTenantId": "t0", "sessionName": "deploy", "sourceIdentity": "alice",
             "sessionTags": { "team": "blue" },
             "webIdentity": { "providerId": "gh", "issuer": "https://issuer.example", "subject": "repo:x" },
@@ -585,7 +585,7 @@ fn projections_are_allowlists() {
         summary,
         json!({
             "id": "s1", "roleId": "r1", "trustId": "tr1", "identityId": "i1", "mfa": true, "format": "opaque",
-            "createdAt": 1000.0, "expiresAt": 61_500.0, "sourceTenantId": "t0", "sessionName": "deploy",
+            "createdAt": 1000, "expiresAt": 61_500, "sourceTenantId": "t0", "sessionName": "deploy",
             "sourceIdentity": "alice", "webIdentity": { "providerId": "gh", "subject": "repo:x" },
         })
     );

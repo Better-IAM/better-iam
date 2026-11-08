@@ -122,10 +122,10 @@ pub struct TemporaryCredential {
     #[serde(rename = "format")]
     pub format: CredentialFormat,
     /// Epoch milliseconds; never later than the source credential's expiry.
-    #[serde(rename = "expiresAt")]
+    #[serde(rename = "expiresAt", serialize_with = "crate::js::serialize_number")]
     pub expires_at: f64,
     /// Seconds from issuance to `expiresAt`.
-    #[serde(rename = "expiresIn")]
+    #[serde(rename = "expiresIn", serialize_with = "crate::js::serialize_number")]
     pub expires_in: f64,
     /// The session the credential opens (`TemporaryCredentialSession`).
     #[serde(rename = "session")]
@@ -148,10 +148,10 @@ pub struct RoleCredential {
     #[serde(rename = "format")]
     pub format: CredentialFormat,
     /// Epoch milliseconds; never later than the source credential's expiry.
-    #[serde(rename = "expiresAt")]
+    #[serde(rename = "expiresAt", serialize_with = "crate::js::serialize_number")]
     pub expires_at: f64,
     /// Seconds from issuance to `expiresAt`.
-    #[serde(rename = "expiresIn")]
+    #[serde(rename = "expiresIn", serialize_with = "crate::js::serialize_number")]
     pub expires_in: f64,
     #[serde(rename = "session")]
     pub session: Value,
@@ -198,11 +198,14 @@ pub struct CallerIdentity {
     pub format: CredentialFormat,
     #[serde(rename = "mfa")]
     pub mfa: bool,
-    #[serde(rename = "authenticatedAt")]
+    #[serde(
+        rename = "authenticatedAt",
+        serialize_with = "crate::js::serialize_number"
+    )]
     pub authenticated_at: f64,
-    #[serde(rename = "issuedAt")]
+    #[serde(rename = "issuedAt", serialize_with = "crate::js::serialize_number")]
     pub issued_at: f64,
-    #[serde(rename = "expiresAt")]
+    #[serde(rename = "expiresAt", serialize_with = "crate::js::serialize_number")]
     pub expires_at: f64,
     #[serde(rename = "method", default, skip_serializing_if = "Option::is_none")]
     pub method: Option<String>,
@@ -279,9 +282,9 @@ pub struct RoleSessionSummary {
     pub mfa: bool,
     #[serde(rename = "format")]
     pub format: CredentialFormat,
-    #[serde(rename = "createdAt")]
+    #[serde(rename = "createdAt", serialize_with = "crate::js::serialize_number")]
     pub created_at: f64,
-    #[serde(rename = "expiresAt")]
+    #[serde(rename = "expiresAt", serialize_with = "crate::js::serialize_number")]
     pub expires_at: f64,
     #[serde(
         rename = "sourceTenantId",
@@ -1217,5 +1220,30 @@ mod tests {
         assert_eq!(seconds_or(Some(-1.0), 3600.0), 3600.0);
         assert_eq!(seconds_or(Some(f64::NAN), 3600.0), 3600.0);
         assert_eq!(seconds_or(Some(120.0), 3600.0), 120.0);
+    }
+
+    #[test]
+    fn credentials_serialize_times_as_javascript_numbers() {
+        let credential = TemporaryCredential {
+            token: "t".into(),
+            token_type: "Bearer".into(),
+            format: json!("opaque"),
+            expires_at: 1_794_113_725_504.0,
+            expires_in: 600.0,
+            session: json!({}),
+            audience: None,
+            extra: Map::new(),
+        };
+        let value = serde_json::to_value(&credential).unwrap();
+        // Integral doubles are JSON integers, as `JSON.stringify` writes them.
+        assert_eq!(value["expiresIn"], json!(600));
+        assert_eq!(value["expiresAt"], json!(1_794_113_725_504_i64));
+        let role = serde_json::to_value(RoleCredential::from(TemporaryCredential {
+            expires_in: 1.5,
+            ..credential
+        }))
+        .unwrap();
+        assert_eq!(role["expiresIn"], json!(1.5));
+        assert_eq!(role["expiresAt"], json!(1_794_113_725_504_i64));
     }
 }
