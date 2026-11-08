@@ -37,6 +37,9 @@ func encodeValue(value any) any {
 		return core.NewObject("$bytes", base64.StdEncoding.EncodeToString(typed))
 	case time.Time:
 		return core.NewObject("$date", typed.UTC().Format("2006-01-02T15:04:05.000Z"))
+	case *http.Response:
+		// A fetch Response is recorded by its class name, as encodeValue does for objects JSON cannot carry.
+		return core.NewObject("$object", "Response")
 	case http.Header:
 		out := core.NewObject()
 		keys := make([]string, 0, len(typed))
