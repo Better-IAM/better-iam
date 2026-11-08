@@ -712,7 +712,7 @@ func TestBillingFeedsMeteredInferenceCallsIntoTheLedgerAsTheInferenceMeter(t *te
 		"apiKey", "sk-ant-billing-test-key-0001")
 	b.object("inference/createModel", b.owner, "tenantId", b.tenantID, "name", "haiku", "providerId", provider.Get("id"),
 		"upstreamModel", "claude-haiku-4-5", "inputPricePerMTok", 1, "outputPricePerMTok", 5)
-	outcome, err := b.iam.Inference.Authorize(b.ctx, core.NewObject("token", b.owner.Token, "model", "haiku"))
+	outcome, err := b.iam.Inference.Authorize(b.ctx, b.owner, core.NewObject("model", "haiku"))
 	requirePorted(t, err)
 	if outcome.Has("denied") {
 		t.Fatalf("denied: %s", core.MustStringify(outcome))
@@ -780,7 +780,10 @@ func TestBillingFindsSpendSpikesAlertsOnThemOnceAndExportsCSV(t *testing.T) {
 
 	// CSV of a spend report, guarded against spreadsheet formulas.
 	s.object("identities/update", s.owner, "tenantId", s.tenantID, "identityId", alice, "name", `=HYPERLINK("x")`)
-	exported := s.object("billing/exportSpend", s.owner, "tenantId", s.tenantID, "groupBy", "identity")
+	// The TypeScript test runs on the wall clock, mid-month; the fixture's clock starts at 00:00 on the 1st, so the
+	// builds above fall in the previous period: export that one.
+	exported := s.object("billing/exportSpend", s.owner, "tenantId", s.tenantID, "groupBy", "identity",
+		"period", s.period(noonDaysAgo(1)))
 	expectMember(t, exported, "contentType", `"text/csv; charset=utf-8"`)
 	filename := jsString(exported.Get("filename"))
 	if !strings.HasPrefix(filename, "spend-") || !strings.HasSuffix(filename, "-identity.csv") {
