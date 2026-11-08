@@ -1709,9 +1709,27 @@ impl Http {
                 body
             })
             .map_err(|_| IamError::with_status("INVALID_REQUEST", "Invalid request target", 400))?;
-        *request.headers_mut() = headers;
+        *request.headers_mut() = node_headers(headers);
         Ok(self.handler(request).await)
     }
+}
+
+/// The headers the node transport hands the handler: like `nodeHandler`, which copies only truthy values, a header
+/// sent once with an empty value (`cookie: ''`) counts as absent. A repeated header is kept, since Node joins its values
+/// into a non-empty one.
+fn node_headers(mut headers: HeaderMap) -> HeaderMap {
+    let empty: Vec<HeaderName> = headers
+        .keys()
+        .filter(|key| {
+            let mut values = headers.get_all(*key).iter();
+            matches!((values.next(), values.next()), (Some(value), None) if value.is_empty())
+        })
+        .cloned()
+        .collect();
+    for key in empty {
+        headers.remove(key);
+    }
+    headers
 }
 
 /// `tower::Service` over the fetch-style handler, for tower-based servers and middleware (axum and actix adapters live in
@@ -1766,6 +1784,19 @@ mod tests {
         assert_eq!(request_id_of(&headers).as_deref(), Some("abc-1:2.3_4"));
         headers.insert("x-request-id", HeaderValue::from_static("bad id"));
         assert_eq!(request_id_of(&headers), None);
+    }
+
+    #[test]
+    fn node_headers_drop_empty_values() {
+        let mut headers = HeaderMap::new();
+        headers.insert("cookie", HeaderValue::from_static(""));
+        headers.insert("user-agent", HeaderValue::from_static("agent"));
+        headers.append("accept", HeaderValue::from_static(""));
+        headers.append("accept", HeaderValue::from_static("text/html"));
+        let kept = node_headers(headers);
+        assert!(!kept.contains_key("cookie"));
+        assert_eq!(kept.get("user-agent").unwrap(), "agent");
+        assert_eq!(kept.get_all("accept").iter().count(), 2);
     }
 
     #[test]
