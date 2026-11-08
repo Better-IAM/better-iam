@@ -582,7 +582,7 @@ func TestThreatEnginePlaybooksContainAndBrake(t *testing.T) {
 	for _, response := range f.find(ThreatCollections.Responses, "tenantId", "org", "action", "contain") {
 		contains = append(contains, jsString(coalesce(response.Get("reason"), response.Get("outcome"))))
 	}
-	if strings.Join(sortedStrings(contains), ",") != "applied,braked,protected" {
+	if strings.Join(teSortedStrings(contains), ",") != "applied,braked,protected" {
 		t.Fatalf("contain responses %v", contains)
 	}
 	count := func(action string) int { return len(f.find("audit", "tenantId", "org", "action", action)) }
@@ -600,7 +600,7 @@ func TestThreatEnginePlaybooksContainAndBrake(t *testing.T) {
 	teCount(t, f.detect("org"), "detections", 0)
 }
 
-func sortedStrings(values []string) []string {
+func teSortedStrings(values []string) []string {
 	sorted := append([]string{}, values...)
 	for i := 1; i < len(sorted); i++ {
 		for j := i; j > 0 && sorted[j] < sorted[j-1]; j-- {
