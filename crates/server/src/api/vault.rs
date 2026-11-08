@@ -573,7 +573,7 @@ fn next_value(
 ) -> IamResult<(String, &'static str)> {
     if explicit.get("value").is_some() || explicit.get("fields").is_some() {
         return Ok((
-            store_vault::secret_value(&vault, &secret.format, explicit)?,
+            store_vault::secret_value(vault, &secret.format, explicit)?,
             "put",
         ));
     }
@@ -597,7 +597,7 @@ fn next_value(
     };
     fields.insert(field, string(generated));
     Ok((
-        store_vault::secret_value(&vault, "json", &json!({ "fields": fields_json(&fields) }))?,
+        store_vault::secret_value(vault, "json", &json!({ "fields": fields_json(&fields) }))?,
         "rotation",
     ))
 }
@@ -1104,12 +1104,12 @@ fn issued_value(
     };
     let value = if is_json(format) {
         if member("fields").is_some() {
-            store_vault::secret_value(&vault, "json", &input("fields"))
+            store_vault::secret_value(vault, "json", &input("fields"))
         } else {
-            store_vault::secret_value(&vault, "json", &input("value"))
+            store_vault::secret_value(vault, "json", &input("value"))
         }
     } else {
-        store_vault::secret_value(&vault, "text", &input("value"))
+        store_vault::secret_value(vault, "text", &input("value"))
     }
     .map_err(|error| error.message)?;
     let handle = match member("handle") {
