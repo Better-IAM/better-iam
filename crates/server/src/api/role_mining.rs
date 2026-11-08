@@ -10,8 +10,8 @@ use std::cmp::Ordering;
 use std::sync::Arc;
 
 use better_iam_core::{
-    CredentialInput, Filter, FindOptions, IamError, IamResult, Identity, IdentityKind,
-    IdentityStatus, Record, canonical_json, match_pattern,
+    CredentialInput, Filter, FindOptions, IamError, IamResult, IdentityKind, IdentityStatus,
+    Record, canonical_json, match_pattern,
 };
 use better_iam_types::api::role_mining;
 use indexmap::{IndexMap, IndexSet};
@@ -93,6 +93,33 @@ fn set_key<'a>(ids: impl IntoIterator<Item = &'a String>) -> String {
     let mut list: Vec<String> = ids.into_iter().cloned().collect();
     crate::js::sort_strings(&mut list);
     list.join(",")
+}
+
+/// The members of a stored identity role mining reads. TypeScript reads records as stored, so the strict `Identity`
+/// model (which requires `emailVerified`, `rootAdmin`, `owner` and `createdAt`) would reject records it accepts.
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Identity {
+    id: String,
+    kind: IdentityKind,
+    status: IdentityStatus,
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    email: Option<String>,
+    #[serde(default)]
+    attributes: Option<Map<String, Value>>,
+    #[serde(default)]
+    expires_at: Option<f64>,
+    #[serde(default)]
+    manager_id: Option<String>,
+}
+
+impl Identity {
+    /// `identityExpired(identity)`.
+    fn expired(&self, ctx: &ServerContext) -> bool {
+        self.expires_at.is_some_and(|expires| expires <= ctx.now())
+    }
 }
 
 fn label(identity: &Identity) -> String {
@@ -206,7 +233,7 @@ async fn snapshot(ctx: &Arc<ServerContext>, tx: &Store, tenant_id: &str) -> IamR
     let mut identities: Vec<Identity> = Vec::new();
     for record in find_records(tx, "identities", tenant()).await? {
         let identity: Identity = decode(record)?;
-        if identity.status == IdentityStatus::Active && !ctx.identity_expired(&identity) {
+        if identity.status == IdentityStatus::Active && !identity.expired(ctx) {
             identities.push(identity);
         }
     }
@@ -1502,7 +1529,7 @@ impl RoleMiningApi {
                     let identity = match identity {
                         Some(identity)
                             if identity.status == IdentityStatus::Active
-                                && !ctx.identity_expired(&identity) =>
+                                && !identity.expired(ctx) =>
                         {
                             identity
                         }
@@ -2076,5 +2103,31 @@ impl RoleMiningApi {
             )
             .await?;
         Ok(Reply::json(result))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Records written straight to the store (as the TypeScript suites do) carry no `emailVerified`, `rootAdmin`,
+    /// `owner` or `uniqueKey`; role mining must still read them.
+    #[test]
+    fn reads_identities_without_the_strict_model_members() {
+        let record = json!({
+            "id": "idn_1",
+            "tenantId": "ten_1",
+            "kind": "user",
+            "status": "active",
+            "email": "u1@example.com",
+            "name": "User 1",
+            "createdAt": 1,
+        });
+        let identity: Identity = decode(record.as_object().cloned().unwrap()).unwrap();
+        assert_eq!(identity.id, "idn_1");
+        assert_eq!(identity.kind, IdentityKind::User);
+        assert_eq!(identity.status, IdentityStatus::Active);
+        assert_eq!(label(&identity), "u1@example.com");
+        assert!(identity.expires_at.is_none());
     }
 }
