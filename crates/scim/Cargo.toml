@@ -46,6 +46,20 @@ tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time", "ne
 hyper = { version = "1", features = ["server", "http1"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
 http-body-util = "0.1"
+serde.workspace = true
 
 [lib]
 doctest = false
+
+# Suites that run SCIM on a Better IAM server (its protocol host and handler).
+[[test]]
+name = "scim_admin"
+required-features = ["server"]
+
+[[test]]
+name = "scim_manager"
+required-features = ["server"]
+
+[[test]]
+name = "security_scim"
+required-features = ["server"]
