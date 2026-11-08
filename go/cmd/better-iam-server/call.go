@@ -176,25 +176,10 @@ func convertArgument(value any, target reflect.Type, tx core.IamStore) (reflect.
 		}
 		return reflect.ValueOf(object), nil
 	case target == credentialType:
-		credential := core.CredentialInput{}
-		if object, ok := value.(*core.Object); ok && object != nil {
-			if token, ok := object.Get("token").(string); ok {
-				credential.Token = token
-			}
-			switch headers := object.Get("headers").(type) {
-			case http.Header:
-				credential.Headers = headers
-			case *core.Object:
-				credential.Headers = http.Header{}
-				headers.Entries(func(key string, item any) bool {
-					credential.Headers.Add(key, fmt.Sprint(item))
-					return true
-				})
-			}
-		}
-		return reflect.ValueOf(credential), nil
+		object, _ := value.(*core.Object)
+		return reflect.ValueOf(credentialFrom(object)), nil
 	case target == headerType:
-		if header, ok := value.(http.Header); ok {
+		if header, ok := headersFrom(value); ok {
 			return reflect.ValueOf(header), nil
 		}
 	}
@@ -220,6 +205,9 @@ func convertArgument(value any, target reflect.Type, tx core.IamStore) (reflect.
 	if err := json.Unmarshal(data, holder.Interface()); err != nil {
 		return reflect.Value{}, err
 	}
+	if object, ok := value.(*core.Object); ok && object != nil && target.Kind() == reflect.Struct {
+		fillRequestExtras(holder.Elem(), object)
+	}
 	if target == identityInput {
 		// A password member means a password was given (TypeScript `password` present, even empty).
 		input := holder.Interface().(*auth.CreateIdentityInput)
@@ -228,6 +216,76 @@ func convertArgument(value any, target reflect.Type, tx core.IamStore) (reflect.
 		input.TenantID, input.Email, input.Name, input.Password = object.Get("tenantId"), object.Get("email"), object.Get("name"), object.Get("password")
 	}
 	return holder.Elem(), nil
+}
+
+// credentialFrom is the CredentialInput a TypeScript argument carries: its top-level token and headers (a request
+// type that extends CredentialInput carries them beside its own members).
+func credentialFrom(object *core.Object) core.CredentialInput {
+	credential := core.CredentialInput{}
+	if object == nil {
+		return credential
+	}
+	if token, ok := object.Get("token").(string); ok {
+		credential.Token = token
+	}
+	if headers, ok := headersFrom(object.Get("headers")); ok {
+		credential.Headers = headers
+	}
+	return credential
+}
+
+// headersFrom is an http.Header from a decoded headers value: an http.Header ({"$headers": ...}), or a model object
+// (a plain headers object, or a decoded http.Header that core.Normalize turned into an object of string lists when
+// it was stored in its parent object).
+func headersFrom(value any) (http.Header, bool) {
+	switch headers := value.(type) {
+	case http.Header:
+		return headers, true
+	case *core.Object:
+		if headers == nil {
+			return nil, false
+		}
+		out := http.Header{}
+		headers.Entries(func(key string, item any) bool {
+			switch typed := item.(type) {
+			case string:
+				out.Add(key, typed)
+			case []any:
+				for _, entry := range typed {
+					if text, ok := entry.(string); ok {
+						out.Add(key, text)
+					} else {
+						out.Add(key, fmt.Sprint(entry))
+					}
+				}
+			case nil:
+			default:
+				if !core.IsUndefined(typed) {
+					out.Add(key, fmt.Sprint(typed))
+				}
+			}
+			return true
+		})
+		return out, true
+	}
+	return nil, false
+}
+
+// fillRequestExtras fills the members of a request struct that JSON does not carry (`json:"-"`): the credential of
+// a request that extends CredentialInput, and the model values some requests validate as given.
+func fillRequestExtras(holder reflect.Value, object *core.Object) {
+	if field := holder.FieldByName("Credential"); field.IsValid() && field.Type() == credentialType && field.CanSet() {
+		field.Set(reflect.ValueOf(credentialFrom(object)))
+	}
+	for name, key := range map[string]string{"ChecksValue": "checks", "LimitValue": "limit", "OffsetValue": "offset"} {
+		field := holder.FieldByName(name)
+		if !field.IsValid() || field.Type() != anyType || !field.CanSet() {
+			continue
+		}
+		if item, ok := object.Lookup(key); ok && item != nil && !core.IsUndefined(item) {
+			field.Set(reflect.ValueOf(item))
+		}
+	}
 }
 
 // invoke calls fn with the decoded arguments (context injected, the transaction for {"$tx": true}) and returns its
