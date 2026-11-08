@@ -113,6 +113,33 @@ Five layers, all run in CI:
 5. **Mixed fleet.** One database, three servers: records written by each are read, updated, and audited by
    the others (sessions issued by one validate on another; the audit chain verifies across writers).
 
+### Running the mixed fleet
+
+The store-level checks (`scripts/conformance/fleet/sqlite-fleet.mjs`, `go-fleet.mjs`) share one database file between
+the adapters. The server-level check, `scripts/conformance/fleet/servers.mjs`, starts the TypeScript, Rust and Go
+servers in conformance mode at the same time on one SQLite file (WAL), with the same `better-iam.json` (deployment
+secret, base URL, trusted origin, session JWT signing key), and walks one scenario across them over HTTP. Each step
+goes to the next server in rotation and the answers are checked on the others: bootstrap and a refused second
+bootstrap; root sign-in, TOTP enrollment and confirmation on three different servers; a tenant created on one, its
+owner invitation delivered by another and accepted on a third; identities, a role and a binding, with the same
+`authorize` decisions everywhere; a session cookie and bearer issued by one used on the others; an API key and a
+session JWT (verified against every server's JWKS) issued on one, accepted on all; the same identity updated from
+each server in turn; a vault secret sealed on one and revealed on another; concurrent writes from all three; an API
+key, a signed-out cookie and revoked sessions (with their JWT) refused everywhere; and finally every server reads the
+same audit log and `audit/verify` passes for each tenant.
+
+```sh
+pnpm build                                                     # the TypeScript packages
+cargo build -p better-iam-server --bin better-iam-server       # target/debug/better-iam-server
+(cd go && go build -o ../target/go/better-iam-server ./cmd/better-iam-server)
+node scripts/conformance/fleet/servers.mjs                     # [--only ts,go] [--keep] [--verbose]
+```
+
+`--rust <bin>`, `--go <bin>` and `--ts-root <dir>` (or `FLEET_RUST_BIN`, `FLEET_GO_BIN`, `FLEET_TS_ROOT`) point at
+binaries and a built checkout elsewhere. It prints PASS/FAIL per step with the servers it used, names the server whose
+answer differed (and the JSON paths that differ), exits 1 on any failure, and keeps the database, configuration and
+server logs of a failed run.
+
 ## Versioning and publishing
 
 All three ecosystems ship one version number in lockstep. `node scripts/release-version.mjs X.Y.Z` bumps every
