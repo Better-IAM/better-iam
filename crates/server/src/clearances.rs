@@ -1464,7 +1464,8 @@ pub async fn parties_of(
             }
             Ok(states)
         }
-        SessionKind::Role => Ok(vec![uncleared(identity.id.clone())]),
+        // Roles and unknown kinds are uncleared (the `default` branch).
+        SessionKind::Role | SessionKind::Unknown => Ok(vec![uncleared(identity.id.clone())]),
     }
 }
 
