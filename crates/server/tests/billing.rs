@@ -1293,3 +1293,17 @@ fn caches_account_spend_within_one_call() {
             .unwrap();
     });
 }
+
+#[test]
+fn names_the_collections_the_module_owns() {
+    assert_eq!(
+        billing::BILLING_COLLECTIONS["meters"],
+        json!(billing::METERS)
+    );
+    assert_eq!(
+        billing::BILLING_COLLECTIONS["subscriptions"],
+        json!(billing::SUBSCRIPTIONS)
+    );
+    assert_eq!(billing::BILLING_COLLECTIONS.as_object().unwrap().len(), 16);
+    assert_eq!(billing::MAX_METERS_PER_TENANT, 100.0);
+}

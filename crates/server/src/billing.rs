@@ -1407,6 +1407,11 @@ pub struct UsageReceipt {
 // ---------------------------------------------------------------------------------------------------------------
 // Collections, terms and settings
 
+/// Collections owned by the billing module.
+pub static BILLING_COLLECTIONS: std::sync::LazyLock<Value> = std::sync::LazyLock::new(
+    || json!({"meters":"billingMeters","prices":"billingPrices","usage":"billingUsage","rollups":"billingRollups","budgets":"billingBudgets","budgetAlerts":"billingBudgetAlerts","credits":"billingCredits","profiles":"billingProfiles","statements":"billingStatements","terms":"billingTerms","invoiceItems":"billingInvoiceItems","creditNotes":"billingCreditNotes","plans":"billingPlans","subscriptions":"billingSubscriptions","coupons":"billingCoupons","discounts":"billingDiscounts"}),
+);
+
 /// `billingCollections.meters`.
 pub const METERS: &str = "billingMeters";
 /// `billingCollections.prices`.
@@ -1907,6 +1912,9 @@ pub(crate) fn is_key(value: &str) -> bool {
             b.is_ascii_lowercase() || b.is_ascii_digit() || matches!(b, b'_' | b'.' | b'-')
         })
 }
+
+/// Meters per defining tenant.
+pub const MAX_METERS_PER_TENANT: f64 = 100.0;
 
 /// A meter key: 1-64 lowercase letters, digits, `.`, `_` or `-`, starting with a letter.
 pub fn meter_key(value: Option<&Value>) -> IamResult<String> {
