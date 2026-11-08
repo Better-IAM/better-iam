@@ -5,6 +5,7 @@ package middleware
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/url"
 	"reflect"
@@ -12,6 +13,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/Better-IAM/better-iam/go/client"
 	"github.com/Better-IAM/better-iam/go/core"
 	"github.com/Better-IAM/better-iam/go/internal/orgfixture"
 	"github.com/Better-IAM/better-iam/go/server"
@@ -235,5 +237,30 @@ func TestHelpersBatchAdvisoryChecksPerRequest(t *testing.T) {
 	results, err = helpers.Authorize(f.Ctx, []Check{{Action: "iam:identities:read"}, {Action: "documents:read", Resource: &ResourceRef{Type: "document", ID: "x"}}})
 	if err != nil || len(results) != 2 || !results[0].Allowed || results[0].Resource.ID != f.TenantID {
 		t.Fatalf("authorize: %+v %v", results, err)
+	}
+}
+
+// Errors from the HTTP client package are refusals too, as TypeScript's isIamRefusal recognises any Error carrying a
+// code and a status (client errors included), wrapped or not.
+func TestRefusalOfRecognisesClientPackageErrors(t *testing.T) {
+	err := fmt.Errorf("listing documents: %w", &client.IamClientError{Code: "FORBIDDEN", Message: "Not allowed", Status: 403})
+	refusal, ok := RefusalOf(err)
+	if !ok || refusal != (Refusal{Code: "FORBIDDEN", Message: "Not allowed", Status: 403}) {
+		t.Fatalf("refusal %+v %v", refusal, ok)
+	}
+	if !IsIamRefusal(err) {
+		t.Fatal("IsIamRefusal")
+	}
+	if code, _ := ErrorCode(err); code != "FORBIDDEN" {
+		t.Fatalf("ErrorCode %q", code)
+	}
+	if status, _ := ErrorStatus(err); status != 403 {
+		t.Fatalf("ErrorStatus %d", status)
+	}
+	if !IsAuthenticationError(&client.IamClientError{Code: "UNAUTHENTICATED", Message: "Sign in", Status: 401}) {
+		t.Fatal("IsAuthenticationError")
+	}
+	if IsIamRefusal(fmt.Errorf("plain")) {
+		t.Fatal("a plain error is not a refusal")
 	}
 }

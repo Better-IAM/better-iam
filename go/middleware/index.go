@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/Better-IAM/better-iam/go/auth"
+	"github.com/Better-IAM/better-iam/go/client"
 	"github.com/Better-IAM/better-iam/go/core"
 	"github.com/Better-IAM/better-iam/go/server"
 )
@@ -169,7 +170,9 @@ type Refusal struct {
 	Reason string
 }
 
-// RefusalOf is the refusal err carries (isIamRefusal): a *core.IamError, a *ClientError or an *IamRequestError.
+// RefusalOf is the refusal err carries (isIamRefusal): a *core.IamError, a *ClientError, a *client.IamClientError or
+// an *IamRequestError. TypeScript recognises any Error with a string code and a numeric status, the client package's
+// IamClientError included.
 func RefusalOf(err error) (Refusal, bool) {
 	if err == nil {
 		return Refusal{}, false
@@ -182,9 +185,13 @@ func RefusalOf(err error) (Refusal, bool) {
 	if errors.As(err, &known) {
 		return Refusal{Code: known.Code, Message: known.Message, Status: known.Status}, true
 	}
-	var client *ClientError
-	if errors.As(err, &client) {
-		return Refusal{Code: client.Code, Message: client.Message, Status: client.Status}, true
+	var clientError *ClientError
+	if errors.As(err, &clientError) {
+		return Refusal{Code: clientError.Code, Message: clientError.Message, Status: clientError.Status}, true
+	}
+	var iamClientError *client.IamClientError
+	if errors.As(err, &iamClientError) {
+		return Refusal{Code: iamClientError.Code, Message: iamClientError.Message, Status: iamClientError.Status}, true
 	}
 	return Refusal{}, false
 }

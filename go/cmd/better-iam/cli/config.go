@@ -19,6 +19,7 @@ import (
 	"github.com/Better-IAM/better-iam/go/adapters/libsql"
 	"github.com/Better-IAM/better-iam/go/adapters/postgres"
 	"github.com/Better-IAM/better-iam/go/adapters/sqlite"
+	"github.com/Better-IAM/better-iam/go/configfile"
 	"github.com/Better-IAM/better-iam/go/core"
 	"github.com/Better-IAM/better-iam/go/server"
 )
@@ -195,27 +196,9 @@ func cliSettingsOf(value any) (*CliSettings, error) {
 	return settings, nil
 }
 
-// storeAdapters open the databases a JSON configuration names; relative SQLite paths resolve against cwd.
-func storeAdapters(cwd string) server.ConfigAdapters {
-	return server.ConfigAdapters{
-		SQLite: func(store server.StoreConfig) (core.IamStore, error) {
-			path := store.Path
-			if path == "" {
-				path = ":memory:"
-			}
-			if path != ":memory:" {
-				path = resolvePath(cwd, path)
-			}
-			return storeOf(sqlite.New(sqlite.Options{Filename: path, BusyTimeoutMs: store.BusyTimeoutMs, JournalMode: store.JournalMode, Durability: store.Durability}))
-		},
-		Postgres: func(store server.StoreConfig) (core.IamStore, error) {
-			return storeOf(postgres.New(postgres.Options{ConnectionString: store.URL, PoolSize: store.PoolSize, LockTimeoutMs: store.LockTimeoutMs}))
-		},
-		LibSQL: func(store server.StoreConfig) (core.IamStore, error) {
-			return storeOf(libsql.New(libsql.Options{URL: store.URL, AuthToken: store.AuthToken, EncryptionKey: store.EncryptionKey, SyncURL: store.SyncURL, SyncInterval: store.SyncInterval}))
-		},
-	}
-}
+// storeAdapters open the databases a JSON configuration names; relative SQLite paths resolve against cwd. They are
+// the adapters configfile exports for applications that load the same file.
+func storeAdapters(cwd string) server.ConfigAdapters { return configfile.Adapters(cwd) }
 
 // storeOf keeps a failed constructor's typed nil out of the interface.
 func storeOf[T core.IamStore](store T, err error) (core.IamStore, error) {
@@ -305,7 +288,7 @@ type LoadConfigOptions struct {
 
 // LoadConfig loads a configuration file and creates its instance: the same resolution the CLI uses, for programs,
 // workers, and tests that want better-iam.json without the command line. Close the instance and its store when
-// done.
+// done. Applications that know the file's path can use configfile.Load instead, outside cmd/.
 func LoadConfig(ctx context.Context, options LoadConfigOptions) (*server.BetterIam, error) {
 	cwd := options.Cwd
 	if cwd == "" {
