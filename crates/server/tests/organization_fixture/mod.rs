@@ -107,6 +107,14 @@ pub fn matches(actual: &Value, expected: &Value) -> bool {
         (Value::Object(actual), Value::Object(expected)) => expected
             .iter()
             .all(|(key, value)| actual.get(key).is_some_and(|member| matches(member, value))),
+        // `toMatchObject` matches arrays element by element (same length).
+        (Value::Array(actual), Value::Array(expected)) => {
+            actual.len() == expected.len()
+                && actual
+                    .iter()
+                    .zip(expected)
+                    .all(|(actual, expected)| matches(actual, expected))
+        }
         (Value::Number(a), Value::Number(b)) => a.as_f64() == b.as_f64(),
         (actual, expected) => actual == expected,
     }
