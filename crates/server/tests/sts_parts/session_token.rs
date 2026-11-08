@@ -877,3 +877,39 @@ fn answers_over_http_with_the_token_in_the_body_and_never_sets_a_cookie() {
         );
     });
 }
+
+/// Port-only regression: `confirmMfa` called in-process reaches the service in both of its spellings, the request
+/// credential with `{ code }` and `{ credential, code }` as one input, instead of bouncing between the public and the
+/// authenticated dispatch until the stack overflows.
+#[test]
+fn confirm_mfa_reaches_the_service_in_process_with_a_credential_or_as_one_input() {
+    run(|| async {
+        let f = ok!(organization_fixture(|_| {}).await);
+        ok!(f.member("alice").await);
+        let login = ok!(f.sign_in("alice").await);
+        let credential = bearer(str_of(&login, "token"));
+        // Nothing enrolled yet: both spellings are refused by the service itself.
+        let error = fails!(
+            f.auth("confirmMfa", &credential, json!({ "code": "123456" }))
+                .await
+        );
+        refused(&error, "INVALID_CHALLENGE", Some(401), None);
+        let error = fails!(
+            f.iam
+                .api
+                .auth
+                .call(
+                    "confirmMfa",
+                    better_iam_server::http::AuthArgs::Public(json!({
+                        "credential": { "token": str_of(&login, "token") },
+                        "code": "123456",
+                    })),
+                )
+                .await
+        );
+        refused(&error, "INVALID_CHALLENGE", Some(401), None);
+        // The credential spelling enrolls once a code is valid.
+        let (_, token) = ok!(enroll_totp(&f, str_of(&login, "token")).await);
+        assert_eq!(f.row_of(&token).await["mfa"], true);
+    });
+}

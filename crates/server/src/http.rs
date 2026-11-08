@@ -537,6 +537,61 @@ fn json_headers(value: Option<&Value>) -> Option<Vec<(String, String)>> {
     }
 }
 
+/// `beginMfa`'s credential: a sign-in challenge from `body`, otherwise `credential` (the router's `dispatchAuth`).
+fn begin_mfa_credential(
+    body: &Map<String, Value>,
+    credential: &CredentialInput,
+) -> IamResult<MfaCredential> {
+    Ok(match body.get("challenge") {
+        Some(Value::String(challenge)) => MfaCredential::Challenge {
+            tenant_id: text(body.get("tenantId"), "tenantId", 256)?,
+            challenge: challenge.clone(),
+        },
+        _ => MfaCredential::Credential(credential.clone()),
+    })
+}
+
+/// `confirmMfa`'s input: the login challenge named in `body.credential`, otherwise `credential`, with the code and
+/// `rememberDevice` from `body` (the router's `dispatchAuth`).
+fn confirm_mfa_input(
+    body: &Map<String, Value>,
+    credential: &CredentialInput,
+) -> IamResult<ConfirmMfaInput> {
+    let empty = Map::new();
+    let challenge = if crate::js::truthy(body.get("credential")) {
+        object(body.get("credential"))?
+    } else {
+        &empty
+    };
+    let mfa = match challenge.get("challenge") {
+        Some(Value::String(token)) => MfaCredential::Challenge {
+            tenant_id: text(challenge.get("tenantId"), "tenantId", 256)?,
+            challenge: token.clone(),
+        },
+        _ => MfaCredential::Credential(credential.clone()),
+    };
+    Ok(ConfirmMfaInput {
+        credential: mfa,
+        code: text(body.get("code"), "code", 256)?,
+        remember_device: body.get("rememberDevice") == Some(&Value::Bool(true)),
+    })
+}
+
+/// A credential spelled as a JSON object (`{ headers?, token? }`), as in-process callers pass it.
+fn json_credential(value: Option<&Value>) -> CredentialInput {
+    CredentialInput {
+        headers: json_headers(value.and_then(|value| value.get("headers"))),
+        token: value
+            .and_then(|value| value.get("token"))
+            .and_then(Value::as_str)
+            .map(str::to_owned),
+    }
+}
+
+fn endpoint_not_found() -> IamError {
+    IamError::with_status("NOT_FOUND", "Endpoint not found", 404)
+}
+
 impl AuthApi {
     /// `Object.hasOwn(authApi, method)`.
     pub fn has(&self, method: &str) -> bool {
@@ -640,14 +695,24 @@ impl AuthApi {
                 }
                 "beginPasskeyMfa" => to_json(auth.begin_passkey_mfa(&body).await?),
                 "finishPasskeyMfa" => to_json(auth.finish_passkey_mfa(&body).await?),
-                // An authenticated method called with a body as its credential (in-process callers).
-                _ => {
-                    let credential = CredentialInput {
-                        headers: json_headers(body.get("headers")),
-                        token: body.get("token").and_then(Value::as_str).map(str::to_owned),
-                    };
+                // In-process callers: `beginMfa(credential)` and `confirmMfa({ credential, code, rememberDevice })`.
+                "beginMfa" => {
+                    let map = body.as_object().cloned().unwrap_or_default();
+                    let credential = begin_mfa_credential(&map, &json_credential(Some(&body)))?;
+                    to_json(auth.begin_mfa(&credential).await?)
+                }
+                "confirmMfa" => {
+                    let map = body.as_object().cloned().unwrap_or_default();
+                    let input = confirm_mfa_input(&map, &json_credential(map.get("credential")))?;
+                    to_json(auth.confirm_mfa(&input).await?)
+                }
+                // An authenticated method called with a body as its credential (in-process callers). The
+                // authenticated arm handles every one of these itself, so this never bounces back here.
+                _ if AUTHENTICATED_AUTH_METHODS.contains(&method) => {
+                    let credential = json_credential(Some(&body));
                     Box::pin(self.invoke(method, AuthArgs::Authenticated(credential, empty))).await
                 }
+                _ => Err(endpoint_not_found()),
             },
             AuthArgs::Authenticated(credential, body) => {
                 let c = &credential;
@@ -686,8 +751,16 @@ impl AuthApi {
                         auth.begin_mfa(&MfaCredential::Credential(credential.clone()))
                             .await?,
                     ),
-                    // A public method called with a credential (in-process callers): the body is its input.
-                    _ => Box::pin(self.invoke(method, AuthArgs::Public(body))).await,
+                    "confirmMfa" => {
+                        let map = body.as_object().cloned().unwrap_or_default();
+                        to_json(auth.confirm_mfa(&confirm_mfa_input(&map, c)?).await?)
+                    }
+                    // A public method called with a credential (in-process callers): the body is its input. The
+                    // public arm handles every one of these itself, so this never bounces back here.
+                    _ if PUBLIC_AUTH_METHODS.contains(&method) => {
+                        Box::pin(self.invoke(method, AuthArgs::Public(body))).await
+                    }
+                    _ => Err(endpoint_not_found()),
                 }
             }
         }
@@ -1061,34 +1134,11 @@ impl Http {
         }
         // MFA enrollment takes either a sign-in challenge from the body or the request's own credential.
         if method == "beginMfa" {
-            let mfa = match body.get("challenge") {
-                Some(Value::String(challenge)) => MfaCredential::Challenge {
-                    tenant_id: text(body.get("tenantId"), "tenantId", 256)?,
-                    challenge: challenge.clone(),
-                },
-                _ => MfaCredential::Credential(credential.clone()),
-            };
+            let mfa = begin_mfa_credential(body, credential)?;
             return self.auth_api.call(method, AuthArgs::BeginMfa(mfa)).await;
         }
         if method == "confirmMfa" {
-            let empty = Map::new();
-            let challenge = if crate::js::truthy(body.get("credential")) {
-                object(body.get("credential"))?
-            } else {
-                &empty
-            };
-            let mfa = match challenge.get("challenge") {
-                Some(Value::String(token)) => MfaCredential::Challenge {
-                    tenant_id: text(challenge.get("tenantId"), "tenantId", 256)?,
-                    challenge: token.clone(),
-                },
-                _ => MfaCredential::Credential(credential.clone()),
-            };
-            let input = ConfirmMfaInput {
-                credential: mfa,
-                code: text(body.get("code"), "code", 256)?,
-                remember_device: body.get("rememberDevice") == Some(&Value::Bool(true)),
-            };
+            let input = confirm_mfa_input(body, credential)?;
             return self
                 .auth_api
                 .call(method, AuthArgs::ConfirmMfa(input))
