@@ -46,7 +46,7 @@ func TestHelpersParseCookiesRecogniseDeletionsAndKeepRedirectsOnThisSite(t *test
 		"/a b?c d#e f":  "/a%20b?c%20d#e%20f",
 		"/x\\y":         "/",
 		"https://x":     "/",
-		"/café":    "/caf%C3%A9",
+		"/café":         "/caf%C3%A9",
 		"/q?'":          "/q?%27",
 		"/a/..":         "/",
 		"/p?":           "/p",
