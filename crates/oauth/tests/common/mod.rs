@@ -377,3 +377,5 @@ pub fn query_param(url: &str, name: &str) -> Option<String> {
         .find(|(key, _)| key == name)
         .map(|(_, value)| value.into_owned())
 }
+
+pub mod provider;

@@ -141,7 +141,7 @@ fn percent_decode(value: &str) -> String {
     crate::client::percent_decode(value).unwrap_or_else(|| value.to_owned())
 }
 
-fn match_route(method: &str, path: &str) -> Option<Route> {
+fn match_route(method: &str, path: &str, registration: bool) -> Option<Route> {
     let attempt = |path: &str| -> Option<Route> {
         let folded = fold(path);
         let get = method == "GET" || method == "HEAD";
@@ -157,7 +157,7 @@ fn match_route(method: &str, path: &str) -> Option<Route> {
             "/AUTH" if get => Some(Route::Authorization),
             "/ME" if get || post || options => Some(Route::Userinfo),
             "/TOKEN" if post || options => Some(Route::Token),
-            "/REG" if post => Some(Route::Registration),
+            "/REG" if post && registration => Some(Route::Registration),
             "/TOKEN/REVOCATION" if post || options => Some(Route::Revocation),
             "/TOKEN/INTROSPECTION" if post || options => Some(Route::Introspection),
             "/SESSION/END/CONFIRM" if post => Some(Route::EndSessionConfirm),
@@ -176,7 +176,7 @@ fn match_route(method: &str, path: &str) -> Option<Route> {
         if parts.len() == 3 && !parts[2].is_empty() && get {
             match folded_parts[1].as_str() {
                 "AUTH" => return Some(Route::Resume(percent_decode(parts[2]))),
-                "REG" => return Some(Route::ClientRead),
+                "REG" if registration => return Some(Route::ClientRead),
                 "DEVICE" => return Some(Route::DeviceResume(percent_decode(parts[2]))),
                 _ => {}
             }
@@ -466,7 +466,7 @@ pub(crate) async fn handle(inner: &Inner, request: &HttpRequest) -> HttpResponse
         if method == "POST" && decoded.to_lowercase().trim_end_matches('/') == "/reg" {
             match registration_gate(&mut ctx).await {
                 Ok(Some(context)) => {
-                    return match match_route(&method, &path) {
+                    return match match_route(&method, &path, inner.config.registration.is_some()) {
                         Some(route) => {
                             ctx.route = route;
                             let key = inner.registration_scope;
@@ -489,7 +489,7 @@ pub(crate) async fn handle(inner: &Inner, request: &HttpRequest) -> HttpResponse
             }
         }
     }
-    let Some(route) = match_route(&method, &path) else {
+    let Some(route) = match_route(&method, &path, inner.config.registration.is_some()) else {
         return finish(ctx);
     };
     ctx.route = route;
@@ -2076,7 +2076,7 @@ async fn validate_dpop(
                 .collect(),
         ),
         current_date: Some(epoch()),
-        clock_tolerance: f64::INFINITY,
+        clock_tolerance: 0.0,
         ..VerifyOptions::default()
     };
     let decoded = match jose::verify_jwt(&proof, VerifyKey::Embedded, &options) {
