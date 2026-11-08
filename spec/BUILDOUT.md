@@ -1,6 +1,16 @@
 # better-iam in Rust and Go: buildout plan
 
-Status: in progress on branch `rust-go-port` (started 2026-10-19).
+Status (2026-11-08): phases 1–4 complete, phase 5 in place but not yet released.
+
+- **Completeness:** every TypeScript server module, API group and package listed in the package map is ported to Rust
+  and Go, with no `not_ported` / `NOT_IMPLEMENTED` stubs left.
+- **Replay:** both servers replay all 1,396 replayable recorded TypeScript traces with 0 failures, the same result as
+  the TypeScript baseline.
+- **Mixed fleet:** the TypeScript, Rust and Go servers pass the server-level check (`scripts/conformance/fleet/servers.mjs`)
+  on one SQLite database.
+- **CI:** CI runs every parity layer.
+- **Release:** nothing is published to crates.io or tagged for Go yet. The first crates.io release needs the
+  `CARGO_REGISTRY_TOKEN` secret described below.
 
 ## Goal
 

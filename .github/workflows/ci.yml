@@ -134,8 +134,42 @@ jobs:
       - run: go test -p 1 -run Postgres ./...
   # Releases run after every green push to main whose version is not published yet. npm, crates.io, and the Go
   # module share one version: bump it with `node scripts/release-version.mjs X.Y.Z`.
+  # Parity layers 1, 4 and 5 of spec/BUILDOUT.md: the generated contract is current, the Rust and Go servers replay
+  # every recorded TypeScript trace, and the three servers share one database (scripts/conformance/fleet/servers.mjs).
+  conformance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.19.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go/go.mod
+          cache-dependency-path: go/go.sum
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - run: pnpm spec:check
+      - run: node scripts/spec/check-generated.mjs rust
+      - run: node scripts/spec/check-generated.mjs go
+      - run: cargo build --locked -p better-iam-server --bin better-iam-server
+      - run: go build -o ../target/go-server ./cmd/better-iam-server
+        working-directory: go
+      - name: Replay the TypeScript traces against the Rust server
+        run: node scripts/conformance/replay.mjs --server 'target/debug/better-iam-server --conformance --config {config} --port {port}' --jobs 6 --keep-going
+      - name: Replay the TypeScript traces against the Go server
+        run: node scripts/conformance/replay.mjs --server 'target/go-server --conformance --config {config} --port {port}' --jobs 6 --keep-going
+      - name: Mixed fleet (TypeScript, Rust and Go on one database)
+        run: node scripts/conformance/fleet/servers.mjs --ts-root . --rust target/debug/better-iam-server --go target/go-server
   release-plan:
-    needs: [test, postgres, rust, rust-postgres, go, go-postgres]
+    needs: [test, postgres, rust, rust-postgres, go, go-postgres, conformance]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     outputs:
