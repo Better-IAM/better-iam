@@ -1,0 +1,462 @@
+---
+title: axum
+metaTitle: axum middleware for Better IAM
+description: Serve the Better IAM API from an axum app with the IamTower layer, read the session with the IamRequest extractor, and guard routes with require_session and authorize.
+icon: Server
+status: experimental
+sources:
+  - crates/middleware/README.md
+  - crates/middleware/src/lib.rs
+  - crates/middleware/src/layer.rs
+  - crates/middleware/src/helpers.rs
+  - crates/middleware/src/axum.rs
+  - crates/middleware/tests/middleware.rs
+---
+
+import { Server, Rust, Globe, ShieldCheck } from '@/lib/icons';
+
+`IamTower` from `better-iam-middleware` connects a [Rust `BetterIam` instance](/docs/integrations/rust) to an axum
+application. It is a tower layer, the Rust counterpart of the [Express adapter](/docs/integrations/express): one layer
+serves the IAM HTTP API under `/api/iam` and gives every other request an `IamRequest` with the caller's
+<Term id="session">session</Term>, permission checks, and an in-process client. Route guards
+(`require_session`, `authorize`) refuse signed-out callers, callers without a permission, and cross-site form posts.
+Refusals become the IAM JSON error envelope, or a redirect to your login page for page navigations.
+
+<Callout type="warn" title="Not on crates.io yet">
+The Rust crates are installed from a checkout of the repository. See the [Rust overview](/docs/integrations/rust)
+for the current parity status.
+</Callout>
+
+## Installation
+
+<Steps>
+<Step>
+
+### Add the crates
+
+```toml title="Cargo.toml"
+[dependencies]
+better-iam = { path = "../better-iam/crates/better-iam" }
+better-iam-middleware = { path = "../better-iam/crates/middleware", features = ["axum"] }
+axum = "0.8"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+```
+
+The `axum` feature builds against axum 0.8. Without it, `IamTower` is still a plain tower layer for hyper or any
+other tower-based server.
+
+</Step>
+<Step>
+
+### Create the instance
+
+Create the instance once, as in [Create the instance](/docs/integrations/rust#create-the-instance), and share it as an
+`Arc<BetterIam>`.
+
+```rust title="src/iam.rs"
+use std::sync::Arc;
+
+use better_iam::adapter_sqlite::{SqliteAdapterOptions, sqlite_adapter};
+use better_iam::{BetterIam, BetterIamOptions, IamError, IamStore, better_iam};
+
+pub async fn create_iam() -> Result<Arc<BetterIam>, IamError> {
+    let store: Arc<dyn IamStore> = sqlite_adapter(SqliteAdapterOptions::new("./better-iam.db"))?;
+    let secret = std::env::var("BETTER_IAM_SECRET")
+        .map_err(|_| IamError::new("MISSING_ENV", "Set BETTER_IAM_SECRET"))?;
+    let iam = better_iam(BetterIamOptions::new(store, secret, "http://localhost:3000"))?;
+    iam.initialize().await?;
+    Ok(Arc::new(iam))
+}
+```
+
+</Step>
+<Step>
+
+### Add the layer
+
+`IamTower::new(iam, options)` takes the instance (an `Arc<BetterIam>`, or a lazy `IamSource`) and the options. Install
+`iam_tower.layer()` with `Router::layer` after your routes, so it wraps all of them, and install guards with
+`route_layer`, so route parameters are known when they run.
+
+```rust title="src/main.rs"
+use std::sync::Arc;
+
+use axum::Router;
+use axum::routing::get;
+use better_iam::BetterIam;
+use better_iam_middleware::layer::{IamLayerOptions, IamTower};
+
+mod iam;
+mod routes;
+
+fn app(iam: Arc<BetterIam>) -> Router {
+    let iam_tower = IamTower::new(
+        iam,
+        IamLayerOptions {
+            login_path: Some("/login".into()), // signed-out page navigations go here with ?next=
+            step_up_path: Some("/verify".into()), // page navigations that must step up go here
+            ..IamLayerOptions::default()
+        },
+    );
+    Router::new()
+        .route("/me", get(routes::me).route_layer(iam_tower.require_session(None)))
+        .layer(iam_tower.layer())
+}
+
+fn main() -> std::io::Result<()> {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .thread_stack_size(64 * 1024 * 1024)
+        .build()?;
+    runtime.block_on(async { tokio::spawn(serve()).await.expect("server task panicked") })
+}
+
+async fn serve() -> std::io::Result<()> {
+    let iam = iam::create_iam().await.expect("Better IAM failed to start");
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:3000").await?;
+    axum::serve(listener, app(iam)).await
+}
+```
+
+The runtime is built by hand, and the server spawned onto it, for its larger stacks; see
+[Stack size](/docs/integrations/rust#stack-size).
+
+- **The API mount.** Requests under the base path (`/api/iam`) are answered by the IAM server through its node
+  transport, before your routes and extractors run. The layer reads the body itself, up to the server's limit.
+- **Protocol mounts outside the base path**, such as `/oauth` or `/.well-known`, need their prefixes in
+  `serve: Some(vec!["/api/iam".into(), "/oauth".into(), "/.well-known".into()])` (see
+  [Protocol mounts](/docs/operations/deployment/protocol-mounts)).
+- **Cookies.** `Set-Cookie` headers the helpers receive during a request (from sign-in or sign-out) are added to that
+  request's response.
+
+</Step>
+</Steps>
+
+## Protect routes
+
+Guards are tower layers built by the `IamTower`. Each one reads the session, checks <Term id="step-up">step-up</Term>
+when asked, then checks authorization and the CSRF rule, and answers a refusal itself: a `401` or `403` JSON
+envelope for API calls, or a `303` redirect to `login_path` or `step_up_path` for page navigations (a `GET` with
+`Accept: text/html`).
+
+### Require a session
+
+```rust title="src/routes.rs"
+use axum::Json;
+use better_iam::BetterIam;
+use better_iam_middleware::{IamRequest, MiddlewareError};
+use serde_json::{Value, json};
+
+pub type Iam = IamRequest<BetterIam>;
+
+pub async fn me(iam: Iam) -> Result<Json<Value>, MiddlewareError> {
+    let session = iam.require_session(None).await?;
+    Ok(Json(json!({
+        "email": session["identity"]["email"],
+        "tenantId": session["session"]["tenantId"],
+        "mfa": session["session"]["mfa"],
+    })))
+}
+```
+
+```rust
+Router::new().route("/me", get(me).route_layer(iam_tower.require_session(None)))
+```
+
+A signed-out API call gets `401` with `{ "error": { "code": "UNAUTHENTICATED", "message": "A session is required" } }`
+and `Cache-Control: no-store`. A signed-out page navigation to `/me?tab=1` is redirected to
+`/login?next=%2Fme%3Ftab%3D1`.
+
+`IamRequest<T>` is an axum extractor. It is available on every route under the layer, guarded or not; a route outside
+the layer fails with a `500` ("The Better IAM layer is not installed on this route").
+
+### Require a permission
+
+`iam_tower.authorize(rule, step_up)` requires a session allowed to perform the rule's action. `AuthorizeRule::new`
+targets the tenant itself (`iam/{tenantId}`) in the session's tenant; `.resource(...)` and `.tenant_id(...)` derive
+them from the request head and the session. `path_param(parts, name)` reads a route parameter.
+
+```rust title="src/main.rs"
+use axum::Json;
+use axum::extract::Path;
+use better_iam_middleware::axum::path_param;
+use better_iam_middleware::{AuthorizeRule, ResourceRef};
+use serde_json::{Value, json};
+
+async fn project(Path(id): Path<String>) -> Json<Value> {
+    Json(json!({ "id": id }))
+}
+
+let read_project = AuthorizeRule::new("projects:read").resource(|parts, _session| ResourceRef {
+    kind: "project".into(),
+    id: path_param(parts, "id").unwrap_or_default(),
+});
+
+Router::new()
+    .route("/projects/{id}", get(project).route_layer(iam_tower.authorize(read_project, None)))
+    .route(
+        "/admin/people",
+        get(people).route_layer(iam_tower.authorize(AuthorizeRule::new("iam:identities:read"), None)),
+    )
+```
+
+The check runs through `iam.require`, so it evaluates the same <Term id="role">roles</Term>,
+<Term id="policy">policies</Term>, <Term id="condition">conditions</Term>, and <Term id="boundary">boundaries</Term>
+as every other check. A denial answers `403 ACCESS_DENIED`. For callbacks that must await something, use
+`resource_async` and `tenant_id_async`, which take a `ResourceFn` or `TenantFn` returning a boxed future.
+
+`ResourceRef` here is `{ kind, id }` (serialized as `{ "type", "id" }`); the tenant comes from the rule or the session.
+
+### Require step-up
+
+Pass a `StepUpRequirement`: `mfa: Some(StepUpMfa::On)` needs a session that completed MFA, `StepUpMfa::Fresh` also
+refuses remembered devices, impersonation, assumed roles, and API keys, and `max_age_ms` needs a recent sign-in.
+
+```rust title="src/main.rs"
+use axum::routing::post;
+use better_iam_middleware::{AuthorizeRule, StepUpMfa, StepUpRequirement};
+
+let recent_mfa = StepUpRequirement { mfa: Some(StepUpMfa::On), max_age_ms: Some(10.0 * 60.0 * 1000.0) };
+
+Router::new().route(
+    "/billing/cancel",
+    post(cancel_subscription)
+        .route_layer(iam_tower.authorize(AuthorizeRule::new("billing:manage"), Some(recent_mfa))),
+)
+```
+
+A session that fails the requirement gets `403` with `MFA_REQUIRED`, `RECENT_AUTH_REQUIRED`, or
+`IMPERSONATION_RESTRICTED`. Page navigations go to `step_up_path?next=...&reason=mfa|recent|impersonation`. Inside a
+handler, the same check is `iam.require_session(Some(&requirement))`. See [Step-up](/docs/authentication/mfa) for
+completing the challenge.
+
+### Enforce inside a handler
+
+When the resource is only known after loading data, enforce inside the handler with `iam.require(action, resource,
+tenant_id)`. It fails with the server's refusal, which the handler returns as a `MiddlewareError`.
+
+```rust title="src/routes.rs"
+use axum::Json;
+use axum::extract::Path;
+use better_iam_middleware::{MiddlewareError, ResourceRef};
+use serde_json::{Value, json};
+
+pub async fn delete_document(iam: Iam, Path(id): Path<String>) -> Result<Json<Value>, MiddlewareError> {
+    let document = ResourceRef { kind: "document".into(), id: id.clone() };
+    iam.require("documents:delete", Some(document), None).await?;
+    Ok(Json(json!({ "deleted": id })))
+}
+```
+
+`MiddlewareError` implements `IntoResponse`: a refusal becomes the JSON envelope with its status (and, through the
+layer, a redirect for page navigations), and any other error is logged and answered with a plain `500`. It converts
+from `IamError` and `IamRequestError`, so `?` works on both.
+
+### Cross-site requests
+
+Guards refuse a cookie-authenticated `POST`, `PUT`, `PATCH`, or `DELETE` whose `Origin` is not the app itself, the IAM
+origin, or one of `trusted_origins` (`403 UNTRUSTED_ORIGIN`, or `403 CSRF_REJECTED` with no `Origin`). A
+`Sec-Fetch-Site: same-origin` request passes, and bearer-token requests skip the check. A state-changing route without
+a guard can run the same rule with `check_request_origin`. See [The CSRF check](/docs/integrations/node#the-csrf-check)
+for why it matters with `SameSite=Lax` cookies.
+
+## Read the session
+
+`IamRequest` is created once per request. It memoizes the session lookup, and cookies the in-process client receives
+count for later calls in the same request. The session is the JSON that `auth.getSession` returns (a
+`serde_json::Value` with `identity` and `session`).
+
+### Get the session
+
+`get_session()` returns `Ok(None)` instead of failing when the request has no usable session: no credential, or the
+server answers `UNAUTHENTICATED`, `MFA_REQUIRED`, `EMAIL_UNVERIFIED`, `TENANT_INACTIVE`, or `TENANT_UNAVAILABLE`.
+`require_session(step_up)` returns the session or fails with an `IamRequestError` (`401`, or `403` with a `reason`).
+
+```rust title="src/routes.rs"
+use axum::response::{IntoResponse, Redirect, Response};
+
+pub async fn home(iam: Iam) -> Result<Response, MiddlewareError> {
+    let Some(session) = iam.get_session().await? else {
+        return Ok(Redirect::to("/login").into_response());
+    };
+    Ok(Json(json!({ "name": session["identity"]["name"] })).into_response())
+}
+```
+
+**Route:** `POST /api/iam/auth/getSession`
+
+### Check permissions for rendering
+
+`can(action, resource, tenant_id)` returns an <Term id="advisory">advisory</Term> boolean. Checks made together share
+one `authorizeMany` call, so a page with many buttons costs one round trip.
+
+```rust title="src/routes.rs"
+pub async fn toolbar(iam: Iam, Path(id): Path<String>) -> Result<Json<Value>, MiddlewareError> {
+    let project = ResourceRef { kind: "project".into(), id };
+    let (edit, delete) = tokio::join!(
+        iam.can("projects:update", Some(project.clone()), None),
+        iam.can("projects:delete", Some(project), None),
+    );
+    Ok(Json(json!({ "canEdit": edit?, "canDelete": delete? })))
+}
+```
+
+`authorize(checks, tenant_id)` returns an `AuthorizeResult` (`action`, `resource`, `allowed`, `reason`) per check.
+Advisory checks decide what to show; enforce the operation itself with a guard or `iam.require`.
+
+### Filter lists
+
+`plan(PlanInput { action, kind, tenant_id })` returns the resources of a type the caller may act on as a filter for
+your own query (`never` when signed out); compile it with the filter compilers of `better_iam::core`, such as
+`filter_to_sql`. `list_accessible(ListAccessibleInput { .. })` lists registered resources of a managed type. See
+[Data filtering](/docs/authorization/data-filtering) for the plan format.
+
+### Sign in and out
+
+`iam.client()` is an in-process client whose transport is the IAM handler, so the cookies the server issues land on
+this response. A plain HTML form can sign someone in without client JavaScript.
+
+```rust title="src/routes.rs"
+use axum::Form;
+use axum::response::Redirect;
+use better_iam_middleware::safe_redirect_path;
+
+#[derive(serde::Deserialize)]
+pub struct LoginForm {
+    tenant_id: String,
+    email: String,
+    password: String,
+    next: Option<String>,
+}
+
+pub async fn login(iam: Iam, Form(form): Form<LoginForm>) -> Result<Redirect, MiddlewareError> {
+    let result = iam
+        .client()
+        .call("auth", "signIn", json!({ "tenantId": form.tenant_id, "email": form.email, "password": form.password }))
+        .await?;
+    if result["mfaRequired"] == json!(true) {
+        let challenge = result["challenge"].as_str().unwrap_or_default();
+        return Ok(Redirect::to(&format!("/verify?challenge={challenge}")));
+    }
+    Ok(Redirect::to(&safe_redirect_path(form.next.as_deref(), "/")))
+}
+
+pub async fn logout(iam: Iam) -> Result<Redirect, MiddlewareError> {
+    iam.sign_out().await?; // ends the session and clears its cookie; never fails for a dead session
+    Ok(Redirect::to("/"))
+}
+```
+
+**Route:** `POST /api/iam/auth/signIn`, `POST /api/iam/auth/signOut`
+
+The in-process client works on JSON (`call(group, method, input)` and `request(path, input)` return a
+`serde_json::Value`). `safe_redirect_path` accepts only same-site paths and falls back to the default you give, so
+`?next=` cannot become an open redirect. A failed sign-in fails with the server's error (for example
+`INVALID_CREDENTIALS` or `RATE_LIMITED`).
+
+### Call the server API directly
+
+`iam.credential()` returns the `CredentialInput` for direct `iam.api.*` calls, including cookies set earlier in the
+same request. Keep the `Arc<BetterIam>` in axum state, or resolve it from the request with `iam_tower.resolve()`.
+
+```rust title="src/routes.rs"
+use std::sync::Arc;
+
+use axum::extract::{Path, State};
+use better_iam::server::api::Body;
+use better_iam::types::api::identities;
+
+pub async fn members(
+    State(server): State<Arc<BetterIam>>,
+    iam: Iam,
+    Path(tenant_id): Path<String>,
+) -> Result<Json<Value>, MiddlewareError> {
+    let people = server
+        .api
+        .identities
+        .list(&iam.credential(), Body::typed(&identities::ListInput { tenant_id, ..Default::default() }))
+        .await?
+        .into_value()?;
+    Ok(Json(people))
+}
+```
+
+Register it with `.route("/orgs/{tenant_id}/members", get(members)).with_state(iam.clone())` before
+`.layer(iam_tower.layer())`.
+
+**Route:** `POST /api/iam/identities/list`
+
+## Options
+
+`IamLayerOptions`:
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `login_path` | `Option<String>` | `None` | Where signed-out page navigations are redirected, with `?next=`. Without it they get the JSON `401` |
+| `step_up_path` | `Option<String>` | `None` | Where page navigations go when the session must step up, with `?next=` and `?reason=`. Without it they get the JSON `403` |
+| `serve` | `Option<Vec<String>>` | the base path | Path prefixes the IAM server answers. Add protocol mounts outside the base path, such as `/oauth` or `/.well-known` |
+| `base_path` | `Option<String>` | the instance's `endpoint.basePath`, else `/api/iam` | Where the IAM API is served; the default `serve` prefix and the in-process client's target |
+| `trusted_origins` | `Vec<String>` | empty | Origins besides the request's own and the IAM origin that may send cookie-authenticated unsafe requests to guarded routes |
+| `csrf` | `bool` | `true` | Check the `Origin` of cookie-authenticated unsafe requests in guards |
+| `now` | `Option<Arc<dyn Fn() -> f64 + Send + Sync>>` | the system clock | The clock for step-up recency checks, in milliseconds, for tests |
+
+`IamTower`:
+
+| Method | What it does |
+| --- | --- |
+| `layer()` | The layer that serves the API under the `serve` prefixes and attaches `IamRequest` to every other request |
+| `require_session(step_up)` | A guard layer requiring a session, and a step-up when given |
+| `authorize(rule, step_up)` | A guard layer requiring a session allowed to perform `rule.action` |
+| `guard(spec)` | A guard layer for any `GuardSpec { step_up, authorize }` |
+| `helpers(&mut parts)` | The per-request helpers of a request head |
+| `resolve()` | Resolves the instance |
+
+`IamRequest`:
+
+| Method | Returns |
+| --- | --- |
+| `get_session()` | `Option<Value>`: the session, or `None` when signed out |
+| `require_session(step_up)` | The session, or a `401` / `403` refusal |
+| `require(action, resource, tenant_id)` | `()`, or the server's refusal |
+| `can(action, resource, tenant_id)` | An advisory `bool`, batched per request |
+| `authorize(checks, tenant_id)` | `Vec<AuthorizeResult>` |
+| `plan(input)` | The query plan as JSON |
+| `list_accessible(input)` | `{ resources, total }` as JSON |
+| `assertion(&input)` | A short-lived signed assertion about the caller for a downstream service |
+| `client()` | The in-process client |
+| `sign_out()` | Ends the session and clears its cookie |
+| `credential()`, `headers()`, `url()` | The request's credential, headers (with cookies set during the request), and URL |
+
+Any `BetterIam`, or a value that borrows one (`Arc<BetterIam>`, your application state with `Borrow<BetterIam>`),
+implements the `IamLike` trait the layer works with. Another implementation of the trait can stand in for tests.
+
+## Errors
+
+| Code | Status | When |
+| --- | --- | --- |
+| [`UNAUTHENTICATED`](/docs/reference/errors#unauthenticated) | 401 | A guard or `require_session` ran with no usable session |
+| [`MFA_REQUIRED`](/docs/reference/errors#mfa_required) | 403 | `step_up.mfa` was not met; `reason` is `mfa` |
+| [`RECENT_AUTH_REQUIRED`](/docs/reference/errors#recent_auth_required) | 403 | `step_up.max_age_ms` was not met; `reason` is `recent` |
+| [`IMPERSONATION_RESTRICTED`](/docs/reference/errors#impersonation_restricted) | 403 | An impersonated session met a `max_age_ms` or `Fresh` requirement; `reason` is `impersonation` |
+| [`ACCESS_DENIED`](/docs/reference/errors#access_denied) | 403 | `authorize` or `iam.require` was denied |
+| [`UNTRUSTED_ORIGIN`](/docs/reference/errors#untrusted_origin) | 403 | A cookie-authenticated unsafe request came from an untrusted origin |
+| [`CSRF_REJECTED`](/docs/reference/errors#csrf_rejected) | 403 | A cookie-authenticated unsafe request had no `Origin` |
+
+## Related
+
+<Cards>
+  <Card icon={<Rust />} title="Rust overview" href="/docs/integrations/rust">
+    Crates, features, configuration, and the mixed-fleet guarantee.
+  </Card>
+  <Card icon={<Server />} title="actix-web" href="/docs/integrations/rust/actix-web">
+    The same helpers and guards as actix-web middleware.
+  </Card>
+  <Card icon={<Globe />} title="Typed client" href="/docs/integrations/rust/client">
+    Call the API you mounted from another Rust service.
+  </Card>
+  <Card icon={<ShieldCheck />} title="Policies" href="/docs/authorization/policies">
+    What `authorize` guards evaluate.
+  </Card>
+</Cards>

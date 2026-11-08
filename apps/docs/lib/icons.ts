@@ -119,6 +119,7 @@ export {
   SiNuxt as Nuxt,
   SiReact as ReactJs,
   SiReactrouter as ReactRouter,
+  SiRust as Rust,
   SiSvelte as Svelte,
   SiVuedotjs as Vue,
 } from 'react-icons/si';

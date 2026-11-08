@@ -1,0 +1,235 @@
+---
+title: actix-web
+metaTitle: actix-web middleware for Better IAM
+description: Serve the Better IAM API from an actix-web app with IamActix, read the session with the IamRequest extractor, and guard resources with require_session and authorize.
+icon: Server
+status: experimental
+sources:
+  - crates/middleware/README.md
+  - crates/middleware/src/actix.rs
+  - crates/middleware/src/helpers.rs
+  - crates/middleware/src/lib.rs
+  - crates/middleware/tests/middleware.rs
+---
+
+import { Server, Rust, Globe } from '@/lib/icons';
+
+`IamActix` from `better-iam-middleware` connects a [Rust `BetterIam` instance](/docs/integrations/rust) to an
+actix-web application. Its middleware serves the IAM HTTP API under `/api/iam` and gives every other request an
+`IamRequest` extractor with the caller's <Term id="session">session</Term>, permission checks, and an in-process
+client. Its guards (`require_session`, `authorize`) wrap resources and scopes. It is the same integration as the
+[axum adapter](/docs/integrations/rust/axum), with actix-web types: the helpers, options, refusals, and error codes are
+identical, so this page covers what differs and links there for the rest.
+
+<Callout type="warn" title="Not on crates.io yet">
+The Rust crates are installed from a checkout of the repository. See the [Rust overview](/docs/integrations/rust)
+for the current parity status.
+</Callout>
+
+## Installation
+
+<Steps>
+<Step>
+
+### Add the crates
+
+```toml title="Cargo.toml"
+[dependencies]
+better-iam = { path = "../better-iam/crates/better-iam" }
+better-iam-middleware = { path = "../better-iam/crates/middleware", features = ["actix-web"] }
+actix-web = "4"
+futures = "0.3"
+serde_json = "1"
+```
+
+</Step>
+<Step>
+
+### Wrap the app
+
+`IamActix::new(iam, options)` takes the instance (an `Arc<BetterIam>`, or a lazy `IamSource`) and the same
+`IamLayerOptions` as the axum adapter. Register `iam_actix.middleware()` with `App::wrap`, so it runs before every
+route, and wrap individual resources with guards.
+
+```rust title="src/main.rs"
+use actix_web::{App, HttpServer, web};
+use better_iam_middleware::actix::IamActix;
+use better_iam_middleware::layer::IamLayerOptions;
+
+mod iam; // create_iam() from the Rust overview
+mod routes;
+
+fn main() -> std::io::Result<()> {
+    actix_web::rt::System::new().block_on(async {
+        let iam = iam::create_iam().await.expect("Better IAM failed to start");
+        let iam_actix = IamActix::new(
+            iam,
+            IamLayerOptions { login_path: Some("/login".into()), ..IamLayerOptions::default() },
+        );
+        HttpServer::new(move || {
+            App::new()
+                .wrap(iam_actix.middleware())
+                .service(
+                    web::resource("/me")
+                        .wrap(iam_actix.require_session(None))
+                        .route(web::get().to(routes::me)),
+                )
+        })
+        .bind(("127.0.0.1", 3000))?
+        .run()
+        .await
+    })
+}
+```
+
+Start the process with `RUST_MIN_STACK=67108864` (64 MiB). actix-web creates its worker threads itself, with the
+default stack size, which the server's futures overflow in debug builds; see
+[Stack size](/docs/integrations/rust#stack-size).
+
+- **The API mount.** Requests under the base path (`/api/iam`) are answered by the IAM server through its node
+  transport before any route matches, including the protocol mounts listed in `serve`.
+- **Cookies.** `Set-Cookie` headers the helpers receive during a request (from sign-in or sign-out) are added to that
+  request's response.
+- **Order.** Guards read the helpers the middleware attached, so register `iam_actix.middleware()` on the `App`, not
+  only on a scope.
+
+</Step>
+</Steps>
+
+## Protect routes
+
+### Require a session
+
+```rust title="src/routes.rs"
+use actix_web::HttpResponse;
+use better_iam::BetterIam;
+use better_iam_middleware::{IamRequest, MiddlewareError};
+use serde_json::json;
+
+pub type Iam = IamRequest<BetterIam>;
+
+pub async fn me(iam: Iam) -> Result<HttpResponse, MiddlewareError> {
+    let session = iam.require_session(None).await?;
+    Ok(HttpResponse::Ok().json(json!({
+        "email": session["identity"]["email"],
+        "tenantId": session["session"]["tenantId"],
+    })))
+}
+```
+
+A signed-out API call gets `401` with `{ "error": { "code": "UNAUTHENTICATED", "message": "A session is required" } }`;
+a signed-out page navigation to `/me?tab=1` is redirected to `/login?next=%2Fme%3Ftab%3D1`.
+
+### Require a permission
+
+`iam_actix.authorize(rule, step_up)` takes an `AuthorizeRule<HttpRequest>`: its `resource` and `tenant_id` callbacks
+receive the actix `HttpRequest`, so route parameters come from `request.match_info()`.
+
+```rust title="src/main.rs"
+use actix_web::{HttpRequest, HttpResponse, web};
+use better_iam_middleware::{AuthorizeRule, ResourceRef};
+use serde_json::json;
+
+async fn project(path: web::Path<String>) -> HttpResponse {
+    HttpResponse::Ok().json(json!({ "id": path.into_inner() }))
+}
+
+// inside HttpServer::new(move || { ... })
+let read_project = AuthorizeRule::<HttpRequest>::new("projects:read").resource(|request, _session| ResourceRef {
+    kind: "project".into(),
+    id: request.match_info().get("id").unwrap_or_default().to_owned(),
+});
+
+App::new()
+    .wrap(iam_actix.middleware())
+    .service(
+        web::resource("/projects/{id}")
+            .wrap(iam_actix.authorize(read_project, None))
+            .route(web::get().to(project)),
+    )
+```
+
+A denial answers `403 ACCESS_DENIED`. Step-up works as in axum: pass
+`Some(StepUpRequirement { mfa: Some(StepUpMfa::On), max_age_ms: Some(600_000.0) })` as the second argument (see
+[Require step-up](/docs/integrations/rust/axum#require-step-up)).
+
+### Enforce inside a handler
+
+```rust title="src/routes.rs"
+use actix_web::{HttpResponse, web};
+use better_iam_middleware::{MiddlewareError, ResourceRef};
+
+pub async fn delete_document(iam: Iam, path: web::Path<String>) -> Result<HttpResponse, MiddlewareError> {
+    let id = path.into_inner();
+    iam.require("documents:delete", Some(ResourceRef { kind: "document".into(), id }), None)
+        .await?;
+    Ok(HttpResponse::NoContent().finish())
+}
+```
+
+`MiddlewareError` and `IamRequestError` implement actix-web's `ResponseError`: a refusal becomes the IAM JSON
+envelope with its status (the middleware turns it into a redirect for page navigations), and any other error is logged
+and answered with a plain `500`.
+
+### Cross-site requests
+
+Guards refuse a cookie-authenticated `POST`, `PUT`, `PATCH`, or `DELETE` from an untrusted `Origin`
+(`403 UNTRUSTED_ORIGIN`, or `403 CSRF_REJECTED` with no `Origin`), exactly as the axum guards do. Add other front-end
+origins to `trusted_origins`.
+
+## Read the session
+
+The `IamRequest` extractor gives handlers the same per-request helpers as in axum: `get_session`, `require_session`,
+`require`, `can` (batched into one `authorizeMany` call per request), `authorize`, `plan`, `list_accessible`,
+`assertion`, `client()` (the in-process client, whose cookies land on this response), `sign_out`, and `credential()`
+for direct `iam.api.*` calls. See [Read the session](/docs/integrations/rust/axum#read-the-session) for each one.
+
+```rust title="src/routes.rs"
+use actix_web::{HttpResponse, web};
+use better_iam_middleware::{MiddlewareError, ResourceRef};
+use serde_json::json;
+
+pub async fn toolbar(iam: Iam, path: web::Path<String>) -> Result<HttpResponse, MiddlewareError> {
+    let project = ResourceRef { kind: "project".into(), id: path.into_inner() };
+    let (edit, delete) = futures::join!(
+        iam.can("projects:update", Some(project.clone()), None),
+        iam.can("projects:delete", Some(project), None),
+    );
+    Ok(HttpResponse::Ok().json(json!({ "canEdit": edit?, "canDelete": delete? })))
+}
+
+pub async fn logout(iam: Iam) -> Result<HttpResponse, MiddlewareError> {
+    iam.sign_out().await?;
+    Ok(HttpResponse::SeeOther().insert_header(("location", "/")).finish())
+}
+```
+
+`iam_actix.helpers(&request)` returns the helpers of an `HttpRequest` outside an extractor.
+
+## Options
+
+`IamActix::new` takes the [`IamLayerOptions`](/docs/integrations/rust/axum#options) of the axum adapter (`login_path`,
+`step_up_path`, `serve`, `base_path`, `trusted_origins`, `csrf`, `now`).
+
+| Method | What it does |
+| --- | --- |
+| `middleware()` | Serves the API under the `serve` prefixes and attaches `IamRequest` to every other request |
+| `require_session(step_up)` | A guard requiring a session, and a step-up when given |
+| `authorize(rule, step_up)` | A guard requiring a session allowed to perform `rule.action` |
+| `guard(spec)` | A guard for any `GuardSpec<HttpRequest>` |
+| `helpers(&request)` | The per-request helpers of a request |
+| `resolve()` | Resolves the instance |
+
+## Related
+
+<Cards>
+  <Card icon={<Rust />} title="Rust overview" href="/docs/integrations/rust">
+    Crates, features, configuration, and the mixed-fleet guarantee.
+  </Card>
+  <Card icon={<Server />} title="axum" href="/docs/integrations/rust/axum">
+    The tower layer, with every helper and option documented.
+  </Card>
+  <Card icon={<Globe />} title="Typed client" href="/docs/integrations/rust/client">
+    Call a Better IAM server from another Rust service.
+  </Card>
+</Cards>
