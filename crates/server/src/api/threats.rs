@@ -33,7 +33,9 @@ use serde_json::{Map, Value, json};
 use crate::api::{Body, Reply};
 use crate::clearances::assert_clearances;
 use crate::context::{ServerContext, Store};
-use crate::contracts::{Mutation, MutationContext, OperationDenied, OperationFailure};
+use crate::contracts::{
+    Mutation, MutationContext, OperationDenied, OperationFailure, OperationResult,
+};
 use crate::js::{number_to_string, truthy, utf16_len};
 use crate::metrics::locale_compare;
 use crate::options::{AuthorizationRequest, ResourceTarget};
@@ -243,7 +245,8 @@ async fn recompute_risk(
     Ok(())
 }
 
-/// `applyResponse(ctx, tx, tenantId, request, settings)` for a person responding (no brake).
+/// `applyResponse(ctx, tx, tenantId, request, settings)` for a person responding (no brake). A refusal stays an
+/// `OperationDenied` (`denied: true`), so the operation envelope records it as a deny audit event.
 async fn apply_response(
     ctx: &Arc<ServerContext>,
     tx: &Store,
@@ -251,7 +254,7 @@ async fn apply_response(
     request: Value,
     actor: &crate::threat_response::ResponseActor,
     settings: &Value,
-) -> IamResult<Value> {
+) -> OperationResult<Value> {
     // The actor is a verified principal, so it travels beside the JSON request rather than inside it.
     let optional = |key: &str| request.get(key).and_then(Value::as_str).map(str::to_owned);
     let request = crate::threat_response::ResponseRequest {
@@ -274,7 +277,7 @@ async fn apply_response(
         None,
     )
     .await?;
-    to_json(&response)
+    Ok(to_json(&response)?)
 }
 
 /// `afterThreatResponses(ctx, tenantId, responses)`.

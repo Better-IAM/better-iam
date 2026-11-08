@@ -1007,6 +1007,49 @@ fn playbooks_that_suspend_clearances_need_the_clearance_officer_permission() {
     });
 }
 
+#[test]
+fn a_response_refused_inside_respond_is_an_audited_denial() {
+    run(|| async {
+        let f =
+            organization(|options| options.clearances = Some(ClearanceOptions::default())).await;
+        let threats = &f.iam.api.threats;
+        let tenant = f.tenant_id.clone();
+        let (_, analyst) = member_with(&f, "analyst", threats_administration()).await;
+        let suspect = f.member("suspect").await;
+        // applyResponse refuses the suspension (OperationDenied): it rolls back, answers ACCESS_DENIED, and the
+        // operation envelope records the refusal as a deny of iam:threats:respond.
+        let error = fails(
+            threats
+                .respond(
+                    &analyst,
+                    body(json!({
+                        "tenantId": tenant, "identityId": suspect,
+                        "actions": [{ "kind": "suspend-clearance" }], "reason": "suspected",
+                    })),
+                )
+                .await,
+        );
+        assert_eq!(
+            (code(&error), error.message.as_str()),
+            (
+                "ACCESS_DENIED",
+                "Suspending a clearance requires iam:clearances:suspend"
+            )
+        );
+        let denials = f
+            .find(
+                "audit",
+                Filter::new()
+                    .eq("tenantId", tenant.clone())
+                    .eq("action", "iam:threats:respond")
+                    .eq("outcome", "deny"),
+            )
+            .await;
+        assert_eq!(denials.len(), 1);
+        assert_eq!(denials[0]["resourceId"], json!("threats/responses"));
+    });
+}
+
 // --- tests/threats-clearances.test.ts (the API's part) -------------------------------------------------------------
 
 #[test]
