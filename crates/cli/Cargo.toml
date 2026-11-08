@@ -1,0 +1,58 @@
+[package]
+name = "better-iam-cli"
+description = "The better-iam command line for Rust: migrations, bootstrap, scheduled jobs, audit and storage operations, diagnostics, configuration as code, and API calls as a saved session, sharing its database with the TypeScript implementation."
+readme = "README.md"
+keywords = ["iam", "cli", "migrations", "rbac", "audit"]
+categories = ["command-line-utilities", "authentication"]
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+
+[features]
+default = ["postgres"]
+# Database kinds a configuration (`better-iam.json`, BETTER_IAM_DATABASE_URL) can open besides SQLite.
+postgres = ["better-iam-server/postgres"]
+# libSQL is optional, like `@better-iam/adapter-libsql` next to the npm CLI.
+libsql = ["better-iam-server/libsql"]
+
+[dependencies]
+better-iam-core.workspace = true
+better-iam-auth.workspace = true
+better-iam-server.workspace = true
+futures.workspace = true
+indexmap.workspace = true
+regex.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "sync", "macros", "time", "net"] }
+base64 = "0.22"
+hex = "0.4"
+rand = "0.8"
+uuid = { version = "1", features = ["v4"] }
+url = "2"
+
+[target.'cfg(unix)'.dependencies]
+# getuid (configuration discovery skips files another user could have planted) and termios (hidden prompts).
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+# Console modes for hidden prompts.
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Console"] }
+
+[dev-dependencies]
+tempfile.workspace = true
+better-iam-adapter-sqlite.workspace = true
+bytes.workspace = true
+http = "1"
+
+[lib]
+name = "better_iam_cli"
+doctest = false
+
+[[bin]]
+name = "better-iam"
+path = "src/main.rs"
