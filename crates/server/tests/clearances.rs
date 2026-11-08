@@ -811,6 +811,25 @@ fn refuses_reading_up_whatever_roles_say_and_limits_listings_and_plans() {
             .await
             .unwrap();
         assert_eq!(plan["filter"], all_but(&["d2"]));
+        // The conformance `planResources` call reads the request's credential in every wire form, the tagged
+        // `{"$headers": {...}}` one included (tests/middleware-plan.test.ts).
+        let token = alice.credential.token.clone().expect("token");
+        let called = f
+            .iam
+            .plan_resources
+            .call(
+                "",
+                vec![json!({
+                    "headers": { "$headers": { "authorization": format!("Bearer {token}") } },
+                    "tenantId": f.tenant_id,
+                    "action": "documents:read",
+                    "type": "document",
+                })],
+            )
+            .await
+            .expect("planResources")
+            .expect("plan");
+        assert_eq!(called["filter"], all_but(&["d2"]));
         let plan = f
             .plan(&bob.credential, "documents:read", "document")
             .await

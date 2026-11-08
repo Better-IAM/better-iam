@@ -319,24 +319,11 @@ impl PlanRuntime {
                 .unwrap_or("")
                 .to_owned()
         };
-        let headers = request
-            .get("headers")
-            .and_then(Value::as_object)
-            .map(|headers| {
-                headers
-                    .iter()
-                    .filter_map(|(name, value)| {
-                        value.as_str().map(|value| (name.clone(), value.to_owned()))
-                    })
-                    .collect()
-            });
-        let token = request
-            .get("token")
-            .and_then(Value::as_str)
-            .map(str::to_owned);
+        // The request's credential members as any other conformance credential: `headers` may be the tagged
+        // `{"$headers": {...}}` form or a list of pairs, which `decode_value` keeps as they are.
         Some(
             self.plan_resources(&PlanResourcesRequest {
-                credential: CredentialInput { headers, token },
+                credential: crate::api::credential_from_json(Some(&request)),
                 tenant_id: string("tenantId"),
                 action: string("action"),
                 kind: string("type"),
