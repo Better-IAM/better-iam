@@ -2074,9 +2074,11 @@ fn service_use_of(value: Option<&Value>) -> IamResult<KmsServiceUse> {
         Some(principal) => Some(principal_from_json(principal)?),
     };
     Ok(KmsServiceUse {
+        // A `via` that is not a string fails `text(use.via, 'via', 64)` when the use is audited, as in TypeScript:
+        // the control character stands in for the non-string value.
         via: match value.get("via") {
             Some(Value::String(via)) => via.clone(),
-            other => js_string(other),
+            _ => "\u{0}".into(),
         },
         principal,
     })
