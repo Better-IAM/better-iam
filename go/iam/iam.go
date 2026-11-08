@@ -15,6 +15,7 @@
 //	better-iam/core                                     github.com/Better-IAM/better-iam/go/core
 //	better-iam/auth                                     github.com/Better-IAM/better-iam/go/auth
 //	better-iam/adapter-sqlite, -postgres, -libsql       github.com/Better-IAM/better-iam/go/adapters/{sqlite,postgres,libsql}
+//	better-iam/cli loadConfig (a configuration file)    github.com/Better-IAM/better-iam/go/configfile
 //
 // The browser-only and framework entry points (passkeys ceremony helpers, React, Vue, Svelte, Next.js, NestJS) have
 // no Go form. TypeScript types that describe records the Go server keeps as *core.Object (Department, Team,
