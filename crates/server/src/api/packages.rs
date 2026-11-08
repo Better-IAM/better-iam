@@ -111,7 +111,7 @@ fn expired_binding(ctx: &ServerContext, binding: &Record) -> bool {
 }
 
 /// `pendingRequest(request, now)`: a request that still waits for a decision.
-fn pending_request(request: &Record, now: f64) -> bool {
+pub fn pending_request(request: &Record, now: f64) -> bool {
     member_str(request, "status") == "pending"
         && num(request, "expiresAt").is_some_and(|expires| expires > now)
 }
