@@ -477,12 +477,13 @@ func (a *app) handle(path string, body any, exclusive bool) (any, error) {
 		a.current = next
 		return core.NewObject("reset", true), nil
 	case "call":
-		fn, err := resolveMethod(current.iam, bodyMember(body, "method"))
+		method := bodyMember(body, "method")
+		fn, err := resolveMethod(current.iam, method)
 		if err != nil {
 			return nil, err
 		}
 		args, _ := decodeValue(bodyMember(body, "args")).([]any)
-		result, callErr := invoke(ctx, fn, args, nil)
+		result, callErr := invokeMember(ctx, fn, method, args, nil)
 		if callErr != nil {
 			return core.NewObject("error", errorShape(callErr)), nil
 		}
