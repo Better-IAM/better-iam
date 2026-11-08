@@ -2173,3 +2173,698 @@ fn logs_in_once_against_a_server_and_later_commands_act_as_the_saved_session() {
         iam.store.close().await.unwrap();
     });
 }
+
+// --- vault (vault-cli.test.ts) ----------------------------------------------------------------------------------------
+
+#[test]
+fn names_environment_variables_after_secret_paths() {
+    use better_iam_cli::commands::vault::secret_env_name;
+    assert_eq!(
+        secret_env_name("prod/app/db-password", "prod/app/"),
+        "DB_PASSWORD"
+    );
+    assert_eq!(
+        secret_env_name("prod/app/v2.api-key", "prod/"),
+        "APP_V2_API_KEY"
+    );
+    assert_eq!(secret_env_name("prod/app/1st", "prod/app/"), "_1ST");
+}
+
+/// A shell command line for `vault-run`: the platform shell running `script`.
+fn shell(script: &str) -> Vec<String> {
+    if cfg!(windows) {
+        vec!["cmd".into(), "/C".into(), script.into()]
+    } else {
+        vec!["sh".into(), "-c".into(), script.into()]
+    }
+}
+
+#[test]
+fn puts_gets_and_runs_a_command_with_secrets_in_its_environment() {
+    run(|| async {
+        let folder = temp();
+        let config = s(&write_config(folder.path(), json!({})));
+        let (tenant_id, token, _) = root_session(Path::new(&config)).await;
+        let r = Recorder::new(Some(folder.path()));
+        let env = [
+            ("BETTER_IAM_TOKEN", token.clone()),
+            ("BETTER_IAM_TENANT", tenant_id.clone()),
+            ("KEEP_ME", "yes".to_owned()),
+        ];
+        let create = |name: &str, extra: Value| {
+            let mut body = json!({ "tenantId": tenant_id, "name": name });
+            if let (Value::Object(body), Value::Object(extra)) = (&mut body, extra) {
+                body.extend(extra);
+            }
+            body.to_string()
+        };
+        for body in [
+            create(
+                "app/db-password",
+                json!({ "value": "the-database-password" }),
+            ),
+            create(
+                "app/smtp",
+                json!({ "format": "json", "fields": { "host": "smtp.acme.test", "password": "mail-password" } }),
+            ),
+            create(
+                "app/signing-key",
+                json!({ "value": "k1", "rotation": { "intervalDays": 1, "generator": { "length": 16 } } }),
+            ),
+        ] {
+            cli(
+                &["api", "vault.create", "--config", &config, "--data", &body],
+                r.io(&env),
+            )
+            .await
+            .unwrap();
+        }
+
+        cli(
+            &["vault-put", "app/db-password", "--config", &config],
+            r.with_stdin(&env, "rotated-by-cli\n"),
+        )
+        .await
+        .unwrap();
+        assert_eq!(r.last()["version"], json!(2));
+        assert_eq!(r.last()["stages"], json!(["current"]));
+        cli(
+            &["vault-get", "app/db-password", "--config", &config],
+            r.io(&env),
+        )
+        .await
+        .unwrap();
+        assert_eq!(r.raw(), "rotated-by-cli");
+        cli(
+            &[
+                "vault-get",
+                "app/smtp",
+                "--field",
+                "host",
+                "--config",
+                &config,
+            ],
+            r.io(&env),
+        )
+        .await
+        .unwrap();
+        assert_eq!(r.raw(), "smtp.acme.test");
+        assert_eq!(
+            fails(
+                &[
+                    "vault-get",
+                    "app/smtp",
+                    "--field",
+                    "port",
+                    "--config",
+                    &config
+                ],
+                r.io(&env)
+            )
+            .await
+            .code(),
+            "NOT_FOUND"
+        );
+        assert_eq!(
+            fails(
+                &[
+                    "vault-get",
+                    "app/smtp",
+                    "--version",
+                    "1",
+                    "--stage",
+                    "previous",
+                    "--config",
+                    &config
+                ],
+                r.io(&env)
+            )
+            .await
+            .code(),
+            "INVALID_ARGUMENT"
+        );
+
+        let dump = folder.path().join("env.txt");
+        let script = if cfg!(windows) {
+            format!("set > {}", s(&dump))
+        } else {
+            format!("env > \"{}\"", s(&dump))
+        };
+        let mut args = argv(&[
+            "vault-run",
+            "--config",
+            &config,
+            "--env",
+            "DATABASE_PASSWORD=app/db-password,MAIL_HOST=app/smtp#host",
+            "--prefix",
+            "app/",
+            "--",
+        ]);
+        args.extend(shell(&script));
+        run_cli(&args, Some(r.io(&env))).await.unwrap();
+        let dumped = std::fs::read_to_string(&dump).unwrap();
+        let vars: std::collections::HashMap<String, String> = dumped
+            .lines()
+            .filter_map(|line| line.split_once('='))
+            .map(|(key, value)| (key.to_uppercase(), value.trim_end_matches('\r').to_owned()))
+            .collect();
+        for (key, value) in [
+            ("DATABASE_PASSWORD", "rotated-by-cli"),
+            ("MAIL_HOST", "smtp.acme.test"),
+            ("DB_PASSWORD", "rotated-by-cli"),
+            ("SMTP_HOST", "smtp.acme.test"),
+            ("SMTP_PASSWORD", "mail-password"),
+            ("SIGNING_KEY", "k1"),
+            ("KEEP_ME", "yes"),
+        ] {
+            assert_eq!(vars.get(key).map(String::as_str), Some(value), "{key}");
+        }
+        // The IAM token does not travel to the child.
+        assert!(!vars.contains_key("BETTER_IAM_TOKEN"));
+
+        // The command's exit status comes back.
+        let mut args = argv(&[
+            "vault-run",
+            "--config",
+            &config,
+            "--env",
+            "X=app/db-password",
+            "--",
+        ]);
+        args.extend(shell("exit 3"));
+        let error = run_cli(&args, Some(r.io(&env))).await.unwrap_err();
+        assert_eq!(error.code(), "COMMAND_FAILED");
+        assert_eq!(error.exit_status, Some(3));
+        assert_eq!(
+            better_iam_cli::report_failure(&error, &Env::new(), &|_| {}),
+            3
+        );
+        assert_eq!(
+            fails(
+                &["vault-run", "--config", &config, "--", "anything"],
+                r.io(&env)
+            )
+            .await
+            .code(),
+            "INVALID_ARGUMENT"
+        );
+        assert_eq!(
+            fails(
+                &[
+                    "vault-run",
+                    "--config",
+                    &config,
+                    "--env",
+                    "1BAD=app/x",
+                    "--",
+                    "anything"
+                ],
+                r.io(&env)
+            )
+            .await
+            .code(),
+            "INVALID_ARGUMENT"
+        );
+        assert_eq!(
+            fails(
+                &[
+                    "vault-run",
+                    "--config",
+                    &config,
+                    "--env",
+                    "X=app/db-password",
+                    "--",
+                    "no-such-command-anywhere"
+                ],
+                r.io(&env)
+            )
+            .await
+            .code(),
+            "COMMAND_NOT_FOUND"
+        );
+
+        // The scheduler jobs.
+        cli(&["vault-rotate-due", "--config", &config], r.io(&[]))
+            .await
+            .unwrap();
+        assert_eq!(
+            r.last(),
+            json!({ "rotated": [], "failed": [], "reminded": [] })
+        );
+        cli(&["vault-expire-leases", "--config", &config], r.io(&[]))
+            .await
+            .unwrap();
+        assert_eq!(r.last()["expired"], json!(0));
+        cli(&["vault-purge-deleted", "--config", &config], r.io(&[]))
+            .await
+            .unwrap();
+        assert_eq!(r.last(), json!({ "purged": 0 }));
+    });
+}
+
+// --- operations (cli-detect-threats.test.ts, cli-analyze.test.ts, the scheduler jobs) ---------------------------------
+
+#[test]
+fn runs_deployment_operations_and_access_reports() {
+    run(|| async {
+        let folder = temp();
+        let config = s(&write_config(folder.path(), json!({})));
+        let (tenant_id, token, _) = root_session(Path::new(&config)).await;
+        let r = Recorder::new(Some(folder.path()));
+        cli(
+            &[
+                "detect-threats",
+                "--config",
+                &config,
+                "--tenant",
+                &tenant_id,
+                "--max-events",
+                "5",
+            ],
+            r.io(&[]),
+        )
+        .await
+        .unwrap();
+        assert!(r.last().is_object());
+        assert_eq!(
+            fails(
+                &["detect-threats", "--config", &config, "--max-events", "0"],
+                r.io(&[])
+            )
+            .await
+            .code(),
+            "INVALID_ARGUMENT"
+        );
+        cli(&["sweep", "--config", &config], r.io(&[]))
+            .await
+            .unwrap();
+        assert!(r.last().is_object());
+        cli(&["monitor-invariants", "--config", &config], r.io(&[]))
+            .await
+            .unwrap();
+        assert!(r.last().is_object());
+        cli(
+            &["rotate-secrets", "--config", &config, "--dry-run"],
+            r.io(&[]),
+        )
+        .await
+        .unwrap();
+        assert_eq!(r.last()["done"], json!(true));
+        cli(&["reconcile", "--config", &config], r.io(&[]))
+            .await
+            .unwrap();
+        assert!(r.last().is_object());
+        assert_eq!(
+            fails(
+                &["reconcile", "--config", &config, "--package", "p1"],
+                r.io(&[])
+            )
+            .await
+            .code(),
+            "INVALID_ARGUMENT"
+        );
+        assert_eq!(
+            fails(
+                &[
+                    "reconcile",
+                    "--config",
+                    &config,
+                    "--tenant",
+                    "t",
+                    "--confirm"
+                ],
+                r.io(&[])
+            )
+            .await
+            .code(),
+            "INVALID_ARGUMENT"
+        );
+
+        let as_root = [
+            ("BETTER_IAM_TOKEN", token),
+            ("BETTER_IAM_TENANT", tenant_id.clone()),
+        ];
+        cli(&["analyze", "--config", &config], r.io(&as_root))
+            .await
+            .unwrap();
+        assert!(r.last()["findings"].is_array());
+        cli(&["report", "--config", &config], r.io(&as_root))
+            .await
+            .unwrap();
+        assert!(r.last().is_object());
+        cli(
+            &["check-invariants", "--config", &config, "--fail-on-broken"],
+            r.io(&as_root),
+        )
+        .await
+        .unwrap();
+        assert!(r.last()["summary"].is_object());
+        cli(
+            &[
+                "who-can",
+                "documents:read",
+                "documents/a",
+                "--config",
+                &config,
+                "--format",
+                "compact",
+            ],
+            r.io(&as_root),
+        )
+        .await
+        .unwrap();
+        assert!(r.last().is_object());
+        cli(
+            &[
+                "explain",
+                "documents:read",
+                "documents/a",
+                "--config",
+                &config,
+                "--identity",
+                ROOT_EMAIL,
+            ],
+            r.io(&as_root),
+        )
+        .await
+        .unwrap();
+        assert!(r.last()["allowed"].is_boolean());
+        assert_eq!(
+            fails(
+                &[
+                    "explain",
+                    "documents:read",
+                    "documents/a",
+                    "--config",
+                    &config,
+                    "--identity",
+                    "nobody@x.test"
+                ],
+                r.io(&as_root)
+            )
+            .await
+            .code(),
+            "NOT_FOUND"
+        );
+    });
+}
+
+// --- SSH (ssh-cli.test.ts) ---------------------------------------------------------------------------------------------
+
+/// An OpenSSH `ssh-ed25519` public key line for a raw 32-byte key (hex).
+fn ssh_public_key(hex_key: &str, comment: &str) -> String {
+    use base64::Engine as _;
+    let key = hex::decode(hex_key).unwrap();
+    let mut blob = Vec::new();
+    for part in [b"ssh-ed25519".as_slice(), key.as_slice()] {
+        blob.extend_from_slice(&(part.len() as u32).to_be_bytes());
+        blob.extend_from_slice(part);
+    }
+    format!(
+        "ssh-ed25519 {} {comment}",
+        base64::engine::general_purpose::STANDARD.encode(blob)
+    )
+}
+
+#[test]
+fn enrolls_and_syncs_a_host_and_gets_a_person_a_certificate() {
+    run(|| async {
+        let folder = temp();
+        let config = write_config(folder.path(), json!({ "ssh": true }));
+        let (tenant_id, token, _) = root_session(&config).await;
+        let config_text = s(&config);
+        let iam = load_config(LoadConfigOptions {
+            config: Some(config_text.clone()),
+            env: Some(Env::new()),
+            ..LoadConfigOptions::default()
+        })
+        .unwrap();
+        let r = Recorder::new(Some(folder.path()));
+        let remote = |env: &[(&str, String)]| {
+            let mut io = r.io(env);
+            io.fetch = Some(handler_fetch(iam.clone()));
+            io
+        };
+        let as_root = [("BETTER_IAM_TOKEN", token.clone())];
+        cli(
+            &[
+                "api",
+                "ssh.setup",
+                "--config",
+                &config_text,
+                &format!("tenantId={tenant_id}"),
+            ],
+            r.io(&as_root),
+        )
+        .await
+        .unwrap();
+        cli(
+            &[
+                "api",
+                "ssh.createHost",
+                "--config",
+                &config_text,
+                &format!("tenantId={tenant_id}"),
+                "name=web-01",
+                "logins[]=deploy",
+            ],
+            r.io(&as_root),
+        )
+        .await
+        .unwrap();
+        let created = r.last();
+        let join_token = created["joinToken"].as_str().unwrap().to_owned();
+        let host_id = created["host"]["id"].as_str().unwrap().to_owned();
+        std::fs::write(
+            folder.path().join("host_key.pub"),
+            format!(
+                "{}\n",
+                ssh_public_key(
+                    "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
+                    "root@web-01"
+                )
+            ),
+        )
+        .unwrap();
+        cli(
+            &[
+                "ssh-host-enroll",
+                "--url",
+                URL,
+                "--host-key",
+                "host_key.pub",
+                "--root",
+                "root",
+                "--dry-run",
+            ],
+            remote(&[("BETTER_IAM_SSH_JOIN_TOKEN", join_token.clone())]),
+        )
+        .await
+        .unwrap();
+        // A dry run lists the files (and spends the join token) without writing anything.
+        assert!(
+            r.last()["files"]
+                .as_array()
+                .unwrap()
+                .contains(&json!("/etc/ssh/better-iam/renewal-token"))
+        );
+        assert!(!folder.path().join("root").exists());
+        cli(
+            &[
+                "api",
+                "ssh.resetJoinToken",
+                "--config",
+                &config_text,
+                &format!("tenantId={tenant_id}"),
+                &format!("hostId={host_id}"),
+            ],
+            r.io(&as_root),
+        )
+        .await
+        .unwrap();
+        let join_token = r.last()["joinToken"].as_str().unwrap().to_owned();
+        cli(
+            &[
+                "ssh-host-enroll",
+                "--url",
+                URL,
+                "--host-key",
+                "host_key.pub",
+                "--root",
+                "root",
+            ],
+            remote(&[("BETTER_IAM_SSH_JOIN_TOKEN", join_token)]),
+        )
+        .await
+        .unwrap();
+        assert_eq!(r.last()["host"], json!("web-01"));
+        assert_eq!(r.last()["hostId"], json!(host_id));
+        assert!(
+            r.notes
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|note| note.contains("reload sshd"))
+        );
+        let etc = folder.path().join("root").join("etc").join("ssh");
+        assert_eq!(
+            std::fs::read_to_string(etc.join("better-iam").join("principals").join("deploy"))
+                .unwrap(),
+            "deploy@web-01\n"
+        );
+        assert_eq!(
+            &std::fs::read(etc.join("better-iam").join("revoked.krl")).unwrap()[..6],
+            b"SSHKRL"
+        );
+        assert!(
+            std::fs::read_to_string(etc.join("sshd_config.d").join("00-better-iam.conf"))
+                .unwrap()
+                .contains("TrustedUserCAKeys")
+        );
+        assert!(
+            std::fs::read_to_string(etc.join("better-iam").join("renewal-token"))
+                .unwrap()
+                .starts_with("biam_sshr.")
+        );
+
+        cli(
+            &["ssh-host-sync", "--url", URL, "--root", "root"],
+            remote(&[]),
+        )
+        .await
+        .unwrap();
+        assert_eq!(r.last()["host"], json!("web-01"));
+        assert_eq!(r.last()["certificateRenewed"], json!(false));
+
+        // A person gets a certificate next to their key and the known_hosts lines for the host authority.
+        std::fs::write(
+            folder.path().join("id_ed25519.pub"),
+            format!(
+                "{}\n",
+                ssh_public_key(
+                    "3d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c",
+                    "root@laptop"
+                )
+            ),
+        )
+        .unwrap();
+        cli(
+            &[
+                "ssh-cert",
+                "--url",
+                URL,
+                "--tenant",
+                &tenant_id,
+                "--key",
+                "id_ed25519.pub",
+                "--known-hosts",
+                "known_hosts",
+                "--ttl-minutes",
+                "30",
+            ],
+            remote(&as_root),
+        )
+        .await
+        .unwrap();
+        assert_eq!(r.last()["principals"], json!(["deploy@web-01"]));
+        assert_eq!(r.last()["hosts"][0]["name"], json!("web-01"));
+        assert!(
+            std::fs::read_to_string(folder.path().join("id_ed25519-cert.pub"))
+                .unwrap()
+                .starts_with("ssh-ed25519-cert-v01@openssh.com ")
+        );
+        assert!(
+            std::fs::read_to_string(folder.path().join("known_hosts"))
+                .unwrap()
+                .starts_with("@cert-authority web-01 ssh-ed25519 ")
+        );
+        assert_eq!(
+            &std::fs::read(folder.path().join("known_hosts_revoked_hosts")).unwrap()[..6],
+            b"SSHKRL"
+        );
+        assert_eq!(
+            fails(
+                &[
+                    "ssh-cert",
+                    "--url",
+                    URL,
+                    "--tenant",
+                    &tenant_id,
+                    "--key",
+                    "id_ed25519"
+                ],
+                remote(&as_root)
+            )
+            .await
+            .code(),
+            "INVALID_ARGUMENT"
+        );
+        assert_eq!(
+            fails(
+                &[
+                    "ssh-cert",
+                    "--url",
+                    URL,
+                    "--tenant",
+                    &tenant_id,
+                    "--key",
+                    "missing.pub"
+                ],
+                remote(&as_root)
+            )
+            .await
+            .code(),
+            "NOT_FOUND"
+        );
+
+        // The sweep job runs from the configuration.
+        cli(&["ssh-sweep", "--config", &config_text], r.io(&[]))
+            .await
+            .unwrap();
+        assert_eq!(r.last()["examined"], json!(1));
+        assert_eq!(r.last()["revoked"], json!(0));
+
+        // A login removed from the host: the next sync deletes its principals file.
+        cli(
+            &[
+                "api",
+                "ssh.updateHost",
+                "--config",
+                &config_text,
+                &format!("tenantId={tenant_id}"),
+                &format!("hostId={host_id}"),
+                "logins[]=ops",
+            ],
+            r.io(&as_root),
+        )
+        .await
+        .unwrap();
+        cli(
+            &["ssh-host-sync", "--url", URL, "--root", "root"],
+            remote(&[]),
+        )
+        .await
+        .unwrap();
+        assert!(
+            r.last()["files"]
+                .as_array()
+                .unwrap()
+                .contains(&json!("-/etc/ssh/better-iam/principals/deploy"))
+        );
+        let principals: Vec<String> = std::fs::read_dir(etc.join("better-iam").join("principals"))
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(principals, vec!["ops".to_owned()]);
+        assert_eq!(
+            fails(
+                &["ssh-host-sync", "--url", URL, "--root", "elsewhere"],
+                remote(&[])
+            )
+            .await
+            .code(),
+            "NOT_FOUND"
+        );
+        iam.store.close().await.unwrap();
+    });
+}
