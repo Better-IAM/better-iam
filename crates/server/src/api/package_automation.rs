@@ -1448,7 +1448,8 @@ pub async fn reconcile_package_rules_with(
             result.inactive_tenants += 1.0;
             continue;
         }
-        if let Err(error) = reconcile_tenant(ctx, &tenant.id, options, &mut result).await {
+        if let Err(error) = Box::pin(reconcile_tenant(ctx, &tenant.id, options, &mut result)).await
+        {
             result.failed_tenants.push(json!({
                 "tenantId": tenant.id,
                 "code": error.code,
@@ -1665,7 +1666,7 @@ async fn reconcile_tenant(
         let mut steps = plan.steps.clone();
         let mut state = StepState::default();
         if rule.is_some() && steps.iter().any(|step| additive(step.change)) {
-            let health = rule_health(ctx, reader, pkg, true).await?;
+            let health = Box::pin(rule_health(ctx, reader, pkg, true)).await?;
             let suspended_key = issue_key_suspended(&pkg.id);
             match health {
                 Health::Failed { reason, detail } => {
@@ -1857,7 +1858,7 @@ async fn reconcile_tenant(
         }
         budget -= 1.0;
         attempted.insert(format!("{}:{}", step.package_id, step.identity_id));
-        match apply_step(ctx, tenant_id, &step, &state, &run_base).await {
+        match Box::pin(apply_step(ctx, tenant_id, &step, &state, &run_base)).await {
             Ok("stale") => result.stale += 1.0,
             Ok(_) => match step.change {
                 "assign" => result.assigned += 1.0,
@@ -1970,9 +1971,11 @@ pub async fn after_identity_change(
         // License seats follow the change first (licenses.ts): rules on identity.licenses then see them, and people a
         // released seat moved off the waiting list are reconciled too. A failure is caught up by the scheduled
         // reconcile.
-        if let Ok(seated) = reconcile_licenses_of(ctx, tenant_id, identity_ids, None).await {
+        if let Ok(seated) =
+            Box::pin(reconcile_licenses_of(ctx, tenant_id, identity_ids, None)).await
+        {
             let ids = crate::js::unique(identity_ids.iter().cloned().chain(seated));
-            let _ = reconcile_package_rules_with(
+            let _ = Box::pin(reconcile_package_rules_with(
                 ctx,
                 &ReconcileOptions {
                     tenant_id: Some(tenant_id.to_owned()),
@@ -1980,7 +1983,7 @@ pub async fn after_identity_change(
                     trigger: "identity-change".into(),
                     ..ReconcileOptions::default()
                 },
-            )
+            ))
             .await;
         }
     }
