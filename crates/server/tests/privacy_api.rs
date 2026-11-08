@@ -1,9 +1,6 @@
 //! Port of tests/privacy.test.ts through the `privacy` API group and the credential-free runtime (api/privacy.ts):
 //! purposes and consent, data-subject requests, public intake, deadline reminders, the review fixes, and legal holds
 //! on organizations. The "privacy emails" suite renders auth templates and belongs to the auth crate's tests.
-//!
-//! The two erasure suites delete an account, which reaches guests.ts revokeGuestInvitationsBy (guests unit); until it
-//! lands they are `#[ignore]`d with that reason. Everything here needs the privacy.ts helpers (port/rust/privacy).
 
 mod organization_fixture;
 
@@ -771,7 +768,6 @@ fn answers_an_access_request_with_an_export_only_the_subject_or_a_handler_downlo
 }
 
 #[test]
-#[ignore = "identity deletion reaches guests.ts revokeGuestInvitationsBy (guests unit), still a stub"]
 fn erases_a_person_after_the_legal_hold_is_released_and_says_so_to_downstream_systems() {
     run(|| async {
         let s = scenario().await;
@@ -1331,7 +1327,6 @@ fn leaves_audit_activity_out_of_exports_made_without_audit_rights() {
 }
 
 #[test]
-#[ignore = "identity deletion reaches guests.ts revokeGuestInvitationsBy (guests unit), still a stub"]
 fn needs_a_linked_subject_for_requests_that_arrived_by_email_and_records_identity_delete_on_erasure()
  {
     run(|| async {
