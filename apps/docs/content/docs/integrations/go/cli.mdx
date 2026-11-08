@@ -1,0 +1,181 @@
+---
+title: CLI
+metaTitle: The better-iam CLI in Go
+description: Build and run the Go better-iam command, which has the same commands, flags, and exit codes as the TypeScript CLI and reads better-iam.json, and ship a project CLI with your own commands.
+icon: SquareTerminal
+status: beta
+packages:
+  - github.com/Better-IAM/better-iam/go/cmd/better-iam
+sources:
+  - go/cmd/better-iam/main.go
+  - go/cmd/better-iam/cli/cli.go
+  - go/cmd/better-iam/cli/config.go
+  - go/cmd/better-iam/cli/framework.go
+  - go/cmd/better-iam/cli/profiles.go
+  - go/cmd/better-iam/cli/commands_setup.go
+  - go/cmd/better-iam/cli/cli_test.go
+---
+
+import { BookOpen, SquareTerminal, Server } from '@/lib/icons';
+
+The Go module ships the `better-iam` command as a single static binary. It is a port of the TypeScript CLI with the
+same commands, flags, help, and exit codes: migrations, bootstrap, scheduled jobs, audit and storage operations,
+diagnostics, configuration as code, the API caller, and saved sessions. Because it runs the Go server in process, it
+needs no Node.js on the machine, which suits containers, cron hosts, and CI images.
+
+The [CLI concepts page](/docs/concepts/cli) explains how the CLI works and the [CLI reference](/docs/reference/cli)
+lists every command and flag; both apply to the Go binary. This page covers what is specific to Go.
+
+## Install
+
+No tagged release exists yet, so build the binary from a checkout of the repository:
+
+```bash
+git clone https://github.com/Better-IAM/better-iam.git
+cd better-iam/go
+go build -o better-iam ./cmd/better-iam
+./better-iam help
+```
+
+Once the module is tagged, `go install github.com/Better-IAM/better-iam/go/cmd/better-iam@latest` installs it, and
+release binaries for Linux, macOS, and Windows are planned for each GitHub release.
+
+## Configuration
+
+The TypeScript CLI imports a JavaScript configuration module. A Go program cannot run JavaScript, so the Go CLI reads
+`better-iam.json`, the JSON configuration every implementation shares, and refuses a `.ts` or `.mjs` file with
+`CONFIG_LOAD_FAILED`. It looks for the configuration in the same order as the TypeScript CLI:
+
+1. `--config PATH`
+2. `BETTER_IAM_CONFIG`
+3. The nearest `better-iam.json` or `better-iam.config.json` in the working directory or a parent, stopping at the
+   repository root or the home directory
+4. `BETTER_IAM_DATABASE_URL` and `BETTER_IAM_SECRET` with no file (`postgres://…`, `sqlite:./iam.db`, or
+   `libsql://…`)
+
+`better-iam init` writes a starter `better-iam.json` for SQLite, PostgreSQL (`--database postgres`), or libSQL
+(`--database libsql`), with the secret read from `BETTER_IAM_SECRET`. With `--typescript` it writes the
+`better-iam.config.ts` module a TypeScript application loads instead. It never overwrites an existing file.
+
+```bash
+better-iam init
+export BETTER_IAM_SECRET="$(better-iam secret)"
+better-iam migrate
+BETTER_IAM_ROOT_EMAIL=root@example.com BETTER_IAM_ROOT_PASSWORD='…' better-iam bootstrap
+```
+
+The optional `cli` member of `better-iam.json` sets flag defaults per command (`"*"` applies to every command with
+that flag):
+
+```json title="better-iam.json"
+{
+  "store": { "kind": "postgres", "url": { "env": "DATABASE_URL" } },
+  "secret": { "env": "BETTER_IAM_SECRET" },
+  "baseURL": "https://app.example.com",
+  "cli": { "defaults": { "sweep": { "retention-days": 30 } } }
+}
+```
+
+Your Go application can load the same file with `cli.LoadConfig`; see
+[Go: Create the instance](/docs/integrations/go#create-the-instance).
+
+## Common commands
+
+```bash
+better-iam doctor --strict                       # check the database, schema, secrets, and scheduled jobs
+better-iam outbox                                # deliver pending email, SMS, and webhooks (schedule it)
+better-iam sweep && better-iam purge             # expire old records (schedule them)
+better-iam audit-verify --tenant ten_123         # recompute a tenant's audit hash chain
+better-iam config-plan --tenant ten_123 --input access.json --fail-on-drift
+```
+
+Configuration commands open the database and run with no credential. Token commands (`whoami`, `can`, `api`,
+`config-apply`, and others) act as `BETTER_IAM_TOKEN` or a saved session, in process through the configuration or
+against a running server with `--url`, and are authorized and audited like console operations.
+
+```bash
+better-iam login --url https://iam.example.com --org acme --email me@acme.test
+better-iam api roles.create name=Reader permissions:='["documents:read"]' --url https://iam.example.com
+better-iam api identities.list limit:=5 --query "[].email"
+```
+
+`login` keeps sessions in the same credentials file as the TypeScript CLI (`BETTER_IAM_CREDENTIALS`, else
+`%APPDATA%\better-iam\credentials.json` on Windows or `~/.config/better-iam/credentials.json`), so either binary can
+use a profile the other saved. `better-iam help` lists every command, and `better-iam help --json` prints the
+manifest for tools.
+
+Exit codes match the TypeScript CLI: `0` on success, `2` for a usage mistake, `1` otherwise. Failures print
+`CODE: message` on stderr; set `BETTER_IAM_DEBUG=1` for details of unexpected errors.
+
+## Add project commands
+
+`cli.CreateCli` builds a program with the built-in commands plus your own, declared with `cli.DefineCommand`. Your
+commands get the same flag parsing, help, configuration loading, and output formatting. Ship the result as your own
+binary:
+
+```go title="cmd/acme-iam/main.go"
+package main
+
+import (
+	"context"
+
+	"github.com/Better-IAM/better-iam/go/cmd/better-iam/cli"
+	"github.com/Better-IAM/better-iam/go/core"
+)
+
+var countPeople = cli.DefineCommand(cli.CommandSpec{
+	Name:    "count-people",
+	Group:   "Project",
+	Summary: "Print how many people an organization has",
+	Target:  "config", // loads better-iam.json; runs with no credential
+	Flags: []cli.FlagSpec{
+		{Name: "tenant", Type: "string", Value: "TENANT_ID", Required: true, Description: "The organization"},
+	},
+	Run: func(ctx context.Context, c *cli.CommandContext) (any, error) {
+		instance, err := c.Iam(ctx)
+		if err != nil {
+			return nil, err
+		}
+		people, err := instance.Store.Find(ctx, "identities", core.NewObject("tenantId", c.Flags.String("tenant")), nil)
+		if err != nil {
+			return nil, err
+		}
+		return core.NewObject("tenantId", c.Flags.String("tenant"), "people", float64(len(people))), nil
+	},
+})
+
+func main() {
+	cli.RunBinary(cli.CreateCli(cli.CreateCliOptions{
+		Commands: []*cli.CommandSpec{countPeople},
+	}))
+}
+```
+
+```bash
+go run ./cmd/acme-iam count-people --tenant ten_123 --format table
+```
+
+- **`Target`** is `"config"` for a deployment operation (`c.Iam(ctx)` opens the instance), `"token"` for a command
+  that acts as the current token (`c.Api(ctx, cli.ApiOptions{})` returns a transport, local or remote), or empty for
+  a command that needs neither.
+- **The result** you return is printed with `--format` (`json`, `compact`, `table`) and `--query` applied.
+- **Configuration from code**: `cli.CreateCliOptions.LoadModule` supplies configuration modules from Go (options, a
+  ready instance, or a factory, plus commands and CLI defaults) for deployments that cannot be described in JSON,
+  such as ones with custom callbacks.
+
+`cli.RunCli(ctx, argv, io)` runs one command line from code and returns its error, which tests use to drive commands
+with their own `*cli.CliIO`. `cli.Manifest()` returns the machine-readable description of every built-in command.
+
+## Related
+
+<Cards>
+  <Card icon={<SquareTerminal />} title="CLI concepts" href="/docs/concepts/cli">
+    How the CLI finds configuration, signs in, and keeps profiles.
+  </Card>
+  <Card icon={<BookOpen />} title="CLI reference" href="/docs/reference/cli">
+    Every command and flag.
+  </Card>
+  <Card icon={<Server />} title="Go" href="/docs/integrations/go">
+    Embed the server in a Go application.
+  </Card>
+</Cards>

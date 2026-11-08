@@ -1,0 +1,461 @@
+---
+title: Go
+metaTitle: Better IAM for Go
+description: Run the Better IAM server natively in Go. Install the module, create the instance from options or better-iam.json, run migrations, serve the http.Handler, and call the API in process.
+icon: Go
+status: beta
+packages:
+  - github.com/Better-IAM/better-iam/go
+sources:
+  - spec/BUILDOUT.md
+  - go/PORTING.md
+  - go/iam/iam.go
+  - go/iam/iam_test.go
+  - go/server/index.go
+  - go/server/options.go
+  - go/server/api_values.go
+  - go/server/standalone_config.go
+  - go/cmd/better-iam/cli/config.go
+  - go/cmd/better-iam-server/main.go
+---
+
+import { Server, Route, SquareTerminal, Globe, Database, OctagonAlert } from '@/lib/icons';
+
+The Go module is a native port of the Better IAM server, not a wrapper around the TypeScript one. A
+`*iam.BetterIam` answers the same HTTP API as `betterIam()` in Node, stores the same records in the same database
+schema, writes the same audit chain, and ships the same `better-iam` CLI. Your Go service can embed it as an
+`http.Handler`, call its API in process with a `context.Context`, and guard its own routes with the
+[net/http](/docs/integrations/go/net-http), [chi](/docs/integrations/go/chi), [gin](/docs/integrations/go/gin), or
+[echo](/docs/integrations/go/echo) middleware.
+
+<Callout type="warn" title="No tagged release yet">
+  The module lives in the `go/` folder of the repository. It is versioned in lockstep with the npm packages
+  (`iam.Version` reads `0.3.1`), but no `go/v…` tag has been pushed, so `go get …@latest` does not resolve yet. Until
+  the first tag, build against a checkout of the repository (see [Installation](#installation)).
+</Callout>
+
+## Packages
+
+Everything lives in one module, `github.com/Better-IAM/better-iam/go`. Import the packages you need:
+
+| Package | What it is |
+| --- | --- |
+| `iam` | The umbrella: `iam.New`, the policy and audit helpers, and aliases for the types an application usually names |
+| `server` | The composed server: `server.New`, `BetterIamOptions`, the API groups, the HTTP transport, the standalone `better-iam.json` reader |
+| `core` | Records (`*core.Object`), `*core.IamError`, the policy engine, the store interface, filter compilers |
+| `auth` | The authentication service: options, delivery messages, TOTP helpers |
+| `adapters/sqlite`, `adapters/postgres`, `adapters/libsql` | The database adapters |
+| `apitypes` | Request and answer types of every route, generated from the shared contract in `spec/` |
+| `middleware` | Per-request helpers, guards, and the net/http integration; `middleware/chi`, `middleware/gin`, `middleware/echo` adapt it |
+| `client` | The typed HTTP client, a session store, and device proofs |
+| `oauth`, `saml`, `scim`, `ldap` | The federation and provisioning protocols |
+| `mcp`, `a2a` | Tool authorization for MCP servers and the agent-to-agent gate |
+| `projects` | The reference Projects plugin |
+| `cmd/better-iam` | The [CLI](/docs/integrations/go/cli) (its commands are in `cmd/better-iam/cli`) |
+| `cmd/better-iam-server` | A standalone server started from `better-iam.json` |
+
+The React, Vue, Svelte, Next.js, Nuxt, NestJS, and React Router packages bind JavaScript UI frameworks and have no Go
+form. A Go back end serves browsers that use the TypeScript [client](/docs/concepts/client) like any other.
+
+## Installation
+
+<Steps>
+<Step>
+
+### Add the module
+
+The module needs Go 1.24 or newer. Until it is tagged, clone the repository next to your project and point your
+module at its `go/` folder with a `replace` directive:
+
+```bash
+git clone https://github.com/Better-IAM/better-iam.git
+```
+
+```text title="go.mod"
+module example.com/app
+
+go 1.24.0
+
+require github.com/Better-IAM/better-iam/go v0.0.0
+
+replace github.com/Better-IAM/better-iam/go => ../better-iam/go
+```
+
+Then run `go mod tidy`. Releases will be tagged `go/vX.Y.Z` (the root `vX.Y.Z` tag stays the npm release), after
+which `go get github.com/Better-IAM/better-iam/go@latest` replaces the `replace` line.
+
+</Step>
+<Step>
+
+### Create the instance
+
+Create the instance once, at startup, and share the pointer. You can describe the deployment in Go or load the
+`better-iam.json` file the [Go CLI](/docs/integrations/go/cli) reads.
+
+<Tabs items={['Options', 'better-iam.json']}>
+<Tab value="Options">
+
+```go title="main.go"
+package main
+
+import (
+	"context"
+	"log"
+	"net/http"
+	"os"
+
+	"github.com/Better-IAM/better-iam/go/adapters/sqlite"
+	"github.com/Better-IAM/better-iam/go/core"
+	"github.com/Better-IAM/better-iam/go/iam"
+	"github.com/Better-IAM/better-iam/go/server"
+)
+
+func main() {
+	ctx := context.Background()
+
+	store, err := sqlite.New(sqlite.Options{Filename: "./better-iam.db"})
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer store.Close(ctx)
+
+	instance, err := iam.New(&iam.BetterIamOptions{
+		Database: store,
+		Secret:   os.Getenv("BETTER_IAM_SECRET"), // at least 32 characters
+		BaseURL:  "http://localhost:3000",
+		Permissions: &core.PermissionsConfig{
+			Actions: []string{"projects:read", "projects:write"},
+		},
+		// Resolves ownership of your own resources from trusted storage.
+		ResolveResource: func(ctx context.Context, ref core.ResourceRef) (*server.ResolvedResource, error) {
+			return &server.ResolvedResource{TenantID: ref.TenantID, Type: ref.Type, ID: ref.ID}, nil
+		},
+	})
+	if err != nil {
+		log.Fatal(err) // INVALID_CONFIG and friends, as *core.IamError
+	}
+	defer instance.Close()
+
+	if err := instance.Initialize(ctx); err != nil { // runs the migrations
+		log.Fatal(err)
+	}
+
+	log.Fatal(http.ListenAndServe(":3000", instance))
+}
+```
+
+`iam.BetterIamOptions` is `server.BetterIamOptions`. Its fields are the TypeScript options in Go form: callbacks such
+as `ResolveResource`, `Authentication.SendEmail`, and `Plugins` are Go functions and values, and collections that
+are records in TypeScript are slices (`ResourceTypes []core.NamedResourceType`). The
+[configuration reference](/docs/operations/deployment/configuration) describes what each option does.
+
+</Tab>
+<Tab value="better-iam.json">
+
+```go title="main.go"
+package main
+
+import (
+	"context"
+	"log"
+	"net/http"
+
+	"github.com/Better-IAM/better-iam/go/cmd/better-iam/cli"
+)
+
+func main() {
+	ctx := context.Background()
+
+	instance, err := cli.LoadConfig(ctx, cli.LoadConfigOptions{Config: "better-iam.json"})
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer instance.Store.Close(ctx)
+	defer instance.Close()
+
+	if err := instance.Initialize(ctx); err != nil {
+		log.Fatal(err)
+	}
+	log.Fatal(http.ListenAndServe(":3000", instance))
+}
+```
+
+`cli.LoadConfig` resolves the configuration the way the CLI does: `Config`, else `BETTER_IAM_CONFIG`, else the
+nearest `better-iam.json` or `better-iam.config.json`, else `BETTER_IAM_DATABASE_URL` and `BETTER_IAM_SECRET` alone.
+It opens the database the file's `store` member names and ignores the CLI's own `cli` member.
+`better-iam init` writes a starter file like this one (abridged):
+
+```json title="better-iam.json"
+{
+  "store": { "kind": "sqlite", "path": "./better-iam.db" },
+  "baseURL": "http://localhost:3000",
+  "secret": { "env": "BETTER_IAM_SECRET" },
+  "authentication": { "signUpEnabled": false },
+  "permissions": {
+    "mode": "catalog",
+    "actions": ["projects:read", "projects:write"]
+  },
+  "cli": { "defaults": { "sweep": { "retention-days": 30 } } }
+}
+```
+
+The lower-level `server.LoadStandaloneConfig(data, server.ConfigRuntime{...})` reads the same format, but you supply
+the adapters (`server.ConfigAdapters`) yourself, and it refuses the `cli` member with
+`Invalid better-iam.json: unknown member "cli"`.
+
+</Tab>
+</Tabs>
+
+`instance.Close()` stops background work; it does not close the database, so close the store too.
+
+</Step>
+<Step>
+
+### Run the migrations
+
+`instance.Initialize(ctx)` creates or upgrades the schema, runs plugin migrations, and applies one-time backfills.
+Calling it at startup is safe on every deploy. To migrate from a deploy step instead, run the CLI:
+
+```bash
+better-iam migrate --config better-iam.json
+```
+
+Both run the same migrations as the TypeScript server, so a database migrated by one is current for the other.
+See [Migrations](/docs/databases/migrations).
+
+</Step>
+<Step>
+
+### Create the root administrator
+
+```bash
+BETTER_IAM_ROOT_EMAIL=root@example.com BETTER_IAM_ROOT_PASSWORD='…' better-iam bootstrap --config better-iam.json
+```
+
+In code, `instance.Bootstrap(ctx, core.NewObject("email", …, "name", …, "password", …))` does the same. The root
+must enroll MFA before it can act.
+
+</Step>
+<Step>
+
+### Serve the handler
+
+`*iam.BetterIam` is an `http.Handler`. It answers the API under its base path (`/api/iam`) and any protocol mounts.
+Serve it alone, as above, or mount it in your own mux:
+
+```go title="routes.go"
+mux := http.NewServeMux()
+mux.Handle("/api/iam/", instance) // the server routes on the full path
+mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
+log.Fatal(http.ListenAndServe(":3000", mux))
+```
+
+To also guard your own routes and read sessions in handlers, wrap the mux with the
+[net/http middleware](/docs/integrations/go/net-http) instead; it serves the API for you. `instance.Handle(r)` is
+the fetch-style handler: it answers a request with a `*server.Response` (`Status`, `Header`, `Body`) instead of
+writing to a `ResponseWriter`.
+
+</Step>
+</Steps>
+
+### Run the standalone server
+
+When you only need the IAM server, without your own Go code, run the standalone binary against a configuration
+file:
+
+```bash
+go run github.com/Better-IAM/better-iam/go/cmd/better-iam-server --config better-iam.json --port 4100
+```
+
+It listens on `127.0.0.1` unless you pass `--host`, runs `Initialize`, and serves the HTTP API. It reads the file
+with `server.LoadStandaloneConfig`, so remove the `cli` member first. Never pass `--conformance` in production: it
+opens the test-control endpoints the trace replay uses.
+
+## Call the API in process
+
+Every API group is a field of `instance.API`, with one method per route. A method takes a `context.Context`, the
+caller's credential, and the request body, and returns `server.Out[T]` or an error. The server authenticates,
+authorizes, validates, and audits the call exactly as it does over HTTP.
+
+```go title="people.go"
+import (
+	"context"
+
+	"github.com/Better-IAM/better-iam/go/apitypes"
+	"github.com/Better-IAM/better-iam/go/core"
+	"github.com/Better-IAM/better-iam/go/iam"
+	"github.com/Better-IAM/better-iam/go/server"
+)
+
+func listPeople(ctx context.Context, instance *iam.BetterIam, token, tenantID string) ([]apitypes.PublicIdentity, error) {
+	credential := core.CredentialInput{Token: token}
+	answer, err := instance.API.Identities.List(ctx, credential, server.Input[apitypes.IdentitiesListInput](
+		core.NewObject("tenantId", tenantID),
+	))
+	if err != nil {
+		return nil, err
+	}
+	return answer.Typed() // apitypes.IdentitiesListOutput is []apitypes.PublicIdentity
+}
+```
+
+**Route:** `POST /api/iam/identities/list`
+
+- **The credential** is a `core.CredentialInput`: a bearer `Token` (a session token, API key, or temporary
+  credential), or the incoming request's `Headers`, which carry the cookie or `Authorization` header. The middleware's
+  `helpers.Credential()` builds the second form for you.
+- **The body** is the JSON object the HTTP route takes. `server.Input[T](obj)` wraps a `*core.Object` (an
+  insertion-ordered JSON object), and `server.InputOf(value)` converts the generated request type instead. Methods
+  without parameters still take one: `server.Input[apitypes.AuthListSessionsInput](nil)`.
+- **The answer** keeps the server's JSON in `Value` (a `*core.Object`, `[]any`, or scalar), byte for byte what the
+  HTTP route answers. `Typed()` decodes it into the generated answer type.
+- **Public routes** take no credential: `instance.API.Auth.SignIn(ctx, input)` and
+  `instance.API.Tenants.Lookup(ctx, input)`.
+- **Cancellation**: the context reaches the store, so a cancelled request stops its queries.
+
+With the generated request type:
+
+```go title="people.go"
+func listActive(ctx context.Context, instance *iam.BetterIam, credential core.CredentialInput, tenantID string) (apitypes.IdentitiesListOutput, error) {
+	active := apitypes.IdentitiesListInputStatusActive
+	input, err := server.InputOf(apitypes.IdentitiesListInput{TenantID: tenantID, Status: &active})
+	if err != nil {
+		return nil, err
+	}
+	answer, err := instance.API.Identities.List(ctx, credential, input)
+	if err != nil {
+		return nil, err
+	}
+	return answer.Typed()
+}
+```
+
+### Authorization checks
+
+`Authorize` returns a decision, and `Require` returns an error unless the caller is allowed. Both evaluate the same
+<Term id="role">roles</Term>, <Term id="policy">policies</Term>, and <Term id="condition">conditions</Term> as
+the HTTP `authorize` route.
+
+```go title="projects.go"
+func canRead(ctx context.Context, instance *iam.BetterIam, token, tenantID, projectID string) (bool, error) {
+	decision, err := instance.Authorize(ctx, iam.AuthorizationRequest{
+		Credential: core.CredentialInput{Token: token},
+		TenantID:   tenantID,
+		Action:     "projects:read",
+		Resource:   server.ResourceTarget{Type: "project", ID: projectID},
+	})
+	if err != nil {
+		return false, err
+	}
+	return decision.Allowed, nil
+}
+
+func requireWrite(ctx context.Context, instance *iam.BetterIam, credential core.CredentialInput, tenantID, projectID string) error {
+	return instance.Require(ctx, iam.AuthorizationRequest{
+		Credential: credential, TenantID: tenantID, Action: "projects:write",
+		Resource: server.ResourceTarget{Type: "project", ID: projectID},
+	}) // ACCESS_DENIED (403) when the decision is a denial
+}
+```
+
+`instance.AuthorizeMany` answers up to 50 checks for one tenant, `instance.ListAccessible` lists registered
+resources of a managed type, and `instance.PlanResources` returns a filter for your own query. The request helpers in
+the [middleware](/docs/integrations/go/net-http#read-the-session) wrap these for the current request.
+
+## Errors
+
+Every refusal the server raises in process is a `*core.IamError` (also exported as `iam.IamError`) with the stable
+`Code`, a `Message`, and the HTTP `Status` the same failure answers over HTTP. Match it with `errors.As`:
+
+```go title="errors.go"
+import (
+	"errors"
+	"fmt"
+
+	"github.com/Better-IAM/better-iam/go/auth"
+	"github.com/Better-IAM/better-iam/go/core"
+)
+
+func describe(err error) string {
+	var limited *auth.RateLimitedError
+	if errors.As(err, &limited) {
+		return fmt.Sprintf("rate limited, retry in %d ms", limited.RetryAfterMs)
+	}
+	var refused *core.IamError
+	if errors.As(err, &refused) {
+		switch refused.Code {
+		case "INVALID_CREDENTIALS":
+			return "wrong email or password"
+		case "ACCESS_DENIED":
+			return "not allowed"
+		}
+		return fmt.Sprintf("%s (%d): %s", refused.Code, refused.Status, refused.Message)
+	}
+	return err.Error()
+}
+```
+
+`RATE_LIMITED` arrives as an `*auth.RateLimitedError`, which embeds the `*core.IamError` and adds `RetryAfterMs`;
+`errors.As` with a `*core.IamError` target matches it too. Errors without an IAM code (a closed database, a
+cancelled context) are plain Go errors. The codes are the ones in the [error reference](/docs/reference/errors).
+
+The other packages have their own error types, each carrying `Code`, `Message`, and `Status`:
+
+| Type | Raised by |
+| --- | --- |
+| `*core.IamError` | The server, in process |
+| `*middleware.IamRequestError` | Middleware guards and request helpers (`UNAUTHENTICATED`, step-up refusals, `CSRF_REJECTED`); `Reason` names a step-up failure |
+| `*middleware.ClientError` | The middleware's in-process client (`helpers.Client().Call`) |
+| `*client.IamClientError` | The [typed HTTP client](/docs/integrations/go/client) |
+
+`middleware.RefusalOf(err)` recognizes the first three, which is what the middleware's error answers use.
+
+## Parity with TypeScript and Rust
+
+The Go server is held to the TypeScript server, which is the specification. The contract in `spec/` defines three
+guarantees:
+
+- **The same HTTP surface.** Every route answers the same request and response JSON, error codes, statuses, cookies,
+  and CORS and CSRF rules, so the TypeScript client, the Go client, and any other HTTP caller cannot tell the servers
+  apart. A test checks that the Go router answers exactly the routes in `spec/api/routes.json`.
+- **The same database (mixed fleet).** TypeScript, Rust, and Go replicas can run side by side on one SQLite,
+  PostgreSQL, or libSQL database, and a deployment can move between them without converting data. Password hashes,
+  sealed secrets, token hashes, the audit hash chain, session JWTs, and assertions are byte-compatible: the Go tests
+  reproduce or verify the vectors the TypeScript implementation produces (`spec/vectors`). The automated mixed-fleet
+  check alternates TypeScript and Go writes on one SQLite or libSQL file and compares the records and audit chains
+  byte for byte.
+- **The same behavior.** Traces recorded from the TypeScript test suite (each call's credential, input, answer,
+  error, outbox messages, and clock moves) are replayed against the Go server over HTTP. At the time of writing, the
+  Go server passes all 1,396 replayable recorded traces.
+
+What differs is the host language:
+
+- Configuration is Go values or `better-iam.json`, not a JavaScript module. The Go CLI cannot load
+  `better-iam.config.ts`.
+- Records the TypeScript server types precisely are `*core.Object` values in Go; the route request and answer types
+  are in `apitypes`.
+- The libSQL adapter's `EncryptionKey` and `SyncURL` (embedded replicas) need libSQL's native library and answer
+  `NOT_IMPLEMENTED` in Go.
+
+## Related
+
+<Cards>
+  <Card icon={<Server />} title="net/http" href="/docs/integrations/go/net-http">
+    Serve the API, guard routes, and read the session with the standard library.
+  </Card>
+  <Card icon={<Route />} title="chi, gin, and echo" href="/docs/integrations/go/chi">
+    The same guards and helpers for the popular routers.
+  </Card>
+  <Card icon={<Globe />} title="Typed client" href="/docs/integrations/go/client">
+    Call a Better IAM server over HTTP from Go.
+  </Card>
+  <Card icon={<SquareTerminal />} title="CLI" href="/docs/integrations/go/cli">
+    Migrations, bootstrap, scheduled jobs, and the API caller as a Go binary.
+  </Card>
+  <Card icon={<Database />} title="Databases" href="/docs/databases">
+    The adapters and the schema every implementation shares.
+  </Card>
+  <Card icon={<OctagonAlert />} title="Errors" href="/docs/reference/errors">
+    Every error code and status.
+  </Card>
+</Cards>

@@ -1,0 +1,163 @@
+---
+title: echo
+metaTitle: Go echo middleware
+description: Serve the Better IAM API from an echo server with echo.New, read the session with echo.FromContext, guard routes with RequireSession and Authorize, and answer refusals with ErrorHandler.
+icon: Waypoints
+status: beta
+packages:
+  - github.com/Better-IAM/better-iam/go/middleware/echo
+sources:
+  - go/middleware/echo/echo.go
+  - go/middleware/echo/echo_test.go
+  - go/middleware/nethttp.go
+  - go/middleware/index.go
+---
+
+import { Server, Globe } from '@/lib/icons';
+
+The echo integration connects a `*iam.BetterIam` to an echo server. Its `Middleware` serves the IAM HTTP API under
+`/api/iam` and stores the request helpers in the echo context; `RequireSession` and `Authorize` are route middleware;
+`ErrorHandler` is an `HTTPErrorHandler` that answers the IAM refusals your handlers return. The helpers, guards, and
+refusal rules are those of the [net/http integration](/docs/integrations/go/net-http).
+
+The package is named `echo`, like the framework, so import echo under another name (the examples use `labstack`).
+
+## Installation
+
+<Steps>
+<Step>
+
+### Create the instance
+
+Follow [Go: Installation](/docs/integrations/go#installation). The examples assume a package-level
+`instance *iam.BetterIam`. The module requires `github.com/labstack/echo/v4`.
+
+</Step>
+<Step>
+
+### Register the middleware
+
+Install the error handler and the middleware. `ErrorHandler(fallback)` answers IAM refusals and passes every other
+error to `fallback` (echo's default handler here, so `echo.HTTPError` values keep their own responses).
+
+```go title="main.go"
+import (
+	"net/http"
+
+	labstack "github.com/labstack/echo/v4"
+
+	"github.com/Better-IAM/better-iam/go/middleware"
+	"github.com/Better-IAM/better-iam/go/middleware/echo"
+)
+
+func main() {
+	iamEcho := echo.New(instance, middleware.Options{LoginPath: "/login", StepUpPath: "/verify"})
+
+	e := labstack.New()
+	e.HTTPErrorHandler = iamEcho.ErrorHandler(e.DefaultHTTPErrorHandler)
+	e.Use(iamEcho.Middleware())
+
+	// ... routes, below
+
+	e.Logger.Fatal(e.Start(":3000"))
+}
+```
+
+With a `nil` fallback, other errors are logged and answered with a plain `500`. `middleware.Options` is described
+under [net/http: Options](/docs/integrations/go/net-http#options).
+
+</Step>
+</Steps>
+
+## Protect routes
+
+Guards are echo middleware; pass them after the handler, or to a group.
+
+```go title="main.go"
+e.GET("/me", func(c labstack.Context) error {
+	session, err := echo.FromContext(c).GetSession(c.Request().Context())
+	if err != nil {
+		return err
+	}
+	return c.JSON(http.StatusOK, map[string]any{"email": session.Get("identity").(*core.Object).Get("email")})
+}, iamEcho.RequireSession(nil))
+
+e.GET("/projects/:id", func(c labstack.Context) error {
+	return c.JSON(http.StatusOK, map[string]any{"id": c.Param("id")})
+}, iamEcho.Authorize("projects:read", middleware.AuthorizeSpec[labstack.Context]{
+	Resource: echo.ResourceFromParam("project", "id"),
+}))
+
+e.GET("/secure", func(c labstack.Context) error { return nil },
+	iamEcho.RequireSession(&middleware.StepUpRequirement{MFA: middleware.MfaRequired}))
+
+admin := e.Group("/admin", iamEcho.Authorize("iam:identities:update", middleware.AuthorizeSpec[labstack.Context]{}))
+admin.GET("/people", func(c labstack.Context) error { return nil })
+```
+
+The `Resource` and `TenantID` callbacks of `middleware.AuthorizeSpec[labstack.Context]` receive the echo context, so
+custom callbacks read parameters with `c.Param`. A signed-out API call gets `401 UNAUTHENTICATED`, a denied one
+`403 ACCESS_DENIED`, and page navigations are redirected to `LoginPath` or `StepUpPath`. See
+[net/http: Protect routes](/docs/integrations/go/net-http#protect-routes) for the refusal rules and the CSRF check.
+
+### Route parameters
+
+`echo.ResourceFromParam(type, name)` and `echo.TenantFromParam(name)` build the callbacks from route parameters:
+
+```go title="main.go"
+e.GET("/orgs/:tenantId/members", func(c labstack.Context) error {
+	return nil // list the members of c.Param("tenantId")
+}, iamEcho.Authorize("iam:identities:read", middleware.AuthorizeSpec[labstack.Context]{
+	TenantID: echo.TenantFromParam("tenantId"),
+	Resource: echo.ResourceFromParam("iam", "tenantId"),
+}))
+```
+
+### Enforce inside a handler
+
+Return the refusal; `ErrorHandler` answers it with the JSON envelope or a redirect.
+
+```go title="main.go"
+e.DELETE("/documents/:id", func(c labstack.Context) error {
+	resource := middleware.ResourceRef{Type: "document", ID: c.Param("id")}
+	if err := echo.FromContext(c).Require(c.Request().Context(), "documents:delete", &resource); err != nil {
+		return err // ErrorHandler answers 403 ACCESS_DENIED
+	}
+	return c.NoContent(http.StatusNoContent)
+}, iamEcho.RequireSession(nil))
+```
+
+`iamEcho.Answer(c, err)` answers a refusal directly and returns `false` for any other error.
+
+## Read the session
+
+`echo.FromContext(c)` returns the request's `*middleware.Helpers` (also stored under `c.Get(echo.ContextKey)`, the key
+`"iam"`, and on the request's context). `GetSession`, `Can`, `Authorize`, `Plan`, `Client`, `Credential`, and
+`SignOut` work as on the [net/http page](/docs/integrations/go/net-http#read-the-session); pass them
+`c.Request().Context()`.
+
+## Reference
+
+| Member | What it does |
+| --- | --- |
+| `echo.New(instance, options)` | The integration over a composed server |
+| `echo.NewWith(source, options)` | The integration over any `middleware.IAM` |
+| `echo.NewLazy(resolve, options)` | The integration over an instance resolved on first use |
+| `iamEcho.Middleware()` | Serves the IAM API and attaches the helpers |
+| `iamEcho.RequireSession(stepUp)`, `iamEcho.Authorize(action, spec)` | Route middleware guards |
+| `iamEcho.ErrorHandler(fallback)` | An `HTTPErrorHandler` that answers refusals and passes other errors to `fallback` |
+| `iamEcho.Answer(c, err)` | Answers a refusal; `false` when `err` is not one |
+| `iamEcho.Helpers(c)` | The request's helpers, created on first use |
+| `echo.FromContext(c)` | The request's helpers, or `nil` |
+| `echo.ResourceFromParam(type, name)`, `echo.TenantFromParam(name)` | Authorize callbacks from route parameters |
+
+## Related
+
+<Cards>
+  <Card icon={<Server />} title="net/http" href="/docs/integrations/go/net-http">
+    The helpers, guards, options, and errors the echo integration shares.
+  </Card>
+  <Card icon={<Globe />} title="Typed client" href="/docs/integrations/go/client">
+    Typed calls to the IAM API from Go.
+  </Card>
+</Cards>

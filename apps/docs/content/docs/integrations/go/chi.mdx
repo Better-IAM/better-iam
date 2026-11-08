@@ -1,0 +1,163 @@
+---
+title: chi
+metaTitle: Go chi middleware
+description: Serve the Better IAM API from a chi router with chi.New, guard routes with router.With, and read route parameters in authorize guards with ResourceFromParam and TenantFromParam.
+icon: Route
+status: beta
+packages:
+  - github.com/Better-IAM/better-iam/go/middleware/chi
+sources:
+  - go/middleware/chi/chi.go
+  - go/middleware/chi/chi_test.go
+  - go/middleware/nethttp.go
+---
+
+import { Server, Globe } from '@/lib/icons';
+
+chi middlewares are `net/http` middlewares, so the chi integration is the
+[net/http integration](/docs/integrations/go/net-http) with helpers that read chi route parameters. `chi.New`
+returns an `*chi.IamChi`, which embeds `*middleware.Middleware`: everything on the net/http page applies, including
+`middleware.FromRequest(r)` for the request helpers.
+
+The package is named `chi`, like the router, so import the router under another name (the examples use
+`chirouter`).
+
+## Installation
+
+<Steps>
+<Step>
+
+### Create the instance
+
+Follow [Go: Installation](/docs/integrations/go#installation). The examples assume a package-level
+`instance *iam.BetterIam`. The module requires `github.com/go-chi/chi/v5`.
+
+</Step>
+<Step>
+
+### Mount the integration
+
+`router.Use(iamChi.Handler)` serves the IAM API under `/api/iam` and attaches the helpers to every other request.
+Register it before your routes.
+
+```go title="main.go"
+import (
+	"log"
+	"net/http"
+
+	chirouter "github.com/go-chi/chi/v5"
+
+	"github.com/Better-IAM/better-iam/go/middleware"
+	"github.com/Better-IAM/better-iam/go/middleware/chi"
+)
+
+func main() {
+	iamChi := chi.New(instance, middleware.Options{LoginPath: "/login", StepUpPath: "/verify"})
+
+	router := chirouter.NewRouter()
+	router.Use(iamChi.Handler) // serves /api/iam and attaches the request helpers
+
+	// ... routes, below
+
+	log.Fatal(http.ListenAndServe(":3000", router))
+}
+```
+
+`middleware.Options` is described under [net/http: Options](/docs/integrations/go/net-http#options).
+
+</Step>
+</Steps>
+
+## Protect routes
+
+Guards are chi middlewares; attach them with `router.With` for one route or `Use` inside a route group.
+
+```go title="main.go"
+router.With(iamChi.RequireSession(nil)).Get("/me", iamChi.Wrap(func(w http.ResponseWriter, r *http.Request) error {
+	session, err := middleware.FromRequest(r).GetSession(r.Context())
+	if err != nil {
+		return err
+	}
+	_, err = w.Write([]byte(session.Get("identity").(*core.Object).Get("email").(string)))
+	return err
+}).ServeHTTP)
+
+router.With(iamChi.Authorize("projects:read", middleware.AuthorizeSpec[*http.Request]{
+	Resource: chi.ResourceFromParam("project", "id"),
+})).Get("/projects/{id}", func(w http.ResponseWriter, r *http.Request) {
+	_, _ = w.Write([]byte(chirouter.URLParam(r, "id")))
+})
+
+router.With(iamChi.RequireSession(&middleware.StepUpRequirement{MFA: middleware.MfaRequired})).
+	Get("/secure", func(w http.ResponseWriter, r *http.Request) {})
+
+router.Route("/admin", func(admin chirouter.Router) {
+	admin.Use(iamChi.Authorize("iam:identities:update", middleware.AuthorizeSpec[*http.Request]{}))
+	admin.Get("/people", func(w http.ResponseWriter, r *http.Request) {})
+})
+```
+
+A signed-out API call gets `401 UNAUTHENTICATED`, a denied one `403 ACCESS_DENIED`, and page navigations are
+redirected to `LoginPath` or `StepUpPath`. See [net/http: Protect routes](/docs/integrations/go/net-http#protect-routes)
+for the refusal rules and the CSRF check.
+
+### Route parameters
+
+`chi.ResourceFromParam(type, name)` and `chi.TenantFromParam(name)` build the `Resource` and `TenantID` callbacks of
+an authorize guard from chi's `URLParam`:
+
+```go title="main.go"
+router.With(iamChi.Authorize("iam:identities:read", middleware.AuthorizeSpec[*http.Request]{
+	TenantID: chi.TenantFromParam("tenantId"),
+	Resource: chi.ResourceFromParam("iam", "tenantId"),
+})).Get("/orgs/{tenantId}/members", func(w http.ResponseWriter, r *http.Request) {
+	// list the members of chirouter.URLParam(r, "tenantId")
+})
+```
+
+A session of another tenant gets `403` here: the check runs in the tenant the URL names.
+
+### Enforce inside a handler
+
+Return the refusal from a handler wrapped with `iamChi.Wrap`. `Wrap` returns an `http.Handler`; pass its
+`ServeHTTP` where chi wants a `HandlerFunc`.
+
+```go title="main.go"
+router.Delete("/documents/{id}", iamChi.Wrap(func(w http.ResponseWriter, r *http.Request) error {
+	resource := middleware.ResourceRef{Type: "document", ID: chirouter.URLParam(r, "id")}
+	if err := middleware.FromRequest(r).Require(r.Context(), "documents:delete", &resource); err != nil {
+		return err // 403 ACCESS_DENIED
+	}
+	w.WriteHeader(http.StatusNoContent)
+	return nil
+}).ServeHTTP)
+```
+
+## Read the session
+
+Handlers read the helpers with `middleware.FromRequest(r)`: `GetSession`, `Can`, `Authorize`, `Plan`, `Client`,
+`Credential`, and `SignOut` work as on the [net/http page](/docs/integrations/go/net-http#read-the-session).
+
+## Reference
+
+| Member | What it does |
+| --- | --- |
+| `chi.New(instance, options)` | The integration over a composed server |
+| `chi.NewWith(source, options)` | The integration over any `middleware.IAM` |
+| `chi.NewLazy(resolve, options)` | The integration over an instance resolved on first use |
+| `iamChi.Handler` | Middleware for `router.Use`: serves the IAM API and attaches the helpers |
+| `iamChi.RequireSession(stepUp)`, `iamChi.Authorize(action, spec)` | Guards for `router.With` and `Use` |
+| `iamChi.Wrap(handler)`, `iamChi.HandleError(w, r, err)` | Refusal answers |
+| `chi.ResourceFromParam(type, name)` | An authorize `Resource` callback naming a resource by a route parameter |
+| `chi.TenantFromParam(name)` | An authorize `TenantID` callback reading the tenant from a route parameter |
+
+## Related
+
+<Cards>
+  <Card icon={<Server />} title="net/http" href="/docs/integrations/go/net-http">
+    The helpers, guards, options, and errors the chi integration shares.
+  </Card>
+  <Card icon={<Globe />} title="Typed client" href="/docs/integrations/go/client">
+    Typed calls to the IAM API from Go.
+  </Card>
+</Cards>

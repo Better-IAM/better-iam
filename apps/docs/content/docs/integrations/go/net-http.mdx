@@ -1,0 +1,512 @@
+---
+title: net/http
+metaTitle: Go net/http middleware
+description: Serve the Better IAM API from a Go net/http server with middleware.New, read the session with middleware.FromRequest, and guard routes with RequireSession and Authorize.
+icon: Server
+status: beta
+packages:
+  - github.com/Better-IAM/better-iam/go/middleware
+sources:
+  - go/middleware/nethttp.go
+  - go/middleware/index.go
+  - go/middleware/client.go
+  - go/middleware/server.go
+  - go/middleware/nethttp_test.go
+  - go/internal/middlewaretest/middlewaretest.go
+---
+
+import { Route, Globe, ShieldCheck, Building } from '@/lib/icons';
+
+`middleware.New` connects a `*iam.BetterIam` to a standard library server. Its `Handler` serves the IAM HTTP API
+under `/api/iam` and gives every other request a set of <Term id="session">session</Term> helpers, which handlers
+read with `middleware.FromRequest(r)`. Route guards (`RequireSession`, `Authorize`) refuse signed-out callers,
+callers without a permission, and cross-site form posts, and `Wrap` turns refusals your handlers return into the IAM
+JSON error envelope or a redirect to your login page.
+
+It is the Go counterpart of the [Express adapter](/docs/integrations/express), with the same behavior. The
+[chi](/docs/integrations/go/chi), [gin](/docs/integrations/go/gin), and [echo](/docs/integrations/go/echo)
+integrations are built on it.
+
+## Installation
+
+<Steps>
+<Step>
+
+### Create the instance
+
+Follow [Go: Installation](/docs/integrations/go#installation) to add the module, create the instance, and run the
+migrations. The examples below assume a package-level `instance *iam.BetterIam`.
+
+</Step>
+<Step>
+
+### Create the middleware
+
+```go title="server.go"
+import "github.com/Better-IAM/better-iam/go/middleware"
+
+iamHTTP := middleware.New(instance, middleware.Options{
+	LoginPath:  "/login",  // signed-out page navigations go here with ?next=
+	StepUpPath: "/verify", // page navigations that must step up go here with ?next= and ?reason=
+})
+```
+
+</Step>
+<Step>
+
+### Wrap your mux
+
+`Handler` is the outermost handler. It answers every request under the instance's base path (`/api/iam`) itself and
+attaches the helpers to all other requests before passing them to your mux.
+
+```go title="server.go"
+mux := http.NewServeMux()
+// ... your routes, below
+log.Fatal(http.ListenAndServe(":3000", iamHTTP.Handler(mux)))
+```
+
+- **The IAM server reads the raw request**, through the server's own `ServeHTTP`, so protocol mounts such as the
+  OAuth provider work.
+- **Mounting under a path** with `http.StripPrefix` also works: the middleware routes on the original request
+  target, before the prefix was stripped.
+- **Protocol mounts outside the base path**, such as `/oauth` or `/.well-known`, need their prefixes in `Serve`
+  (see [Protocol mounts](/docs/operations/deployment/protocol-mounts)):
+  `middleware.Options{Serve: []string{"/api/iam", "/oauth", "/.well-known"}}`.
+
+</Step>
+</Steps>
+
+## Protect routes
+
+Guards are `func(http.Handler) http.Handler`. Each one reads the session, checks <Term id="step-up">step-up</Term>
+when asked, then checks authorization, and answers a refusal itself: a `401` or `403` JSON envelope for API calls, or
+a `303` redirect to `LoginPath` or `StepUpPath` for page navigations (a `GET` with `Accept: text/html`).
+
+### Require a session
+
+```go title="routes.go"
+mux.Handle("GET /me", iamHTTP.RequireSession(nil)(iamHTTP.Wrap(func(w http.ResponseWriter, r *http.Request) error {
+	session, err := middleware.FromRequest(r).GetSession(r.Context())
+	if err != nil {
+		return err
+	}
+	identity := session.Get("identity").(*core.Object)
+	writeJSON(w, map[string]any{"email": identity.Get("email")})
+	return nil
+})))
+```
+
+A signed-out API call gets `401` with `{ "error": { "code": "UNAUTHENTICATED", "message": "A session is required" } }`
+and `Cache-Control: no-store`. A signed-out page navigation to `/me?tab=1` is redirected to
+`/login?next=%2Fme%3Ftab%3D1`. `writeJSON` stands for your own JSON helper.
+
+### Require a permission
+
+`Authorize(action, spec)` requires a session allowed to perform `action`. The resource defaults to the tenant itself
+(`iam/{tenantId}`) and the tenant to the session's tenant. `Resource` and `TenantID` in the
+`middleware.AuthorizeSpec[*http.Request]` are functions of the request and the session; read path values with
+`r.PathValue`.
+
+```go title="routes.go"
+mux.Handle("GET /projects/{id}", iamHTTP.Authorize("projects:read", middleware.AuthorizeSpec[*http.Request]{
+	Resource: func(r *http.Request, _ *core.Object) (middleware.ResourceRef, error) {
+		return middleware.ResourceRef{Type: "project", ID: r.PathValue("id")}, nil
+	},
+})(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, map[string]any{"id": r.PathValue("id")})
+})))
+```
+
+The check runs through `instance.Require`, so it evaluates the same <Term id="role">roles</Term>,
+<Term id="policy">policies</Term>, <Term id="condition">conditions</Term>, and <Term id="boundary">boundaries</Term>
+as every other check. A denial answers `403 ACCESS_DENIED`.
+
+### Require step-up
+
+`StepUp` asks for more assurance than a session: `middleware.MfaRequired` needs a session that completed MFA,
+`middleware.MfaFresh` also refuses remembered devices, impersonation, assumed roles, and API keys, and `MaxAgeMs`
+needs a recent sign-in.
+
+```go title="routes.go"
+maxAge := float64(10 * 60 * 1000)
+mux.Handle("POST /billing/cancel", iamHTTP.Authorize("billing:manage", middleware.AuthorizeSpec[*http.Request]{
+	StepUp: &middleware.StepUpRequirement{MFA: middleware.MfaRequired, MaxAgeMs: &maxAge},
+})(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	w.WriteHeader(http.StatusNoContent)
+})))
+```
+
+`RequireSession(&middleware.StepUpRequirement{...})` takes the same requirement without an authorization check. A
+session that fails it gets `403` with `MFA_REQUIRED`, `RECENT_AUTH_REQUIRED`, or `IMPERSONATION_RESTRICTED`. Page
+navigations go to `StepUpPath?next=...&reason=mfa|recent|impersonation`. See
+[Step-up](/docs/authentication/mfa#step-up) for completing the challenge.
+
+### Enforce inside a handler
+
+When the resource is only known after loading data, enforce inside the handler with `helpers.Require`. Return its
+error from a handler wrapped with `Wrap`, which answers the refusal.
+
+```go title="routes.go"
+mux.Handle("DELETE /documents/{id}", iamHTTP.RequireSession(nil)(iamHTTP.Wrap(func(w http.ResponseWriter, r *http.Request) error {
+	resource := middleware.ResourceRef{Type: "document", ID: r.PathValue("id")}
+	if err := middleware.FromRequest(r).Require(r.Context(), "documents:delete", &resource); err != nil {
+		return err // Wrap answers 403 ACCESS_DENIED
+	}
+	w.WriteHeader(http.StatusNoContent)
+	return nil
+})))
+```
+
+`Wrap` answers an IAM refusal with the JSON envelope (or a redirect for page navigations), any other error with a
+plain `500`, and aborts the response if the handler had already started writing. Outside `Wrap`, call
+`iamHTTP.HandleError(w, r, err)`, which answers a refusal and returns `false` for any other error.
+
+### Cross-site requests
+
+Guards also refuse a cookie-authenticated `POST`, `PUT`, `PATCH`, or `DELETE` whose `Origin` is not the app itself,
+the IAM origin, or one of `TrustedOrigins` (`403 UNTRUSTED_ORIGIN`, or `403 CSRF_REJECTED` with no `Origin`). A
+`Sec-Fetch-Site: same-origin` request passes, and bearer-token requests skip the check. A state-changing route
+without a guard should run the same rule with `middleware.CheckRequestOrigin`:
+
+```go title="routes.go"
+mux.HandleFunc("POST /newsletter/subscribe", func(w http.ResponseWriter, r *http.Request) {
+	target, err := middleware.RequestURL(r)
+	if err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	refusal := middleware.CheckRequestOrigin(
+		middleware.OriginRequest{Method: r.Method, URL: target, Header: r.Header},
+		[]string{instance.Endpoint.Origin},
+	)
+	if refusal != nil {
+		iamHTTP.HandleError(w, r, refusal)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+})
+```
+
+[The CSRF check](/docs/integrations/node#the-csrf-check) explains why it matters with `SameSite=Lax` cookies.
+
+## Read the session
+
+`middleware.FromRequest(r)` returns the request's `*middleware.Helpers` (nil when the middleware has not seen the
+request). They are created once per request, memoize the session lookup, and count cookies the in-process client
+receives for later calls in the same request. They are safe for concurrent use by the goroutines of one request.
+
+### Get the session
+
+`GetSession(ctx)` returns the session as a `*core.Object` (the `auth.getSession` answer, with `identity` and
+`session` members), or `nil` when the request has no usable session: no credential, or the server answers
+`UNAUTHENTICATED`, `MFA_REQUIRED`, `EMAIL_UNVERIFIED`, `TENANT_INACTIVE`, or `TENANT_UNAVAILABLE`.
+`RequireSession(ctx, stepUp)` returns the session or an `*middleware.IamRequestError` (`401`, or `403` with a
+`Reason`). `middleware.TenantOf(session)` reads the tenant the session acts in.
+
+**Route:** `POST /api/iam/auth/getSession`
+
+### Check permissions for rendering
+
+`Can` returns an <Term id="advisory">advisory</Term> boolean. Checks made concurrently, from goroutines of the same
+request, share one `authorizeMany` call; checks made one after another, as below, are one call each, and a repeated
+check is answered from memory.
+
+```go title="routes.go"
+mux.Handle("GET /projects/{id}/toolbar", iamHTTP.RequireSession(nil)(iamHTTP.Wrap(func(w http.ResponseWriter, r *http.Request) error {
+	ctx, helpers := r.Context(), middleware.FromRequest(r)
+	project := &middleware.ResourceRef{Type: "project", ID: r.PathValue("id")}
+	canEdit, err := helpers.Can(ctx, "projects:update", project)
+	if err != nil {
+		return err
+	}
+	canInvite, err := helpers.Can(ctx, "iam:identities:create", nil) // nil: the tenant itself
+	if err != nil {
+		return err
+	}
+	writeJSON(w, map[string]bool{"canEdit": canEdit, "canInvite": canInvite})
+	return nil
+})))
+```
+
+`helpers.Authorize(ctx, []middleware.Check{...})` returns a `[]middleware.AuthorizeResult` (`Action`, `Resource`,
+`Allowed`, `Reason`) for a list of checks in one call. Advisory checks decide what to show; enforce the operation
+itself with a guard or `helpers.Require`.
+
+### Filter lists
+
+`Plan(ctx, middleware.PlanInput{Action, Type})` returns the resources of a type the caller may act on as a filter for
+your own query (`kind` is `never` when signed out). Compile its `filter` with the core compilers:
+
+```go title="routes.go"
+mux.Handle("GET /documents", iamHTTP.RequireSession(nil)(iamHTTP.Wrap(func(w http.ResponseWriter, r *http.Request) error {
+	plan, err := middleware.FromRequest(r).Plan(r.Context(), middleware.PlanInput{Action: "documents:read", Type: "document"})
+	if err != nil {
+		return err
+	}
+	if plan.Get("kind") == "never" {
+		writeJSON(w, []any{})
+		return nil
+	}
+	filter, err := core.FilterFromValue(plan.Get("filter"))
+	if err != nil {
+		return err
+	}
+	where, err := core.FilterToSql(filter, core.SqlFilterOptions{
+		Dialect: "postgres",
+		Column:  func(field string) string { return map[string]string{"id": "d.id", "ownerId": "d.owner_id"}[field] },
+		Offset:  1,
+	})
+	if err != nil {
+		return err
+	}
+	params := append([]any{plan.Get("tenantId")}, where.Params...)
+	rows, err := db.QueryContext(r.Context(), "SELECT id, title FROM documents d WHERE d.tenant_id = $1 AND "+where.SQL, params...)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	// ... scan and write the rows
+	return nil
+})))
+```
+
+`ListAccessible(ctx, middleware.ListAccessibleInput{...})` lists registered resources of a managed type instead. See
+[Data filtering](/docs/authorization/data-filtering) for the plan format.
+
+### Sign in and out
+
+`helpers.Client()` is an in-process client: its transport is the IAM handler in this process, and the cookies the
+server issues land on this response, so a plain HTML form can sign someone in without client JavaScript.
+
+```go title="routes.go"
+mux.Handle("POST /login", iamHTTP.Wrap(func(w http.ResponseWriter, r *http.Request) error {
+	_, err := middleware.FromRequest(r).Client().Call(r.Context(), "auth/signIn", core.NewObject(
+		"tenantId", r.FormValue("tenantId"),
+		"email", r.FormValue("email"),
+		"password", r.FormValue("password"),
+	))
+	if err != nil {
+		return err // INVALID_CREDENTIALS, RATE_LIMITED, ...
+	}
+	http.Redirect(w, r, middleware.SafeRedirectPath(r.URL.Query().Get("next")), http.StatusSeeOther)
+	return nil
+}))
+
+mux.Handle("POST /logout", iamHTTP.Wrap(func(w http.ResponseWriter, r *http.Request) error {
+	if err := middleware.FromRequest(r).SignOut(r.Context()); err != nil { // never fails for a dead session
+		return err
+	}
+	http.Redirect(w, r, "/", http.StatusSeeOther)
+	return nil
+}))
+```
+
+**Route:** `POST /api/iam/auth/signIn`, `POST /api/iam/auth/signOut`
+
+`Call(ctx, path, input)` answers the envelope's `data` as a model value (here a `*core.Object` holding either `token`
+and `session`, or `mfaRequired` and `challenge`). For typed answers, use the [typed client](/docs/integrations/go/client)
+over the same transport: `*middleware.Client` is an `http.RoundTripper` for the base URL `http://better-iam.internal`.
+
+```go title="routes.go"
+c, err := client.New(client.Options{
+	BaseURL:    "http://better-iam.internal",
+	HTTPClient: &http.Client{Transport: middleware.FromRequest(r).Client()},
+})
+if err != nil {
+	return err
+}
+result, err := c.Auth.SignIn(r.Context(), apitypes.AuthSignInInput{TenantID: tenantID, Email: email, Password: password})
+```
+
+`middleware.SafeRedirectPath` accepts only same-site paths and falls back to `/`, so `?next=` cannot become an open
+redirect.
+
+### Call the server API directly
+
+`helpers.Credential()` returns the `core.CredentialInput` for direct `instance.API` calls, including cookies set
+earlier in the same request.
+
+```go title="routes.go"
+mux.Handle("GET /me/sessions", iamHTTP.RequireSession(nil)(iamHTTP.Wrap(func(w http.ResponseWriter, r *http.Request) error {
+	answer, err := instance.API.Auth.ListSessions(r.Context(), middleware.FromRequest(r).Credential(),
+		server.Input[apitypes.AuthListSessionsInput](nil))
+	if err != nil {
+		return err
+	}
+	writeJSON(w, answer.Value)
+	return nil
+})))
+```
+
+**Route:** `POST /api/iam/auth/listSessions`
+
+### API keys and session tokens
+
+`RequireSession` and the `Authorize` guard build on `auth.getSession`, which serves signed-in people only, so API
+keys and temporary credentials are refused there with `401`. Machine routes pass the request's `Authorization` header
+to the server through the helpers: `helpers.Require(ctx, action, resource, tenantID)` with an explicit tenant, or
+`instance.API` with `helpers.Credential()`.
+
+```go title="routes.go"
+mux.Handle("POST /hooks/import", iamHTTP.Wrap(func(w http.ResponseWriter, r *http.Request) error {
+	ctx, helpers := r.Context(), middleware.FromRequest(r)
+	answer, err := instance.API.Sts.GetCallerIdentity(ctx, helpers.Credential(),
+		server.Input[apitypes.StsGetCallerIdentityInput](nil))
+	if err != nil {
+		return err
+	}
+	caller, err := answer.Typed()
+	if err != nil {
+		return err
+	}
+	if err := helpers.Require(ctx, "imports:run", nil, caller.TenantID); err != nil {
+		return err
+	}
+	w.WriteHeader(http.StatusAccepted)
+	return nil
+}))
+```
+
+**Route:** `POST /api/iam/sts/getCallerIdentity`
+
+## Organizations
+
+Every session acts in one <Term id="tenant">tenant</Term> (an organization). Guards and helpers default to it.
+
+### Check in another tenant
+
+Set `TenantID` to check against a different tenant, for example a child organization the URL names. The server
+decides whether the caller's credential may act there.
+
+```go title="routes.go"
+mux.Handle("GET /orgs/{tenantId}/members", iamHTTP.Authorize("iam:identities:read", middleware.AuthorizeSpec[*http.Request]{
+	TenantID: func(r *http.Request, _ *core.Object) (string, error) { return r.PathValue("tenantId"), nil },
+})(iamHTTP.Wrap(func(w http.ResponseWriter, r *http.Request) error {
+	answer, err := instance.API.Identities.List(r.Context(), middleware.FromRequest(r).Credential(),
+		server.Input[apitypes.IdentitiesListInput](core.NewObject("tenantId", r.PathValue("tenantId"))))
+	if err != nil {
+		return err
+	}
+	writeJSON(w, answer.Value)
+	return nil
+})))
+```
+
+Inside a handler, the same option is the trailing `tenantID` argument of `helpers.Require` and `helpers.Can`.
+
+### The organization in the URL
+
+When each organization lives under its own path (`/acme/projects`), resolve the alias with `tenants.lookup` and send
+visitors whose session belongs to another organization to sign in there.
+
+```go title="routes.go"
+mux.Handle("GET /{org}/projects", iamHTTP.Wrap(func(w http.ResponseWriter, r *http.Request) error {
+	ctx, helpers := r.Context(), middleware.FromRequest(r)
+	slug := r.PathValue("org")
+	answer, err := instance.API.Tenants.Lookup(ctx, server.Input[apitypes.TenantsLookupInput](core.NewObject("slug", slug)))
+	if err != nil {
+		return err // NOT_FOUND for unknown or inactive aliases
+	}
+	organization, err := answer.Typed()
+	if err != nil {
+		return err
+	}
+	session, err := helpers.GetSession(ctx)
+	if err != nil {
+		return err
+	}
+	if middleware.TenantOf(session) != organization.TenantID {
+		back := middleware.SafeRedirectPath(r.URL.RequestURI())
+		http.Redirect(w, r, middleware.WithQuery("/login",
+			middleware.QueryParam{Name: "org", Value: slug},
+			middleware.QueryParam{Name: "next", Value: back},
+		), http.StatusSeeOther)
+		return nil
+	}
+	return helpers.Require(ctx, "projects:read", nil)
+}))
+```
+
+**Route:** `POST /api/iam/tenants/lookup`
+
+With [organization sign-in addresses](/docs/operations/deployment/hosts-and-regions), calls through
+`helpers.Client()` keep the host the visitor is on, so the server pins them to that organization as it would a
+browser call.
+
+## Options
+
+`middleware.New(instance, options)` takes the composed server. `middleware.NewWith(source, options)` takes any
+implementation of the `middleware.IAM` interface (`middleware.Server(instance)` adapts a server), and
+`middleware.NewLazy(resolve, options)` resolves the instance on first use.
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `LoginPath` | `string` | none | Where signed-out page navigations are redirected, with `?next=`. Without it they get the JSON `401` |
+| `StepUpPath` | `string` | none | Where page navigations go when the session must step up, with `?next=` and `?reason=`. Without it they get the JSON `403` |
+| `Serve` | `[]string` | `[basePath]` | Path prefixes the IAM server answers. Add protocol mounts outside the base path |
+| `BasePath` | `string` | the instance's `Endpoint.BasePath`, else `/api/iam` | Where the IAM API is served |
+| `TrustedOrigins` | `[]string` | none | Origins besides the request's own and the IAM origin that may send cookie-authenticated unsafe requests to guarded routes |
+| `CSRF` | `*bool` | `true` | Check the `Origin` of cookie-authenticated unsafe requests in guards. Set to `false` only when something else checks origins |
+| `Now` | `func() int64` | wall clock | The clock in milliseconds for step-up recency checks, for tests |
+
+The `*middleware.Middleware` it returns:
+
+| Member | What it does |
+| --- | --- |
+| `Handler(next)` | Serves the IAM API under the `Serve` prefixes and attaches the helpers to every other request before `next` |
+| `RequireSession(stepUp)` | A guard requiring a session, and a step-up when not nil |
+| `Authorize(action, spec)` | A guard requiring a session allowed to perform `action` |
+| `Wrap(handler)` | Adapts a `func(w, r) error`: refusals become the JSON envelope or a redirect, other errors a `500` |
+| `HandleError(w, r, err)` | Answers a refusal; `false` when `err` is not one |
+| `Helpers(w, r)` | The request's helpers, created on first use, and the request carrying them |
+
+The `*middleware.Helpers` members:
+
+| Member | What it does |
+| --- | --- |
+| `GetSession(ctx)` | The session, or `nil` when signed out |
+| `RequireSession(ctx, stepUp)` | The session, or an `*IamRequestError` |
+| `Require(ctx, action, resource, tenantID...)` | Enforces one action; a `nil` resource is the tenant |
+| `Can(ctx, action, resource, tenantID...)` | One advisory decision, batched with concurrent checks |
+| `Authorize(ctx, checks, tenantID...)` | Advisory decisions for several checks |
+| `Plan(ctx, input)` | A data filter for the resources the caller may act on |
+| `ListAccessible(ctx, input)` | The registered resources of a managed type the caller may act on |
+| `Assertion(ctx, input)` | A short-lived signed assertion about the caller for a downstream service |
+| `Client()` | The in-process client (`Call`, and `RoundTrip` as an `http.RoundTripper`) |
+| `Credential()` | The `core.CredentialInput` for direct `instance.API` calls |
+| `SignOut(ctx)` | Ends the session and clears its cookie |
+
+## Errors
+
+| Code | Status | When |
+| --- | --- | --- |
+| [`UNAUTHENTICATED`](/docs/reference/errors#unauthenticated) | 401 | A guard or `RequireSession` ran with no usable session |
+| [`MFA_REQUIRED`](/docs/reference/errors#mfa_required) | 403 | `StepUp.MFA` was not met; `Reason` is `mfa` |
+| [`RECENT_AUTH_REQUIRED`](/docs/reference/errors#recent_auth_required) | 403 | `StepUp.MaxAgeMs` was not met; `Reason` is `recent` |
+| [`IMPERSONATION_RESTRICTED`](/docs/reference/errors#impersonation_restricted) | 403 | An impersonated session met a `MaxAgeMs` or `MfaFresh` requirement; `Reason` is `impersonation` |
+| [`ACCESS_DENIED`](/docs/reference/errors#access_denied) | 403 | `Authorize` or `helpers.Require` was denied |
+| [`UNTRUSTED_ORIGIN`](/docs/reference/errors#untrusted_origin) | 403 | A cookie-authenticated unsafe request came from an untrusted origin |
+| [`CSRF_REJECTED`](/docs/reference/errors#csrf_rejected) | 403 | A cookie-authenticated unsafe request had no `Origin` |
+| [`INVALID_INPUT`](/docs/reference/errors#invalid_input) | 400 | An `Authorize` guard had no tenant to check in |
+
+`Wrap` and `HandleError` answer any error `middleware.RefusalOf` recognizes (`*middleware.IamRequestError`, the
+server's `*core.IamError`, the in-process client's `*middleware.ClientError`) with its status and
+`{ "error": { "code", "message" } }`. When the instance has no Node-style transport (a custom `middleware.IAM`), the
+middleware buffers request bodies for the IAM API up to 2 MiB and answers `413` beyond.
+
+## Related
+
+<Cards>
+  <Card icon={<Route />} title="chi" href="/docs/integrations/go/chi">
+    The same middleware with chi route-parameter helpers.
+  </Card>
+  <Card icon={<Globe />} title="Typed client" href="/docs/integrations/go/client">
+    Typed calls to the IAM API from Go.
+  </Card>
+  <Card icon={<ShieldCheck />} title="Policies" href="/docs/authorization/policies">
+    What `Authorize` guards evaluate.
+  </Card>
+  <Card icon={<Building />} title="Hosts and regions" href="/docs/operations/deployment/hosts-and-regions">
+    Organization sign-in addresses and pinning.
+  </Card>
+</Cards>

@@ -1,0 +1,165 @@
+---
+title: gin
+metaTitle: Go gin middleware
+description: Serve the Better IAM API from a gin engine with gin.New, read the session with gin.FromContext, guard routes with RequireSession and Authorize, and answer refusals with ErrorHandler.
+icon: Gin
+status: beta
+packages:
+  - github.com/Better-IAM/better-iam/go/middleware/gin
+sources:
+  - go/middleware/gin/gin.go
+  - go/middleware/gin/gin_test.go
+  - go/middleware/nethttp.go
+  - go/middleware/index.go
+---
+
+import { Server, Globe } from '@/lib/icons';
+
+The gin integration connects a `*iam.BetterIam` to a gin engine. Its `Middleware` serves the IAM HTTP API under
+`/api/iam` and stores the request helpers in the gin context; `RequireSession` and `Authorize` are gin handlers that
+guard routes; `ErrorHandler` answers the IAM refusals your handlers report with `c.Error`. The helpers, guards, and
+refusal rules are those of the [net/http integration](/docs/integrations/go/net-http).
+
+The package is named `gin`, like the framework, so import gin under another name (the examples use `gingonic`).
+
+## Installation
+
+<Steps>
+<Step>
+
+### Create the instance
+
+Follow [Go: Installation](/docs/integrations/go#installation). The examples assume a package-level
+`instance *iam.BetterIam`. The module requires `github.com/gin-gonic/gin`.
+
+</Step>
+<Step>
+
+### Register the middleware
+
+Register `ErrorHandler` first and `Middleware` second. `ErrorHandler` runs the rest of the chain, then answers the
+last error a handler reported.
+
+```go title="main.go"
+import (
+	"log"
+	"net/http"
+
+	gingonic "github.com/gin-gonic/gin"
+
+	"github.com/Better-IAM/better-iam/go/middleware"
+	"github.com/Better-IAM/better-iam/go/middleware/gin"
+)
+
+func main() {
+	iamGin := gin.New(instance, middleware.Options{LoginPath: "/login", StepUpPath: "/verify"})
+
+	router := gingonic.New()
+	router.Use(iamGin.ErrorHandler(), iamGin.Middleware())
+
+	// ... routes, below
+
+	log.Fatal(router.Run(":3000"))
+}
+```
+
+`Middleware` answers requests under the `Serve` prefixes (default `/api/iam`) itself and aborts the chain for them.
+`middleware.Options` is described under [net/http: Options](/docs/integrations/go/net-http#options).
+
+</Step>
+</Steps>
+
+## Protect routes
+
+Guards are gin handlers placed before your handler. They answer refusals themselves and abort the chain.
+
+```go title="main.go"
+router.GET("/me", iamGin.RequireSession(nil), func(c *gingonic.Context) {
+	session, err := gin.FromContext(c).GetSession(c.Request.Context())
+	if err != nil {
+		_ = c.Error(err)
+		return
+	}
+	c.JSON(http.StatusOK, gingonic.H{"email": session.Get("identity").(*core.Object).Get("email")})
+})
+
+router.GET("/projects/:id", iamGin.Authorize("projects:read", middleware.AuthorizeSpec[*gingonic.Context]{
+	Resource: gin.ResourceFromParam("project", "id"),
+}), func(c *gingonic.Context) {
+	c.JSON(http.StatusOK, gingonic.H{"id": c.Param("id")})
+})
+
+router.GET("/secure", iamGin.RequireSession(&middleware.StepUpRequirement{MFA: middleware.MfaRequired}), func(c *gingonic.Context) {})
+
+admin := router.Group("/admin", iamGin.Authorize("iam:identities:update", middleware.AuthorizeSpec[*gingonic.Context]{}))
+admin.GET("/people", func(c *gingonic.Context) {})
+```
+
+The `Resource` and `TenantID` callbacks of `middleware.AuthorizeSpec[*gingonic.Context]` receive the gin context, so
+custom callbacks read parameters with `c.Param`. A signed-out API call gets `401 UNAUTHENTICATED`, a denied one
+`403 ACCESS_DENIED`, and page navigations are redirected to `LoginPath` or `StepUpPath`. See
+[net/http: Protect routes](/docs/integrations/go/net-http#protect-routes) for the refusal rules and the CSRF check.
+
+### Route parameters
+
+`gin.ResourceFromParam(type, name)` and `gin.TenantFromParam(name)` build the callbacks from route parameters:
+
+```go title="main.go"
+router.GET("/orgs/:tenantId/members", iamGin.Authorize("iam:identities:read", middleware.AuthorizeSpec[*gingonic.Context]{
+	TenantID: gin.TenantFromParam("tenantId"),
+	Resource: gin.ResourceFromParam("iam", "tenantId"),
+}), func(c *gingonic.Context) {
+	// list the members of c.Param("tenantId")
+})
+```
+
+### Enforce inside a handler
+
+Report the refusal with `c.Error`; `ErrorHandler` answers it with the JSON envelope or a redirect, and any other
+error with a plain `500`, unless the response already started.
+
+```go title="main.go"
+router.DELETE("/documents/:id", iamGin.RequireSession(nil), func(c *gingonic.Context) {
+	resource := middleware.ResourceRef{Type: "document", ID: c.Param("id")}
+	if err := gin.FromContext(c).Require(c.Request.Context(), "documents:delete", &resource); err != nil {
+		_ = c.Error(err) // ErrorHandler answers 403 ACCESS_DENIED
+		return
+	}
+	c.Status(http.StatusNoContent)
+})
+```
+
+`iamGin.Answer(c, err)` answers a refusal directly and returns `false` for any other error.
+
+## Read the session
+
+`gin.FromContext(c)` returns the request's `*middleware.Helpers` (also stored under `c.Get(gin.ContextKey)`, the key
+`"iam"`, and on the request's context). `GetSession`, `Can`, `Authorize`, `Plan`, `Client`, `Credential`, and
+`SignOut` work as on the [net/http page](/docs/integrations/go/net-http#read-the-session); pass them
+`c.Request.Context()`.
+
+## Reference
+
+| Member | What it does |
+| --- | --- |
+| `gin.New(instance, options)` | The integration over a composed server |
+| `gin.NewWith(source, options)` | The integration over any `middleware.IAM` |
+| `gin.NewLazy(resolve, options)` | The integration over an instance resolved on first use |
+| `iamGin.Middleware()` | Serves the IAM API and attaches the helpers |
+| `iamGin.RequireSession(stepUp)`, `iamGin.Authorize(action, spec)` | Guard handlers |
+| `iamGin.ErrorHandler()` | Answers the last error reported with `c.Error` |
+| `iamGin.Answer(c, err)` | Answers a refusal; `false` when `err` is not one |
+| `iamGin.Helpers(c)` | The request's helpers, created on first use |
+| `gin.FromContext(c)` | The request's helpers, or `nil` |
+| `gin.ResourceFromParam(type, name)`, `gin.TenantFromParam(name)` | Authorize callbacks from route parameters |
+
+## Related
+
+<Cards>
+  <Card icon={<Server />} title="net/http" href="/docs/integrations/go/net-http">
+    The helpers, guards, options, and errors the gin integration shares.
+  </Card>
+  <Card icon={<Globe />} title="Typed client" href="/docs/integrations/go/client">
+    Typed calls to the IAM API from Go.
+  </Card>
+</Cards>

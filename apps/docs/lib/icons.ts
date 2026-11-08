@@ -112,6 +112,8 @@ export {
 export {
   SiExpress as Express,
   SiFastify as Fastify,
+  SiGin as Gin,
+  SiGo as Go,
   SiHono as Hono,
   SiNestjs as NestJS,
   SiNextdotjs as Nextjs,

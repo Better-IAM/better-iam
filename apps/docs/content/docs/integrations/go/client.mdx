@@ -1,0 +1,257 @@
+---
+title: Typed client
+metaTitle: Go typed HTTP client
+description: Call any Better IAM server over HTTP from Go with client.New, with a method per route, generated request and answer types, bearer or cookie authentication, and typed errors.
+icon: Globe
+status: beta
+packages:
+  - github.com/Better-IAM/better-iam/go/client
+sources:
+  - go/client/client.go
+  - go/client/client_gen.go
+  - go/client/session.go
+  - go/client/device.go
+  - go/client/client_test.go
+  - go/client/integration_test.go
+---
+
+import { Server, KeyRound, OctagonAlert } from '@/lib/icons';
+
+The `client` package is the Go port of the TypeScript [typed client](/docs/concepts/client). It calls a Better IAM
+server over HTTP: a TypeScript, Rust, or Go server, since all three answer the same routes. Every route of the API is
+a method on a group field (`c.Roles.Create`, `c.Auth.SignIn`) with the request and answer types of the `apitypes`
+package. It depends on no server code, so CLIs, workers, and services that only call the API stay small.
+
+Use it from Go processes that talk to an IAM server elsewhere. Code that embeds the server calls it
+[in process](/docs/integrations/go#call-the-api-in-process) instead.
+
+## Create the client
+
+```go title="iam.go"
+import (
+	"os"
+
+	"github.com/Better-IAM/better-iam/go/client"
+)
+
+c, err := client.New(client.Options{
+	BaseURL: "https://app.example.com", // calls go to POST /api/iam/{group}/{method}
+	Token:   os.Getenv("BETTER_IAM_TOKEN"),
+})
+if err != nil {
+	log.Fatal(err) // INVALID_CONFIG, with Status 0
+}
+```
+
+`BaseURL` is required: there is no page origin outside a browser. It must be an absolute `http` or `https` URL
+without credentials, query, or fragment. Set `BasePath` when the server is mounted somewhere other than `/api/iam`.
+
+Every request is `POST {BaseURL}{BasePath}/{group}/{method}` with the input as the JSON body, plus the
+`Content-Type: application/json` and `X-Better-IAM: 1` headers the server's CSRF boundary requires. Redirects are
+always refused.
+
+## Call routes
+
+```go title="iam.go"
+session, err := c.Auth.GetSession(ctx)
+if err != nil {
+	return err
+}
+fmt.Println(session.Identity.Name, session.Session.TenantID)
+
+slug := "acme"
+org, err := c.Tenants.Lookup(ctx, apitypes.TenantsLookupInput{Slug: &slug})
+if err != nil {
+	return err
+}
+
+people, err := c.Identities.List(ctx, apitypes.IdentitiesListInput{TenantID: org.TenantID})
+for _, person := range people {
+	fmt.Println(person.Name)
+}
+
+decision, err := c.Authorize(ctx, apitypes.AuthorizeInput{
+	TenantID: org.TenantID,
+	Action:   "projects:read",
+	Resource: apitypes.AuthorizeInputResource{Type: "project", ID: "p1"},
+})
+fmt.Println(decision.Allowed, decision.Reason)
+```
+
+**Route:** `POST /api/iam/auth/getSession`, `POST /api/iam/tenants/lookup`, `POST /api/iam/identities/list`,
+`POST /api/iam/authorize`
+
+- **Types.** The input of `c.Identities.List` is `apitypes.IdentitiesListInput` and its answer
+  `apitypes.IdentitiesListOutput`; every route follows the `{Group}{Method}Input` and `{Group}{Method}Output` naming.
+  Optional members are pointers, and string unions are typed constants (`apitypes.IdentitiesListInputStatusActive`).
+- **Unions.** Answers that can take several shapes have one pointer per variant. `c.Auth.SignIn` returns an
+  `apitypes.SignInResult` whose `SessionResult` or `MfaRequired` is set.
+- **No-input routes** take only the context: `c.Auth.GetSession(ctx)`, `c.Auth.SignOut(ctx)`,
+  `c.Auth.ListSessions(ctx)`.
+- **Top-level routes** are methods of the client: `c.Authorize`, `c.AuthorizeMany`, `c.ListAccessible`.
+- **Cancellation** is the call's context.
+
+`client.Do` calls a route through its typed descriptor, and `c.Request` or `client.Call` reach routes without a
+generated method, such as plugin routes:
+
+```go title="iam.go"
+created, err := client.Do(ctx, c, apitypes.OpRolesCreate, apitypes.RolesCreateInput{TenantID: org.TenantID, Name: "Viewer"})
+
+summary, err := c.Request(ctx, "plugins/reporting/summary", core.NewObject("tenantId", org.TenantID)) // a model value
+
+type Summary struct {
+	Total float64 `json:"total"`
+}
+typed, err := client.Call[Summary](ctx, c, "plugins/reporting/summary", core.NewObject("tenantId", org.TenantID))
+```
+
+Path segments must be plain identifiers; anything else fails with `INVALID_PATH` before a request is made.
+
+## Authenticate
+
+The client never stores tokens. Choose how each request is authenticated:
+
+| Option | Use it for |
+| --- | --- |
+| `Token` | A fixed bearer token: an API key, a session token, or an IAM-signed session JWT |
+| `TokenFunc` | A token read at each request (`ok` false sends none); it takes precedence over `Token` |
+| `HTTPClient` with a cookie jar | Cookie sessions, as a browser would hold them |
+
+A token of any other shape fails with `INVALID_TOKEN` before a request is made, so a stray value cannot end up in an
+`Authorization` header.
+
+### Sign in with cookies
+
+```go title="login.go"
+jar, _ := cookiejar.New(nil)
+browserLike, err := client.New(client.Options{
+	BaseURL:    "https://app.example.com",
+	HTTPClient: &http.Client{Jar: jar, Timeout: 10 * time.Second},
+})
+if err != nil {
+	return err
+}
+result, err := browserLike.Auth.SignIn(ctx, apitypes.AuthSignInInput{TenantID: org.TenantID, Email: email, Password: password})
+if err != nil {
+	return err
+}
+if result.MfaRequired != nil {
+	_, err = browserLike.Auth.VerifyMfa(ctx, apitypes.AuthVerifyMfaInput{
+		TenantID: org.TenantID, Challenge: result.MfaRequired.Challenge, Code: code,
+	})
+}
+```
+
+**Route:** `POST /api/iam/auth/signIn`, `POST /api/iam/auth/verifyMfa`
+
+With a bearer token instead of a jar, read `result.SessionResult.Token` and pass it as `Token` on later clients. During
+MFA enrollment after sign-in, `c.Auth.BeginMfa` and `c.Auth.ConfirmMfa` take a `*client.MfaChallenge` (the tenant and
+challenge) in place of a session.
+
+### Device proofs
+
+`client.NewDeviceProver` keeps an ES256 key for a registered device and signs the `x-better-iam-device` proof the
+server checks for device posture. Pass its headers on every request with `HeadersFunc`:
+
+```go title="device.go"
+device, err := client.NewDeviceProver(client.DeviceProverOptions{Store: client.MemoryKeyStore()})
+if err != nil {
+	return err
+}
+var sessionID string // the current session's ID, from c.Auth.GetSession
+c, err := client.New(client.Options{
+	BaseURL: "https://app.example.com",
+	Token:   os.Getenv("BETTER_IAM_TOKEN"),
+	HeadersFunc: func(ctx context.Context) (http.Header, error) {
+		return device.Headers(ctx, sessionID), nil
+	},
+})
+```
+
+`client.FileKeyStore(path)` keeps the key in a file instead. `device.PublicJwk(ctx)` is the public key to enroll with
+`c.Devices.Enroll`.
+
+## Errors
+
+Refusals are `*client.IamClientError` values (also named `client.ClientError`). They carry the server's `Code`,
+`Message`, and HTTP `Status`, never the raw response body:
+
+```go title="login.go"
+var refused *client.IamClientError
+if errors.As(err, &refused) {
+	switch refused.Code {
+	case "INVALID_CREDENTIALS":
+		// show the form again
+	case "RATE_LIMITED":
+		// *refused.RetryAfterMs says how long to wait
+	case "WRONG_REGION":
+		// refused.Location is the organization's sign-in URL in refused.Region
+	}
+}
+```
+
+Configuration and input errors raised before any request (`INVALID_CONFIG`, `INVALID_TOKEN`, `INVALID_PATH`) have
+`Status` 0. `RequestID` is the `X-Request-Id` the request carried, for support tickets. The codes are listed in the
+[error reference](/docs/reference/errors).
+
+## Options
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `BaseURL` | `string` | required | The application's origin |
+| `BasePath` | `string` | `/api/iam` | Where the IAM routes are mounted |
+| `Token` | `string` | none | A bearer token sent on every request |
+| `TokenFunc` | `func(ctx) (string, bool, error)` | none | Reads the bearer token at each request; takes precedence over `Token` |
+| `Headers` | `http.Header` | none | Headers sent on every request |
+| `HeadersFunc` | `func(ctx) (http.Header, error)` | none | Computes each request's headers; takes precedence over `Headers` |
+| `HTTPClient` | `*http.Client` | `http.DefaultClient` | Sends the requests; its cookie jar carries cookie sessions |
+| `Fetch` | `func(*http.Request) (*http.Response, error)` | none | Sends the requests instead of `HTTPClient`, for tests and custom transports |
+| `OnUnauthenticated` | `func(*IamClientError)` | none | Called once per request refused with `UNAUTHENTICATED` or `SESSION_NETWORK_MISMATCH`, to send the person to sign in |
+| `RetryRateLimited` | `bool` | `false` | Retry a `RATE_LIMITED` answer once after the server's wait, when it is at most `RetryMaxWaitMs` |
+| `RetryMaxWaitMs` | `float64` | `5000` | The longest retry wait; negative turns retries off |
+| `RequestID` | `func() string` | none | Supplies each request's `X-Request-Id` (1 to 128 characters of `[A-Za-z0-9._:-]`) |
+| `GenerateRequestID` | `bool` | `false` | Sends a random `X-Request-Id` when `RequestID` is nil |
+
+Per-call `client.CallOptions{Headers: ...}` override the configured headers for one call; `Content-Type` and
+`X-Better-IAM` stay fixed:
+
+```go title="iam.go"
+session, err := c.Auth.GetSession(ctx, client.CallOptions{Headers: http.Header{"Accept-Language": {"de"}}})
+```
+
+## Session store
+
+`client.NewClientSessionStore` keeps the current session for long-running programs (a desktop app, a TUI, an agent)
+and notifies subscribers when it changes:
+
+```go title="session.go"
+store := client.NewClientSessionStore(c, client.SessionStoreOptions[apitypes.AuthGetSessionOutput]{})
+unsubscribe := store.Subscribe(func() {
+	fmt.Println(store.Snapshot().Status) // loading, authenticated, unauthenticated, or error
+})
+defer unsubscribe()
+
+snapshot := store.Refresh(ctx) // concurrent refreshes share one request
+if snapshot.Status == client.SessionAuthenticated {
+	fmt.Println(snapshot.Session.Identity.Email)
+}
+_ = store.SignOut(ctx) // ends the server session and clears the local one
+```
+
+A refused session moves the store to `client.SessionUnauthenticated` and keeps the server's error in
+`snapshot.Error`; a transport failure moves it to `client.SessionError` and keeps the last session.
+`client.IsUnauthenticated(err)` tells the two apart.
+
+## Related
+
+<Cards>
+  <Card icon={<Server />} title="Go" href="/docs/integrations/go">
+    Embed the server and call the API in process.
+  </Card>
+  <Card icon={<KeyRound />} title="API reference" href="/docs/reference/api">
+    Every route, its input, and its answer.
+  </Card>
+  <Card icon={<OctagonAlert />} title="Errors" href="/docs/reference/errors">
+    Every error code and status.
+  </Card>
+</Cards>
