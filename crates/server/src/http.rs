@@ -1439,8 +1439,10 @@ impl Http {
             ));
         }
         let raw = String::from_utf8_lossy(request.body()).into_owned();
-        let mut body = match core_js::parse(&raw) {
-            Ok(Value::Object(map)) => map,
+        // Strings that held unpaired surrogates read as U+FFFD; the set keeps them apart from a literal U+FFFD for the
+        // checks that refuse text which is not well-formed.
+        let (mut body, ill_formed) = match core_js::parse_reporting(&raw) {
+            Ok((Value::Object(map), ill_formed)) => (map, ill_formed),
             _ => return Err(IamError::new("INVALID_INPUT", "Invalid JSON")),
         };
         let path = pathname[base_path.len() + 1..].to_owned();
@@ -1531,7 +1533,10 @@ impl Http {
                     client.clone(),
                     auth.with_request_host(
                         Some(host),
-                        Box::pin(self.dispatch(&path, &body, &credential_of(headers))),
+                        Box::pin(core_js::with_ill_formed(
+                            ill_formed,
+                            self.dispatch(&path, &body, &credential_of(headers)),
+                        )),
                     ),
                 )
                 .await

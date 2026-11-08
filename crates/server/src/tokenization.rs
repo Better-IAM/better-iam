@@ -376,6 +376,9 @@ pub fn normalize_value(
             ))
         }
         Some("email") => {
+            if core_js::was_ill_formed(value) {
+                return Err(invalid("email address"));
+            }
             let email = core_js::to_lower(&core_js::trim(value).nfc().collect::<String>());
             if utf16_len(&email) > 254
                 || email.chars().any(is_control)
@@ -400,7 +403,11 @@ pub fn normalize_value(
                     "Values are 1 to {MAX_GENERIC_LENGTH} characters of well-formed text without control or bidirectional formatting characters"
                 ))
             };
-            if value.chars().any(is_control) || value.chars().any(is_bidi) {
+            // An unpaired surrogate reads as U+FFFD, so different values would share a token.
+            if core_js::was_ill_formed(value)
+                || value.chars().any(is_control)
+                || value.chars().any(is_bidi)
+            {
                 return Err(refuse());
             }
             let normalized: String = value.nfc().collect();
