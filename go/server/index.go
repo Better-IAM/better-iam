@@ -540,5 +540,8 @@ func (iam *BetterIam) RotateSecrets(ctx context.Context, options SecretRotationO
 	return RotateSecrets(ctx, iam.Context, options)
 }
 
-// Close stops the background work of the instance (the access usage writer); it does not close the database.
+// Close stops the background work of the instance: the access usage writer's timer (the recorder's stop() in
+// packages/server/src/usage.ts). It neither flushes buffered access usage (call FlushAccessUsage first to keep it)
+// nor closes the store. That matches TypeScript, where the instance has no close at all and the database stays with
+// whoever opened it (the CLI calls iam.store.close() itself): close the store with iam.Store.Close(ctx) after Close.
 func (iam *BetterIam) Close() { iam.Context.Usage.Stop() }
