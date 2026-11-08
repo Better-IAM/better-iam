@@ -157,6 +157,12 @@
       "step": "audit/list",
       "paths": ["$.data[*].metadata.message"],
       "reason": "The audited refusal names the first enrolled host outside the new patterns, checked in the order of (random) host IDs."
+    },
+    {
+      "trace": "tests/activation-approvals.test.ts#001",
+      "step": "audit/list",
+      "paths": ["$.data[*]", "$.data[*].*"],
+      "reason": "Approving an activation appends two audit events back to back; when both land in the same millisecond, audit/list (timestamp descending, then event ID) orders them by their random IDs, so which one tops the page differs per run. The TypeScript server fails this step about 1 run in 10 without this entry."
     }
   ]
 }
