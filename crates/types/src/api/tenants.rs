@@ -34,7 +34,7 @@ impl crate::routes::Operation for AcceptInvitation {
     };
 }
 
-/// Creates a child tenant in the pending state under a parent and emails an invitation to its first owner.
+/// Creates a child tenant in the pending state under a parent and emails an invitation to its first owner, or, for a root principal with activate: true, creates it active with its owner account.
 ///
 /// `POST {basePath}/tenants/create`: input [`CreateInput`], output [`CreateOutput`].
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
@@ -479,6 +479,12 @@ pub struct CreateInput {
     pub authority_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub region: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub activate: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner_email_verified: Option<bool>,
 }
 
 /// Result (`data`) of `tenants/create`.
@@ -486,7 +492,6 @@ pub struct CreateInput {
 #[serde(rename_all = "camelCase")]
 pub struct CreateOutput {
     pub tenant: crate::schemas::Tenant,
-    pub invitation_id: String,
     pub owner_email: String,
 }
 

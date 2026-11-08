@@ -891,8 +891,9 @@ pub fn resolve_config(options: &BetterIamOptions) -> IamResult<ServerConfig> {
     let model = crate::options_value::options_value(options);
     let root = Some(&*model);
     let get = |key: &str| member(root, key);
-    // new URL(options.baseURL): a TypeError for anything that is not an absolute URL.
-    let base_url = Url::parse(&js_string(get("baseURL"))).map_err(|_| internal_error())?;
+    // new URL(options.baseURL), whose TypeError for anything that is not an absolute URL becomes INVALID_CONFIG.
+    let base_url = Url::parse(&js_string(get("baseURL")))
+        .map_err(|_| invalid_config("baseURL must be an absolute URL"))?;
     if base_url.scheme() != "https"
         && !["localhost", "127.0.0.1", "[::1]"].contains(&url_hostname(&base_url).as_str())
     {

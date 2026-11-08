@@ -312,6 +312,11 @@ pub enum SessionKind {
     ApiKey,
     SessionToken,
     Delegated,
+    /// A stored kind this server does not know (a row written by hand or by a newer server). It decodes so the
+    /// credential path refuses it as TypeScript does (`Invalid credential kind`, after the identity and tenant checks)
+    /// instead of failing as a corrupt record, and it never serializes, so the stored kind is never overwritten.
+    #[serde(other, skip_serializing)]
+    Unknown,
 }
 
 impl SessionKind {
@@ -322,6 +327,7 @@ impl SessionKind {
             SessionKind::ApiKey => "api-key",
             SessionKind::SessionToken => "session-token",
             SessionKind::Delegated => "delegated",
+            SessionKind::Unknown => "unknown",
         }
     }
 }
@@ -720,5 +726,20 @@ pub trait IamPlugin: Send + Sync {
     /// Remove plugin-owned records before the server deletes purged tenants in the same transaction.
     async fn purge(&self, _store: &dyn IamStore, _tenant_ids: &[String]) -> IamResult<()> {
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unknown_session_kind_decodes_and_never_serializes() {
+        let kind: SessionKind = serde_json::from_value(serde_json::json!("gizmo")).unwrap();
+        assert_eq!(kind, SessionKind::Unknown);
+        let known: SessionKind = serde_json::from_value(serde_json::json!("api-key")).unwrap();
+        assert_eq!(known, SessionKind::ApiKey);
+        // Writing an unknown kind back would overwrite the stored one, so it refuses instead.
+        assert!(serde_json::to_value(SessionKind::Unknown).is_err());
     }
 }

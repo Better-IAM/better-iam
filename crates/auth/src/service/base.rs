@@ -5,6 +5,7 @@ use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::sync::{Arc, Mutex};
 
+use better_iam_core::boxed;
 use better_iam_core::{
     AuthMethod, AuthenticatedPrincipal, CredentialInput, Filter, IamError, IamResult, IamStoreExt,
     Identity, IdentityKind, IdentityStatus, OutboxKind, Session, SessionClientInfo, SessionKind,
@@ -1400,9 +1401,7 @@ impl AuthService {
         identity: &Identity,
         options: IssueSessionOptions,
     ) -> IamResult<SessionResult> {
-        let active = self
-            .user(tx, &identity.id, Some(&identity.tenant_id))
-            .await?;
+        let active = boxed(|| self.user(tx, &identity.id, Some(&identity.tenant_id))).await?;
         if self.require_email_verification && !active.email_verified {
             return Err(IamError::with_status(
                 "EMAIL_UNVERIFIED",
@@ -1410,19 +1409,19 @@ impl AuthService {
                 403,
             ));
         }
-        if self.mfa_required(tx, &active).await? && options.mfa != Some(true) {
+        if boxed(|| self.mfa_required(tx, &active)).await? && options.mfa != Some(true) {
             return Err(IamError::with_status(
                 "MFA_REQUIRED",
                 "Multi-factor authentication is required",
                 403,
             ));
         }
-        let tenant: Option<Tenant> = get(tx.as_ref(), "tenants", &active.tenant_id).await?;
+        let tenant: Option<Tenant> =
+            boxed(|| get(tx.as_ref(), "tenants", &active.tenant_id)).await?;
         let client = self.current_client();
         let ip = client.as_ref().and_then(|client| client.ip.clone());
         self.assert_ip_allowed(tenant.as_ref(), ip.as_deref())?;
-        self.assert_network_not_blocked(tx, &active.tenant_id, ip.as_deref())
-            .await?;
+        boxed(|| self.assert_network_not_blocked(tx, &active.tenant_id, ip.as_deref())).await?;
         let now = self.now();
         let token = new_credential_token(CredentialTokenType::Ses);
         let mfa = options.mfa.unwrap_or(false);
@@ -1458,11 +1457,12 @@ impl AuthService {
         session.client = client.clone();
         // The previous sign-in, and the attempts that failed since, travel on the session for a "last sign-in"
         // notice; the ledger then restarts from this session.
-        let ledger: Option<SignInLedger> = get(tx.as_ref(), "authSignIns", &active.id).await?;
+        let ledger: Option<SignInLedger> =
+            boxed(|| get(tx.as_ref(), "authSignIns", &active.id)).await?;
         if let Some(ledger) = &ledger {
             session.previous_sign_in = Some(ledger.summary());
         }
-        insert(tx.as_ref(), "sessions", &session).await?;
+        boxed(|| insert(tx.as_ref(), "sessions", &session)).await?;
         let next = SignInLedger {
             id: active.id.clone(),
             tenant_id: active.tenant_id.clone(),
@@ -1476,9 +1476,9 @@ impl AuthService {
             extra: Map::new(),
         };
         if ledger.is_some() {
-            put(tx.as_ref(), "authSignIns", &next).await?;
+            boxed(|| put(tx.as_ref(), "authSignIns", &next)).await?;
         } else {
-            insert(tx.as_ref(), "authSignIns", &next).await?;
+            boxed(|| insert(tx.as_ref(), "authSignIns", &next)).await?;
         }
         // A tenant may cap concurrent sessions per person; the oldest live sessions make room for the new one.
         if let Some(max_sessions) = tenant
@@ -1486,14 +1486,17 @@ impl AuthService {
             .and_then(|tenant| tenant.auth_policy.as_ref())
             .and_then(|policy| policy.max_sessions)
         {
-            let mut live: Vec<Session> = find::<Session>(
-                tx.as_ref(),
-                "sessions",
-                &Filter::new()
-                    .eq("tenantId", active.tenant_id.clone())
-                    .eq("identityId", active.id.clone())
-                    .eq("kind", "user"),
-            )
+            let mut live: Vec<Session> = boxed(|| async {
+                find::<Session>(
+                    tx.as_ref(),
+                    "sessions",
+                    &Filter::new()
+                        .eq("tenantId", active.tenant_id.clone())
+                        .eq("identityId", active.id.clone())
+                        .eq("kind", "user"),
+                )
+                .await
+            })
             .await?
             .into_iter()
             .filter(|item| {
@@ -1503,7 +1506,7 @@ impl AuthService {
             live.sort_by(|a, b| by_number_then_id((a.created_at, &a.id), (b.created_at, &b.id)));
             let excess = (live.len() as f64 - max_sessions).max(0.0);
             for stale in live.iter().take(excess as usize) {
-                self.end_session(tx, &stale.id).await?;
+                boxed(|| self.end_session(tx, &stale.id)).await?;
             }
         }
         let mut metadata = Map::new();
@@ -1514,11 +1517,9 @@ impl AuthService {
             );
         }
         metadata.extend(self.client_metadata());
-        self.audit(tx, &active, "auth:session:create", None, Some(metadata))
-            .await?;
+        boxed(|| self.audit(tx, &active, "auth:session:create", None, Some(metadata))).await?;
         if session.trusted_device_id.is_none() {
-            self.notify_new_sign_in(tx, &active, tenant.as_ref(), &session)
-                .await?;
+            boxed(|| self.notify_new_sign_in(tx, &active, tenant.as_ref(), &session)).await?;
         }
         Ok(SessionResult {
             token,
@@ -1931,20 +1932,18 @@ impl AuthService {
         method: Option<AuthMethod>,
         device_token: Option<&str>,
     ) -> IamResult<SignInResult> {
-        let active = self
-            .user(tx, &identity.id, Some(&identity.tenant_id))
-            .await?;
+        let active = boxed(|| self.user(tx, &identity.id, Some(&identity.tenant_id))).await?;
         if let Some(method) = method {
-            self.method_allowed(tx, &active.tenant_id, method).await?;
+            boxed(|| self.method_allowed(tx, &active.tenant_id, method)).await?;
         }
-        if self.mfa_required(tx, &active).await? {
+        if boxed(|| self.mfa_required(tx, &active)).await? {
             let device = match device_token.filter(|token| !token.is_empty()) {
-                Some(token) => self.trusted_device(tx, &active, token).await?,
+                Some(token) => boxed(|| self.trusted_device(tx, &active, token)).await?,
                 None => None,
             };
             if let Some(device) = device {
-                return self
-                    .issue_session(
+                return boxed(|| {
+                    self.issue_session(
                         tx,
                         &active,
                         IssueSessionOptions {
@@ -1954,13 +1953,15 @@ impl AuthService {
                             ..Default::default()
                         },
                     )
-                    .await
-                    .map(SignInResult::Session);
+                })
+                .await
+                .map(SignInResult::Session);
             }
-            let mfa: Option<MfaRecord> = get(tx.as_ref(), "authMfa", &active.id).await?;
+            let mfa: Option<MfaRecord> = boxed(|| get(tx.as_ref(), "authMfa", &active.id)).await?;
             let enabled = mfa.is_some_and(|mfa| mfa.enabled);
             // Emailed one-time codes stand in for an authenticator only when nothing is enrolled and policy allows it.
-            let tenant: Option<Tenant> = get(tx.as_ref(), "tenants", &active.tenant_id).await?;
+            let tenant: Option<Tenant> =
+                boxed(|| get(tx.as_ref(), "tenants", &active.tenant_id)).await?;
             let email_codes = !enabled
                 && !active.root_admin
                 && active
@@ -1975,7 +1976,7 @@ impl AuthService {
                     .and_then(|policy| policy.mfa_email_codes)
                     .or(self.options.mfa_email_codes)
                     .unwrap_or(false);
-            let passkeys = self.passkey_factor(tx, &active).await?;
+            let passkeys = boxed(|| self.passkey_factor(tx, &active)).await?;
             let mut payload = Map::new();
             if let Some(method) = method {
                 payload.insert(
@@ -1986,8 +1987,8 @@ impl AuthService {
             if email_codes {
                 payload.insert("emailCodes".to_owned(), Value::String("1".to_owned()));
             }
-            let challenge = self
-                .challenge(
+            let challenge = boxed(|| {
+                self.challenge(
                     tx,
                     &active,
                     "mfa-login",
@@ -1996,7 +1997,8 @@ impl AuthService {
                     None,
                     None,
                 )
-                .await?;
+            })
+            .await?;
             return Ok(SignInResult::MfaRequired(MfaRequired {
                 mfa_required: true,
                 challenge,
@@ -2007,14 +2009,16 @@ impl AuthService {
                 passkey_available: passkeys.then_some(true),
             }));
         }
-        self.issue_session(
-            tx,
-            &active,
-            IssueSessionOptions {
-                method,
-                ..Default::default()
-            },
-        )
+        boxed(|| {
+            self.issue_session(
+                tx,
+                &active,
+                IssueSessionOptions {
+                    method,
+                    ..Default::default()
+                },
+            )
+        })
         .await
         .map(SignInResult::Session)
     }
@@ -2076,16 +2080,18 @@ impl AuthService {
             let token = token.clone();
             self.store()
                 .transaction(|tx| async move {
-                    let session: Option<Session> = find::<Session>(
-                        tx.as_ref(),
-                        "sessions",
-                        &Filter::new().eq("tokenHash", hash_token(&token)),
-                    )
+                    let session: Option<Session> = boxed(|| async {
+                        find::<Session>(
+                            tx.as_ref(),
+                            "sessions",
+                            &Filter::new().eq("tokenHash", hash_token(&token)),
+                        )
+                        .await
+                    })
                     .await?
                     .into_iter()
                     .next();
-                    self.validate_stored_session(&tx, session, Some(&sink))
-                        .await
+                    boxed(|| self.validate_stored_session(&tx, session, Some(&sink))).await
                 })
                 .await
         };
@@ -2099,7 +2105,7 @@ impl AuthService {
                 if let Some(mismatch) = mismatch
                     && error.code == "SESSION_NETWORK_MISMATCH"
                 {
-                    self.record_session_mismatch(&mismatch).await;
+                    boxed(|| self.record_session_mismatch(&mismatch)).await;
                 }
                 return Err(error);
             }
@@ -2166,7 +2172,8 @@ impl AuthService {
             }
             _ => return Err(invalid()),
         };
-        let tenant: Option<Tenant> = get(tx.as_ref(), "tenants", &session.tenant_id).await?;
+        let tenant: Option<Tenant> =
+            boxed(|| get(tx.as_ref(), "tenants", &session.tenant_id)).await?;
         let SessionLimits {
             lifetime_ms,
             idle_timeout_ms,
@@ -2177,9 +2184,8 @@ impl AuthService {
         {
             return Err(invalid());
         }
-        let identity = self
-            .user(tx, &session.identity_id, Some(&session.tenant_id))
-            .await?;
+        let identity =
+            boxed(|| self.user(tx, &session.identity_id, Some(&session.tenant_id))).await?;
         if self.require_email_verification && !identity.email_verified {
             return Err(IamError::with_status(
                 "EMAIL_UNVERIFIED",
@@ -2187,25 +2193,25 @@ impl AuthService {
                 403,
             ));
         }
-        if self.mfa_required(tx, &identity).await? && !session.mfa {
+        if boxed(|| self.mfa_required(tx, &identity)).await? && !session.mfa {
             return Err(IamError::with_status(
                 "MFA_REQUIRED",
                 "Multi-factor authentication is required",
                 403,
             ));
         }
-        self.assert_impersonation_source(tx, &session).await?;
+        boxed(|| self.assert_impersonation_source(tx, &session)).await?;
         // A session issued from a network the tenant no longer allows, or has since blocked, stops working.
         let session_ip = session.client.as_ref().and_then(|client| client.ip.clone());
         self.assert_ip_allowed(tenant.as_ref(), session_ip.as_deref())?;
-        self.assert_network_not_blocked(tx, &session.tenant_id, session_ip.as_deref())
+        boxed(|| self.assert_network_not_blocked(tx, &session.tenant_id, session_ip.as_deref()))
             .await?;
         // The address presenting the cookie now is judged against network blocks too.
         let presented = self.client_ip().filter(|ip| !ip.is_empty());
         if let Some(presented) = &presented
             && Some(presented) != session_ip.as_ref()
         {
-            self.assert_network_not_blocked(tx, &session.tenant_id, Some(presented))
+            boxed(|| self.assert_network_not_blocked(tx, &session.tenant_id, Some(presented)))
                 .await?;
         }
         // Opt-in per tenant: the session works only from the network it was issued from.
@@ -2233,7 +2239,7 @@ impl AuthService {
         // A touch at most every tenth of the idle window (at most once a minute).
         if self.now() - session.last_seen_at >= js_min(60_000.0, (idle_timeout_ms / 10.0).floor()) {
             session.last_seen_at = self.now();
-            put(tx.as_ref(), "sessions", &session).await?;
+            boxed(|| put(tx.as_ref(), "sessions", &session)).await?;
         }
         Ok(AuthenticatedPrincipal {
             identity,

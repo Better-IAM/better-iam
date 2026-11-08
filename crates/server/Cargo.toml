@@ -34,6 +34,8 @@ regex.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
+# SHA-1 key identifiers of X.509 certificates (RFC 5280 4.2.1.2, x509.ts keyIdentifier).
+sha1 = "0.10"
 thiserror.workspace = true
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "sync", "macros", "time", "net", "signal"] }
 bytes.workspace = true
@@ -44,18 +46,35 @@ hyper-util = { version = "0.1", features = ["tokio"] }
 tower-service = "0.3"
 base64 = "0.22"
 hex = "0.4"
+# The system resolver for the TXT lookups of domain and hostname verification (`node:dns/promises` resolveTxt).
+hickory-resolver = "0.25"
 hmac = "0.12"
+# AES-256-GCM under raw data keys (tokenization.ts sealValue / openValue).
+aes-gcm = "0.10"
 subtle = "2"
 url = "2"
 uuid = { version = "1", features = ["v4"] }
 # IANA time zones for access windows (Intl.DateTimeFormat) and the ICU root collation of String#localeCompare.
 jiff = { version = "0.2", default-features = false, features = ["std", "tz-system", "tzdb-bundle-always"] }
 icu_collator = "2"
+# JOSE for session JWTs (EdDSA, ES256) and external web-identity tokens (RS*, PS*, ES256, ES384, EdDSA).
+ed25519-dalek = { version = "2", features = ["pkcs8"] }
+p256 = { version = "0.13", default-features = false, features = ["ecdsa", "std", "pkcs8"] }
+p384 = { version = "0.13", default-features = false, features = ["ecdsa", "std", "pkcs8"] }
+p521 = { version = "0.13", default-features = false, features = ["ecdsa", "std"] }
+rsa = { version = "0.9", default-features = false, features = ["std", "sha2"] }
+# Key management (kms.ts): randomness for key generation and RSA padding (AES-256-GCM above).
+rand = "0.8"
+# zlib (`node:zlib` deflateSync/inflateSync) for Token Status Lists.
+miniz_oxide = "0.9"
+# NFKD decomposition for team slugs derived from names (String#normalize).
+unicode-normalization = "0.1"
 
 [dev-dependencies]
 better-iam-adapter-sqlite.workspace = true
 tempfile.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time", "net", "io-util"] }
+rand = "0.8"
 
 [lib]
 doctest = false

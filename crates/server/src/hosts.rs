@@ -7,6 +7,7 @@
 
 use std::sync::{Arc, LazyLock};
 
+use better_iam_core::boxed;
 use better_iam_core::{IamError, IamResult};
 use futures::future::BoxFuture;
 use indexmap::IndexMap;
@@ -822,20 +823,22 @@ impl Hosts {
             let Some(alias) = captures.name("tenant").map(|m| m.as_str().to_owned()) else {
                 continue;
             };
-            let record = tx.get("tenantAliases", &alias).await?;
+            let record = boxed(|| tx.get("tenantAliases", &alias)).await?;
             let owner = match &record {
                 Some(record) => {
-                    Self::tenant(
-                        tx,
-                        record.get("tenantId").and_then(Value::as_str).unwrap_or(""),
-                    )
+                    boxed(|| {
+                        Self::tenant(
+                            tx,
+                            record.get("tenantId").and_then(Value::as_str).unwrap_or(""),
+                        )
+                    })
                     .await?
                 }
                 None => None,
             };
-            let Some(realm) = self.active(tx, owner).await? else {
+            let Some(realm) = boxed(|| self.active(tx, owner)).await? else {
                 if record.is_none()
-                    && let Some(elsewhere) = self.alias_elsewhere(&alias).await
+                    && let Some(elsewhere) = boxed(|| self.alias_elsewhere(&alias)).await
                 {
                     return Err(elsewhere.into());
                 }
@@ -859,10 +862,10 @@ impl Hosts {
         }
         if self.hosts.custom_hostnames {
             let hostname = strip_port(&host);
-            if let Some(owner) = tx.get("hostnameOwners", hostname).await? {
+            if let Some(owner) = boxed(|| tx.get("hostnameOwners", hostname)).await? {
                 let tenant_id = owner.get("tenantId").and_then(Value::as_str).unwrap_or("");
-                let owner = Self::tenant(tx, tenant_id).await?;
-                let Some(realm) = self.active(tx, owner).await? else {
+                let owner = boxed(|| Self::tenant(tx, tenant_id)).await?;
+                let Some(realm) = boxed(|| self.active(tx, owner)).await? else {
                     return Err(IamError::with_status(
                         "NOT_FOUND",
                         "No organization uses this address",

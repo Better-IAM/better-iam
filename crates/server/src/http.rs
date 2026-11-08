@@ -11,9 +11,10 @@ use better_iam_auth::service::mfa::ConfirmMfaInput;
 use better_iam_auth::{AuthService, MfaCredential, RequestHost};
 use better_iam_core::{
     CredentialInput, IamError, IamResult, OutboxMessage, Session, SessionClientInfo, SessionKind,
-    js as core_js,
+    boxed, js as core_js,
 };
 use bytes::Bytes;
+use futures::future::BoxFuture;
 use http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode};
 use serde::Serialize;
 use serde_json::{Map, Value, json};
@@ -321,7 +322,13 @@ pub fn error_response(error: &IamError) -> HttpResponse {
     let retry_after = retry_after_ms(error);
     let mut body = Map::new();
     body.insert("code".into(), Value::String(error.code.clone()));
-    body.insert("message".into(), Value::String(error.message.clone()));
+    // An exception that is not an IamError keeps its message to itself (`known ? error.message : '...'`).
+    let message = if crate::js::thrown_name(error).is_some() {
+        crate::js::internal_error().message
+    } else {
+        error.message.clone()
+    };
+    body.insert("message".into(), Value::String(message));
     if let Some(retry_after) = retry_after {
         body.insert("retryAfterMs".into(), crate::js::number(retry_after));
     }
@@ -512,6 +519,12 @@ fn to_json<T: Serialize>(value: T) -> IamResult<Value> {
     serde_json::to_value(value).map_err(|_| crate::js::internal_error())
 }
 
+/// Awaits a boxed auth method and answers its result as JSON (each method of [`AuthApi::invoke`] is boxed, so
+/// `invoke`'s frame holds none of their futures).
+async fn json_of<T: Serialize>(future: BoxFuture<'_, IamResult<T>>) -> IamResult<Value> {
+    to_json(future.await?)
+}
+
 /// Header pairs of a JSON `headers` member (`{ name: value }` or `[[name, value]]`).
 fn json_headers(value: Option<&Value>) -> Option<Vec<(String, String)>> {
     match value? {
@@ -535,6 +548,61 @@ fn json_headers(value: Option<&Value>) -> Option<Vec<(String, String)>> {
         ),
         _ => None,
     }
+}
+
+/// `beginMfa`'s credential: a sign-in challenge from `body`, otherwise `credential` (the router's `dispatchAuth`).
+fn begin_mfa_credential(
+    body: &Map<String, Value>,
+    credential: &CredentialInput,
+) -> IamResult<MfaCredential> {
+    Ok(match body.get("challenge") {
+        Some(Value::String(challenge)) => MfaCredential::Challenge {
+            tenant_id: text(body.get("tenantId"), "tenantId", 256)?,
+            challenge: challenge.clone(),
+        },
+        _ => MfaCredential::Credential(credential.clone()),
+    })
+}
+
+/// `confirmMfa`'s input: the login challenge named in `body.credential`, otherwise `credential`, with the code and
+/// `rememberDevice` from `body` (the router's `dispatchAuth`).
+fn confirm_mfa_input(
+    body: &Map<String, Value>,
+    credential: &CredentialInput,
+) -> IamResult<ConfirmMfaInput> {
+    let empty = Map::new();
+    let challenge = if crate::js::truthy(body.get("credential")) {
+        object(body.get("credential"))?
+    } else {
+        &empty
+    };
+    let mfa = match challenge.get("challenge") {
+        Some(Value::String(token)) => MfaCredential::Challenge {
+            tenant_id: text(challenge.get("tenantId"), "tenantId", 256)?,
+            challenge: token.clone(),
+        },
+        _ => MfaCredential::Credential(credential.clone()),
+    };
+    Ok(ConfirmMfaInput {
+        credential: mfa,
+        code: text(body.get("code"), "code", 256)?,
+        remember_device: body.get("rememberDevice") == Some(&Value::Bool(true)),
+    })
+}
+
+/// A credential spelled as a JSON object (`{ headers?, token? }`), as in-process callers pass it.
+fn json_credential(value: Option<&Value>) -> CredentialInput {
+    CredentialInput {
+        headers: json_headers(value.and_then(|value| value.get("headers"))),
+        token: value
+            .and_then(|value| value.get("token"))
+            .and_then(Value::as_str)
+            .map(str::to_owned),
+    }
+}
+
+fn endpoint_not_found() -> IamError {
+    IamError::with_status("NOT_FOUND", "Endpoint not found", 404)
 }
 
 impl AuthApi {
@@ -611,86 +679,133 @@ impl AuthApi {
         }
     }
 
-    async fn invoke(&self, method: &str, args: AuthArgs) -> IamResult<Value> {
-        let auth = &self.auth;
-        let empty = Value::Object(Map::new());
-        match args {
-            AuthArgs::BeginMfa(credential) => to_json(auth.begin_mfa(&credential).await?),
-            AuthArgs::ConfirmMfa(input) => to_json(auth.confirm_mfa(&input).await?),
-            AuthArgs::Public(body) => match method {
-                "signUp" => to_json(auth.sign_up(&body).await?),
-                "signIn" => to_json(auth.sign_in(&body).await?),
-                "requestEmailVerification" => {
-                    to_json(auth.request_email_verification(&body).await?)
+    /// Runs one auth method. A plain function returning a boxed future: the in-process forms call it recursively,
+    /// and callers hold only a pointer.
+    fn invoke<'a>(&'a self, method: &'a str, args: AuthArgs) -> BoxFuture<'a, IamResult<Value>> {
+        Box::pin(async move {
+            let auth = &self.auth;
+            let empty = Value::Object(Map::new());
+            match args {
+                AuthArgs::BeginMfa(credential) => {
+                    json_of(boxed(|| auth.begin_mfa(&credential))).await
                 }
-                "verifyEmail" => to_json(auth.verify_email(&body).await?),
-                "requestPasswordReset" => to_json(auth.request_password_reset(&body).await?),
-                "resetPassword" => to_json(auth.reset_password(&body).await?),
-                "confirmEmailChange" => to_json(auth.confirm_email_change(&body).await?),
-                "startPasswordless" => to_json(auth.start_passwordless(&body).await?),
-                "finishPasswordless" => to_json(auth.finish_passwordless(&body).await?),
-                "verifyMfa" => to_json(auth.verify_mfa(&body).await?),
-                "requestMfaCode" => to_json(auth.request_mfa_code(&body).await?),
-                "recoverMfa" => to_json(auth.recover_mfa(&body).await?),
-                "beginPasskeyAuthentication" => {
-                    to_json(auth.begin_passkey_authentication(&body).await?)
-                }
-                "finishPasskeyAuthentication" => {
-                    to_json(auth.finish_passkey_authentication(&body).await?)
-                }
-                "beginPasskeyMfa" => to_json(auth.begin_passkey_mfa(&body).await?),
-                "finishPasskeyMfa" => to_json(auth.finish_passkey_mfa(&body).await?),
-                // An authenticated method called with a body as its credential (in-process callers).
-                _ => {
-                    let credential = CredentialInput {
-                        headers: json_headers(body.get("headers")),
-                        token: body.get("token").and_then(Value::as_str).map(str::to_owned),
-                    };
-                    Box::pin(self.invoke(method, AuthArgs::Authenticated(credential, empty))).await
-                }
-            },
-            AuthArgs::Authenticated(credential, body) => {
-                let c = &credential;
-                match method {
-                    "signOut" => to_json(auth.sign_out(c).await?),
-                    "getSession" => to_json(auth.get_session(c).await?),
-                    "listSessions" => to_json(auth.list_sessions(c).await?),
-                    "revokeSession" => to_json(auth.revoke_session(c, &body).await?),
-                    "revokeOtherSessions" => to_json(auth.revoke_other_sessions(c).await?),
-                    "changePassword" => to_json(auth.change_password(c, &body).await?),
-                    "requestEmailChange" => to_json(auth.request_email_change(c, &body).await?),
-                    "beginPasskeyRegistration" => {
-                        to_json(auth.begin_passkey_registration(c).await?)
+                AuthArgs::ConfirmMfa(input) => json_of(boxed(|| auth.confirm_mfa(&input))).await,
+                AuthArgs::Public(body) => match method {
+                    "signUp" => json_of(boxed(|| auth.sign_up(&body))).await,
+                    "signIn" => json_of(boxed(|| auth.sign_in(&body))).await,
+                    "requestEmailVerification" => {
+                        json_of(boxed(|| auth.request_email_verification(&body))).await
                     }
-                    "finishPasskeyRegistration" => {
-                        to_json(auth.finish_passkey_registration(c, &body).await?)
+                    "verifyEmail" => json_of(boxed(|| auth.verify_email(&body))).await,
+                    "requestPasswordReset" => {
+                        json_of(boxed(|| auth.request_password_reset(&body))).await
                     }
-                    "startPhoneVerification" => {
-                        to_json(auth.start_phone_verification(c, &body).await?)
+                    "resetPassword" => json_of(boxed(|| auth.reset_password(&body))).await,
+                    "confirmEmailChange" => {
+                        json_of(boxed(|| auth.confirm_email_change(&body))).await
                     }
-                    "confirmPhoneVerification" => {
-                        to_json(auth.confirm_phone_verification(c, &body).await?)
+                    "startPasswordless" => json_of(boxed(|| auth.start_passwordless(&body))).await,
+                    "finishPasswordless" => {
+                        json_of(boxed(|| auth.finish_passwordless(&body))).await
                     }
-                    "reauthenticate" => to_json(auth.reauthenticate(c, &body).await?),
-                    "listPasskeys" => to_json(auth.list_passkeys(c).await?),
-                    "deletePasskey" => to_json(auth.delete_passkey(c, &body).await?),
-                    "renamePasskey" => to_json(auth.rename_passkey(c, &body).await?),
-                    "regenerateRecoveryCodes" => to_json(auth.regenerate_recovery_codes(c).await?),
-                    "disableMfa" => to_json(auth.disable_mfa(c).await?),
-                    "listTrustedDevices" => to_json(auth.list_trusted_devices(c).await?),
-                    "revokeTrustedDevice" => to_json(auth.revoke_trusted_device(c, &body).await?),
-                    "revokeTrustedDevices" => to_json(auth.revoke_trusted_devices(c).await?),
-                    "listSecurityEvents" => to_json(auth.list_security_events(c, &body).await?),
-                    "mfaStatus" => to_json(auth.mfa_status(c).await?),
-                    "beginMfa" => to_json(
-                        auth.begin_mfa(&MfaCredential::Credential(credential.clone()))
-                            .await?,
-                    ),
-                    // A public method called with a credential (in-process callers): the body is its input.
-                    _ => Box::pin(self.invoke(method, AuthArgs::Public(body))).await,
+                    "verifyMfa" => json_of(boxed(|| auth.verify_mfa(&body))).await,
+                    "requestMfaCode" => json_of(boxed(|| auth.request_mfa_code(&body))).await,
+                    "recoverMfa" => json_of(boxed(|| auth.recover_mfa(&body))).await,
+                    "beginPasskeyAuthentication" => {
+                        json_of(boxed(|| auth.begin_passkey_authentication(&body))).await
+                    }
+                    "finishPasskeyAuthentication" => {
+                        json_of(boxed(|| auth.finish_passkey_authentication(&body))).await
+                    }
+                    "beginPasskeyMfa" => json_of(boxed(|| auth.begin_passkey_mfa(&body))).await,
+                    "finishPasskeyMfa" => json_of(boxed(|| auth.finish_passkey_mfa(&body))).await,
+                    // In-process callers: `beginMfa(credential)` and `confirmMfa({ credential, code, rememberDevice })`.
+                    "beginMfa" => {
+                        let map = body.as_object().cloned().unwrap_or_default();
+                        let credential = begin_mfa_credential(&map, &json_credential(Some(&body)))?;
+                        json_of(boxed(|| auth.begin_mfa(&credential))).await
+                    }
+                    "confirmMfa" => {
+                        let map = body.as_object().cloned().unwrap_or_default();
+                        let input =
+                            confirm_mfa_input(&map, &json_credential(map.get("credential")))?;
+                        json_of(boxed(|| auth.confirm_mfa(&input))).await
+                    }
+                    // An authenticated method called with a body as its credential (in-process callers). The
+                    // authenticated arm handles every one of these itself, so this never bounces back here.
+                    _ if AUTHENTICATED_AUTH_METHODS.contains(&method) => {
+                        let credential = json_credential(Some(&body));
+                        self.invoke(method, AuthArgs::Authenticated(credential, empty))
+                            .await
+                    }
+                    _ => Err(endpoint_not_found()),
+                },
+                AuthArgs::Authenticated(credential, body) => {
+                    let c = &credential;
+                    match method {
+                        "signOut" => json_of(boxed(|| auth.sign_out(c))).await,
+                        "getSession" => json_of(boxed(|| auth.get_session(c))).await,
+                        "listSessions" => json_of(boxed(|| auth.list_sessions(c))).await,
+                        "revokeSession" => json_of(boxed(|| auth.revoke_session(c, &body))).await,
+                        "revokeOtherSessions" => {
+                            json_of(boxed(|| auth.revoke_other_sessions(c))).await
+                        }
+                        "changePassword" => json_of(boxed(|| auth.change_password(c, &body))).await,
+                        "requestEmailChange" => {
+                            json_of(boxed(|| auth.request_email_change(c, &body))).await
+                        }
+                        "beginPasskeyRegistration" => {
+                            json_of(boxed(|| auth.begin_passkey_registration(c))).await
+                        }
+                        "finishPasskeyRegistration" => {
+                            json_of(boxed(|| auth.finish_passkey_registration(c, &body))).await
+                        }
+                        "startPhoneVerification" => {
+                            json_of(boxed(|| auth.start_phone_verification(c, &body))).await
+                        }
+                        "confirmPhoneVerification" => {
+                            json_of(boxed(|| auth.confirm_phone_verification(c, &body))).await
+                        }
+                        "reauthenticate" => json_of(boxed(|| auth.reauthenticate(c, &body))).await,
+                        "listPasskeys" => json_of(boxed(|| auth.list_passkeys(c))).await,
+                        "deletePasskey" => json_of(boxed(|| auth.delete_passkey(c, &body))).await,
+                        "renamePasskey" => json_of(boxed(|| auth.rename_passkey(c, &body))).await,
+                        "regenerateRecoveryCodes" => {
+                            json_of(boxed(|| auth.regenerate_recovery_codes(c))).await
+                        }
+                        "disableMfa" => json_of(boxed(|| auth.disable_mfa(c))).await,
+                        "listTrustedDevices" => {
+                            json_of(boxed(|| auth.list_trusted_devices(c))).await
+                        }
+                        "revokeTrustedDevice" => {
+                            json_of(boxed(|| auth.revoke_trusted_device(c, &body))).await
+                        }
+                        "revokeTrustedDevices" => {
+                            json_of(boxed(|| auth.revoke_trusted_devices(c))).await
+                        }
+                        "listSecurityEvents" => {
+                            json_of(boxed(|| auth.list_security_events(c, &body))).await
+                        }
+                        "mfaStatus" => json_of(boxed(|| auth.mfa_status(c))).await,
+                        "beginMfa" => {
+                            let mfa = MfaCredential::Credential(credential.clone());
+                            json_of(boxed(|| auth.begin_mfa(&mfa))).await
+                        }
+                        "confirmMfa" => {
+                            let map = body.as_object().cloned().unwrap_or_default();
+                            let input = confirm_mfa_input(&map, c)?;
+                            json_of(boxed(|| auth.confirm_mfa(&input))).await
+                        }
+                        // A public method called with a credential (in-process callers): the body is its input. The
+                        // public arm handles every one of these itself, so this never bounces back here.
+                        _ if PUBLIC_AUTH_METHODS.contains(&method) => {
+                            self.invoke(method, AuthArgs::Public(body)).await
+                        }
+                        _ => Err(endpoint_not_found()),
+                    }
                 }
             }
-        }
+        })
     }
 }
 
@@ -832,8 +947,34 @@ impl Http {
             .push(Arc::new(MountedProtocol(protocol)));
     }
 
+    /// `followableRedirect(value)`: a redirect a protocol asks for (`x-better-iam-redirect`, the SAML ACS's
+    /// `afterSignIn`): a path on this site or a URL on this deployment's origin or one of `trustedOrigins`. Anything
+    /// else is not followed.
+    fn followable_redirect(&self, value: Option<&str>) -> Option<String> {
+        let value = value.filter(|value| !value.is_empty())?;
+        if value.encode_utf16().count() > 4096
+            || value
+                .chars()
+                .any(|c| c <= '\u{1f}' || c == '\u{7f}' || c == '\\')
+        {
+            return None;
+        }
+        if value.starts_with('/') {
+            return (!value.starts_with("//")).then(|| value.to_owned());
+        }
+        let target = url::Url::parse(value).ok()?;
+        (target.username().is_empty()
+            && target.password().is_none()
+            && self
+                .ctx
+                .config
+                .trusted_origins
+                .contains(&crate::hosts::url_origin(&target)))
+        .then(|| target.as_str().to_owned())
+    }
+
     /// `protocolResponse(request)`: the first mount that answers; a JSON answer with `token` and `session.expiresAt`
-    /// sets the session cookie.
+    /// sets the session cookie, and a followable `x-better-iam-redirect` turns the answer into a 303 to that page.
     async fn protocol_response(&self, request: &HttpRequest) -> IamResult<Option<HttpResponse>> {
         let mounts: Vec<Arc<dyn ProtocolMount>> = self
             .ctx
@@ -845,6 +986,12 @@ impl Http {
             let Some(mut response) = protocol.handle(request).await? else {
                 continue;
             };
+            let hint = header_joined(response.headers(), "x-better-iam-redirect");
+            let redirect = self.followable_redirect(hint.as_deref());
+            if hint.is_some() {
+                response.headers_mut().remove("x-better-iam-redirect");
+            }
+            let mut cookie = None;
             let json = response.status().is_success()
                 && header_str(response.headers(), "content-type")
                     .is_some_and(|value| value.contains("application/json"));
@@ -858,9 +1005,31 @@ impl Http {
                         .and_then(Value::as_f64),
                 )
             {
-                let cookie =
-                    self.session_cookie(token, expires_at, self.persistent_for(request.headers()));
-                append_header(response.headers_mut(), "set-cookie", &cookie);
+                cookie = Some(self.session_cookie(
+                    token,
+                    expires_at,
+                    self.persistent_for(request.headers()),
+                ));
+            }
+            // A browser sign-in that finishes on a page: 303 there, carrying the protocol's cookies and the session
+            // cookie, never the body (the token stays out of the page).
+            if let Some(redirect) = redirect {
+                let mut headers = HeaderMap::new();
+                append_header(&mut headers, "location", &redirect);
+                append_header(&mut headers, "cache-control", "no-store");
+                for value in response.headers().get_all("set-cookie") {
+                    headers.append(http::header::SET_COOKIE, value.clone());
+                }
+                if let Some(cookie) = &cookie {
+                    append_header(&mut headers, "set-cookie", cookie);
+                }
+                let mut redirected = HttpResponse::new(Bytes::new());
+                *redirected.status_mut() = StatusCode::SEE_OTHER;
+                *redirected.headers_mut() = headers;
+                return Ok(Some(redirected));
+            }
+            if let Some(cookie) = &cookie {
+                append_header(response.headers_mut(), "set-cookie", cookie);
             }
             return Ok(Some(response));
         }
@@ -980,12 +1149,12 @@ impl Http {
             return Err(not_found());
         }
         if *group == "auth" {
-            return self.dispatch_auth(method, body, credential).await;
+            return boxed(|| self.dispatch_auth(method, body, credential)).await;
         }
         if !ROUTE_GROUPS.contains(group) {
             return Err(not_found());
         }
-        match dispatch_route(&self.api, path, body.clone(), credential).await {
+        match boxed(|| dispatch_route(&self.api, path, body.clone(), credential)).await {
             Some(result) => result,
             None => Err(not_found()),
         }
@@ -1007,34 +1176,11 @@ impl Http {
         }
         // MFA enrollment takes either a sign-in challenge from the body or the request's own credential.
         if method == "beginMfa" {
-            let mfa = match body.get("challenge") {
-                Some(Value::String(challenge)) => MfaCredential::Challenge {
-                    tenant_id: text(body.get("tenantId"), "tenantId", 256)?,
-                    challenge: challenge.clone(),
-                },
-                _ => MfaCredential::Credential(credential.clone()),
-            };
+            let mfa = begin_mfa_credential(body, credential)?;
             return self.auth_api.call(method, AuthArgs::BeginMfa(mfa)).await;
         }
         if method == "confirmMfa" {
-            let empty = Map::new();
-            let challenge = if crate::js::truthy(body.get("credential")) {
-                object(body.get("credential"))?
-            } else {
-                &empty
-            };
-            let mfa = match challenge.get("challenge") {
-                Some(Value::String(token)) => MfaCredential::Challenge {
-                    tenant_id: text(challenge.get("tenantId"), "tenantId", 256)?,
-                    challenge: token.clone(),
-                },
-                _ => MfaCredential::Credential(credential.clone()),
-            };
-            let input = ConfirmMfaInput {
-                credential: mfa,
-                code: text(body.get("code"), "code", 256)?,
-                remember_device: body.get("rememberDevice") == Some(&Value::Bool(true)),
-            };
+            let input = confirm_mfa_input(body, credential)?;
             return self
                 .auth_api
                 .call(method, AuthArgs::ConfirmMfa(input))
@@ -1271,7 +1417,7 @@ impl Http {
             .iter()
             .map(|id| ("x-request-id".to_owned(), id.clone()))
             .collect();
-        match Box::pin(self.handle(&request, &request_id, &mut answer_headers)).await {
+        match boxed(|| self.handle(&request, &request_id, &mut answer_headers)).await {
             Ok(response) => response,
             Err(error) => with_headers(error_response(&error), &answer_headers),
         }
@@ -1289,7 +1435,7 @@ impl Http {
         // client so network allowlists, blocks, and IP binding judge those sessions like any other sign-in.
         let client = client_from_request(ctx.options.http.as_ref(), &head_of(request));
         if let Some(mounted) = auth
-            .with_client(client.clone(), self.protocol_response(request))
+            .with_client(client.clone(), boxed(|| self.protocol_response(request)))
             .await?
         {
             let extra: Vec<(String, String)> = request_id
@@ -1354,7 +1500,7 @@ impl Http {
         // Awaited so a refusal inside becomes an error response like every other failure here.
         if method == Method::GET {
             return Ok(with_headers(
-                self.operational(&pathname, request).await?,
+                boxed(|| self.operational(&pathname, request)).await?,
                 answer_headers,
             ));
         }
@@ -1385,8 +1531,10 @@ impl Http {
             ));
         }
         let raw = String::from_utf8_lossy(request.body()).into_owned();
-        let mut body = match core_js::parse(&raw) {
-            Ok(Value::Object(map)) => map,
+        // Strings that held unpaired surrogates read as U+FFFD; the set keeps them apart from a literal U+FFFD for the
+        // checks that refuse text which is not well-formed.
+        let (mut body, ill_formed) = match core_js::parse_reporting(&raw) {
+            Ok((Value::Object(map), ill_formed)) => (map, ill_formed),
             _ => return Err(IamError::new("INVALID_INPUT", "Invalid JSON")),
         };
         let path = pathname[base_path.len() + 1..].to_owned();
@@ -1473,12 +1621,16 @@ impl Http {
                     origin: origin.clone(),
                     tenant_id: pinned.as_ref().map(|pinned| pinned.tenant_id.clone()),
                 };
+                let credential = credential_of(headers);
+                let dispatch = boxed(|| self.dispatch(&path, &body, &credential));
                 auth.with_client(
                     client.clone(),
-                    auth.with_request_host(
-                        Some(host),
-                        Box::pin(self.dispatch(&path, &body, &credential_of(headers))),
-                    ),
+                    boxed(|| {
+                        auth.with_request_host(
+                            Some(host),
+                            boxed(|| core_js::with_ill_formed(ill_formed, dispatch)),
+                        )
+                    }),
                 )
                 .await
             }
@@ -1655,9 +1807,27 @@ impl Http {
                 body
             })
             .map_err(|_| IamError::with_status("INVALID_REQUEST", "Invalid request target", 400))?;
-        *request.headers_mut() = headers;
+        *request.headers_mut() = node_headers(headers);
         Ok(self.handler(request).await)
     }
+}
+
+/// The headers the node transport hands the handler: like `nodeHandler`, which copies only truthy values, a header
+/// sent once with an empty value (`cookie: ''`) counts as absent. A repeated header is kept, since Node joins its values
+/// into a non-empty one.
+fn node_headers(mut headers: HeaderMap) -> HeaderMap {
+    let empty: Vec<HeaderName> = headers
+        .keys()
+        .filter(|key| {
+            let mut values = headers.get_all(*key).iter();
+            matches!((values.next(), values.next()), (Some(value), None) if value.is_empty())
+        })
+        .cloned()
+        .collect();
+    for key in empty {
+        headers.remove(key);
+    }
+    headers
 }
 
 /// `tower::Service` over the fetch-style handler, for tower-based servers and middleware (axum and actix adapters live in
@@ -1712,6 +1882,19 @@ mod tests {
         assert_eq!(request_id_of(&headers).as_deref(), Some("abc-1:2.3_4"));
         headers.insert("x-request-id", HeaderValue::from_static("bad id"));
         assert_eq!(request_id_of(&headers), None);
+    }
+
+    #[test]
+    fn node_headers_drop_empty_values() {
+        let mut headers = HeaderMap::new();
+        headers.insert("cookie", HeaderValue::from_static(""));
+        headers.insert("user-agent", HeaderValue::from_static("agent"));
+        headers.append("accept", HeaderValue::from_static(""));
+        headers.append("accept", HeaderValue::from_static("text/html"));
+        let kept = node_headers(headers);
+        assert!(!kept.contains_key("cookie"));
+        assert_eq!(kept.get("user-agent").unwrap(), "agent");
+        assert_eq!(kept.get_all("accept").iter().count(), 2);
     }
 
     #[test]

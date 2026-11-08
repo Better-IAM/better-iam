@@ -6,12 +6,13 @@
 #![allow(clippy::too_many_lines)]
 
 use better_iam_core::{CredentialInput, IamResult};
+use futures::future::BoxFuture;
 use serde_json::{Map, Value};
 
 use crate::api::index::Api;
 use crate::api::{Body, Reply};
 
-/// Each route's future is boxed, so this function's own future stays small however large the methods' grow.
+/// A route's answer: the method's result as JSON.
 fn answer<T: serde::Serialize>(result: IamResult<Reply<T>>) -> IamResult<Value> {
     result?.into_value()
 }
@@ -307,10 +308,12 @@ pub const ROUTE_PATHS: &[&str] = &[
     "identities/get",
     "identities/impersonate",
     "identities/invite",
+    "identities/linkProvider",
     "identities/list",
     "identities/listBindings",
     "identities/listGroups",
     "identities/listInvitations",
+    "identities/listProviders",
     "identities/listReports",
     "identities/listSessions",
     "identities/offboard",
@@ -321,6 +324,7 @@ pub const ROUTE_PATHS: &[&str] = &[
     "identities/setBoundary",
     "identities/setOwner",
     "identities/setStatus",
+    "identities/unlinkProvider",
     "identities/unlock",
     "identities/update",
     "impact/preview",
@@ -752,6 +756,3580 @@ pub const ROUTE_PATHS: &[&str] = &[
     "workflows/update",
 ];
 
+/// One route of the table: calls the method with the request credential and body, as a boxed future.
+type Route =
+    for<'a> fn(&'a Api, &'a CredentialInput, Map<String, Value>) -> BoxFuture<'a, IamResult<Value>>;
+
+/// Every group route with its call, sorted by path like [`ROUTE_PATHS`]. Each call is a function of its own that
+/// returns a boxed future, so neither [`dispatch`]'s future nor its stack frame holds any method's future (an
+/// unoptimized build would otherwise reserve stack for every arm of a match over the routes).
+const ROUTES: &[(&str, Route)] = &[
+    ("accessPaths/find", |api, credential, body| {
+        Box::pin(async move { answer(api.access_paths.find(credential, Body::new(body)).await) })
+    }),
+    ("accessRequests/approve", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.access_requests
+                    .approve(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("accessRequests/cancel", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.access_requests
+                    .cancel(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("accessRequests/create", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.access_requests
+                    .create(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("accessRequests/deny", |api, credential, body| {
+        Box::pin(async move { answer(api.access_requests.deny(credential, Body::new(body)).await) })
+    }),
+    ("accessRequests/get", |api, credential, body| {
+        Box::pin(async move { answer(api.access_requests.get(credential, Body::new(body)).await) })
+    }),
+    ("accessRequests/list", |api, credential, body| {
+        Box::pin(async move { answer(api.access_requests.list(credential, Body::new(body)).await) })
+    }),
+    ("accessRequests/listMine", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.access_requests
+                    .list_mine(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("actions/list", |api, credential, body| {
+        Box::pin(async move { answer(api.actions.list(credential, Body::new(body)).await) })
+    }),
+    ("actions/register", |api, credential, body| {
+        Box::pin(async move { answer(api.actions.register(credential, Body::new(body)).await) })
+    }),
+    ("actions/unregister", |api, credential, body| {
+        Box::pin(async move { answer(api.actions.unregister(credential, Body::new(body)).await) })
+    }),
+    ("agents/activity", |api, credential, body| {
+        Box::pin(async move { answer(api.agents.activity(credential, Body::new(body)).await) })
+    }),
+    ("agents/catalog", |api, credential, body| {
+        Box::pin(async move { answer(api.agents.catalog(credential, Body::new(body)).await) })
+    }),
+    ("agents/create", |api, credential, body| {
+        Box::pin(async move { answer(api.agents.create(credential, Body::new(body)).await) })
+    }),
+    ("agents/delete", |api, credential, body| {
+        Box::pin(async move { answer(api.agents.delete(credential, Body::new(body)).await) })
+    }),
+    ("agents/directory", |api, credential, body| {
+        Box::pin(async move { answer(api.agents.directory(credential, Body::new(body)).await) })
+    }),
+    ("agents/get", |api, credential, body| {
+        Box::pin(async move { answer(api.agents.get(credential, Body::new(body)).await) })
+    }),
+    ("agents/list", |api, credential, body| {
+        Box::pin(async move { answer(api.agents.list(credential, Body::new(body)).await) })
+    }),
+    ("agents/listMine", |api, credential, body| {
+        Box::pin(async move { answer(api.agents.list_mine(credential, Body::new(body)).await) })
+    }),
+    ("agents/resume", |api, credential, body| {
+        Box::pin(async move { answer(api.agents.resume(credential, Body::new(body)).await) })
+    }),
+    ("agents/signCard", |api, credential, body| {
+        Box::pin(async move { answer(api.agents.sign_card(credential, Body::new(body)).await) })
+    }),
+    ("agents/standing", |api, credential, body| {
+        Box::pin(async move { answer(api.agents.standing(credential, Body::new(body)).await) })
+    }),
+    ("agents/suspend", |api, credential, body| {
+        Box::pin(async move { answer(api.agents.suspend(credential, Body::new(body)).await) })
+    }),
+    ("agents/suspendAll", |api, credential, body| {
+        Box::pin(async move { answer(api.agents.suspend_all(credential, Body::new(body)).await) })
+    }),
+    ("agents/update", |api, credential, body| {
+        Box::pin(async move { answer(api.agents.update(credential, Body::new(body)).await) })
+    }),
+    ("agreements/accept", |api, credential, body| {
+        Box::pin(async move { answer(api.agreements.accept(credential, Body::new(body)).await) })
+    }),
+    ("agreements/create", |api, credential, body| {
+        Box::pin(async move { answer(api.agreements.create(credential, Body::new(body)).await) })
+    }),
+    ("agreements/delete", |api, credential, body| {
+        Box::pin(async move { answer(api.agreements.delete(credential, Body::new(body)).await) })
+    }),
+    ("agreements/list", |api, credential, body| {
+        Box::pin(async move { answer(api.agreements.list(credential, Body::new(body)).await) })
+    }),
+    ("agreements/listMine", |api, credential, body| {
+        Box::pin(async move { answer(api.agreements.list_mine(credential, Body::new(body)).await) })
+    }),
+    ("agreements/status", |api, credential, body| {
+        Box::pin(async move { answer(api.agreements.status(credential, Body::new(body)).await) })
+    }),
+    ("agreements/update", |api, credential, body| {
+        Box::pin(async move { answer(api.agreements.update(credential, Body::new(body)).await) })
+    }),
+    ("analysis/findings", |api, credential, body| {
+        Box::pin(async move { answer(api.analysis.findings(credential, Body::new(body)).await) })
+    }),
+    ("analysis/lintPolicy", |api, credential, body| {
+        Box::pin(async move { answer(api.analysis.lint_policy(credential, Body::new(body)).await) })
+    }),
+    ("analysis/suppress", |api, credential, body| {
+        Box::pin(async move { answer(api.analysis.suppress(credential, Body::new(body)).await) })
+    }),
+    ("analysis/unsuppress", |api, credential, body| {
+        Box::pin(async move { answer(api.analysis.unsuppress(credential, Body::new(body)).await) })
+    }),
+    ("applications/assign", |api, credential, body| {
+        Box::pin(async move { answer(api.applications.assign(credential, Body::new(body)).await) })
+    }),
+    ("applications/check", |api, credential, body| {
+        Box::pin(async move { answer(api.applications.check(credential, Body::new(body)).await) })
+    }),
+    ("applications/create", |api, credential, body| {
+        Box::pin(async move { answer(api.applications.create(credential, Body::new(body)).await) })
+    }),
+    ("applications/delete", |api, credential, body| {
+        Box::pin(async move { answer(api.applications.delete(credential, Body::new(body)).await) })
+    }),
+    ("applications/launch", |api, credential, body| {
+        Box::pin(async move { answer(api.applications.launch(credential, Body::new(body)).await) })
+    }),
+    ("applications/list", |api, credential, body| {
+        Box::pin(async move { answer(api.applications.list(credential, Body::new(body)).await) })
+    }),
+    ("applications/listAssignments", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.applications
+                    .list_assignments(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("applications/mine", |api, credential, body| {
+        Box::pin(async move { answer(api.applications.mine(credential, Body::new(body)).await) })
+    }),
+    ("applications/removeUnused", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.applications
+                    .remove_unused(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("applications/unassign", |api, credential, body| {
+        Box::pin(
+            async move { answer(api.applications.unassign(credential, Body::new(body)).await) },
+        )
+    }),
+    ("applications/update", |api, credential, body| {
+        Box::pin(async move { answer(api.applications.update(credential, Body::new(body)).await) })
+    }),
+    ("applications/usage", |api, credential, body| {
+        Box::pin(async move { answer(api.applications.usage(credential, Body::new(body)).await) })
+    }),
+    ("assertions/issue", |api, credential, body| {
+        Box::pin(async move { answer(api.assertions.issue(credential, Body::new(body)).await) })
+    }),
+    ("audit/export", |api, credential, body| {
+        Box::pin(async move { answer(api.audit.export(credential, Body::new(body)).await) })
+    }),
+    ("audit/list", |api, credential, body| {
+        Box::pin(async move { answer(api.audit.list(credential, Body::new(body)).await) })
+    }),
+    ("audit/verify", |api, credential, body| {
+        Box::pin(async move { answer(api.audit.verify(credential, Body::new(body)).await) })
+    }),
+    ("authorities/create", |api, credential, body| {
+        Box::pin(async move { answer(api.authorities.create(credential, Body::new(body)).await) })
+    }),
+    ("authorities/revoke", |api, credential, body| {
+        Box::pin(async move { answer(api.authorities.revoke(credential, Body::new(body)).await) })
+    }),
+    ("billing/accounts", |api, credential, body| {
+        Box::pin(async move { answer(api.billing.accounts(credential, Body::new(body)).await) })
+    }),
+    ("billing/anomalies", |api, credential, body| {
+        Box::pin(async move { answer(api.billing.anomalies(credential, Body::new(body)).await) })
+    }),
+    ("billing/cancelSubscription", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.billing
+                    .cancel_subscription(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("billing/changePlan", |api, credential, body| {
+        Box::pin(async move { answer(api.billing.change_plan(credential, Body::new(body)).await) })
+    }),
+    ("billing/check", |api, credential, body| {
+        Box::pin(async move { answer(api.billing.check(credential, Body::new(body)).await) })
+    }),
+    ("billing/closePeriod", |api, credential, body| {
+        Box::pin(async move { answer(api.billing.close_period(credential, Body::new(body)).await) })
+    }),
+    ("billing/createBudget", |api, credential, body| {
+        Box::pin(
+            async move { answer(api.billing.create_budget(credential, Body::new(body)).await) },
+        )
+    }),
+    ("billing/createCoupon", |api, credential, body| {
+        Box::pin(
+            async move { answer(api.billing.create_coupon(credential, Body::new(body)).await) },
+        )
+    }),
+    ("billing/createCreditNote", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.billing
+                    .create_credit_note(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("billing/createInvoiceItem", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.billing
+                    .create_invoice_item(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("billing/createMeter", |api, credential, body| {
+        Box::pin(async move { answer(api.billing.create_meter(credential, Body::new(body)).await) })
+    }),
+    ("billing/createPlan", |api, credential, body| {
+        Box::pin(async move { answer(api.billing.create_plan(credential, Body::new(body)).await) })
+    }),
+    ("billing/deactivateCoupon", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.billing
+                    .deactivate_coupon(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("billing/deleteBudget", |api, credential, body| {
+        Box::pin(
+            async move { answer(api.billing.delete_budget(credential, Body::new(body)).await) },
+        )
+    }),
+    ("billing/deleteInvoiceItem", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.billing
+                    .delete_invoice_item(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("billing/deleteMeter", |api, credential, body| {
+        Box::pin(async move { answer(api.billing.delete_meter(credential, Body::new(body)).await) })
+    }),
+    ("billing/deleteProfile", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.billing
+                    .delete_profile(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("billing/departmentSpend", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.billing
+                    .department_spend(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("billing/exportSpend", |api, credential, body| {
+        Box::pin(async move { answer(api.billing.export_spend(credential, Body::new(body)).await) })
+    }),
+    ("billing/exportStatement", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.billing
+                    .export_statement(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("billing/finalizeInvoice", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.billing
+                    .finalize_invoice(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("billing/getProfile", |api, credential, body| {
+        Box::pin(async move { answer(api.billing.get_profile(credential, Body::new(body)).await) })
+    }),
+    ("billing/getStatement", |api, credential, body| {
+        Box::pin(
+            async move { answer(api.billing.get_statement(credential, Body::new(body)).await) },
+        )
+    }),
+    ("billing/getTerms", |api, credential, body| {
+        Box::pin(async move { answer(api.billing.get_terms(credential, Body::new(body)).await) })
+    }),
+    ("billing/grantCredit", |api, credential, body| {
+        Box::pin(async move { answer(api.billing.grant_credit(credential, Body::new(body)).await) })
+    }),
+    ("billing/listBudgets", |api, credential, body| {
+        Box::pin(async move { answer(api.billing.list_budgets(credential, Body::new(body)).await) })
+    }),
+    ("billing/listCoupons", |api, credential, body| {
+        Box::pin(async move { answer(api.billing.list_coupons(credential, Body::new(body)).await) })
+    }),
+    ("billing/listCreditNotes", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.billing
+                    .list_credit_notes(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("billing/listCredits", |api, credential, body| {
+        Box::pin(async move { answer(api.billing.list_credits(credential, Body::new(body)).await) })
+    }),
+    ("billing/listDiscounts", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.billing
+                    .list_discounts(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("billing/listInvoiceItems", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.billing
+                    .list_invoice_items(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("billing/listMeters", |api, credential, body| {
+        Box::pin(async move { answer(api.billing.list_meters(credential, Body::new(body)).await) })
+    }),
+    ("billing/listPlans", |api, credential, body| {
+        Box::pin(async move { answer(api.billing.list_plans(credential, Body::new(body)).await) })
+    }),
+    ("billing/listPrices", |api, credential, body| {
+        Box::pin(async move { answer(api.billing.list_prices(credential, Body::new(body)).await) })
+    }),
+    ("billing/listStatements", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.billing
+                    .list_statements(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("billing/listSubscriptions", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.billing
+                    .list_subscriptions(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("billing/listUsage", |api, credential, body| {
+        Box::pin(async move { answer(api.billing.list_usage(credential, Body::new(body)).await) })
+    }),
+    ("billing/markPaid", |api, credential, body| {
+        Box::pin(async move { answer(api.billing.mark_paid(credential, Body::new(body)).await) })
+    }),
+    ("billing/markUncollectible", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.billing
+                    .mark_uncollectible(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("billing/mySpend", |api, credential, body| {
+        Box::pin(async move { answer(api.billing.my_spend(credential, Body::new(body)).await) })
+    }),
+    ("billing/previewStatement", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.billing
+                    .preview_statement(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("billing/quote", |api, credential, body| {
+        Box::pin(async move { answer(api.billing.quote(credential, Body::new(body)).await) })
+    }),
+    ("billing/record", |api, credential, body| {
+        Box::pin(async move { answer(api.billing.record(credential, Body::new(body)).await) })
+    }),
+    ("billing/recordMany", |api, credential, body| {
+        Box::pin(async move { answer(api.billing.record_many(credential, Body::new(body)).await) })
+    }),
+    ("billing/recordPayment", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.billing
+                    .record_payment(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("billing/redeemCoupon", |api, credential, body| {
+        Box::pin(
+            async move { answer(api.billing.redeem_coupon(credential, Body::new(body)).await) },
+        )
+    }),
+    ("billing/removeDiscount", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.billing
+                    .remove_discount(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("billing/renderInvoice", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.billing
+                    .render_invoice(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("billing/resumeSubscription", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.billing
+                    .resume_subscription(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("billing/revokeCredit", |api, credential, body| {
+        Box::pin(
+            async move { answer(api.billing.revoke_credit(credential, Body::new(body)).await) },
+        )
+    }),
+    ("billing/setPrice", |api, credential, body| {
+        Box::pin(async move { answer(api.billing.set_price(credential, Body::new(body)).await) })
+    }),
+    ("billing/setProfile", |api, credential, body| {
+        Box::pin(async move { answer(api.billing.set_profile(credential, Body::new(body)).await) })
+    }),
+    ("billing/setTerms", |api, credential, body| {
+        Box::pin(async move { answer(api.billing.set_terms(credential, Body::new(body)).await) })
+    }),
+    ("billing/spend", |api, credential, body| {
+        Box::pin(async move { answer(api.billing.spend(credential, Body::new(body)).await) })
+    }),
+    ("billing/subscribe", |api, credential, body| {
+        Box::pin(async move { answer(api.billing.subscribe(credential, Body::new(body)).await) })
+    }),
+    ("billing/teamSpend", |api, credential, body| {
+        Box::pin(async move { answer(api.billing.team_spend(credential, Body::new(body)).await) })
+    }),
+    ("billing/trend", |api, credential, body| {
+        Box::pin(async move { answer(api.billing.trend(credential, Body::new(body)).await) })
+    }),
+    ("billing/updateBudget", |api, credential, body| {
+        Box::pin(
+            async move { answer(api.billing.update_budget(credential, Body::new(body)).await) },
+        )
+    }),
+    ("billing/updateMeter", |api, credential, body| {
+        Box::pin(async move { answer(api.billing.update_meter(credential, Body::new(body)).await) })
+    }),
+    ("billing/updatePlan", |api, credential, body| {
+        Box::pin(async move { answer(api.billing.update_plan(credential, Body::new(body)).await) })
+    }),
+    ("billing/updateSubscription", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.billing
+                    .update_subscription(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("billing/voidStatement", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.billing
+                    .void_statement(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("bindings/activate", |api, credential, body| {
+        Box::pin(async move { answer(api.bindings.activate(credential, Body::new(body)).await) })
+    }),
+    ("bindings/approveActivation", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.bindings
+                    .approve_activation(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("bindings/create", |api, credential, body| {
+        Box::pin(async move { answer(api.bindings.create(credential, Body::new(body)).await) })
+    }),
+    ("bindings/deactivate", |api, credential, body| {
+        Box::pin(async move { answer(api.bindings.deactivate(credential, Body::new(body)).await) })
+    }),
+    ("bindings/delete", |api, credential, body| {
+        Box::pin(async move { answer(api.bindings.delete(credential, Body::new(body)).await) })
+    }),
+    ("bindings/denyActivation", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.bindings
+                    .deny_activation(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("bindings/list", |api, credential, body| {
+        Box::pin(async move { answer(api.bindings.list(credential, Body::new(body)).await) })
+    }),
+    ("bindings/listActivations", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.bindings
+                    .list_activations(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("bindings/listApprovals", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.bindings
+                    .list_approvals(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("bindings/listMine", |api, credential, body| {
+        Box::pin(async move { answer(api.bindings.list_mine(credential, Body::new(body)).await) })
+    }),
+    ("bindings/revokeActivation", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.bindings
+                    .revoke_activation(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("bindings/update", |api, credential, body| {
+        Box::pin(async move { answer(api.bindings.update(credential, Body::new(body)).await) })
+    }),
+    ("certifications/close", |api, credential, body| {
+        Box::pin(async move { answer(api.certifications.close(credential, Body::new(body)).await) })
+    }),
+    ("certifications/create", |api, credential, body| {
+        Box::pin(
+            async move { answer(api.certifications.create(credential, Body::new(body)).await) },
+        )
+    }),
+    ("certifications/decide", |api, credential, body| {
+        Box::pin(
+            async move { answer(api.certifications.decide(credential, Body::new(body)).await) },
+        )
+    }),
+    ("certifications/delete", |api, credential, body| {
+        Box::pin(
+            async move { answer(api.certifications.delete(credential, Body::new(body)).await) },
+        )
+    }),
+    ("certifications/get", |api, credential, body| {
+        Box::pin(async move { answer(api.certifications.get(credential, Body::new(body)).await) })
+    }),
+    ("certifications/list", |api, credential, body| {
+        Box::pin(async move { answer(api.certifications.list(credential, Body::new(body)).await) })
+    }),
+    ("certifications/listMine", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.certifications
+                    .list_mine(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("certifications/remind", |api, credential, body| {
+        Box::pin(
+            async move { answer(api.certifications.remind(credential, Body::new(body)).await) },
+        )
+    }),
+    ("certifications/review", |api, credential, body| {
+        Box::pin(
+            async move { answer(api.certifications.review(credential, Body::new(body)).await) },
+        )
+    }),
+    ("clearances/debrief", |api, credential, body| {
+        Box::pin(async move { answer(api.clearances.debrief(credential, Body::new(body)).await) })
+    }),
+    ("clearances/declassify", |api, credential, body| {
+        Box::pin(
+            async move { answer(api.clearances.declassify(credential, Body::new(body)).await) },
+        )
+    }),
+    ("clearances/defineScheme", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.clearances
+                    .define_scheme(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("clearances/explain", |api, credential, body| {
+        Box::pin(async move { answer(api.clearances.explain(credential, Body::new(body)).await) })
+    }),
+    ("clearances/get", |api, credential, body| {
+        Box::pin(async move { answer(api.clearances.get(credential, Body::new(body)).await) })
+    }),
+    ("clearances/getLabel", |api, credential, body| {
+        Box::pin(async move { answer(api.clearances.get_label(credential, Body::new(body)).await) })
+    }),
+    ("clearances/getScheme", |api, credential, body| {
+        Box::pin(
+            async move { answer(api.clearances.get_scheme(credential, Body::new(body)).await) },
+        )
+    }),
+    ("clearances/grant", |api, credential, body| {
+        Box::pin(async move { answer(api.clearances.grant(credential, Body::new(body)).await) })
+    }),
+    ("clearances/label", |api, credential, body| {
+        Box::pin(async move { answer(api.clearances.label(credential, Body::new(body)).await) })
+    }),
+    ("clearances/list", |api, credential, body| {
+        Box::pin(async move { answer(api.clearances.list(credential, Body::new(body)).await) })
+    }),
+    ("clearances/listLabels", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.clearances
+                    .list_labels(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("clearances/mine", |api, credential, body| {
+        Box::pin(async move { answer(api.clearances.mine(credential, Body::new(body)).await) })
+    }),
+    ("clearances/readIn", |api, credential, body| {
+        Box::pin(async move { answer(api.clearances.read_in(credential, Body::new(body)).await) })
+    }),
+    ("clearances/reinstate", |api, credential, body| {
+        Box::pin(async move { answer(api.clearances.reinstate(credential, Body::new(body)).await) })
+    }),
+    ("clearances/revoke", |api, credential, body| {
+        Box::pin(async move { answer(api.clearances.revoke(credential, Body::new(body)).await) })
+    }),
+    ("clearances/suspend", |api, credential, body| {
+        Box::pin(async move { answer(api.clearances.suspend(credential, Body::new(body)).await) })
+    }),
+    ("clearances/templates", |api, credential, body| {
+        Box::pin(async move { answer(api.clearances.templates(credential, Body::new(body)).await) })
+    }),
+    ("clearances/update", |api, credential, body| {
+        Box::pin(async move { answer(api.clearances.update(credential, Body::new(body)).await) })
+    }),
+    ("clearances/updateScheme", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.clearances
+                    .update_scheme(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("compliance/adoptFramework", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.compliance
+                    .adopt_framework(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("compliance/approveException", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.compliance
+                    .approve_exception(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("compliance/catalog", |api, credential, body| {
+        Box::pin(async move { answer(api.compliance.catalog(credential, Body::new(body)).await) })
+    }),
+    ("compliance/createControl", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.compliance
+                    .create_control(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("compliance/createException", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.compliance
+                    .create_exception(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("compliance/deleteControl", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.compliance
+                    .delete_control(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("compliance/evaluate", |api, credential, body| {
+        Box::pin(async move { answer(api.compliance.evaluate(credential, Body::new(body)).await) })
+    }),
+    ("compliance/evidenceKeys", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.compliance
+                    .evidence_keys(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("compliance/exportEvidence", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.compliance
+                    .export_evidence(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("compliance/listControls", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.compliance
+                    .list_controls(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("compliance/listExceptions", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.compliance
+                    .list_exceptions(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("compliance/listResults", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.compliance
+                    .list_results(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("compliance/listRuns", |api, credential, body| {
+        Box::pin(async move { answer(api.compliance.list_runs(credential, Body::new(body)).await) })
+    }),
+    ("compliance/revokeException", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.compliance
+                    .revoke_exception(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("compliance/status", |api, credential, body| {
+        Box::pin(async move { answer(api.compliance.status(credential, Body::new(body)).await) })
+    }),
+    ("compliance/updateControl", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.compliance
+                    .update_control(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("compliance/verifyEvidence", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.compliance
+                    .verify_evidence(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("config/apply", |api, credential, body| {
+        Box::pin(async move { answer(api.config.apply(credential, Body::new(body)).await) })
+    }),
+    ("config/export", |api, credential, body| {
+        Box::pin(async move { answer(api.config.export(credential, Body::new(body)).await) })
+    }),
+    ("config/plan", |api, credential, body| {
+        Box::pin(async move { answer(api.config.plan(credential, Body::new(body)).await) })
+    }),
+    ("credentials/create", |api, credential, body| {
+        Box::pin(async move { answer(api.credentials.create(credential, Body::new(body)).await) })
+    }),
+    ("credentials/get", |api, credential, body| {
+        Box::pin(async move { answer(api.credentials.get(credential, Body::new(body)).await) })
+    }),
+    ("credentials/list", |api, credential, body| {
+        Box::pin(async move { answer(api.credentials.list(credential, Body::new(body)).await) })
+    }),
+    ("credentials/revoke", |api, credential, body| {
+        Box::pin(async move { answer(api.credentials.revoke(credential, Body::new(body)).await) })
+    }),
+    ("credentials/rotate", |api, credential, body| {
+        Box::pin(async move { answer(api.credentials.rotate(credential, Body::new(body)).await) })
+    }),
+    ("credentials/update", |api, credential, body| {
+        Box::pin(async move { answer(api.credentials.update(credential, Body::new(body)).await) })
+    }),
+    ("delegations/activity", |api, credential, body| {
+        Box::pin(async move { answer(api.delegations.activity(credential, Body::new(body)).await) })
+    }),
+    ("delegations/approve", |api, credential, body| {
+        Box::pin(async move { answer(api.delegations.approve(credential, Body::new(body)).await) })
+    }),
+    ("delegations/assume", |api, credential, body| {
+        Box::pin(async move { answer(api.delegations.assume(credential, Body::new(body)).await) })
+    }),
+    ("delegations/decideConfirmation", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.delegations
+                    .decide_confirmation(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("delegations/deny", |api, credential, body| {
+        Box::pin(async move { answer(api.delegations.deny(credential, Body::new(body)).await) })
+    }),
+    ("delegations/get", |api, credential, body| {
+        Box::pin(async move { answer(api.delegations.get(credential, Body::new(body)).await) })
+    }),
+    ("delegations/getConfirmation", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.delegations
+                    .get_confirmation(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("delegations/grant", |api, credential, body| {
+        Box::pin(async move { answer(api.delegations.grant(credential, Body::new(body)).await) })
+    }),
+    ("delegations/handoff", |api, credential, body| {
+        Box::pin(async move { answer(api.delegations.handoff(credential, Body::new(body)).await) })
+    }),
+    ("delegations/issueToken", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.delegations
+                    .issue_token(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("delegations/list", |api, credential, body| {
+        Box::pin(async move { answer(api.delegations.list(credential, Body::new(body)).await) })
+    }),
+    ("delegations/listConfirmations", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.delegations
+                    .list_confirmations(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("delegations/listMine", |api, credential, body| {
+        Box::pin(
+            async move { answer(api.delegations.list_mine(credential, Body::new(body)).await) },
+        )
+    }),
+    ("delegations/request", |api, credential, body| {
+        Box::pin(async move { answer(api.delegations.request(credential, Body::new(body)).await) })
+    }),
+    (
+        "delegations/requestConfirmation",
+        |api, credential, body| {
+            Box::pin(async move {
+                answer(
+                    api.delegations
+                        .request_confirmation(credential, Body::new(body))
+                        .await,
+                )
+            })
+        },
+    ),
+    ("delegations/revoke", |api, credential, body| {
+        Box::pin(async move { answer(api.delegations.revoke(credential, Body::new(body)).await) })
+    }),
+    ("departments/assign", |api, credential, body| {
+        Box::pin(async move { answer(api.departments.assign(credential, Body::new(body)).await) })
+    }),
+    ("departments/create", |api, credential, body| {
+        Box::pin(async move { answer(api.departments.create(credential, Body::new(body)).await) })
+    }),
+    ("departments/delete", |api, credential, body| {
+        Box::pin(async move { answer(api.departments.delete(credential, Body::new(body)).await) })
+    }),
+    ("departments/get", |api, credential, body| {
+        Box::pin(async move { answer(api.departments.get(credential, Body::new(body)).await) })
+    }),
+    (
+        "departments/importFromAttribute",
+        |api, credential, body| {
+            Box::pin(async move {
+                answer(
+                    api.departments
+                        .import_from_attribute(credential, Body::new(body))
+                        .await,
+                )
+            })
+        },
+    ),
+    ("departments/list", |api, credential, body| {
+        Box::pin(async move { answer(api.departments.list(credential, Body::new(body)).await) })
+    }),
+    ("departments/listMembers", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.departments
+                    .list_members(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("departments/mine", |api, credential, body| {
+        Box::pin(async move { answer(api.departments.mine(credential, Body::new(body)).await) })
+    }),
+    ("departments/ofIdentity", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.departments
+                    .of_identity(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("departments/suggestBirthright", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.departments
+                    .suggest_birthright(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("departments/syncManagers", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.departments
+                    .sync_managers(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("departments/tree", |api, credential, body| {
+        Box::pin(async move { answer(api.departments.tree(credential, Body::new(body)).await) })
+    }),
+    ("departments/unassign", |api, credential, body| {
+        Box::pin(async move { answer(api.departments.unassign(credential, Body::new(body)).await) })
+    }),
+    ("departments/update", |api, credential, body| {
+        Box::pin(async move { answer(api.departments.update(credential, Body::new(body)).await) })
+    }),
+    ("devices/check", |api, credential, body| {
+        Box::pin(async move { answer(api.devices.check(credential, Body::new(body)).await) })
+    }),
+    ("devices/configure", |api, credential, body| {
+        Box::pin(async move { answer(api.devices.configure(credential, Body::new(body)).await) })
+    }),
+    ("devices/createEnrollment", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.devices
+                    .create_enrollment(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("devices/createIntegration", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.devices
+                    .create_integration(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("devices/delete", |api, credential, body| {
+        Box::pin(async move { answer(api.devices.delete(credential, Body::new(body)).await) })
+    }),
+    ("devices/deleteIntegration", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.devices
+                    .delete_integration(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("devices/enroll", |api, credential, body| {
+        Box::pin(async move { answer(api.devices.enroll(credential, Body::new(body)).await) })
+    }),
+    ("devices/get", |api, credential, body| {
+        Box::pin(async move { answer(api.devices.get(credential, Body::new(body)).await) })
+    }),
+    ("devices/getSettings", |api, credential, body| {
+        Box::pin(async move { answer(api.devices.get_settings(credential, Body::new(body)).await) })
+    }),
+    ("devices/list", |api, credential, body| {
+        Box::pin(async move { answer(api.devices.list(credential, Body::new(body)).await) })
+    }),
+    ("devices/listEnrollments", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.devices
+                    .list_enrollments(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("devices/listIntegrations", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.devices
+                    .list_integrations(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("devices/mine", |api, credential, body| {
+        Box::pin(async move { answer(api.devices.mine(credential, Body::new(body)).await) })
+    }),
+    ("devices/removeKey", |api, credential, body| {
+        Box::pin(async move { answer(api.devices.remove_key(credential, Body::new(body)).await) })
+    }),
+    ("devices/report", |api, credential, body| {
+        Box::pin(async move { answer(api.devices.report(credential, Body::new(body)).await) })
+    }),
+    ("devices/retire", |api, credential, body| {
+        Box::pin(async move { answer(api.devices.retire(credential, Body::new(body)).await) })
+    }),
+    ("devices/retireMine", |api, credential, body| {
+        Box::pin(async move { answer(api.devices.retire_mine(credential, Body::new(body)).await) })
+    }),
+    ("devices/revokeEnrollment", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.devices
+                    .revoke_enrollment(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("devices/update", |api, credential, body| {
+        Box::pin(async move { answer(api.devices.update(credential, Body::new(body)).await) })
+    }),
+    ("devices/updateIntegration", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.devices
+                    .update_integration(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("domains/add", |api, credential, body| {
+        Box::pin(async move { answer(api.domains.add(credential, Body::new(body)).await) })
+    }),
+    ("domains/delete", |api, credential, body| {
+        Box::pin(async move { answer(api.domains.delete(credential, Body::new(body)).await) })
+    }),
+    ("domains/discover", |api, _, body| {
+        Box::pin(async move { answer(api.domains.discover(Body::new(body)).await) })
+    }),
+    ("domains/list", |api, credential, body| {
+        Box::pin(async move { answer(api.domains.list(credential, Body::new(body)).await) })
+    }),
+    ("domains/verify", |api, credential, body| {
+        Box::pin(async move { answer(api.domains.verify(credential, Body::new(body)).await) })
+    }),
+    ("features/create", |api, credential, body| {
+        Box::pin(async move { answer(api.features.create(credential, Body::new(body)).await) })
+    }),
+    ("features/delete", |api, credential, body| {
+        Box::pin(async move { answer(api.features.delete(credential, Body::new(body)).await) })
+    }),
+    ("features/evaluate", |api, credential, body| {
+        Box::pin(async move { answer(api.features.evaluate(credential, Body::new(body)).await) })
+    }),
+    ("features/list", |api, credential, body| {
+        Box::pin(async move { answer(api.features.list(credential, Body::new(body)).await) })
+    }),
+    ("features/listTargets", |api, credential, body| {
+        Box::pin(
+            async move { answer(api.features.list_targets(credential, Body::new(body)).await) },
+        )
+    }),
+    ("features/setOverride", |api, credential, body| {
+        Box::pin(
+            async move { answer(api.features.set_override(credential, Body::new(body)).await) },
+        )
+    }),
+    ("features/setTarget", |api, credential, body| {
+        Box::pin(async move { answer(api.features.set_target(credential, Body::new(body)).await) })
+    }),
+    ("features/update", |api, credential, body| {
+        Box::pin(async move { answer(api.features.update(credential, Body::new(body)).await) })
+    }),
+    ("filters/plan", |api, credential, body| {
+        Box::pin(async move { answer(api.filters.plan(credential, Body::new(body)).await) })
+    }),
+    ("filters/planFor", |api, credential, body| {
+        Box::pin(async move { answer(api.filters.plan_for(credential, Body::new(body)).await) })
+    }),
+    ("groups/addMember", |api, credential, body| {
+        Box::pin(async move { answer(api.groups.add_member(credential, Body::new(body)).await) })
+    }),
+    ("groups/addMembers", |api, credential, body| {
+        Box::pin(async move { answer(api.groups.add_members(credential, Body::new(body)).await) })
+    }),
+    ("groups/create", |api, credential, body| {
+        Box::pin(async move { answer(api.groups.create(credential, Body::new(body)).await) })
+    }),
+    ("groups/delete", |api, credential, body| {
+        Box::pin(async move { answer(api.groups.delete(credential, Body::new(body)).await) })
+    }),
+    ("groups/get", |api, credential, body| {
+        Box::pin(async move { answer(api.groups.get(credential, Body::new(body)).await) })
+    }),
+    ("groups/list", |api, credential, body| {
+        Box::pin(async move { answer(api.groups.list(credential, Body::new(body)).await) })
+    }),
+    ("groups/listMembers", |api, credential, body| {
+        Box::pin(async move { answer(api.groups.list_members(credential, Body::new(body)).await) })
+    }),
+    ("groups/removeMember", |api, credential, body| {
+        Box::pin(async move { answer(api.groups.remove_member(credential, Body::new(body)).await) })
+    }),
+    ("groups/update", |api, credential, body| {
+        Box::pin(async move { answer(api.groups.update(credential, Body::new(body)).await) })
+    }),
+    ("groups/updateMember", |api, credential, body| {
+        Box::pin(async move { answer(api.groups.update_member(credential, Body::new(body)).await) })
+    }),
+    ("guests/attest", |api, credential, body| {
+        Box::pin(async move { answer(api.guests.attest(credential, Body::new(body)).await) })
+    }),
+    ("guests/configure", |api, credential, body| {
+        Box::pin(async move { answer(api.guests.configure(credential, Body::new(body)).await) })
+    }),
+    ("guests/convertToMember", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.guests
+                    .convert_to_member(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("guests/get", |api, credential, body| {
+        Box::pin(async move { answer(api.guests.get(credential, Body::new(body)).await) })
+    }),
+    ("guests/getSettings", |api, credential, body| {
+        Box::pin(async move { answer(api.guests.get_settings(credential, Body::new(body)).await) })
+    }),
+    ("guests/invite", |api, credential, body| {
+        Box::pin(async move { answer(api.guests.invite(credential, Body::new(body)).await) })
+    }),
+    ("guests/list", |api, credential, body| {
+        Box::pin(async move { answer(api.guests.list(credential, Body::new(body)).await) })
+    }),
+    ("guests/listInvitations", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.guests
+                    .list_invitations(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("guests/mine", |api, credential, body| {
+        Box::pin(async move { answer(api.guests.mine(credential, Body::new(body)).await) })
+    }),
+    ("guests/redeem", |api, _, body| {
+        Box::pin(async move { answer(api.guests.redeem(Body::new(body)).await) })
+    }),
+    ("guests/remove", |api, credential, body| {
+        Box::pin(async move { answer(api.guests.remove(credential, Body::new(body)).await) })
+    }),
+    ("guests/resendInvitation", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.guests
+                    .resend_invitation(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("guests/revokeInvitation", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.guests
+                    .revoke_invitation(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("guests/setSponsor", |api, credential, body| {
+        Box::pin(async move { answer(api.guests.set_sponsor(credential, Body::new(body)).await) })
+    }),
+    ("hostnames/add", |api, credential, body| {
+        Box::pin(async move { answer(api.hostnames.add(credential, Body::new(body)).await) })
+    }),
+    ("hostnames/delete", |api, credential, body| {
+        Box::pin(async move { answer(api.hostnames.delete(credential, Body::new(body)).await) })
+    }),
+    ("hostnames/list", |api, credential, body| {
+        Box::pin(async move { answer(api.hostnames.list(credential, Body::new(body)).await) })
+    }),
+    ("hostnames/setPrimary", |api, credential, body| {
+        Box::pin(
+            async move { answer(api.hostnames.set_primary(credential, Body::new(body)).await) },
+        )
+    }),
+    ("hostnames/verify", |api, credential, body| {
+        Box::pin(async move { answer(api.hostnames.verify(credential, Body::new(body)).await) })
+    }),
+    ("identities/acceptInvitation", |api, _, body| {
+        Box::pin(async move { answer(api.identities.accept_invitation(Body::new(body)).await) })
+    }),
+    ("identities/create", |api, credential, body| {
+        Box::pin(async move { answer(api.identities.create(credential, Body::new(body)).await) })
+    }),
+    ("identities/createMany", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.identities
+                    .create_many(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("identities/delete", |api, credential, body| {
+        Box::pin(async move { answer(api.identities.delete(credential, Body::new(body)).await) })
+    }),
+    ("identities/export", |api, credential, body| {
+        Box::pin(async move { answer(api.identities.export(credential, Body::new(body)).await) })
+    }),
+    ("identities/get", |api, credential, body| {
+        Box::pin(async move { answer(api.identities.get(credential, Body::new(body)).await) })
+    }),
+    ("identities/impersonate", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.identities
+                    .impersonate(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("identities/invite", |api, credential, body| {
+        Box::pin(async move { answer(api.identities.invite(credential, Body::new(body)).await) })
+    }),
+    ("identities/linkProvider", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.identities
+                    .link_provider(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("identities/list", |api, credential, body| {
+        Box::pin(async move { answer(api.identities.list(credential, Body::new(body)).await) })
+    }),
+    ("identities/listBindings", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.identities
+                    .list_bindings(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("identities/listGroups", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.identities
+                    .list_groups(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("identities/listInvitations", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.identities
+                    .list_invitations(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("identities/listProviders", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.identities
+                    .list_providers(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("identities/listReports", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.identities
+                    .list_reports(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("identities/listSessions", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.identities
+                    .list_sessions(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("identities/offboard", |api, credential, body| {
+        Box::pin(async move { answer(api.identities.offboard(credential, Body::new(body)).await) })
+    }),
+    (
+        "identities/requestPasswordReset",
+        |api, credential, body| {
+            Box::pin(async move {
+                answer(
+                    api.identities
+                        .request_password_reset(credential, Body::new(body))
+                        .await,
+                )
+            })
+        },
+    ),
+    ("identities/resendInvitation", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.identities
+                    .resend_invitation(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("identities/revokeInvitation", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.identities
+                    .revoke_invitation(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("identities/revokeSessions", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.identities
+                    .revoke_sessions(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("identities/setBoundary", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.identities
+                    .set_boundary(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("identities/setOwner", |api, credential, body| {
+        Box::pin(async move { answer(api.identities.set_owner(credential, Body::new(body)).await) })
+    }),
+    ("identities/setStatus", |api, credential, body| {
+        Box::pin(
+            async move { answer(api.identities.set_status(credential, Body::new(body)).await) },
+        )
+    }),
+    ("identities/unlinkProvider", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.identities
+                    .unlink_provider(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("identities/unlock", |api, credential, body| {
+        Box::pin(async move { answer(api.identities.unlock(credential, Body::new(body)).await) })
+    }),
+    ("identities/update", |api, credential, body| {
+        Box::pin(async move { answer(api.identities.update(credential, Body::new(body)).await) })
+    }),
+    ("impact/preview", |api, credential, body| {
+        Box::pin(async move { answer(api.impact.preview(credential, Body::new(body)).await) })
+    }),
+    ("inference/check", |api, credential, body| {
+        Box::pin(async move { answer(api.inference.check(credential, Body::new(body)).await) })
+    }),
+    ("inference/createModel", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.inference
+                    .create_model(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("inference/createProvider", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.inference
+                    .create_provider(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("inference/deleteBudget", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.inference
+                    .delete_budget(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("inference/deleteModel", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.inference
+                    .delete_model(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("inference/deleteProvider", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.inference
+                    .delete_provider(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("inference/listBudgets", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.inference
+                    .list_budgets(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("inference/listMine", |api, credential, body| {
+        Box::pin(async move { answer(api.inference.list_mine(credential, Body::new(body)).await) })
+    }),
+    ("inference/listModels", |api, credential, body| {
+        Box::pin(
+            async move { answer(api.inference.list_models(credential, Body::new(body)).await) },
+        )
+    }),
+    ("inference/listProviders", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.inference
+                    .list_providers(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("inference/myUsage", |api, credential, body| {
+        Box::pin(async move { answer(api.inference.my_usage(credential, Body::new(body)).await) })
+    }),
+    ("inference/record", |api, credential, body| {
+        Box::pin(async move { answer(api.inference.record(credential, Body::new(body)).await) })
+    }),
+    ("inference/setBudget", |api, credential, body| {
+        Box::pin(async move { answer(api.inference.set_budget(credential, Body::new(body)).await) })
+    }),
+    ("inference/updateModel", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.inference
+                    .update_model(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("inference/updateProvider", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.inference
+                    .update_provider(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("inference/usage", |api, credential, body| {
+        Box::pin(async move { answer(api.inference.usage(credential, Body::new(body)).await) })
+    }),
+    ("invariants/create", |api, credential, body| {
+        Box::pin(async move { answer(api.invariants.create(credential, Body::new(body)).await) })
+    }),
+    ("invariants/delete", |api, credential, body| {
+        Box::pin(async move { answer(api.invariants.delete(credential, Body::new(body)).await) })
+    }),
+    ("invariants/list", |api, credential, body| {
+        Box::pin(async move { answer(api.invariants.list(credential, Body::new(body)).await) })
+    }),
+    ("invariants/run", |api, credential, body| {
+        Box::pin(async move { answer(api.invariants.run(credential, Body::new(body)).await) })
+    }),
+    ("invariants/update", |api, credential, body| {
+        Box::pin(async move { answer(api.invariants.update(credential, Body::new(body)).await) })
+    }),
+    ("keys/cancelDeletion", |api, credential, body| {
+        Box::pin(async move { answer(api.keys.cancel_deletion(credential, Body::new(body)).await) })
+    }),
+    ("keys/create", |api, credential, body| {
+        Box::pin(async move { answer(api.keys.create(credential, Body::new(body)).await) })
+    }),
+    ("keys/createAlias", |api, credential, body| {
+        Box::pin(async move { answer(api.keys.create_alias(credential, Body::new(body)).await) })
+    }),
+    ("keys/createGrant", |api, credential, body| {
+        Box::pin(async move { answer(api.keys.create_grant(credential, Body::new(body)).await) })
+    }),
+    ("keys/decrypt", |api, credential, body| {
+        Box::pin(async move { answer(api.keys.decrypt(credential, Body::new(body)).await) })
+    }),
+    ("keys/deleteAlias", |api, credential, body| {
+        Box::pin(async move { answer(api.keys.delete_alias(credential, Body::new(body)).await) })
+    }),
+    ("keys/disable", |api, credential, body| {
+        Box::pin(async move { answer(api.keys.disable(credential, Body::new(body)).await) })
+    }),
+    ("keys/enable", |api, credential, body| {
+        Box::pin(async move { answer(api.keys.enable(credential, Body::new(body)).await) })
+    }),
+    ("keys/encrypt", |api, credential, body| {
+        Box::pin(async move { answer(api.keys.encrypt(credential, Body::new(body)).await) })
+    }),
+    ("keys/generateDataKey", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.keys
+                    .generate_data_key(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("keys/generateMac", |api, credential, body| {
+        Box::pin(async move { answer(api.keys.generate_mac(credential, Body::new(body)).await) })
+    }),
+    ("keys/get", |api, credential, body| {
+        Box::pin(async move { answer(api.keys.get(credential, Body::new(body)).await) })
+    }),
+    ("keys/jwks", |api, credential, body| {
+        Box::pin(async move { answer(api.keys.jwks(credential, Body::new(body)).await) })
+    }),
+    ("keys/list", |api, credential, body| {
+        Box::pin(async move { answer(api.keys.list(credential, Body::new(body)).await) })
+    }),
+    ("keys/listAliases", |api, credential, body| {
+        Box::pin(async move { answer(api.keys.list_aliases(credential, Body::new(body)).await) })
+    }),
+    ("keys/listGrants", |api, credential, body| {
+        Box::pin(async move { answer(api.keys.list_grants(credential, Body::new(body)).await) })
+    }),
+    ("keys/listVersions", |api, credential, body| {
+        Box::pin(async move { answer(api.keys.list_versions(credential, Body::new(body)).await) })
+    }),
+    ("keys/publicKey", |api, credential, body| {
+        Box::pin(async move { answer(api.keys.public_key(credential, Body::new(body)).await) })
+    }),
+    ("keys/reEncrypt", |api, credential, body| {
+        Box::pin(async move { answer(api.keys.re_encrypt(credential, Body::new(body)).await) })
+    }),
+    ("keys/retireGrant", |api, credential, body| {
+        Box::pin(async move { answer(api.keys.retire_grant(credential, Body::new(body)).await) })
+    }),
+    ("keys/revokeGrant", |api, credential, body| {
+        Box::pin(async move { answer(api.keys.revoke_grant(credential, Body::new(body)).await) })
+    }),
+    ("keys/rotate", |api, credential, body| {
+        Box::pin(async move { answer(api.keys.rotate(credential, Body::new(body)).await) })
+    }),
+    ("keys/scheduleDeletion", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.keys
+                    .schedule_deletion(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("keys/sign", |api, credential, body| {
+        Box::pin(async move { answer(api.keys.sign(credential, Body::new(body)).await) })
+    }),
+    ("keys/signJwt", |api, credential, body| {
+        Box::pin(async move { answer(api.keys.sign_jwt(credential, Body::new(body)).await) })
+    }),
+    ("keys/update", |api, credential, body| {
+        Box::pin(async move { answer(api.keys.update(credential, Body::new(body)).await) })
+    }),
+    ("keys/updateAlias", |api, credential, body| {
+        Box::pin(async move { answer(api.keys.update_alias(credential, Body::new(body)).await) })
+    }),
+    ("keys/verify", |api, credential, body| {
+        Box::pin(async move { answer(api.keys.verify(credential, Body::new(body)).await) })
+    }),
+    ("keys/verifyJwt", |api, credential, body| {
+        Box::pin(async move { answer(api.keys.verify_jwt(credential, Body::new(body)).await) })
+    }),
+    ("keys/verifyMac", |api, credential, body| {
+        Box::pin(async move { answer(api.keys.verify_mac(credential, Body::new(body)).await) })
+    }),
+    ("ldap/directory", |api, credential, body| {
+        Box::pin(async move { answer(api.ldap.directory(credential, Body::new(body)).await) })
+    }),
+    ("ldap/getSettings", |api, credential, body| {
+        Box::pin(async move { answer(api.ldap.get_settings(credential, Body::new(body)).await) })
+    }),
+    ("ldap/updateSettings", |api, credential, body| {
+        Box::pin(async move { answer(api.ldap.update_settings(credential, Body::new(body)).await) })
+    }),
+    ("licenses/addPool", |api, credential, body| {
+        Box::pin(async move { answer(api.licenses.add_pool(credential, Body::new(body)).await) })
+    }),
+    ("licenses/assign", |api, credential, body| {
+        Box::pin(async move { answer(api.licenses.assign(credential, Body::new(body)).await) })
+    }),
+    ("licenses/assignMany", |api, credential, body| {
+        Box::pin(async move { answer(api.licenses.assign_many(credential, Body::new(body)).await) })
+    }),
+    ("licenses/configure", |api, credential, body| {
+        Box::pin(async move { answer(api.licenses.configure(credential, Body::new(body)).await) })
+    }),
+    ("licenses/createProduct", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.licenses
+                    .create_product(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("licenses/getProduct", |api, credential, body| {
+        Box::pin(async move { answer(api.licenses.get_product(credential, Body::new(body)).await) })
+    }),
+    ("licenses/getSettings", |api, credential, body| {
+        Box::pin(
+            async move { answer(api.licenses.get_settings(credential, Body::new(body)).await) },
+        )
+    }),
+    ("licenses/listAssignments", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.licenses
+                    .list_assignments(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("licenses/listPools", |api, credential, body| {
+        Box::pin(async move { answer(api.licenses.list_pools(credential, Body::new(body)).await) })
+    }),
+    ("licenses/listProducts", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.licenses
+                    .list_products(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("licenses/listSeats", |api, credential, body| {
+        Box::pin(async move { answer(api.licenses.list_seats(credential, Body::new(body)).await) })
+    }),
+    ("licenses/mine", |api, credential, body| {
+        Box::pin(async move { answer(api.licenses.mine(credential, Body::new(body)).await) })
+    }),
+    ("licenses/removePool", |api, credential, body| {
+        Box::pin(async move { answer(api.licenses.remove_pool(credential, Body::new(body)).await) })
+    }),
+    ("licenses/retireProduct", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.licenses
+                    .retire_product(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("licenses/unassign", |api, credential, body| {
+        Box::pin(async move { answer(api.licenses.unassign(credential, Body::new(body)).await) })
+    }),
+    ("licenses/updatePool", |api, credential, body| {
+        Box::pin(async move { answer(api.licenses.update_pool(credential, Body::new(body)).await) })
+    }),
+    ("licenses/updateProduct", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.licenses
+                    .update_product(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("licenses/usage", |api, credential, body| {
+        Box::pin(async move { answer(api.licenses.usage(credential, Body::new(body)).await) })
+    }),
+    ("links/create", |api, credential, body| {
+        Box::pin(async move { answer(api.links.create(credential, Body::new(body)).await) })
+    }),
+    ("links/list", |api, credential, body| {
+        Box::pin(async move { answer(api.links.list(credential, Body::new(body)).await) })
+    }),
+    ("links/revoke", |api, credential, body| {
+        Box::pin(async move { answer(api.links.revoke(credential, Body::new(body)).await) })
+    }),
+    ("links/switch", |api, credential, body| {
+        Box::pin(async move { answer(api.links.switch(credential, Body::new(body)).await) })
+    }),
+    ("oidcProviders/create", |api, credential, body| {
+        Box::pin(
+            async move { answer(api.oidc_providers.create(credential, Body::new(body)).await) },
+        )
+    }),
+    ("oidcProviders/delete", |api, credential, body| {
+        Box::pin(
+            async move { answer(api.oidc_providers.delete(credential, Body::new(body)).await) },
+        )
+    }),
+    ("oidcProviders/get", |api, credential, body| {
+        Box::pin(async move { answer(api.oidc_providers.get(credential, Body::new(body)).await) })
+    }),
+    ("oidcProviders/list", |api, credential, body| {
+        Box::pin(async move { answer(api.oidc_providers.list(credential, Body::new(body)).await) })
+    }),
+    ("oidcProviders/revokeSessions", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.oidc_providers
+                    .revoke_sessions(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("oidcProviders/update", |api, credential, body| {
+        Box::pin(
+            async move { answer(api.oidc_providers.update(credential, Body::new(body)).await) },
+        )
+    }),
+    ("onboarding/createFlow", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.onboarding
+                    .create_flow(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("onboarding/deleteFlow", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.onboarding
+                    .delete_flow(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("onboarding/effective", |api, credential, body| {
+        Box::pin(async move { answer(api.onboarding.effective(credential, Body::new(body)).await) })
+    }),
+    ("onboarding/getFlow", |api, credential, body| {
+        Box::pin(async move { answer(api.onboarding.get_flow(credential, Body::new(body)).await) })
+    }),
+    ("onboarding/listFlows", |api, credential, body| {
+        Box::pin(
+            async move { answer(api.onboarding.list_flows(credential, Body::new(body)).await) },
+        )
+    }),
+    ("onboarding/memberProgress", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.onboarding
+                    .member_progress(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("onboarding/mine", |api, credential, body| {
+        Box::pin(async move { answer(api.onboarding.mine(credential, Body::new(body)).await) })
+    }),
+    ("onboarding/progress", |api, credential, body| {
+        Box::pin(async move { answer(api.onboarding.progress(credential, Body::new(body)).await) })
+    }),
+    ("onboarding/resetProgress", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.onboarding
+                    .reset_progress(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("onboarding/setSettings", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.onboarding
+                    .set_settings(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("onboarding/setup", |api, credential, body| {
+        Box::pin(async move { answer(api.onboarding.setup(credential, Body::new(body)).await) })
+    }),
+    ("onboarding/submitSetupStep", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.onboarding
+                    .submit_setup_step(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("onboarding/submitStep", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.onboarding
+                    .submit_step(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("onboarding/updateFlow", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.onboarding
+                    .update_flow(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("onboarding/verifyStep", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.onboarding
+                    .verify_step(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("packages/approveRequest", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.packages
+                    .approve_request(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("packages/assign", |api, credential, body| {
+        Box::pin(async move { answer(api.packages.assign(credential, Body::new(body)).await) })
+    }),
+    ("packages/cancelRequest", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.packages
+                    .cancel_request(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("packages/create", |api, credential, body| {
+        Box::pin(async move { answer(api.packages.create(credential, Body::new(body)).await) })
+    }),
+    ("packages/delete", |api, credential, body| {
+        Box::pin(async move { answer(api.packages.delete(credential, Body::new(body)).await) })
+    }),
+    ("packages/denyRequest", |api, credential, body| {
+        Box::pin(
+            async move { answer(api.packages.deny_request(credential, Body::new(body)).await) },
+        )
+    }),
+    ("packages/extend", |api, credential, body| {
+        Box::pin(async move { answer(api.packages.extend(credential, Body::new(body)).await) })
+    }),
+    ("packages/get", |api, credential, body| {
+        Box::pin(async move { answer(api.packages.get(credential, Body::new(body)).await) })
+    }),
+    ("packages/list", |api, credential, body| {
+        Box::pin(async move { answer(api.packages.list(credential, Body::new(body)).await) })
+    }),
+    ("packages/listApprovals", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.packages
+                    .list_approvals(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("packages/listAssignments", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.packages
+                    .list_assignments(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("packages/listMine", |api, credential, body| {
+        Box::pin(async move { answer(api.packages.list_mine(credential, Body::new(body)).await) })
+    }),
+    ("packages/listRequests", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.packages
+                    .list_requests(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("packages/previewAutoAssign", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.packages
+                    .preview_auto_assign(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("packages/reconcile", |api, credential, body| {
+        Box::pin(async move { answer(api.packages.reconcile(credential, Body::new(body)).await) })
+    }),
+    ("packages/request", |api, credential, body| {
+        Box::pin(async move { answer(api.packages.request(credential, Body::new(body)).await) })
+    }),
+    ("packages/revoke", |api, credential, body| {
+        Box::pin(async move { answer(api.packages.revoke(credential, Body::new(body)).await) })
+    }),
+    ("packages/update", |api, credential, body| {
+        Box::pin(async move { answer(api.packages.update(credential, Body::new(body)).await) })
+    }),
+    ("pki/bundle", |api, credential, body| {
+        Box::pin(async move { answer(api.pki.bundle(credential, Body::new(body)).await) })
+    }),
+    ("pki/createAuthority", |api, credential, body| {
+        Box::pin(async move { answer(api.pki.create_authority(credential, Body::new(body)).await) })
+    }),
+    ("pki/crl", |api, credential, body| {
+        Box::pin(async move { answer(api.pki.crl(credential, Body::new(body)).await) })
+    }),
+    ("pki/getAuthority", |api, credential, body| {
+        Box::pin(async move { answer(api.pki.get_authority(credential, Body::new(body)).await) })
+    }),
+    ("pki/getCertificate", |api, credential, body| {
+        Box::pin(async move { answer(api.pki.get_certificate(credential, Body::new(body)).await) })
+    }),
+    ("pki/issueCertificate", |api, credential, body| {
+        Box::pin(
+            async move { answer(api.pki.issue_certificate(credential, Body::new(body)).await) },
+        )
+    }),
+    ("pki/listAuthorities", |api, credential, body| {
+        Box::pin(async move { answer(api.pki.list_authorities(credential, Body::new(body)).await) })
+    }),
+    ("pki/listCertificates", |api, credential, body| {
+        Box::pin(
+            async move { answer(api.pki.list_certificates(credential, Body::new(body)).await) },
+        )
+    }),
+    ("pki/requestCertificate", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.pki
+                    .request_certificate(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("pki/revokeCertificate", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.pki
+                    .revoke_certificate(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("pki/updateAuthority", |api, credential, body| {
+        Box::pin(async move { answer(api.pki.update_authority(credential, Body::new(body)).await) })
+    }),
+    ("policies/create", |api, credential, body| {
+        Box::pin(async move { answer(api.policies.create(credential, Body::new(body)).await) })
+    }),
+    ("policies/delete", |api, credential, body| {
+        Box::pin(async move { answer(api.policies.delete(credential, Body::new(body)).await) })
+    }),
+    ("policies/effectiveActions", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.policies
+                    .effective_actions(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("policies/get", |api, credential, body| {
+        Box::pin(async move { answer(api.policies.get(credential, Body::new(body)).await) })
+    }),
+    ("policies/list", |api, credential, body| {
+        Box::pin(async move { answer(api.policies.list(credential, Body::new(body)).await) })
+    }),
+    ("policies/listVersions", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.policies
+                    .list_versions(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("policies/restoreVersion", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.policies
+                    .restore_version(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("policies/simulate", |api, credential, body| {
+        Box::pin(async move { answer(api.policies.simulate(credential, Body::new(body)).await) })
+    }),
+    ("policies/test", |api, credential, body| {
+        Box::pin(async move { answer(api.policies.test(credential, Body::new(body)).await) })
+    }),
+    ("policies/update", |api, credential, body| {
+        Box::pin(async move { answer(api.policies.update(credential, Body::new(body)).await) })
+    }),
+    ("policies/whoCan", |api, credential, body| {
+        Box::pin(async move { answer(api.policies.who_can(credential, Body::new(body)).await) })
+    }),
+    ("privacy/addNote", |api, credential, body| {
+        Box::pin(async move { answer(api.privacy.add_note(credential, Body::new(body)).await) })
+    }),
+    ("privacy/assignRequest", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.privacy
+                    .assign_request(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("privacy/audience", |api, credential, body| {
+        Box::pin(async move { answer(api.privacy.audience(credential, Body::new(body)).await) })
+    }),
+    ("privacy/cancelMyRequest", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.privacy
+                    .cancel_my_request(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("privacy/check", |api, credential, body| {
+        Box::pin(async move { answer(api.privacy.check(credential, Body::new(body)).await) })
+    }),
+    ("privacy/confirmPublic", |api, _, body| {
+        Box::pin(async move { answer(api.privacy.confirm_public(Body::new(body)).await) })
+    }),
+    ("privacy/createPurpose", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.privacy
+                    .create_purpose(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("privacy/createRequest", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.privacy
+                    .create_request(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("privacy/decide", |api, credential, body| {
+        Box::pin(async move { answer(api.privacy.decide(credential, Body::new(body)).await) })
+    }),
+    ("privacy/deletePurpose", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.privacy
+                    .delete_purpose(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("privacy/downloadExport", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.privacy
+                    .download_export(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("privacy/extendRequest", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.privacy
+                    .extend_request(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("privacy/filterSubjects", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.privacy
+                    .filter_subjects(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("privacy/fulfilRequest", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.privacy
+                    .fulfil_request(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("privacy/getRequest", |api, credential, body| {
+        Box::pin(async move { answer(api.privacy.get_request(credential, Body::new(body)).await) })
+    }),
+    ("privacy/getSettings", |api, credential, body| {
+        Box::pin(async move { answer(api.privacy.get_settings(credential, Body::new(body)).await) })
+    }),
+    ("privacy/history", |api, credential, body| {
+        Box::pin(async move { answer(api.privacy.history(credential, Body::new(body)).await) })
+    }),
+    ("privacy/importDecisions", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.privacy
+                    .import_decisions(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("privacy/liftRestriction", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.privacy
+                    .lift_restriction(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("privacy/linkRequest", |api, credential, body| {
+        Box::pin(async move { answer(api.privacy.link_request(credential, Body::new(body)).await) })
+    }),
+    ("privacy/listConsents", |api, credential, body| {
+        Box::pin(
+            async move { answer(api.privacy.list_consents(credential, Body::new(body)).await) },
+        )
+    }),
+    ("privacy/listHolds", |api, credential, body| {
+        Box::pin(async move { answer(api.privacy.list_holds(credential, Body::new(body)).await) })
+    }),
+    ("privacy/listPurposes", |api, credential, body| {
+        Box::pin(
+            async move { answer(api.privacy.list_purposes(credential, Body::new(body)).await) },
+        )
+    }),
+    ("privacy/listRequests", |api, credential, body| {
+        Box::pin(
+            async move { answer(api.privacy.list_requests(credential, Body::new(body)).await) },
+        )
+    }),
+    ("privacy/listRestrictions", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.privacy
+                    .list_restrictions(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("privacy/mine", |api, credential, body| {
+        Box::pin(async move { answer(api.privacy.mine(credential, Body::new(body)).await) })
+    }),
+    ("privacy/myHistory", |api, credential, body| {
+        Box::pin(async move { answer(api.privacy.my_history(credential, Body::new(body)).await) })
+    }),
+    ("privacy/myReceipt", |api, credential, body| {
+        Box::pin(async move { answer(api.privacy.my_receipt(credential, Body::new(body)).await) })
+    }),
+    ("privacy/placeHold", |api, credential, body| {
+        Box::pin(async move { answer(api.privacy.place_hold(credential, Body::new(body)).await) })
+    }),
+    ("privacy/record", |api, credential, body| {
+        Box::pin(async move { answer(api.privacy.record(credential, Body::new(body)).await) })
+    }),
+    ("privacy/rejectRequest", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.privacy
+                    .reject_request(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("privacy/releaseHold", |api, credential, body| {
+        Box::pin(async move { answer(api.privacy.release_hold(credential, Body::new(body)).await) })
+    }),
+    ("privacy/submitPublic", |api, _, body| {
+        Box::pin(async move { answer(api.privacy.submit_public(Body::new(body)).await) })
+    }),
+    ("privacy/submitRequest", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.privacy
+                    .submit_request(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("privacy/summary", |api, credential, body| {
+        Box::pin(async move { answer(api.privacy.summary(credential, Body::new(body)).await) })
+    }),
+    ("privacy/updatePurpose", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.privacy
+                    .update_purpose(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("privacy/updateSettings", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.privacy
+                    .update_settings(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("privacy/verifyReceipt", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.privacy
+                    .verify_receipt(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("privacy/verifyRequest", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.privacy
+                    .verify_request(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("protection/createProfile", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.protection
+                    .create_profile(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("protection/deleteProfile", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.protection
+                    .delete_profile(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("protection/deleteTokens", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.protection
+                    .delete_tokens(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("protection/detokenize", |api, credential, body| {
+        Box::pin(
+            async move { answer(api.protection.detokenize(credential, Body::new(body)).await) },
+        )
+    }),
+    ("protection/getProfile", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.protection
+                    .get_profile(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("protection/listProfiles", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.protection
+                    .list_profiles(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("protection/mask", |api, credential, body| {
+        Box::pin(async move { answer(api.protection.mask(credential, Body::new(body)).await) })
+    }),
+    ("protection/tokenize", |api, credential, body| {
+        Box::pin(async move { answer(api.protection.tokenize(credential, Body::new(body)).await) })
+    }),
+    ("protection/updateProfile", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.protection
+                    .update_profile(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("quotas/assign", |api, credential, body| {
+        Box::pin(async move { answer(api.quotas.assign(credential, Body::new(body)).await) })
+    }),
+    ("quotas/consume", |api, credential, body| {
+        Box::pin(async move { answer(api.quotas.consume(credential, Body::new(body)).await) })
+    }),
+    ("quotas/createPlan", |api, credential, body| {
+        Box::pin(async move { answer(api.quotas.create_plan(credential, Body::new(body)).await) })
+    }),
+    ("quotas/deletePlan", |api, credential, body| {
+        Box::pin(async move { answer(api.quotas.delete_plan(credential, Body::new(body)).await) })
+    }),
+    ("quotas/getPlan", |api, credential, body| {
+        Box::pin(async move { answer(api.quotas.get_plan(credential, Body::new(body)).await) })
+    }),
+    ("quotas/listAssignments", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.quotas
+                    .list_assignments(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("quotas/listPlans", |api, credential, body| {
+        Box::pin(async move { answer(api.quotas.list_plans(credential, Body::new(body)).await) })
+    }),
+    ("quotas/reset", |api, credential, body| {
+        Box::pin(async move { answer(api.quotas.reset(credential, Body::new(body)).await) })
+    }),
+    ("quotas/status", |api, credential, body| {
+        Box::pin(async move { answer(api.quotas.status(credential, Body::new(body)).await) })
+    }),
+    ("quotas/unassign", |api, credential, body| {
+        Box::pin(async move { answer(api.quotas.unassign(credential, Body::new(body)).await) })
+    }),
+    ("quotas/updatePlan", |api, credential, body| {
+        Box::pin(async move { answer(api.quotas.update_plan(credential, Body::new(body)).await) })
+    }),
+    ("quotas/usage", |api, credential, body| {
+        Box::pin(async move { answer(api.quotas.usage(credential, Body::new(body)).await) })
+    }),
+    ("relationships/create", |api, credential, body| {
+        Box::pin(async move { answer(api.relationships.create(credential, Body::new(body)).await) })
+    }),
+    ("relationships/delete", |api, credential, body| {
+        Box::pin(async move { answer(api.relationships.delete(credential, Body::new(body)).await) })
+    }),
+    ("relationships/list", |api, credential, body| {
+        Box::pin(async move { answer(api.relationships.list(credential, Body::new(body)).await) })
+    }),
+    ("reports/access", |api, credential, body| {
+        Box::pin(async move { answer(api.reports.access(credential, Body::new(body)).await) })
+    }),
+    ("resourceTypes/delete", |api, credential, body| {
+        Box::pin(
+            async move { answer(api.resource_types.delete(credential, Body::new(body)).await) },
+        )
+    }),
+    ("resourceTypes/get", |api, credential, body| {
+        Box::pin(async move { answer(api.resource_types.get(credential, Body::new(body)).await) })
+    }),
+    ("resourceTypes/list", |api, credential, body| {
+        Box::pin(async move { answer(api.resource_types.list(credential, Body::new(body)).await) })
+    }),
+    ("resourceTypes/register", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.resource_types
+                    .register(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("resourceTypes/update", |api, credential, body| {
+        Box::pin(
+            async move { answer(api.resource_types.update(credential, Body::new(body)).await) },
+        )
+    }),
+    ("resources/delete", |api, credential, body| {
+        Box::pin(async move { answer(api.resources.delete(credential, Body::new(body)).await) })
+    }),
+    ("resources/get", |api, credential, body| {
+        Box::pin(async move { answer(api.resources.get(credential, Body::new(body)).await) })
+    }),
+    ("resources/list", |api, credential, body| {
+        Box::pin(async move { answer(api.resources.list(credential, Body::new(body)).await) })
+    }),
+    ("resources/register", |api, credential, body| {
+        Box::pin(async move { answer(api.resources.register(credential, Body::new(body)).await) })
+    }),
+    ("resources/registerMany", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.resources
+                    .register_many(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("resources/update", |api, credential, body| {
+        Box::pin(async move { answer(api.resources.update(credential, Body::new(body)).await) })
+    }),
+    ("roleMining/apply", |api, credential, body| {
+        Box::pin(async move { answer(api.role_mining.apply(credential, Body::new(body)).await) })
+    }),
+    ("roleMining/outliers", |api, credential, body| {
+        Box::pin(async move { answer(api.role_mining.outliers(credential, Body::new(body)).await) })
+    }),
+    (
+        "roleMining/reviewRecommendations",
+        |api, credential, body| {
+            Box::pin(async move {
+                answer(
+                    api.role_mining
+                        .review_recommendations(credential, Body::new(body))
+                        .await,
+                )
+            })
+        },
+    ),
+    ("roleMining/rightSize", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.role_mining
+                    .right_size(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("roleMining/suggest", |api, credential, body| {
+        Box::pin(async move { answer(api.role_mining.suggest(credential, Body::new(body)).await) })
+    }),
+    ("roleMining/usage", |api, credential, body| {
+        Box::pin(async move { answer(api.role_mining.usage(credential, Body::new(body)).await) })
+    }),
+    ("roles/assume", |api, credential, body| {
+        Box::pin(async move { answer(api.roles.assume(credential, Body::new(body)).await) })
+    }),
+    ("roles/create", |api, credential, body| {
+        Box::pin(async move { answer(api.roles.create(credential, Body::new(body)).await) })
+    }),
+    ("roles/delete", |api, credential, body| {
+        Box::pin(async move { answer(api.roles.delete(credential, Body::new(body)).await) })
+    }),
+    ("roles/get", |api, credential, body| {
+        Box::pin(async move { answer(api.roles.get(credential, Body::new(body)).await) })
+    }),
+    ("roles/list", |api, credential, body| {
+        Box::pin(async move { answer(api.roles.list(credential, Body::new(body)).await) })
+    }),
+    ("roles/listBindings", |api, credential, body| {
+        Box::pin(async move { answer(api.roles.list_bindings(credential, Body::new(body)).await) })
+    }),
+    ("roles/listSessions", |api, credential, body| {
+        Box::pin(async move { answer(api.roles.list_sessions(credential, Body::new(body)).await) })
+    }),
+    ("roles/revokeSessions", |api, credential, body| {
+        Box::pin(
+            async move { answer(api.roles.revoke_sessions(credential, Body::new(body)).await) },
+        )
+    }),
+    ("roles/update", |api, credential, body| {
+        Box::pin(async move { answer(api.roles.update(credential, Body::new(body)).await) })
+    }),
+    ("root/listAdministrators", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.root
+                    .list_administrators(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("root/setAdministrator", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.root
+                    .set_administrator(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("security/blockNetwork", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.security
+                    .block_network(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("security/listBlocks", |api, credential, body| {
+        Box::pin(async move { answer(api.security.list_blocks(credential, Body::new(body)).await) })
+    }),
+    ("security/unblockNetwork", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.security
+                    .unblock_network(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("serviceAccounts/create", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.service_accounts
+                    .create(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("serviceAccounts/delete", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.service_accounts
+                    .delete(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("serviceAccounts/get", |api, credential, body| {
+        Box::pin(async move { answer(api.service_accounts.get(credential, Body::new(body)).await) })
+    }),
+    ("serviceAccounts/list", |api, credential, body| {
+        Box::pin(
+            async move { answer(api.service_accounts.list(credential, Body::new(body)).await) },
+        )
+    }),
+    ("serviceAccounts/setStatus", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.service_accounts
+                    .set_status(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("serviceAccounts/update", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.service_accounts
+                    .update(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("signals/createSource", |api, credential, body| {
+        Box::pin(
+            async move { answer(api.signals.create_source(credential, Body::new(body)).await) },
+        )
+    }),
+    ("signals/deleteSource", |api, credential, body| {
+        Box::pin(
+            async move { answer(api.signals.delete_source(credential, Body::new(body)).await) },
+        )
+    }),
+    ("signals/getEvent", |api, credential, body| {
+        Box::pin(async move { answer(api.signals.get_event(credential, Body::new(body)).await) })
+    }),
+    ("signals/getSource", |api, credential, body| {
+        Box::pin(async move { answer(api.signals.get_source(credential, Body::new(body)).await) })
+    }),
+    ("signals/listEvents", |api, credential, body| {
+        Box::pin(async move { answer(api.signals.list_events(credential, Body::new(body)).await) })
+    }),
+    ("signals/listSources", |api, credential, body| {
+        Box::pin(async move { answer(api.signals.list_sources(credential, Body::new(body)).await) })
+    }),
+    ("signals/poll", |api, credential, body| {
+        Box::pin(async move { answer(api.signals.poll(credential, Body::new(body)).await) })
+    }),
+    ("signals/reprocess", |api, credential, body| {
+        Box::pin(async move { answer(api.signals.reprocess(credential, Body::new(body)).await) })
+    }),
+    ("signals/rotatePushToken", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.signals
+                    .rotate_push_token(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("signals/updateSource", |api, credential, body| {
+        Box::pin(
+            async move { answer(api.signals.update_source(credential, Body::new(body)).await) },
+        )
+    }),
+    ("sod/create", |api, credential, body| {
+        Box::pin(async move { answer(api.sod.create(credential, Body::new(body)).await) })
+    }),
+    ("sod/delete", |api, credential, body| {
+        Box::pin(async move { answer(api.sod.delete(credential, Body::new(body)).await) })
+    }),
+    ("sod/list", |api, credential, body| {
+        Box::pin(async move { answer(api.sod.list(credential, Body::new(body)).await) })
+    }),
+    ("sod/update", |api, credential, body| {
+        Box::pin(async move { answer(api.sod.update(credential, Body::new(body)).await) })
+    }),
+    ("sod/violations", |api, credential, body| {
+        Box::pin(async move { answer(api.sod.violations(credential, Body::new(body)).await) })
+    }),
+    ("ssh/activateAuthority", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.ssh
+                    .activate_authority(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("ssh/clientTrust", |api, credential, body| {
+        Box::pin(async move { answer(api.ssh.client_trust(credential, Body::new(body)).await) })
+    }),
+    ("ssh/createHost", |api, credential, body| {
+        Box::pin(async move { answer(api.ssh.create_host(credential, Body::new(body)).await) })
+    }),
+    ("ssh/deleteHost", |api, credential, body| {
+        Box::pin(async move { answer(api.ssh.delete_host(credential, Body::new(body)).await) })
+    }),
+    ("ssh/disableHost", |api, credential, body| {
+        Box::pin(async move { answer(api.ssh.disable_host(credential, Body::new(body)).await) })
+    }),
+    ("ssh/enrollHost", |api, _, body| {
+        Box::pin(async move { answer(api.ssh.enroll_host(Body::new(body)).await) })
+    }),
+    ("ssh/getCertificate", |api, credential, body| {
+        Box::pin(async move { answer(api.ssh.get_certificate(credential, Body::new(body)).await) })
+    }),
+    ("ssh/getHost", |api, credential, body| {
+        Box::pin(async move { answer(api.ssh.get_host(credential, Body::new(body)).await) })
+    }),
+    ("ssh/getSettings", |api, credential, body| {
+        Box::pin(async move { answer(api.ssh.get_settings(credential, Body::new(body)).await) })
+    }),
+    ("ssh/issueCertificate", |api, credential, body| {
+        Box::pin(
+            async move { answer(api.ssh.issue_certificate(credential, Body::new(body)).await) },
+        )
+    }),
+    ("ssh/listAuthorities", |api, credential, body| {
+        Box::pin(async move { answer(api.ssh.list_authorities(credential, Body::new(body)).await) })
+    }),
+    ("ssh/listCertificates", |api, credential, body| {
+        Box::pin(
+            async move { answer(api.ssh.list_certificates(credential, Body::new(body)).await) },
+        )
+    }),
+    ("ssh/listHosts", |api, credential, body| {
+        Box::pin(async move { answer(api.ssh.list_hosts(credential, Body::new(body)).await) })
+    }),
+    ("ssh/myAccess", |api, credential, body| {
+        Box::pin(async move { answer(api.ssh.my_access(credential, Body::new(body)).await) })
+    }),
+    ("ssh/myCertificates", |api, credential, body| {
+        Box::pin(async move { answer(api.ssh.my_certificates(credential, Body::new(body)).await) })
+    }),
+    ("ssh/resetJoinToken", |api, credential, body| {
+        Box::pin(async move { answer(api.ssh.reset_join_token(credential, Body::new(body)).await) })
+    }),
+    ("ssh/retireAuthority", |api, credential, body| {
+        Box::pin(async move { answer(api.ssh.retire_authority(credential, Body::new(body)).await) })
+    }),
+    ("ssh/revocationList", |api, _, body| {
+        Box::pin(async move { answer(api.ssh.revocation_list(Body::new(body)).await) })
+    }),
+    ("ssh/revokeAllCertificates", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.ssh
+                    .revoke_all_certificates(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("ssh/revokeCertificate", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.ssh
+                    .revoke_certificate(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("ssh/revokeIdentity", |api, credential, body| {
+        Box::pin(async move { answer(api.ssh.revoke_identity(credential, Body::new(body)).await) })
+    }),
+    ("ssh/rotateAuthority", |api, credential, body| {
+        Box::pin(async move { answer(api.ssh.rotate_authority(credential, Body::new(body)).await) })
+    }),
+    ("ssh/setup", |api, credential, body| {
+        Box::pin(async move { answer(api.ssh.setup(credential, Body::new(body)).await) })
+    }),
+    ("ssh/status", |api, credential, body| {
+        Box::pin(async move { answer(api.ssh.status(credential, Body::new(body)).await) })
+    }),
+    ("ssh/sweep", |api, credential, body| {
+        Box::pin(async move { answer(api.ssh.sweep(credential, Body::new(body)).await) })
+    }),
+    ("ssh/syncHost", |api, _, body| {
+        Box::pin(async move { answer(api.ssh.sync_host(Body::new(body)).await) })
+    }),
+    ("ssh/trust", |api, _, body| {
+        Box::pin(async move { answer(api.ssh.trust(Body::new(body)).await) })
+    }),
+    ("ssh/updateHost", |api, credential, body| {
+        Box::pin(async move { answer(api.ssh.update_host(credential, Body::new(body)).await) })
+    }),
+    ("ssh/updateSettings", |api, credential, body| {
+        Box::pin(async move { answer(api.ssh.update_settings(credential, Body::new(body)).await) })
+    }),
+    ("ssh/whoCanLogin", |api, credential, body| {
+        Box::pin(async move { answer(api.ssh.who_can_login(credential, Body::new(body)).await) })
+    }),
+    ("sts/assumeRoleWithWebIdentity", |api, _, body| {
+        Box::pin(
+            async move { answer(api.sts.assume_role_with_web_identity(Body::new(body)).await) },
+        )
+    }),
+    ("sts/getCallerIdentity", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.sts
+                    .get_caller_identity(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("sts/getSessionToken", |api, credential, body| {
+        Box::pin(
+            async move { answer(api.sts.get_session_token(credential, Body::new(body)).await) },
+        )
+    }),
+    ("teams/addMember", |api, credential, body| {
+        Box::pin(async move { answer(api.teams.add_member(credential, Body::new(body)).await) })
+    }),
+    ("teams/addMembers", |api, credential, body| {
+        Box::pin(async move { answer(api.teams.add_members(credential, Body::new(body)).await) })
+    }),
+    ("teams/approveRequest", |api, credential, body| {
+        Box::pin(
+            async move { answer(api.teams.approve_request(credential, Body::new(body)).await) },
+        )
+    }),
+    ("teams/cancelRequest", |api, credential, body| {
+        Box::pin(async move { answer(api.teams.cancel_request(credential, Body::new(body)).await) })
+    }),
+    ("teams/cancelReview", |api, credential, body| {
+        Box::pin(async move { answer(api.teams.cancel_review(credential, Body::new(body)).await) })
+    }),
+    ("teams/candidates", |api, credential, body| {
+        Box::pin(async move { answer(api.teams.candidates(credential, Body::new(body)).await) })
+    }),
+    ("teams/completeReview", |api, credential, body| {
+        Box::pin(
+            async move { answer(api.teams.complete_review(credential, Body::new(body)).await) },
+        )
+    }),
+    ("teams/create", |api, credential, body| {
+        Box::pin(async move { answer(api.teams.create(credential, Body::new(body)).await) })
+    }),
+    ("teams/decideReview", |api, credential, body| {
+        Box::pin(async move { answer(api.teams.decide_review(credential, Body::new(body)).await) })
+    }),
+    ("teams/delete", |api, credential, body| {
+        Box::pin(async move { answer(api.teams.delete(credential, Body::new(body)).await) })
+    }),
+    ("teams/denyRequest", |api, credential, body| {
+        Box::pin(async move { answer(api.teams.deny_request(credential, Body::new(body)).await) })
+    }),
+    ("teams/get", |api, credential, body| {
+        Box::pin(async move { answer(api.teams.get(credential, Body::new(body)).await) })
+    }),
+    ("teams/getReview", |api, credential, body| {
+        Box::pin(async move { answer(api.teams.get_review(credential, Body::new(body)).await) })
+    }),
+    ("teams/leave", |api, credential, body| {
+        Box::pin(async move { answer(api.teams.leave(credential, Body::new(body)).await) })
+    }),
+    ("teams/list", |api, credential, body| {
+        Box::pin(async move { answer(api.teams.list(credential, Body::new(body)).await) })
+    }),
+    ("teams/listForIdentity", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.teams
+                    .list_for_identity(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("teams/listMembers", |api, credential, body| {
+        Box::pin(async move { answer(api.teams.list_members(credential, Body::new(body)).await) })
+    }),
+    ("teams/listMine", |api, credential, body| {
+        Box::pin(async move { answer(api.teams.list_mine(credential, Body::new(body)).await) })
+    }),
+    ("teams/listRequests", |api, credential, body| {
+        Box::pin(async move { answer(api.teams.list_requests(credential, Body::new(body)).await) })
+    }),
+    ("teams/listReviews", |api, credential, body| {
+        Box::pin(async move { answer(api.teams.list_reviews(credential, Body::new(body)).await) })
+    }),
+    ("teams/reconcile", |api, credential, body| {
+        Box::pin(async move { answer(api.teams.reconcile(credential, Body::new(body)).await) })
+    }),
+    ("teams/removeMember", |api, credential, body| {
+        Box::pin(async move { answer(api.teams.remove_member(credential, Body::new(body)).await) })
+    }),
+    ("teams/requestToJoin", |api, credential, body| {
+        Box::pin(
+            async move { answer(api.teams.request_to_join(credential, Body::new(body)).await) },
+        )
+    }),
+    ("teams/startReview", |api, credential, body| {
+        Box::pin(async move { answer(api.teams.start_review(credential, Body::new(body)).await) })
+    }),
+    ("teams/suggestBirthright", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.teams
+                    .suggest_birthright(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("teams/update", |api, credential, body| {
+        Box::pin(async move { answer(api.teams.update(credential, Body::new(body)).await) })
+    }),
+    ("teams/updateMember", |api, credential, body| {
+        Box::pin(async move { answer(api.teams.update_member(credential, Body::new(body)).await) })
+    }),
+    ("tenants/acceptInvitation", |api, _, body| {
+        Box::pin(async move { answer(api.tenants.accept_invitation(Body::new(body)).await) })
+    }),
+    ("tenants/create", |api, credential, body| {
+        Box::pin(async move { answer(api.tenants.create(credential, Body::new(body)).await) })
+    }),
+    ("tenants/get", |api, credential, body| {
+        Box::pin(async move { answer(api.tenants.get(credential, Body::new(body)).await) })
+    }),
+    ("tenants/listChildren", |api, credential, body| {
+        Box::pin(
+            async move { answer(api.tenants.list_children(credential, Body::new(body)).await) },
+        )
+    }),
+    ("tenants/listInvitations", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.tenants
+                    .list_invitations(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("tenants/lookup", |api, _, body| {
+        Box::pin(async move { answer(api.tenants.lookup(Body::new(body)).await) })
+    }),
+    ("tenants/reparent", |api, credential, body| {
+        Box::pin(async move { answer(api.tenants.reparent(credential, Body::new(body)).await) })
+    }),
+    ("tenants/resendInvitation", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.tenants
+                    .resend_invitation(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("tenants/revokeInvitation", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.tenants
+                    .revoke_invitation(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("tenants/revokeSessions", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.tenants
+                    .revoke_sessions(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("tenants/setAccessPolicy", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.tenants
+                    .set_access_policy(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("tenants/setAuthPolicy", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.tenants
+                    .set_auth_policy(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("tenants/setBoundary", |api, credential, body| {
+        Box::pin(async move { answer(api.tenants.set_boundary(credential, Body::new(body)).await) })
+    }),
+    ("tenants/setLimits", |api, credential, body| {
+        Box::pin(async move { answer(api.tenants.set_limits(credential, Body::new(body)).await) })
+    }),
+    ("tenants/setRegion", |api, credential, body| {
+        Box::pin(async move { answer(api.tenants.set_region(credential, Body::new(body)).await) })
+    }),
+    ("tenants/setSlug", |api, credential, body| {
+        Box::pin(async move { answer(api.tenants.set_slug(credential, Body::new(body)).await) })
+    }),
+    ("tenants/setStatus", |api, credential, body| {
+        Box::pin(async move { answer(api.tenants.set_status(credential, Body::new(body)).await) })
+    }),
+    ("tenants/update", |api, credential, body| {
+        Box::pin(async move { answer(api.tenants.update(credential, Body::new(body)).await) })
+    }),
+    ("tenants/usage", |api, credential, body| {
+        Box::pin(async move { answer(api.tenants.usage(credential, Body::new(body)).await) })
+    }),
+    ("threats/addNote", |api, credential, body| {
+        Box::pin(async move { answer(api.threats.add_note(credential, Body::new(body)).await) })
+    }),
+    ("threats/configure", |api, credential, body| {
+        Box::pin(async move { answer(api.threats.configure(credential, Body::new(body)).await) })
+    }),
+    ("threats/createPlaybook", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.threats
+                    .create_playbook(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("threats/deletePlaybook", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.threats
+                    .delete_playbook(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("threats/detect", |api, credential, body| {
+        Box::pin(async move { answer(api.threats.detect(credential, Body::new(body)).await) })
+    }),
+    ("threats/dismissDetection", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.threats
+                    .dismiss_detection(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("threats/getDetection", |api, credential, body| {
+        Box::pin(
+            async move { answer(api.threats.get_detection(credential, Body::new(body)).await) },
+        )
+    }),
+    ("threats/getIncident", |api, credential, body| {
+        Box::pin(async move { answer(api.threats.get_incident(credential, Body::new(body)).await) })
+    }),
+    ("threats/getRisk", |api, credential, body| {
+        Box::pin(async move { answer(api.threats.get_risk(credential, Body::new(body)).await) })
+    }),
+    ("threats/getSettings", |api, credential, body| {
+        Box::pin(async move { answer(api.threats.get_settings(credential, Body::new(body)).await) })
+    }),
+    ("threats/listDetections", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.threats
+                    .list_detections(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("threats/listIncidents", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.threats
+                    .list_incidents(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("threats/listPlaybooks", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.threats
+                    .list_playbooks(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("threats/listRisk", |api, credential, body| {
+        Box::pin(async move { answer(api.threats.list_risk(credential, Body::new(body)).await) })
+    }),
+    ("threats/release", |api, credential, body| {
+        Box::pin(async move { answer(api.threats.release(credential, Body::new(body)).await) })
+    }),
+    ("threats/reportSuspicious", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.threats
+                    .report_suspicious(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("threats/resolveIncident", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.threats
+                    .resolve_incident(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("threats/respond", |api, credential, body| {
+        Box::pin(async move { answer(api.threats.respond(credential, Body::new(body)).await) })
+    }),
+    ("threats/rules", |api, credential, body| {
+        Box::pin(async move { answer(api.threats.rules(credential, Body::new(body)).await) })
+    }),
+    ("threats/setRisk", |api, credential, body| {
+        Box::pin(async move { answer(api.threats.set_risk(credential, Body::new(body)).await) })
+    }),
+    ("threats/summary", |api, credential, body| {
+        Box::pin(async move { answer(api.threats.summary(credential, Body::new(body)).await) })
+    }),
+    ("threats/timeline", |api, credential, body| {
+        Box::pin(async move { answer(api.threats.timeline(credential, Body::new(body)).await) })
+    }),
+    ("threats/updateIncident", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.threats
+                    .update_incident(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("threats/updatePlaybook", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.threats
+                    .update_playbook(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("trust/create", |api, credential, body| {
+        Box::pin(async move { answer(api.trust.create(credential, Body::new(body)).await) })
+    }),
+    ("trust/evaluateWebIdentity", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.trust
+                    .evaluate_web_identity(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("trust/list", |api, credential, body| {
+        Box::pin(async move { answer(api.trust.list(credential, Body::new(body)).await) })
+    }),
+    ("trust/revoke", |api, credential, body| {
+        Box::pin(async move { answer(api.trust.revoke(credential, Body::new(body)).await) })
+    }),
+    ("trust/revokeSessions", |api, credential, body| {
+        Box::pin(
+            async move { answer(api.trust.revoke_sessions(credential, Body::new(body)).await) },
+        )
+    }),
+    ("trust/update", |api, credential, body| {
+        Box::pin(async move { answer(api.trust.update(credential, Body::new(body)).await) })
+    }),
+    ("vault/accessLog", |api, credential, body| {
+        Box::pin(async move { answer(api.vault.access_log(credential, Body::new(body)).await) })
+    }),
+    ("vault/checkin", |api, credential, body| {
+        Box::pin(async move { answer(api.vault.checkin(credential, Body::new(body)).await) })
+    }),
+    ("vault/checkout", |api, credential, body| {
+        Box::pin(async move { answer(api.vault.checkout(credential, Body::new(body)).await) })
+    }),
+    ("vault/create", |api, credential, body| {
+        Box::pin(async move { answer(api.vault.create(credential, Body::new(body)).await) })
+    }),
+    ("vault/delete", |api, credential, body| {
+        Box::pin(async move { answer(api.vault.delete(credential, Body::new(body)).await) })
+    }),
+    ("vault/destroyVersion", |api, credential, body| {
+        Box::pin(
+            async move { answer(api.vault.destroy_version(credential, Body::new(body)).await) },
+        )
+    }),
+    ("vault/generate", |api, credential, body| {
+        Box::pin(async move { answer(api.vault.generate(credential, Body::new(body)).await) })
+    }),
+    ("vault/get", |api, credential, body| {
+        Box::pin(async move { answer(api.vault.get(credential, Body::new(body)).await) })
+    }),
+    ("vault/lease", |api, credential, body| {
+        Box::pin(async move { answer(api.vault.lease(credential, Body::new(body)).await) })
+    }),
+    ("vault/list", |api, credential, body| {
+        Box::pin(async move { answer(api.vault.list(credential, Body::new(body)).await) })
+    }),
+    ("vault/listLeases", |api, credential, body| {
+        Box::pin(async move { answer(api.vault.list_leases(credential, Body::new(body)).await) })
+    }),
+    ("vault/listMine", |api, credential, body| {
+        Box::pin(async move { answer(api.vault.list_mine(credential, Body::new(body)).await) })
+    }),
+    ("vault/listVersions", |api, credential, body| {
+        Box::pin(async move { answer(api.vault.list_versions(credential, Body::new(body)).await) })
+    }),
+    ("vault/promote", |api, credential, body| {
+        Box::pin(async move { answer(api.vault.promote(credential, Body::new(body)).await) })
+    }),
+    ("vault/put", |api, credential, body| {
+        Box::pin(async move { answer(api.vault.put(credential, Body::new(body)).await) })
+    }),
+    ("vault/renewLease", |api, credential, body| {
+        Box::pin(async move { answer(api.vault.renew_lease(credential, Body::new(body)).await) })
+    }),
+    ("vault/restore", |api, credential, body| {
+        Box::pin(async move { answer(api.vault.restore(credential, Body::new(body)).await) })
+    }),
+    ("vault/reveal", |api, credential, body| {
+        Box::pin(async move { answer(api.vault.reveal(credential, Body::new(body)).await) })
+    }),
+    ("vault/revokeLease", |api, credential, body| {
+        Box::pin(async move { answer(api.vault.revoke_lease(credential, Body::new(body)).await) })
+    }),
+    ("vault/rotate", |api, credential, body| {
+        Box::pin(async move { answer(api.vault.rotate(credential, Body::new(body)).await) })
+    }),
+    ("vault/setStage", |api, credential, body| {
+        Box::pin(async move { answer(api.vault.set_stage(credential, Body::new(body)).await) })
+    }),
+    ("vault/setVersionState", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.vault
+                    .set_version_state(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("vault/update", |api, credential, body| {
+        Box::pin(async move { answer(api.vault.update(credential, Body::new(body)).await) })
+    }),
+    (
+        "verifiableCredentials/available",
+        |api, credential, body| {
+            Box::pin(async move {
+                answer(
+                    api.verifiable_credentials
+                        .available(credential, Body::new(body))
+                        .await,
+                )
+            })
+        },
+    ),
+    (
+        "verifiableCredentials/createOffer",
+        |api, credential, body| {
+            Box::pin(async move {
+                answer(
+                    api.verifiable_credentials
+                        .create_offer(credential, Body::new(body))
+                        .await,
+                )
+            })
+        },
+    ),
+    (
+        "verifiableCredentials/createType",
+        |api, credential, body| {
+            Box::pin(async move {
+                answer(
+                    api.verifiable_credentials
+                        .create_type(credential, Body::new(body))
+                        .await,
+                )
+            })
+        },
+    ),
+    (
+        "verifiableCredentials/deleteType",
+        |api, credential, body| {
+            Box::pin(async move {
+                answer(
+                    api.verifiable_credentials
+                        .delete_type(credential, Body::new(body))
+                        .await,
+                )
+            })
+        },
+    ),
+    ("verifiableCredentials/getType", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.verifiable_credentials
+                    .get_type(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("verifiableCredentials/issuerMetadata", |api, _, body| {
+        Box::pin(async move {
+            answer(
+                api.verifiable_credentials
+                    .issuer_metadata(Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    (
+        "verifiableCredentials/listIssued",
+        |api, credential, body| {
+            Box::pin(async move {
+                answer(
+                    api.verifiable_credentials
+                        .list_issued(credential, Body::new(body))
+                        .await,
+                )
+            })
+        },
+    ),
+    ("verifiableCredentials/listKeys", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.verifiable_credentials
+                    .list_keys(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    (
+        "verifiableCredentials/listTypes",
+        |api, credential, body| {
+            Box::pin(async move {
+                answer(
+                    api.verifiable_credentials
+                        .list_types(credential, Body::new(body))
+                        .await,
+                )
+            })
+        },
+    ),
+    ("verifiableCredentials/mine", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.verifiable_credentials
+                    .mine(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("verifiableCredentials/nonce", |api, _, body| {
+        Box::pin(async move { answer(api.verifiable_credentials.nonce(Body::new(body)).await) })
+    }),
+    (
+        "verifiableCredentials/reinstate",
+        |api, credential, body| {
+            Box::pin(async move {
+                answer(
+                    api.verifiable_credentials
+                        .reinstate(credential, Body::new(body))
+                        .await,
+                )
+            })
+        },
+    ),
+    ("verifiableCredentials/request", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.verifiable_credentials
+                    .request(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    (
+        "verifiableCredentials/retireKey",
+        |api, credential, body| {
+            Box::pin(async move {
+                answer(
+                    api.verifiable_credentials
+                        .retire_key(credential, Body::new(body))
+                        .await,
+                )
+            })
+        },
+    ),
+    ("verifiableCredentials/revoke", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.verifiable_credentials
+                    .revoke(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    (
+        "verifiableCredentials/rotateKey",
+        |api, credential, body| {
+            Box::pin(async move {
+                answer(
+                    api.verifiable_credentials
+                        .rotate_key(credential, Body::new(body))
+                        .await,
+                )
+            })
+        },
+    ),
+    ("verifiableCredentials/status", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.verifiable_credentials
+                    .status(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("verifiableCredentials/suspend", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.verifiable_credentials
+                    .suspend(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    (
+        "verifiableCredentials/updateType",
+        |api, credential, body| {
+            Box::pin(async move {
+                answer(
+                    api.verifiable_credentials
+                        .update_type(credential, Body::new(body))
+                        .await,
+                )
+            })
+        },
+    ),
+    ("verifiableCredentials/verify", |api, _, body| {
+        Box::pin(async move { answer(api.verifiable_credentials.verify(Body::new(body)).await) })
+    }),
+    ("webhooks/create", |api, credential, body| {
+        Box::pin(async move { answer(api.webhooks.create(credential, Body::new(body)).await) })
+    }),
+    ("webhooks/delete", |api, credential, body| {
+        Box::pin(async move { answer(api.webhooks.delete(credential, Body::new(body)).await) })
+    }),
+    ("webhooks/get", |api, credential, body| {
+        Box::pin(async move { answer(api.webhooks.get(credential, Body::new(body)).await) })
+    }),
+    ("webhooks/list", |api, credential, body| {
+        Box::pin(async move { answer(api.webhooks.list(credential, Body::new(body)).await) })
+    }),
+    ("webhooks/listDeliveries", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.webhooks
+                    .list_deliveries(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("webhooks/ping", |api, credential, body| {
+        Box::pin(async move { answer(api.webhooks.ping(credential, Body::new(body)).await) })
+    }),
+    ("webhooks/redeliver", |api, credential, body| {
+        Box::pin(async move { answer(api.webhooks.redeliver(credential, Body::new(body)).await) })
+    }),
+    ("webhooks/rotateSecret", |api, credential, body| {
+        Box::pin(async move {
+            answer(
+                api.webhooks
+                    .rotate_secret(credential, Body::new(body))
+                    .await,
+            )
+        })
+    }),
+    ("webhooks/update", |api, credential, body| {
+        Box::pin(async move { answer(api.webhooks.update(credential, Body::new(body)).await) })
+    }),
+    ("workflows/cancelRun", |api, credential, body| {
+        Box::pin(async move { answer(api.workflows.cancel_run(credential, Body::new(body)).await) })
+    }),
+    ("workflows/create", |api, credential, body| {
+        Box::pin(async move { answer(api.workflows.create(credential, Body::new(body)).await) })
+    }),
+    ("workflows/delete", |api, credential, body| {
+        Box::pin(async move { answer(api.workflows.delete(credential, Body::new(body)).await) })
+    }),
+    ("workflows/evaluate", |api, credential, body| {
+        Box::pin(async move { answer(api.workflows.evaluate(credential, Body::new(body)).await) })
+    }),
+    ("workflows/get", |api, credential, body| {
+        Box::pin(async move { answer(api.workflows.get(credential, Body::new(body)).await) })
+    }),
+    ("workflows/getRun", |api, credential, body| {
+        Box::pin(async move { answer(api.workflows.get_run(credential, Body::new(body)).await) })
+    }),
+    ("workflows/list", |api, credential, body| {
+        Box::pin(async move { answer(api.workflows.list(credential, Body::new(body)).await) })
+    }),
+    ("workflows/listRuns", |api, credential, body| {
+        Box::pin(async move { answer(api.workflows.list_runs(credential, Body::new(body)).await) })
+    }),
+    ("workflows/preview", |api, credential, body| {
+        Box::pin(async move { answer(api.workflows.preview(credential, Body::new(body)).await) })
+    }),
+    ("workflows/retryRun", |api, credential, body| {
+        Box::pin(async move { answer(api.workflows.retry_run(credential, Body::new(body)).await) })
+    }),
+    ("workflows/run", |api, credential, body| {
+        Box::pin(async move { answer(api.workflows.run(credential, Body::new(body)).await) })
+    }),
+    ("workflows/update", |api, credential, body| {
+        Box::pin(async move { answer(api.workflows.update(credential, Body::new(body)).await) })
+    }),
+];
+
 /// Calls the route `path`; None when `path` is not a group route.
 pub async fn dispatch(
     api: &Api,
@@ -759,2007 +4337,19 @@ pub async fn dispatch(
     body: Map<String, Value>,
     credential: &CredentialInput,
 ) -> Option<IamResult<Value>> {
-    let _ = credential;
-    Some(match path {
-        "accessPaths/find" => {
-            answer(Box::pin(api.access_paths.find(credential, Body::new(body))).await)
-        }
-        "accessRequests/approve" => {
-            answer(Box::pin(api.access_requests.approve(credential, Body::new(body))).await)
-        }
-        "accessRequests/cancel" => {
-            answer(Box::pin(api.access_requests.cancel(credential, Body::new(body))).await)
-        }
-        "accessRequests/create" => {
-            answer(Box::pin(api.access_requests.create(credential, Body::new(body))).await)
-        }
-        "accessRequests/deny" => {
-            answer(Box::pin(api.access_requests.deny(credential, Body::new(body))).await)
-        }
-        "accessRequests/get" => {
-            answer(Box::pin(api.access_requests.get(credential, Body::new(body))).await)
-        }
-        "accessRequests/list" => {
-            answer(Box::pin(api.access_requests.list(credential, Body::new(body))).await)
-        }
-        "accessRequests/listMine" => {
-            answer(Box::pin(api.access_requests.list_mine(credential, Body::new(body))).await)
-        }
-        "actions/list" => answer(Box::pin(api.actions.list(credential, Body::new(body))).await),
-        "actions/register" => {
-            answer(Box::pin(api.actions.register(credential, Body::new(body))).await)
-        }
-        "actions/unregister" => {
-            answer(Box::pin(api.actions.unregister(credential, Body::new(body))).await)
-        }
-        "agents/activity" => {
-            answer(Box::pin(api.agents.activity(credential, Body::new(body))).await)
-        }
-        "agents/catalog" => answer(Box::pin(api.agents.catalog(credential, Body::new(body))).await),
-        "agents/create" => answer(Box::pin(api.agents.create(credential, Body::new(body))).await),
-        "agents/delete" => answer(Box::pin(api.agents.delete(credential, Body::new(body))).await),
-        "agents/directory" => {
-            answer(Box::pin(api.agents.directory(credential, Body::new(body))).await)
-        }
-        "agents/get" => answer(Box::pin(api.agents.get(credential, Body::new(body))).await),
-        "agents/list" => answer(Box::pin(api.agents.list(credential, Body::new(body))).await),
-        "agents/listMine" => {
-            answer(Box::pin(api.agents.list_mine(credential, Body::new(body))).await)
-        }
-        "agents/resume" => answer(Box::pin(api.agents.resume(credential, Body::new(body))).await),
-        "agents/signCard" => {
-            answer(Box::pin(api.agents.sign_card(credential, Body::new(body))).await)
-        }
-        "agents/standing" => {
-            answer(Box::pin(api.agents.standing(credential, Body::new(body))).await)
-        }
-        "agents/suspend" => answer(Box::pin(api.agents.suspend(credential, Body::new(body))).await),
-        "agents/suspendAll" => {
-            answer(Box::pin(api.agents.suspend_all(credential, Body::new(body))).await)
-        }
-        "agents/update" => answer(Box::pin(api.agents.update(credential, Body::new(body))).await),
-        "agreements/accept" => {
-            answer(Box::pin(api.agreements.accept(credential, Body::new(body))).await)
-        }
-        "agreements/create" => {
-            answer(Box::pin(api.agreements.create(credential, Body::new(body))).await)
-        }
-        "agreements/delete" => {
-            answer(Box::pin(api.agreements.delete(credential, Body::new(body))).await)
-        }
-        "agreements/list" => {
-            answer(Box::pin(api.agreements.list(credential, Body::new(body))).await)
-        }
-        "agreements/listMine" => {
-            answer(Box::pin(api.agreements.list_mine(credential, Body::new(body))).await)
-        }
-        "agreements/status" => {
-            answer(Box::pin(api.agreements.status(credential, Body::new(body))).await)
-        }
-        "agreements/update" => {
-            answer(Box::pin(api.agreements.update(credential, Body::new(body))).await)
-        }
-        "analysis/findings" => {
-            answer(Box::pin(api.analysis.findings(credential, Body::new(body))).await)
-        }
-        "analysis/lintPolicy" => {
-            answer(Box::pin(api.analysis.lint_policy(credential, Body::new(body))).await)
-        }
-        "analysis/suppress" => {
-            answer(Box::pin(api.analysis.suppress(credential, Body::new(body))).await)
-        }
-        "analysis/unsuppress" => {
-            answer(Box::pin(api.analysis.unsuppress(credential, Body::new(body))).await)
-        }
-        "applications/assign" => {
-            answer(Box::pin(api.applications.assign(credential, Body::new(body))).await)
-        }
-        "applications/check" => {
-            answer(Box::pin(api.applications.check(credential, Body::new(body))).await)
-        }
-        "applications/create" => {
-            answer(Box::pin(api.applications.create(credential, Body::new(body))).await)
-        }
-        "applications/delete" => {
-            answer(Box::pin(api.applications.delete(credential, Body::new(body))).await)
-        }
-        "applications/launch" => {
-            answer(Box::pin(api.applications.launch(credential, Body::new(body))).await)
-        }
-        "applications/list" => {
-            answer(Box::pin(api.applications.list(credential, Body::new(body))).await)
-        }
-        "applications/listAssignments" => answer(
-            Box::pin(
-                api.applications
-                    .list_assignments(credential, Body::new(body)),
-            )
-            .await,
-        ),
-        "applications/mine" => {
-            answer(Box::pin(api.applications.mine(credential, Body::new(body))).await)
-        }
-        "applications/removeUnused" => {
-            answer(Box::pin(api.applications.remove_unused(credential, Body::new(body))).await)
-        }
-        "applications/unassign" => {
-            answer(Box::pin(api.applications.unassign(credential, Body::new(body))).await)
-        }
-        "applications/update" => {
-            answer(Box::pin(api.applications.update(credential, Body::new(body))).await)
-        }
-        "applications/usage" => {
-            answer(Box::pin(api.applications.usage(credential, Body::new(body))).await)
-        }
-        "assertions/issue" => {
-            answer(Box::pin(api.assertions.issue(credential, Body::new(body))).await)
-        }
-        "audit/export" => answer(Box::pin(api.audit.export(credential, Body::new(body))).await),
-        "audit/list" => answer(Box::pin(api.audit.list(credential, Body::new(body))).await),
-        "audit/verify" => answer(Box::pin(api.audit.verify(credential, Body::new(body))).await),
-        "authorities/create" => {
-            answer(Box::pin(api.authorities.create(credential, Body::new(body))).await)
-        }
-        "authorities/revoke" => {
-            answer(Box::pin(api.authorities.revoke(credential, Body::new(body))).await)
-        }
-        "billing/accounts" => {
-            answer(Box::pin(api.billing.accounts(credential, Body::new(body))).await)
-        }
-        "billing/anomalies" => {
-            answer(Box::pin(api.billing.anomalies(credential, Body::new(body))).await)
-        }
-        "billing/cancelSubscription" => {
-            answer(Box::pin(api.billing.cancel_subscription(credential, Body::new(body))).await)
-        }
-        "billing/changePlan" => {
-            answer(Box::pin(api.billing.change_plan(credential, Body::new(body))).await)
-        }
-        "billing/check" => answer(Box::pin(api.billing.check(credential, Body::new(body))).await),
-        "billing/closePeriod" => {
-            answer(Box::pin(api.billing.close_period(credential, Body::new(body))).await)
-        }
-        "billing/createBudget" => {
-            answer(Box::pin(api.billing.create_budget(credential, Body::new(body))).await)
-        }
-        "billing/createCoupon" => {
-            answer(Box::pin(api.billing.create_coupon(credential, Body::new(body))).await)
-        }
-        "billing/createCreditNote" => {
-            answer(Box::pin(api.billing.create_credit_note(credential, Body::new(body))).await)
-        }
-        "billing/createInvoiceItem" => {
-            answer(Box::pin(api.billing.create_invoice_item(credential, Body::new(body))).await)
-        }
-        "billing/createMeter" => {
-            answer(Box::pin(api.billing.create_meter(credential, Body::new(body))).await)
-        }
-        "billing/createPlan" => {
-            answer(Box::pin(api.billing.create_plan(credential, Body::new(body))).await)
-        }
-        "billing/deactivateCoupon" => {
-            answer(Box::pin(api.billing.deactivate_coupon(credential, Body::new(body))).await)
-        }
-        "billing/deleteBudget" => {
-            answer(Box::pin(api.billing.delete_budget(credential, Body::new(body))).await)
-        }
-        "billing/deleteInvoiceItem" => {
-            answer(Box::pin(api.billing.delete_invoice_item(credential, Body::new(body))).await)
-        }
-        "billing/deleteMeter" => {
-            answer(Box::pin(api.billing.delete_meter(credential, Body::new(body))).await)
-        }
-        "billing/deleteProfile" => {
-            answer(Box::pin(api.billing.delete_profile(credential, Body::new(body))).await)
-        }
-        "billing/departmentSpend" => {
-            answer(Box::pin(api.billing.department_spend(credential, Body::new(body))).await)
-        }
-        "billing/exportSpend" => {
-            answer(Box::pin(api.billing.export_spend(credential, Body::new(body))).await)
-        }
-        "billing/exportStatement" => {
-            answer(Box::pin(api.billing.export_statement(credential, Body::new(body))).await)
-        }
-        "billing/finalizeInvoice" => {
-            answer(Box::pin(api.billing.finalize_invoice(credential, Body::new(body))).await)
-        }
-        "billing/getProfile" => {
-            answer(Box::pin(api.billing.get_profile(credential, Body::new(body))).await)
-        }
-        "billing/getStatement" => {
-            answer(Box::pin(api.billing.get_statement(credential, Body::new(body))).await)
-        }
-        "billing/getTerms" => {
-            answer(Box::pin(api.billing.get_terms(credential, Body::new(body))).await)
-        }
-        "billing/grantCredit" => {
-            answer(Box::pin(api.billing.grant_credit(credential, Body::new(body))).await)
-        }
-        "billing/listBudgets" => {
-            answer(Box::pin(api.billing.list_budgets(credential, Body::new(body))).await)
-        }
-        "billing/listCoupons" => {
-            answer(Box::pin(api.billing.list_coupons(credential, Body::new(body))).await)
-        }
-        "billing/listCreditNotes" => {
-            answer(Box::pin(api.billing.list_credit_notes(credential, Body::new(body))).await)
-        }
-        "billing/listCredits" => {
-            answer(Box::pin(api.billing.list_credits(credential, Body::new(body))).await)
-        }
-        "billing/listDiscounts" => {
-            answer(Box::pin(api.billing.list_discounts(credential, Body::new(body))).await)
-        }
-        "billing/listInvoiceItems" => {
-            answer(Box::pin(api.billing.list_invoice_items(credential, Body::new(body))).await)
-        }
-        "billing/listMeters" => {
-            answer(Box::pin(api.billing.list_meters(credential, Body::new(body))).await)
-        }
-        "billing/listPlans" => {
-            answer(Box::pin(api.billing.list_plans(credential, Body::new(body))).await)
-        }
-        "billing/listPrices" => {
-            answer(Box::pin(api.billing.list_prices(credential, Body::new(body))).await)
-        }
-        "billing/listStatements" => {
-            answer(Box::pin(api.billing.list_statements(credential, Body::new(body))).await)
-        }
-        "billing/listSubscriptions" => {
-            answer(Box::pin(api.billing.list_subscriptions(credential, Body::new(body))).await)
-        }
-        "billing/listUsage" => {
-            answer(Box::pin(api.billing.list_usage(credential, Body::new(body))).await)
-        }
-        "billing/markPaid" => {
-            answer(Box::pin(api.billing.mark_paid(credential, Body::new(body))).await)
-        }
-        "billing/markUncollectible" => {
-            answer(Box::pin(api.billing.mark_uncollectible(credential, Body::new(body))).await)
-        }
-        "billing/mySpend" => {
-            answer(Box::pin(api.billing.my_spend(credential, Body::new(body))).await)
-        }
-        "billing/previewStatement" => {
-            answer(Box::pin(api.billing.preview_statement(credential, Body::new(body))).await)
-        }
-        "billing/quote" => answer(Box::pin(api.billing.quote(credential, Body::new(body))).await),
-        "billing/record" => answer(Box::pin(api.billing.record(credential, Body::new(body))).await),
-        "billing/recordMany" => {
-            answer(Box::pin(api.billing.record_many(credential, Body::new(body))).await)
-        }
-        "billing/recordPayment" => {
-            answer(Box::pin(api.billing.record_payment(credential, Body::new(body))).await)
-        }
-        "billing/redeemCoupon" => {
-            answer(Box::pin(api.billing.redeem_coupon(credential, Body::new(body))).await)
-        }
-        "billing/removeDiscount" => {
-            answer(Box::pin(api.billing.remove_discount(credential, Body::new(body))).await)
-        }
-        "billing/renderInvoice" => {
-            answer(Box::pin(api.billing.render_invoice(credential, Body::new(body))).await)
-        }
-        "billing/resumeSubscription" => {
-            answer(Box::pin(api.billing.resume_subscription(credential, Body::new(body))).await)
-        }
-        "billing/revokeCredit" => {
-            answer(Box::pin(api.billing.revoke_credit(credential, Body::new(body))).await)
-        }
-        "billing/setPrice" => {
-            answer(Box::pin(api.billing.set_price(credential, Body::new(body))).await)
-        }
-        "billing/setProfile" => {
-            answer(Box::pin(api.billing.set_profile(credential, Body::new(body))).await)
-        }
-        "billing/setTerms" => {
-            answer(Box::pin(api.billing.set_terms(credential, Body::new(body))).await)
-        }
-        "billing/spend" => answer(Box::pin(api.billing.spend(credential, Body::new(body))).await),
-        "billing/subscribe" => {
-            answer(Box::pin(api.billing.subscribe(credential, Body::new(body))).await)
-        }
-        "billing/teamSpend" => {
-            answer(Box::pin(api.billing.team_spend(credential, Body::new(body))).await)
-        }
-        "billing/trend" => answer(Box::pin(api.billing.trend(credential, Body::new(body))).await),
-        "billing/updateBudget" => {
-            answer(Box::pin(api.billing.update_budget(credential, Body::new(body))).await)
-        }
-        "billing/updateMeter" => {
-            answer(Box::pin(api.billing.update_meter(credential, Body::new(body))).await)
-        }
-        "billing/updatePlan" => {
-            answer(Box::pin(api.billing.update_plan(credential, Body::new(body))).await)
-        }
-        "billing/updateSubscription" => {
-            answer(Box::pin(api.billing.update_subscription(credential, Body::new(body))).await)
-        }
-        "billing/voidStatement" => {
-            answer(Box::pin(api.billing.void_statement(credential, Body::new(body))).await)
-        }
-        "bindings/activate" => {
-            answer(Box::pin(api.bindings.activate(credential, Body::new(body))).await)
-        }
-        "bindings/approveActivation" => {
-            answer(Box::pin(api.bindings.approve_activation(credential, Body::new(body))).await)
-        }
-        "bindings/create" => {
-            answer(Box::pin(api.bindings.create(credential, Body::new(body))).await)
-        }
-        "bindings/deactivate" => {
-            answer(Box::pin(api.bindings.deactivate(credential, Body::new(body))).await)
-        }
-        "bindings/delete" => {
-            answer(Box::pin(api.bindings.delete(credential, Body::new(body))).await)
-        }
-        "bindings/denyActivation" => {
-            answer(Box::pin(api.bindings.deny_activation(credential, Body::new(body))).await)
-        }
-        "bindings/list" => answer(Box::pin(api.bindings.list(credential, Body::new(body))).await),
-        "bindings/listActivations" => {
-            answer(Box::pin(api.bindings.list_activations(credential, Body::new(body))).await)
-        }
-        "bindings/listApprovals" => {
-            answer(Box::pin(api.bindings.list_approvals(credential, Body::new(body))).await)
-        }
-        "bindings/listMine" => {
-            answer(Box::pin(api.bindings.list_mine(credential, Body::new(body))).await)
-        }
-        "bindings/revokeActivation" => {
-            answer(Box::pin(api.bindings.revoke_activation(credential, Body::new(body))).await)
-        }
-        "bindings/update" => {
-            answer(Box::pin(api.bindings.update(credential, Body::new(body))).await)
-        }
-        "certifications/close" => {
-            answer(Box::pin(api.certifications.close(credential, Body::new(body))).await)
-        }
-        "certifications/create" => {
-            answer(Box::pin(api.certifications.create(credential, Body::new(body))).await)
-        }
-        "certifications/decide" => {
-            answer(Box::pin(api.certifications.decide(credential, Body::new(body))).await)
-        }
-        "certifications/delete" => {
-            answer(Box::pin(api.certifications.delete(credential, Body::new(body))).await)
-        }
-        "certifications/get" => {
-            answer(Box::pin(api.certifications.get(credential, Body::new(body))).await)
-        }
-        "certifications/list" => {
-            answer(Box::pin(api.certifications.list(credential, Body::new(body))).await)
-        }
-        "certifications/listMine" => {
-            answer(Box::pin(api.certifications.list_mine(credential, Body::new(body))).await)
-        }
-        "certifications/remind" => {
-            answer(Box::pin(api.certifications.remind(credential, Body::new(body))).await)
-        }
-        "certifications/review" => {
-            answer(Box::pin(api.certifications.review(credential, Body::new(body))).await)
-        }
-        "clearances/debrief" => {
-            answer(Box::pin(api.clearances.debrief(credential, Body::new(body))).await)
-        }
-        "clearances/declassify" => {
-            answer(Box::pin(api.clearances.declassify(credential, Body::new(body))).await)
-        }
-        "clearances/defineScheme" => {
-            answer(Box::pin(api.clearances.define_scheme(credential, Body::new(body))).await)
-        }
-        "clearances/explain" => {
-            answer(Box::pin(api.clearances.explain(credential, Body::new(body))).await)
-        }
-        "clearances/get" => answer(Box::pin(api.clearances.get(credential, Body::new(body))).await),
-        "clearances/getLabel" => {
-            answer(Box::pin(api.clearances.get_label(credential, Body::new(body))).await)
-        }
-        "clearances/getScheme" => {
-            answer(Box::pin(api.clearances.get_scheme(credential, Body::new(body))).await)
-        }
-        "clearances/grant" => {
-            answer(Box::pin(api.clearances.grant(credential, Body::new(body))).await)
-        }
-        "clearances/label" => {
-            answer(Box::pin(api.clearances.label(credential, Body::new(body))).await)
-        }
-        "clearances/list" => {
-            answer(Box::pin(api.clearances.list(credential, Body::new(body))).await)
-        }
-        "clearances/listLabels" => {
-            answer(Box::pin(api.clearances.list_labels(credential, Body::new(body))).await)
-        }
-        "clearances/mine" => {
-            answer(Box::pin(api.clearances.mine(credential, Body::new(body))).await)
-        }
-        "clearances/readIn" => {
-            answer(Box::pin(api.clearances.read_in(credential, Body::new(body))).await)
-        }
-        "clearances/reinstate" => {
-            answer(Box::pin(api.clearances.reinstate(credential, Body::new(body))).await)
-        }
-        "clearances/revoke" => {
-            answer(Box::pin(api.clearances.revoke(credential, Body::new(body))).await)
-        }
-        "clearances/suspend" => {
-            answer(Box::pin(api.clearances.suspend(credential, Body::new(body))).await)
-        }
-        "clearances/templates" => {
-            answer(Box::pin(api.clearances.templates(credential, Body::new(body))).await)
-        }
-        "clearances/update" => {
-            answer(Box::pin(api.clearances.update(credential, Body::new(body))).await)
-        }
-        "clearances/updateScheme" => {
-            answer(Box::pin(api.clearances.update_scheme(credential, Body::new(body))).await)
-        }
-        "compliance/adoptFramework" => {
-            answer(Box::pin(api.compliance.adopt_framework(credential, Body::new(body))).await)
-        }
-        "compliance/approveException" => answer(
-            Box::pin(
-                api.compliance
-                    .approve_exception(credential, Body::new(body)),
-            )
-            .await,
-        ),
-        "compliance/catalog" => {
-            answer(Box::pin(api.compliance.catalog(credential, Body::new(body))).await)
-        }
-        "compliance/createControl" => {
-            answer(Box::pin(api.compliance.create_control(credential, Body::new(body))).await)
-        }
-        "compliance/createException" => {
-            answer(Box::pin(api.compliance.create_exception(credential, Body::new(body))).await)
-        }
-        "compliance/deleteControl" => {
-            answer(Box::pin(api.compliance.delete_control(credential, Body::new(body))).await)
-        }
-        "compliance/evaluate" => {
-            answer(Box::pin(api.compliance.evaluate(credential, Body::new(body))).await)
-        }
-        "compliance/evidenceKeys" => {
-            answer(Box::pin(api.compliance.evidence_keys(credential, Body::new(body))).await)
-        }
-        "compliance/exportEvidence" => {
-            answer(Box::pin(api.compliance.export_evidence(credential, Body::new(body))).await)
-        }
-        "compliance/listControls" => {
-            answer(Box::pin(api.compliance.list_controls(credential, Body::new(body))).await)
-        }
-        "compliance/listExceptions" => {
-            answer(Box::pin(api.compliance.list_exceptions(credential, Body::new(body))).await)
-        }
-        "compliance/listResults" => {
-            answer(Box::pin(api.compliance.list_results(credential, Body::new(body))).await)
-        }
-        "compliance/listRuns" => {
-            answer(Box::pin(api.compliance.list_runs(credential, Body::new(body))).await)
-        }
-        "compliance/revokeException" => {
-            answer(Box::pin(api.compliance.revoke_exception(credential, Body::new(body))).await)
-        }
-        "compliance/status" => {
-            answer(Box::pin(api.compliance.status(credential, Body::new(body))).await)
-        }
-        "compliance/updateControl" => {
-            answer(Box::pin(api.compliance.update_control(credential, Body::new(body))).await)
-        }
-        "compliance/verifyEvidence" => {
-            answer(Box::pin(api.compliance.verify_evidence(credential, Body::new(body))).await)
-        }
-        "config/apply" => answer(Box::pin(api.config.apply(credential, Body::new(body))).await),
-        "config/export" => answer(Box::pin(api.config.export(credential, Body::new(body))).await),
-        "config/plan" => answer(Box::pin(api.config.plan(credential, Body::new(body))).await),
-        "credentials/create" => {
-            answer(Box::pin(api.credentials.create(credential, Body::new(body))).await)
-        }
-        "credentials/get" => {
-            answer(Box::pin(api.credentials.get(credential, Body::new(body))).await)
-        }
-        "credentials/list" => {
-            answer(Box::pin(api.credentials.list(credential, Body::new(body))).await)
-        }
-        "credentials/revoke" => {
-            answer(Box::pin(api.credentials.revoke(credential, Body::new(body))).await)
-        }
-        "credentials/rotate" => {
-            answer(Box::pin(api.credentials.rotate(credential, Body::new(body))).await)
-        }
-        "credentials/update" => {
-            answer(Box::pin(api.credentials.update(credential, Body::new(body))).await)
-        }
-        "delegations/activity" => {
-            answer(Box::pin(api.delegations.activity(credential, Body::new(body))).await)
-        }
-        "delegations/approve" => {
-            answer(Box::pin(api.delegations.approve(credential, Body::new(body))).await)
-        }
-        "delegations/assume" => {
-            answer(Box::pin(api.delegations.assume(credential, Body::new(body))).await)
-        }
-        "delegations/decideConfirmation" => answer(
-            Box::pin(
-                api.delegations
-                    .decide_confirmation(credential, Body::new(body)),
-            )
-            .await,
-        ),
-        "delegations/deny" => {
-            answer(Box::pin(api.delegations.deny(credential, Body::new(body))).await)
-        }
-        "delegations/get" => {
-            answer(Box::pin(api.delegations.get(credential, Body::new(body))).await)
-        }
-        "delegations/getConfirmation" => answer(
-            Box::pin(
-                api.delegations
-                    .get_confirmation(credential, Body::new(body)),
-            )
-            .await,
-        ),
-        "delegations/grant" => {
-            answer(Box::pin(api.delegations.grant(credential, Body::new(body))).await)
-        }
-        "delegations/handoff" => {
-            answer(Box::pin(api.delegations.handoff(credential, Body::new(body))).await)
-        }
-        "delegations/issueToken" => {
-            answer(Box::pin(api.delegations.issue_token(credential, Body::new(body))).await)
-        }
-        "delegations/list" => {
-            answer(Box::pin(api.delegations.list(credential, Body::new(body))).await)
-        }
-        "delegations/listConfirmations" => answer(
-            Box::pin(
-                api.delegations
-                    .list_confirmations(credential, Body::new(body)),
-            )
-            .await,
-        ),
-        "delegations/listMine" => {
-            answer(Box::pin(api.delegations.list_mine(credential, Body::new(body))).await)
-        }
-        "delegations/request" => {
-            answer(Box::pin(api.delegations.request(credential, Body::new(body))).await)
-        }
-        "delegations/requestConfirmation" => answer(
-            Box::pin(
-                api.delegations
-                    .request_confirmation(credential, Body::new(body)),
-            )
-            .await,
-        ),
-        "delegations/revoke" => {
-            answer(Box::pin(api.delegations.revoke(credential, Body::new(body))).await)
-        }
-        "departments/assign" => {
-            answer(Box::pin(api.departments.assign(credential, Body::new(body))).await)
-        }
-        "departments/create" => {
-            answer(Box::pin(api.departments.create(credential, Body::new(body))).await)
-        }
-        "departments/delete" => {
-            answer(Box::pin(api.departments.delete(credential, Body::new(body))).await)
-        }
-        "departments/get" => {
-            answer(Box::pin(api.departments.get(credential, Body::new(body))).await)
-        }
-        "departments/importFromAttribute" => answer(
-            Box::pin(
-                api.departments
-                    .import_from_attribute(credential, Body::new(body)),
-            )
-            .await,
-        ),
-        "departments/list" => {
-            answer(Box::pin(api.departments.list(credential, Body::new(body))).await)
-        }
-        "departments/listMembers" => {
-            answer(Box::pin(api.departments.list_members(credential, Body::new(body))).await)
-        }
-        "departments/mine" => {
-            answer(Box::pin(api.departments.mine(credential, Body::new(body))).await)
-        }
-        "departments/ofIdentity" => {
-            answer(Box::pin(api.departments.of_identity(credential, Body::new(body))).await)
-        }
-        "departments/suggestBirthright" => answer(
-            Box::pin(
-                api.departments
-                    .suggest_birthright(credential, Body::new(body)),
-            )
-            .await,
-        ),
-        "departments/syncManagers" => {
-            answer(Box::pin(api.departments.sync_managers(credential, Body::new(body))).await)
-        }
-        "departments/tree" => {
-            answer(Box::pin(api.departments.tree(credential, Body::new(body))).await)
-        }
-        "departments/unassign" => {
-            answer(Box::pin(api.departments.unassign(credential, Body::new(body))).await)
-        }
-        "departments/update" => {
-            answer(Box::pin(api.departments.update(credential, Body::new(body))).await)
-        }
-        "devices/check" => answer(Box::pin(api.devices.check(credential, Body::new(body))).await),
-        "devices/configure" => {
-            answer(Box::pin(api.devices.configure(credential, Body::new(body))).await)
-        }
-        "devices/createEnrollment" => {
-            answer(Box::pin(api.devices.create_enrollment(credential, Body::new(body))).await)
-        }
-        "devices/createIntegration" => {
-            answer(Box::pin(api.devices.create_integration(credential, Body::new(body))).await)
-        }
-        "devices/delete" => answer(Box::pin(api.devices.delete(credential, Body::new(body))).await),
-        "devices/deleteIntegration" => {
-            answer(Box::pin(api.devices.delete_integration(credential, Body::new(body))).await)
-        }
-        "devices/enroll" => answer(Box::pin(api.devices.enroll(credential, Body::new(body))).await),
-        "devices/get" => answer(Box::pin(api.devices.get(credential, Body::new(body))).await),
-        "devices/getSettings" => {
-            answer(Box::pin(api.devices.get_settings(credential, Body::new(body))).await)
-        }
-        "devices/list" => answer(Box::pin(api.devices.list(credential, Body::new(body))).await),
-        "devices/listEnrollments" => {
-            answer(Box::pin(api.devices.list_enrollments(credential, Body::new(body))).await)
-        }
-        "devices/listIntegrations" => {
-            answer(Box::pin(api.devices.list_integrations(credential, Body::new(body))).await)
-        }
-        "devices/mine" => answer(Box::pin(api.devices.mine(credential, Body::new(body))).await),
-        "devices/removeKey" => {
-            answer(Box::pin(api.devices.remove_key(credential, Body::new(body))).await)
-        }
-        "devices/report" => answer(Box::pin(api.devices.report(credential, Body::new(body))).await),
-        "devices/retire" => answer(Box::pin(api.devices.retire(credential, Body::new(body))).await),
-        "devices/retireMine" => {
-            answer(Box::pin(api.devices.retire_mine(credential, Body::new(body))).await)
-        }
-        "devices/revokeEnrollment" => {
-            answer(Box::pin(api.devices.revoke_enrollment(credential, Body::new(body))).await)
-        }
-        "devices/update" => answer(Box::pin(api.devices.update(credential, Body::new(body))).await),
-        "devices/updateIntegration" => {
-            answer(Box::pin(api.devices.update_integration(credential, Body::new(body))).await)
-        }
-        "domains/add" => answer(Box::pin(api.domains.add(credential, Body::new(body))).await),
-        "domains/delete" => answer(Box::pin(api.domains.delete(credential, Body::new(body))).await),
-        "domains/discover" => answer(Box::pin(api.domains.discover(Body::new(body))).await),
-        "domains/list" => answer(Box::pin(api.domains.list(credential, Body::new(body))).await),
-        "domains/verify" => answer(Box::pin(api.domains.verify(credential, Body::new(body))).await),
-        "features/create" => {
-            answer(Box::pin(api.features.create(credential, Body::new(body))).await)
-        }
-        "features/delete" => {
-            answer(Box::pin(api.features.delete(credential, Body::new(body))).await)
-        }
-        "features/evaluate" => {
-            answer(Box::pin(api.features.evaluate(credential, Body::new(body))).await)
-        }
-        "features/list" => answer(Box::pin(api.features.list(credential, Body::new(body))).await),
-        "features/listTargets" => {
-            answer(Box::pin(api.features.list_targets(credential, Body::new(body))).await)
-        }
-        "features/setOverride" => {
-            answer(Box::pin(api.features.set_override(credential, Body::new(body))).await)
-        }
-        "features/setTarget" => {
-            answer(Box::pin(api.features.set_target(credential, Body::new(body))).await)
-        }
-        "features/update" => {
-            answer(Box::pin(api.features.update(credential, Body::new(body))).await)
-        }
-        "filters/plan" => answer(Box::pin(api.filters.plan(credential, Body::new(body))).await),
-        "filters/planFor" => {
-            answer(Box::pin(api.filters.plan_for(credential, Body::new(body))).await)
-        }
-        "groups/addMember" => {
-            answer(Box::pin(api.groups.add_member(credential, Body::new(body))).await)
-        }
-        "groups/addMembers" => {
-            answer(Box::pin(api.groups.add_members(credential, Body::new(body))).await)
-        }
-        "groups/create" => answer(Box::pin(api.groups.create(credential, Body::new(body))).await),
-        "groups/delete" => answer(Box::pin(api.groups.delete(credential, Body::new(body))).await),
-        "groups/get" => answer(Box::pin(api.groups.get(credential, Body::new(body))).await),
-        "groups/list" => answer(Box::pin(api.groups.list(credential, Body::new(body))).await),
-        "groups/listMembers" => {
-            answer(Box::pin(api.groups.list_members(credential, Body::new(body))).await)
-        }
-        "groups/removeMember" => {
-            answer(Box::pin(api.groups.remove_member(credential, Body::new(body))).await)
-        }
-        "groups/update" => answer(Box::pin(api.groups.update(credential, Body::new(body))).await),
-        "groups/updateMember" => {
-            answer(Box::pin(api.groups.update_member(credential, Body::new(body))).await)
-        }
-        "guests/attest" => answer(Box::pin(api.guests.attest(credential, Body::new(body))).await),
-        "guests/configure" => {
-            answer(Box::pin(api.guests.configure(credential, Body::new(body))).await)
-        }
-        "guests/convertToMember" => {
-            answer(Box::pin(api.guests.convert_to_member(credential, Body::new(body))).await)
-        }
-        "guests/get" => answer(Box::pin(api.guests.get(credential, Body::new(body))).await),
-        "guests/getSettings" => {
-            answer(Box::pin(api.guests.get_settings(credential, Body::new(body))).await)
-        }
-        "guests/invite" => answer(Box::pin(api.guests.invite(credential, Body::new(body))).await),
-        "guests/list" => answer(Box::pin(api.guests.list(credential, Body::new(body))).await),
-        "guests/listInvitations" => {
-            answer(Box::pin(api.guests.list_invitations(credential, Body::new(body))).await)
-        }
-        "guests/mine" => answer(Box::pin(api.guests.mine(credential, Body::new(body))).await),
-        "guests/redeem" => answer(Box::pin(api.guests.redeem(Body::new(body))).await),
-        "guests/remove" => answer(Box::pin(api.guests.remove(credential, Body::new(body))).await),
-        "guests/resendInvitation" => {
-            answer(Box::pin(api.guests.resend_invitation(credential, Body::new(body))).await)
-        }
-        "guests/revokeInvitation" => {
-            answer(Box::pin(api.guests.revoke_invitation(credential, Body::new(body))).await)
-        }
-        "guests/setSponsor" => {
-            answer(Box::pin(api.guests.set_sponsor(credential, Body::new(body))).await)
-        }
-        "hostnames/add" => answer(Box::pin(api.hostnames.add(credential, Body::new(body))).await),
-        "hostnames/delete" => {
-            answer(Box::pin(api.hostnames.delete(credential, Body::new(body))).await)
-        }
-        "hostnames/list" => answer(Box::pin(api.hostnames.list(credential, Body::new(body))).await),
-        "hostnames/setPrimary" => {
-            answer(Box::pin(api.hostnames.set_primary(credential, Body::new(body))).await)
-        }
-        "hostnames/verify" => {
-            answer(Box::pin(api.hostnames.verify(credential, Body::new(body))).await)
-        }
-        "identities/acceptInvitation" => {
-            answer(Box::pin(api.identities.accept_invitation(Body::new(body))).await)
-        }
-        "identities/create" => {
-            answer(Box::pin(api.identities.create(credential, Body::new(body))).await)
-        }
-        "identities/createMany" => {
-            answer(Box::pin(api.identities.create_many(credential, Body::new(body))).await)
-        }
-        "identities/delete" => {
-            answer(Box::pin(api.identities.delete(credential, Body::new(body))).await)
-        }
-        "identities/export" => {
-            answer(Box::pin(api.identities.export(credential, Body::new(body))).await)
-        }
-        "identities/get" => answer(Box::pin(api.identities.get(credential, Body::new(body))).await),
-        "identities/impersonate" => {
-            answer(Box::pin(api.identities.impersonate(credential, Body::new(body))).await)
-        }
-        "identities/invite" => {
-            answer(Box::pin(api.identities.invite(credential, Body::new(body))).await)
-        }
-        "identities/list" => {
-            answer(Box::pin(api.identities.list(credential, Body::new(body))).await)
-        }
-        "identities/listBindings" => {
-            answer(Box::pin(api.identities.list_bindings(credential, Body::new(body))).await)
-        }
-        "identities/listGroups" => {
-            answer(Box::pin(api.identities.list_groups(credential, Body::new(body))).await)
-        }
-        "identities/listInvitations" => {
-            answer(Box::pin(api.identities.list_invitations(credential, Body::new(body))).await)
-        }
-        "identities/listReports" => {
-            answer(Box::pin(api.identities.list_reports(credential, Body::new(body))).await)
-        }
-        "identities/listSessions" => {
-            answer(Box::pin(api.identities.list_sessions(credential, Body::new(body))).await)
-        }
-        "identities/offboard" => {
-            answer(Box::pin(api.identities.offboard(credential, Body::new(body))).await)
-        }
-        "identities/requestPasswordReset" => answer(
-            Box::pin(
-                api.identities
-                    .request_password_reset(credential, Body::new(body)),
-            )
-            .await,
-        ),
-        "identities/resendInvitation" => answer(
-            Box::pin(
-                api.identities
-                    .resend_invitation(credential, Body::new(body)),
-            )
-            .await,
-        ),
-        "identities/revokeInvitation" => answer(
-            Box::pin(
-                api.identities
-                    .revoke_invitation(credential, Body::new(body)),
-            )
-            .await,
-        ),
-        "identities/revokeSessions" => {
-            answer(Box::pin(api.identities.revoke_sessions(credential, Body::new(body))).await)
-        }
-        "identities/setBoundary" => {
-            answer(Box::pin(api.identities.set_boundary(credential, Body::new(body))).await)
-        }
-        "identities/setOwner" => {
-            answer(Box::pin(api.identities.set_owner(credential, Body::new(body))).await)
-        }
-        "identities/setStatus" => {
-            answer(Box::pin(api.identities.set_status(credential, Body::new(body))).await)
-        }
-        "identities/unlock" => {
-            answer(Box::pin(api.identities.unlock(credential, Body::new(body))).await)
-        }
-        "identities/update" => {
-            answer(Box::pin(api.identities.update(credential, Body::new(body))).await)
-        }
-        "impact/preview" => answer(Box::pin(api.impact.preview(credential, Body::new(body))).await),
-        "inference/check" => {
-            answer(Box::pin(api.inference.check(credential, Body::new(body))).await)
-        }
-        "inference/createModel" => {
-            answer(Box::pin(api.inference.create_model(credential, Body::new(body))).await)
-        }
-        "inference/createProvider" => {
-            answer(Box::pin(api.inference.create_provider(credential, Body::new(body))).await)
-        }
-        "inference/deleteBudget" => {
-            answer(Box::pin(api.inference.delete_budget(credential, Body::new(body))).await)
-        }
-        "inference/deleteModel" => {
-            answer(Box::pin(api.inference.delete_model(credential, Body::new(body))).await)
-        }
-        "inference/deleteProvider" => {
-            answer(Box::pin(api.inference.delete_provider(credential, Body::new(body))).await)
-        }
-        "inference/listBudgets" => {
-            answer(Box::pin(api.inference.list_budgets(credential, Body::new(body))).await)
-        }
-        "inference/listMine" => {
-            answer(Box::pin(api.inference.list_mine(credential, Body::new(body))).await)
-        }
-        "inference/listModels" => {
-            answer(Box::pin(api.inference.list_models(credential, Body::new(body))).await)
-        }
-        "inference/listProviders" => {
-            answer(Box::pin(api.inference.list_providers(credential, Body::new(body))).await)
-        }
-        "inference/myUsage" => {
-            answer(Box::pin(api.inference.my_usage(credential, Body::new(body))).await)
-        }
-        "inference/record" => {
-            answer(Box::pin(api.inference.record(credential, Body::new(body))).await)
-        }
-        "inference/setBudget" => {
-            answer(Box::pin(api.inference.set_budget(credential, Body::new(body))).await)
-        }
-        "inference/updateModel" => {
-            answer(Box::pin(api.inference.update_model(credential, Body::new(body))).await)
-        }
-        "inference/updateProvider" => {
-            answer(Box::pin(api.inference.update_provider(credential, Body::new(body))).await)
-        }
-        "inference/usage" => {
-            answer(Box::pin(api.inference.usage(credential, Body::new(body))).await)
-        }
-        "invariants/create" => {
-            answer(Box::pin(api.invariants.create(credential, Body::new(body))).await)
-        }
-        "invariants/delete" => {
-            answer(Box::pin(api.invariants.delete(credential, Body::new(body))).await)
-        }
-        "invariants/list" => {
-            answer(Box::pin(api.invariants.list(credential, Body::new(body))).await)
-        }
-        "invariants/run" => answer(Box::pin(api.invariants.run(credential, Body::new(body))).await),
-        "invariants/update" => {
-            answer(Box::pin(api.invariants.update(credential, Body::new(body))).await)
-        }
-        "keys/cancelDeletion" => {
-            answer(Box::pin(api.keys.cancel_deletion(credential, Body::new(body))).await)
-        }
-        "keys/create" => answer(Box::pin(api.keys.create(credential, Body::new(body))).await),
-        "keys/createAlias" => {
-            answer(Box::pin(api.keys.create_alias(credential, Body::new(body))).await)
-        }
-        "keys/createGrant" => {
-            answer(Box::pin(api.keys.create_grant(credential, Body::new(body))).await)
-        }
-        "keys/decrypt" => answer(Box::pin(api.keys.decrypt(credential, Body::new(body))).await),
-        "keys/deleteAlias" => {
-            answer(Box::pin(api.keys.delete_alias(credential, Body::new(body))).await)
-        }
-        "keys/disable" => answer(Box::pin(api.keys.disable(credential, Body::new(body))).await),
-        "keys/enable" => answer(Box::pin(api.keys.enable(credential, Body::new(body))).await),
-        "keys/encrypt" => answer(Box::pin(api.keys.encrypt(credential, Body::new(body))).await),
-        "keys/generateDataKey" => {
-            answer(Box::pin(api.keys.generate_data_key(credential, Body::new(body))).await)
-        }
-        "keys/generateMac" => {
-            answer(Box::pin(api.keys.generate_mac(credential, Body::new(body))).await)
-        }
-        "keys/get" => answer(Box::pin(api.keys.get(credential, Body::new(body))).await),
-        "keys/jwks" => answer(Box::pin(api.keys.jwks(credential, Body::new(body))).await),
-        "keys/list" => answer(Box::pin(api.keys.list(credential, Body::new(body))).await),
-        "keys/listAliases" => {
-            answer(Box::pin(api.keys.list_aliases(credential, Body::new(body))).await)
-        }
-        "keys/listGrants" => {
-            answer(Box::pin(api.keys.list_grants(credential, Body::new(body))).await)
-        }
-        "keys/listVersions" => {
-            answer(Box::pin(api.keys.list_versions(credential, Body::new(body))).await)
-        }
-        "keys/publicKey" => {
-            answer(Box::pin(api.keys.public_key(credential, Body::new(body))).await)
-        }
-        "keys/reEncrypt" => {
-            answer(Box::pin(api.keys.re_encrypt(credential, Body::new(body))).await)
-        }
-        "keys/retireGrant" => {
-            answer(Box::pin(api.keys.retire_grant(credential, Body::new(body))).await)
-        }
-        "keys/revokeGrant" => {
-            answer(Box::pin(api.keys.revoke_grant(credential, Body::new(body))).await)
-        }
-        "keys/rotate" => answer(Box::pin(api.keys.rotate(credential, Body::new(body))).await),
-        "keys/scheduleDeletion" => {
-            answer(Box::pin(api.keys.schedule_deletion(credential, Body::new(body))).await)
-        }
-        "keys/sign" => answer(Box::pin(api.keys.sign(credential, Body::new(body))).await),
-        "keys/signJwt" => answer(Box::pin(api.keys.sign_jwt(credential, Body::new(body))).await),
-        "keys/update" => answer(Box::pin(api.keys.update(credential, Body::new(body))).await),
-        "keys/updateAlias" => {
-            answer(Box::pin(api.keys.update_alias(credential, Body::new(body))).await)
-        }
-        "keys/verify" => answer(Box::pin(api.keys.verify(credential, Body::new(body))).await),
-        "keys/verifyJwt" => {
-            answer(Box::pin(api.keys.verify_jwt(credential, Body::new(body))).await)
-        }
-        "keys/verifyMac" => {
-            answer(Box::pin(api.keys.verify_mac(credential, Body::new(body))).await)
-        }
-        "ldap/directory" => answer(Box::pin(api.ldap.directory(credential, Body::new(body))).await),
-        "ldap/getSettings" => {
-            answer(Box::pin(api.ldap.get_settings(credential, Body::new(body))).await)
-        }
-        "ldap/updateSettings" => {
-            answer(Box::pin(api.ldap.update_settings(credential, Body::new(body))).await)
-        }
-        "licenses/addPool" => {
-            answer(Box::pin(api.licenses.add_pool(credential, Body::new(body))).await)
-        }
-        "licenses/assign" => {
-            answer(Box::pin(api.licenses.assign(credential, Body::new(body))).await)
-        }
-        "licenses/assignMany" => {
-            answer(Box::pin(api.licenses.assign_many(credential, Body::new(body))).await)
-        }
-        "licenses/configure" => {
-            answer(Box::pin(api.licenses.configure(credential, Body::new(body))).await)
-        }
-        "licenses/createProduct" => {
-            answer(Box::pin(api.licenses.create_product(credential, Body::new(body))).await)
-        }
-        "licenses/getProduct" => {
-            answer(Box::pin(api.licenses.get_product(credential, Body::new(body))).await)
-        }
-        "licenses/getSettings" => {
-            answer(Box::pin(api.licenses.get_settings(credential, Body::new(body))).await)
-        }
-        "licenses/listAssignments" => {
-            answer(Box::pin(api.licenses.list_assignments(credential, Body::new(body))).await)
-        }
-        "licenses/listPools" => {
-            answer(Box::pin(api.licenses.list_pools(credential, Body::new(body))).await)
-        }
-        "licenses/listProducts" => {
-            answer(Box::pin(api.licenses.list_products(credential, Body::new(body))).await)
-        }
-        "licenses/listSeats" => {
-            answer(Box::pin(api.licenses.list_seats(credential, Body::new(body))).await)
-        }
-        "licenses/mine" => answer(Box::pin(api.licenses.mine(credential, Body::new(body))).await),
-        "licenses/removePool" => {
-            answer(Box::pin(api.licenses.remove_pool(credential, Body::new(body))).await)
-        }
-        "licenses/retireProduct" => {
-            answer(Box::pin(api.licenses.retire_product(credential, Body::new(body))).await)
-        }
-        "licenses/unassign" => {
-            answer(Box::pin(api.licenses.unassign(credential, Body::new(body))).await)
-        }
-        "licenses/updatePool" => {
-            answer(Box::pin(api.licenses.update_pool(credential, Body::new(body))).await)
-        }
-        "licenses/updateProduct" => {
-            answer(Box::pin(api.licenses.update_product(credential, Body::new(body))).await)
-        }
-        "licenses/usage" => answer(Box::pin(api.licenses.usage(credential, Body::new(body))).await),
-        "links/create" => answer(Box::pin(api.links.create(credential, Body::new(body))).await),
-        "links/list" => answer(Box::pin(api.links.list(credential, Body::new(body))).await),
-        "links/revoke" => answer(Box::pin(api.links.revoke(credential, Body::new(body))).await),
-        "links/switch" => answer(Box::pin(api.links.switch(credential, Body::new(body))).await),
-        "oidcProviders/create" => {
-            answer(Box::pin(api.oidc_providers.create(credential, Body::new(body))).await)
-        }
-        "oidcProviders/delete" => {
-            answer(Box::pin(api.oidc_providers.delete(credential, Body::new(body))).await)
-        }
-        "oidcProviders/get" => {
-            answer(Box::pin(api.oidc_providers.get(credential, Body::new(body))).await)
-        }
-        "oidcProviders/list" => {
-            answer(Box::pin(api.oidc_providers.list(credential, Body::new(body))).await)
-        }
-        "oidcProviders/revokeSessions" => answer(
-            Box::pin(
-                api.oidc_providers
-                    .revoke_sessions(credential, Body::new(body)),
-            )
-            .await,
-        ),
-        "oidcProviders/update" => {
-            answer(Box::pin(api.oidc_providers.update(credential, Body::new(body))).await)
-        }
-        "onboarding/createFlow" => {
-            answer(Box::pin(api.onboarding.create_flow(credential, Body::new(body))).await)
-        }
-        "onboarding/deleteFlow" => {
-            answer(Box::pin(api.onboarding.delete_flow(credential, Body::new(body))).await)
-        }
-        "onboarding/effective" => {
-            answer(Box::pin(api.onboarding.effective(credential, Body::new(body))).await)
-        }
-        "onboarding/getFlow" => {
-            answer(Box::pin(api.onboarding.get_flow(credential, Body::new(body))).await)
-        }
-        "onboarding/listFlows" => {
-            answer(Box::pin(api.onboarding.list_flows(credential, Body::new(body))).await)
-        }
-        "onboarding/memberProgress" => {
-            answer(Box::pin(api.onboarding.member_progress(credential, Body::new(body))).await)
-        }
-        "onboarding/mine" => {
-            answer(Box::pin(api.onboarding.mine(credential, Body::new(body))).await)
-        }
-        "onboarding/progress" => {
-            answer(Box::pin(api.onboarding.progress(credential, Body::new(body))).await)
-        }
-        "onboarding/resetProgress" => {
-            answer(Box::pin(api.onboarding.reset_progress(credential, Body::new(body))).await)
-        }
-        "onboarding/setSettings" => {
-            answer(Box::pin(api.onboarding.set_settings(credential, Body::new(body))).await)
-        }
-        "onboarding/setup" => {
-            answer(Box::pin(api.onboarding.setup(credential, Body::new(body))).await)
-        }
-        "onboarding/submitSetupStep" => answer(
-            Box::pin(
-                api.onboarding
-                    .submit_setup_step(credential, Body::new(body)),
-            )
-            .await,
-        ),
-        "onboarding/submitStep" => {
-            answer(Box::pin(api.onboarding.submit_step(credential, Body::new(body))).await)
-        }
-        "onboarding/updateFlow" => {
-            answer(Box::pin(api.onboarding.update_flow(credential, Body::new(body))).await)
-        }
-        "onboarding/verifyStep" => {
-            answer(Box::pin(api.onboarding.verify_step(credential, Body::new(body))).await)
-        }
-        "packages/approveRequest" => {
-            answer(Box::pin(api.packages.approve_request(credential, Body::new(body))).await)
-        }
-        "packages/assign" => {
-            answer(Box::pin(api.packages.assign(credential, Body::new(body))).await)
-        }
-        "packages/cancelRequest" => {
-            answer(Box::pin(api.packages.cancel_request(credential, Body::new(body))).await)
-        }
-        "packages/create" => {
-            answer(Box::pin(api.packages.create(credential, Body::new(body))).await)
-        }
-        "packages/delete" => {
-            answer(Box::pin(api.packages.delete(credential, Body::new(body))).await)
-        }
-        "packages/denyRequest" => {
-            answer(Box::pin(api.packages.deny_request(credential, Body::new(body))).await)
-        }
-        "packages/extend" => {
-            answer(Box::pin(api.packages.extend(credential, Body::new(body))).await)
-        }
-        "packages/get" => answer(Box::pin(api.packages.get(credential, Body::new(body))).await),
-        "packages/list" => answer(Box::pin(api.packages.list(credential, Body::new(body))).await),
-        "packages/listApprovals" => {
-            answer(Box::pin(api.packages.list_approvals(credential, Body::new(body))).await)
-        }
-        "packages/listAssignments" => {
-            answer(Box::pin(api.packages.list_assignments(credential, Body::new(body))).await)
-        }
-        "packages/listMine" => {
-            answer(Box::pin(api.packages.list_mine(credential, Body::new(body))).await)
-        }
-        "packages/listRequests" => {
-            answer(Box::pin(api.packages.list_requests(credential, Body::new(body))).await)
-        }
-        "packages/previewAutoAssign" => answer(
-            Box::pin(
-                api.packages
-                    .preview_auto_assign(credential, Body::new(body)),
-            )
-            .await,
-        ),
-        "packages/reconcile" => {
-            answer(Box::pin(api.packages.reconcile(credential, Body::new(body))).await)
-        }
-        "packages/request" => {
-            answer(Box::pin(api.packages.request(credential, Body::new(body))).await)
-        }
-        "packages/revoke" => {
-            answer(Box::pin(api.packages.revoke(credential, Body::new(body))).await)
-        }
-        "packages/update" => {
-            answer(Box::pin(api.packages.update(credential, Body::new(body))).await)
-        }
-        "pki/bundle" => answer(Box::pin(api.pki.bundle(credential, Body::new(body))).await),
-        "pki/createAuthority" => {
-            answer(Box::pin(api.pki.create_authority(credential, Body::new(body))).await)
-        }
-        "pki/crl" => answer(Box::pin(api.pki.crl(credential, Body::new(body))).await),
-        "pki/getAuthority" => {
-            answer(Box::pin(api.pki.get_authority(credential, Body::new(body))).await)
-        }
-        "pki/getCertificate" => {
-            answer(Box::pin(api.pki.get_certificate(credential, Body::new(body))).await)
-        }
-        "pki/issueCertificate" => {
-            answer(Box::pin(api.pki.issue_certificate(credential, Body::new(body))).await)
-        }
-        "pki/listAuthorities" => {
-            answer(Box::pin(api.pki.list_authorities(credential, Body::new(body))).await)
-        }
-        "pki/listCertificates" => {
-            answer(Box::pin(api.pki.list_certificates(credential, Body::new(body))).await)
-        }
-        "pki/requestCertificate" => {
-            answer(Box::pin(api.pki.request_certificate(credential, Body::new(body))).await)
-        }
-        "pki/revokeCertificate" => {
-            answer(Box::pin(api.pki.revoke_certificate(credential, Body::new(body))).await)
-        }
-        "pki/updateAuthority" => {
-            answer(Box::pin(api.pki.update_authority(credential, Body::new(body))).await)
-        }
-        "policies/create" => {
-            answer(Box::pin(api.policies.create(credential, Body::new(body))).await)
-        }
-        "policies/delete" => {
-            answer(Box::pin(api.policies.delete(credential, Body::new(body))).await)
-        }
-        "policies/effectiveActions" => {
-            answer(Box::pin(api.policies.effective_actions(credential, Body::new(body))).await)
-        }
-        "policies/get" => answer(Box::pin(api.policies.get(credential, Body::new(body))).await),
-        "policies/list" => answer(Box::pin(api.policies.list(credential, Body::new(body))).await),
-        "policies/listVersions" => {
-            answer(Box::pin(api.policies.list_versions(credential, Body::new(body))).await)
-        }
-        "policies/restoreVersion" => {
-            answer(Box::pin(api.policies.restore_version(credential, Body::new(body))).await)
-        }
-        "policies/simulate" => {
-            answer(Box::pin(api.policies.simulate(credential, Body::new(body))).await)
-        }
-        "policies/test" => answer(Box::pin(api.policies.test(credential, Body::new(body))).await),
-        "policies/update" => {
-            answer(Box::pin(api.policies.update(credential, Body::new(body))).await)
-        }
-        "policies/whoCan" => {
-            answer(Box::pin(api.policies.who_can(credential, Body::new(body))).await)
-        }
-        "privacy/addNote" => {
-            answer(Box::pin(api.privacy.add_note(credential, Body::new(body))).await)
-        }
-        "privacy/assignRequest" => {
-            answer(Box::pin(api.privacy.assign_request(credential, Body::new(body))).await)
-        }
-        "privacy/audience" => {
-            answer(Box::pin(api.privacy.audience(credential, Body::new(body))).await)
-        }
-        "privacy/cancelMyRequest" => {
-            answer(Box::pin(api.privacy.cancel_my_request(credential, Body::new(body))).await)
-        }
-        "privacy/check" => answer(Box::pin(api.privacy.check(credential, Body::new(body))).await),
-        "privacy/confirmPublic" => {
-            answer(Box::pin(api.privacy.confirm_public(Body::new(body))).await)
-        }
-        "privacy/createPurpose" => {
-            answer(Box::pin(api.privacy.create_purpose(credential, Body::new(body))).await)
-        }
-        "privacy/createRequest" => {
-            answer(Box::pin(api.privacy.create_request(credential, Body::new(body))).await)
-        }
-        "privacy/decide" => answer(Box::pin(api.privacy.decide(credential, Body::new(body))).await),
-        "privacy/deletePurpose" => {
-            answer(Box::pin(api.privacy.delete_purpose(credential, Body::new(body))).await)
-        }
-        "privacy/downloadExport" => {
-            answer(Box::pin(api.privacy.download_export(credential, Body::new(body))).await)
-        }
-        "privacy/extendRequest" => {
-            answer(Box::pin(api.privacy.extend_request(credential, Body::new(body))).await)
-        }
-        "privacy/filterSubjects" => {
-            answer(Box::pin(api.privacy.filter_subjects(credential, Body::new(body))).await)
-        }
-        "privacy/fulfilRequest" => {
-            answer(Box::pin(api.privacy.fulfil_request(credential, Body::new(body))).await)
-        }
-        "privacy/getRequest" => {
-            answer(Box::pin(api.privacy.get_request(credential, Body::new(body))).await)
-        }
-        "privacy/getSettings" => {
-            answer(Box::pin(api.privacy.get_settings(credential, Body::new(body))).await)
-        }
-        "privacy/history" => {
-            answer(Box::pin(api.privacy.history(credential, Body::new(body))).await)
-        }
-        "privacy/importDecisions" => {
-            answer(Box::pin(api.privacy.import_decisions(credential, Body::new(body))).await)
-        }
-        "privacy/liftRestriction" => {
-            answer(Box::pin(api.privacy.lift_restriction(credential, Body::new(body))).await)
-        }
-        "privacy/linkRequest" => {
-            answer(Box::pin(api.privacy.link_request(credential, Body::new(body))).await)
-        }
-        "privacy/listConsents" => {
-            answer(Box::pin(api.privacy.list_consents(credential, Body::new(body))).await)
-        }
-        "privacy/listHolds" => {
-            answer(Box::pin(api.privacy.list_holds(credential, Body::new(body))).await)
-        }
-        "privacy/listPurposes" => {
-            answer(Box::pin(api.privacy.list_purposes(credential, Body::new(body))).await)
-        }
-        "privacy/listRequests" => {
-            answer(Box::pin(api.privacy.list_requests(credential, Body::new(body))).await)
-        }
-        "privacy/listRestrictions" => {
-            answer(Box::pin(api.privacy.list_restrictions(credential, Body::new(body))).await)
-        }
-        "privacy/mine" => answer(Box::pin(api.privacy.mine(credential, Body::new(body))).await),
-        "privacy/myHistory" => {
-            answer(Box::pin(api.privacy.my_history(credential, Body::new(body))).await)
-        }
-        "privacy/myReceipt" => {
-            answer(Box::pin(api.privacy.my_receipt(credential, Body::new(body))).await)
-        }
-        "privacy/placeHold" => {
-            answer(Box::pin(api.privacy.place_hold(credential, Body::new(body))).await)
-        }
-        "privacy/record" => answer(Box::pin(api.privacy.record(credential, Body::new(body))).await),
-        "privacy/rejectRequest" => {
-            answer(Box::pin(api.privacy.reject_request(credential, Body::new(body))).await)
-        }
-        "privacy/releaseHold" => {
-            answer(Box::pin(api.privacy.release_hold(credential, Body::new(body))).await)
-        }
-        "privacy/submitPublic" => {
-            answer(Box::pin(api.privacy.submit_public(Body::new(body))).await)
-        }
-        "privacy/submitRequest" => {
-            answer(Box::pin(api.privacy.submit_request(credential, Body::new(body))).await)
-        }
-        "privacy/summary" => {
-            answer(Box::pin(api.privacy.summary(credential, Body::new(body))).await)
-        }
-        "privacy/updatePurpose" => {
-            answer(Box::pin(api.privacy.update_purpose(credential, Body::new(body))).await)
-        }
-        "privacy/updateSettings" => {
-            answer(Box::pin(api.privacy.update_settings(credential, Body::new(body))).await)
-        }
-        "privacy/verifyReceipt" => {
-            answer(Box::pin(api.privacy.verify_receipt(credential, Body::new(body))).await)
-        }
-        "privacy/verifyRequest" => {
-            answer(Box::pin(api.privacy.verify_request(credential, Body::new(body))).await)
-        }
-        "protection/createProfile" => {
-            answer(Box::pin(api.protection.create_profile(credential, Body::new(body))).await)
-        }
-        "protection/deleteProfile" => {
-            answer(Box::pin(api.protection.delete_profile(credential, Body::new(body))).await)
-        }
-        "protection/deleteTokens" => {
-            answer(Box::pin(api.protection.delete_tokens(credential, Body::new(body))).await)
-        }
-        "protection/detokenize" => {
-            answer(Box::pin(api.protection.detokenize(credential, Body::new(body))).await)
-        }
-        "protection/getProfile" => {
-            answer(Box::pin(api.protection.get_profile(credential, Body::new(body))).await)
-        }
-        "protection/listProfiles" => {
-            answer(Box::pin(api.protection.list_profiles(credential, Body::new(body))).await)
-        }
-        "protection/mask" => {
-            answer(Box::pin(api.protection.mask(credential, Body::new(body))).await)
-        }
-        "protection/tokenize" => {
-            answer(Box::pin(api.protection.tokenize(credential, Body::new(body))).await)
-        }
-        "protection/updateProfile" => {
-            answer(Box::pin(api.protection.update_profile(credential, Body::new(body))).await)
-        }
-        "quotas/assign" => answer(Box::pin(api.quotas.assign(credential, Body::new(body))).await),
-        "quotas/consume" => answer(Box::pin(api.quotas.consume(credential, Body::new(body))).await),
-        "quotas/createPlan" => {
-            answer(Box::pin(api.quotas.create_plan(credential, Body::new(body))).await)
-        }
-        "quotas/deletePlan" => {
-            answer(Box::pin(api.quotas.delete_plan(credential, Body::new(body))).await)
-        }
-        "quotas/getPlan" => {
-            answer(Box::pin(api.quotas.get_plan(credential, Body::new(body))).await)
-        }
-        "quotas/listAssignments" => {
-            answer(Box::pin(api.quotas.list_assignments(credential, Body::new(body))).await)
-        }
-        "quotas/listPlans" => {
-            answer(Box::pin(api.quotas.list_plans(credential, Body::new(body))).await)
-        }
-        "quotas/reset" => answer(Box::pin(api.quotas.reset(credential, Body::new(body))).await),
-        "quotas/status" => answer(Box::pin(api.quotas.status(credential, Body::new(body))).await),
-        "quotas/unassign" => {
-            answer(Box::pin(api.quotas.unassign(credential, Body::new(body))).await)
-        }
-        "quotas/updatePlan" => {
-            answer(Box::pin(api.quotas.update_plan(credential, Body::new(body))).await)
-        }
-        "quotas/usage" => answer(Box::pin(api.quotas.usage(credential, Body::new(body))).await),
-        "relationships/create" => {
-            answer(Box::pin(api.relationships.create(credential, Body::new(body))).await)
-        }
-        "relationships/delete" => {
-            answer(Box::pin(api.relationships.delete(credential, Body::new(body))).await)
-        }
-        "relationships/list" => {
-            answer(Box::pin(api.relationships.list(credential, Body::new(body))).await)
-        }
-        "reports/access" => answer(Box::pin(api.reports.access(credential, Body::new(body))).await),
-        "resourceTypes/delete" => {
-            answer(Box::pin(api.resource_types.delete(credential, Body::new(body))).await)
-        }
-        "resourceTypes/get" => {
-            answer(Box::pin(api.resource_types.get(credential, Body::new(body))).await)
-        }
-        "resourceTypes/list" => {
-            answer(Box::pin(api.resource_types.list(credential, Body::new(body))).await)
-        }
-        "resourceTypes/register" => {
-            answer(Box::pin(api.resource_types.register(credential, Body::new(body))).await)
-        }
-        "resourceTypes/update" => {
-            answer(Box::pin(api.resource_types.update(credential, Body::new(body))).await)
-        }
-        "resources/delete" => {
-            answer(Box::pin(api.resources.delete(credential, Body::new(body))).await)
-        }
-        "resources/get" => answer(Box::pin(api.resources.get(credential, Body::new(body))).await),
-        "resources/list" => answer(Box::pin(api.resources.list(credential, Body::new(body))).await),
-        "resources/register" => {
-            answer(Box::pin(api.resources.register(credential, Body::new(body))).await)
-        }
-        "resources/registerMany" => {
-            answer(Box::pin(api.resources.register_many(credential, Body::new(body))).await)
-        }
-        "resources/update" => {
-            answer(Box::pin(api.resources.update(credential, Body::new(body))).await)
-        }
-        "roleMining/apply" => {
-            answer(Box::pin(api.role_mining.apply(credential, Body::new(body))).await)
-        }
-        "roleMining/outliers" => {
-            answer(Box::pin(api.role_mining.outliers(credential, Body::new(body))).await)
-        }
-        "roleMining/reviewRecommendations" => answer(
-            Box::pin(
-                api.role_mining
-                    .review_recommendations(credential, Body::new(body)),
-            )
-            .await,
-        ),
-        "roleMining/rightSize" => {
-            answer(Box::pin(api.role_mining.right_size(credential, Body::new(body))).await)
-        }
-        "roleMining/suggest" => {
-            answer(Box::pin(api.role_mining.suggest(credential, Body::new(body))).await)
-        }
-        "roleMining/usage" => {
-            answer(Box::pin(api.role_mining.usage(credential, Body::new(body))).await)
-        }
-        "roles/assume" => answer(Box::pin(api.roles.assume(credential, Body::new(body))).await),
-        "roles/create" => answer(Box::pin(api.roles.create(credential, Body::new(body))).await),
-        "roles/delete" => answer(Box::pin(api.roles.delete(credential, Body::new(body))).await),
-        "roles/get" => answer(Box::pin(api.roles.get(credential, Body::new(body))).await),
-        "roles/list" => answer(Box::pin(api.roles.list(credential, Body::new(body))).await),
-        "roles/listBindings" => {
-            answer(Box::pin(api.roles.list_bindings(credential, Body::new(body))).await)
-        }
-        "roles/listSessions" => {
-            answer(Box::pin(api.roles.list_sessions(credential, Body::new(body))).await)
-        }
-        "roles/revokeSessions" => {
-            answer(Box::pin(api.roles.revoke_sessions(credential, Body::new(body))).await)
-        }
-        "roles/update" => answer(Box::pin(api.roles.update(credential, Body::new(body))).await),
-        "root/listAdministrators" => {
-            answer(Box::pin(api.root.list_administrators(credential, Body::new(body))).await)
-        }
-        "root/setAdministrator" => {
-            answer(Box::pin(api.root.set_administrator(credential, Body::new(body))).await)
-        }
-        "security/blockNetwork" => {
-            answer(Box::pin(api.security.block_network(credential, Body::new(body))).await)
-        }
-        "security/listBlocks" => {
-            answer(Box::pin(api.security.list_blocks(credential, Body::new(body))).await)
-        }
-        "security/unblockNetwork" => {
-            answer(Box::pin(api.security.unblock_network(credential, Body::new(body))).await)
-        }
-        "serviceAccounts/create" => {
-            answer(Box::pin(api.service_accounts.create(credential, Body::new(body))).await)
-        }
-        "serviceAccounts/delete" => {
-            answer(Box::pin(api.service_accounts.delete(credential, Body::new(body))).await)
-        }
-        "serviceAccounts/get" => {
-            answer(Box::pin(api.service_accounts.get(credential, Body::new(body))).await)
-        }
-        "serviceAccounts/list" => {
-            answer(Box::pin(api.service_accounts.list(credential, Body::new(body))).await)
-        }
-        "serviceAccounts/setStatus" => {
-            answer(Box::pin(api.service_accounts.set_status(credential, Body::new(body))).await)
-        }
-        "serviceAccounts/update" => {
-            answer(Box::pin(api.service_accounts.update(credential, Body::new(body))).await)
-        }
-        "signals/createSource" => {
-            answer(Box::pin(api.signals.create_source(credential, Body::new(body))).await)
-        }
-        "signals/deleteSource" => {
-            answer(Box::pin(api.signals.delete_source(credential, Body::new(body))).await)
-        }
-        "signals/getEvent" => {
-            answer(Box::pin(api.signals.get_event(credential, Body::new(body))).await)
-        }
-        "signals/getSource" => {
-            answer(Box::pin(api.signals.get_source(credential, Body::new(body))).await)
-        }
-        "signals/listEvents" => {
-            answer(Box::pin(api.signals.list_events(credential, Body::new(body))).await)
-        }
-        "signals/listSources" => {
-            answer(Box::pin(api.signals.list_sources(credential, Body::new(body))).await)
-        }
-        "signals/poll" => answer(Box::pin(api.signals.poll(credential, Body::new(body))).await),
-        "signals/reprocess" => {
-            answer(Box::pin(api.signals.reprocess(credential, Body::new(body))).await)
-        }
-        "signals/rotatePushToken" => {
-            answer(Box::pin(api.signals.rotate_push_token(credential, Body::new(body))).await)
-        }
-        "signals/updateSource" => {
-            answer(Box::pin(api.signals.update_source(credential, Body::new(body))).await)
-        }
-        "sod/create" => answer(Box::pin(api.sod.create(credential, Body::new(body))).await),
-        "sod/delete" => answer(Box::pin(api.sod.delete(credential, Body::new(body))).await),
-        "sod/list" => answer(Box::pin(api.sod.list(credential, Body::new(body))).await),
-        "sod/update" => answer(Box::pin(api.sod.update(credential, Body::new(body))).await),
-        "sod/violations" => answer(Box::pin(api.sod.violations(credential, Body::new(body))).await),
-        "ssh/activateAuthority" => {
-            answer(Box::pin(api.ssh.activate_authority(credential, Body::new(body))).await)
-        }
-        "ssh/clientTrust" => {
-            answer(Box::pin(api.ssh.client_trust(credential, Body::new(body))).await)
-        }
-        "ssh/createHost" => {
-            answer(Box::pin(api.ssh.create_host(credential, Body::new(body))).await)
-        }
-        "ssh/deleteHost" => {
-            answer(Box::pin(api.ssh.delete_host(credential, Body::new(body))).await)
-        }
-        "ssh/disableHost" => {
-            answer(Box::pin(api.ssh.disable_host(credential, Body::new(body))).await)
-        }
-        "ssh/enrollHost" => answer(Box::pin(api.ssh.enroll_host(Body::new(body))).await),
-        "ssh/getCertificate" => {
-            answer(Box::pin(api.ssh.get_certificate(credential, Body::new(body))).await)
-        }
-        "ssh/getHost" => answer(Box::pin(api.ssh.get_host(credential, Body::new(body))).await),
-        "ssh/getSettings" => {
-            answer(Box::pin(api.ssh.get_settings(credential, Body::new(body))).await)
-        }
-        "ssh/issueCertificate" => {
-            answer(Box::pin(api.ssh.issue_certificate(credential, Body::new(body))).await)
-        }
-        "ssh/listAuthorities" => {
-            answer(Box::pin(api.ssh.list_authorities(credential, Body::new(body))).await)
-        }
-        "ssh/listCertificates" => {
-            answer(Box::pin(api.ssh.list_certificates(credential, Body::new(body))).await)
-        }
-        "ssh/listHosts" => answer(Box::pin(api.ssh.list_hosts(credential, Body::new(body))).await),
-        "ssh/myAccess" => answer(Box::pin(api.ssh.my_access(credential, Body::new(body))).await),
-        "ssh/myCertificates" => {
-            answer(Box::pin(api.ssh.my_certificates(credential, Body::new(body))).await)
-        }
-        "ssh/resetJoinToken" => {
-            answer(Box::pin(api.ssh.reset_join_token(credential, Body::new(body))).await)
-        }
-        "ssh/retireAuthority" => {
-            answer(Box::pin(api.ssh.retire_authority(credential, Body::new(body))).await)
-        }
-        "ssh/revocationList" => answer(Box::pin(api.ssh.revocation_list(Body::new(body))).await),
-        "ssh/revokeAllCertificates" => {
-            answer(Box::pin(api.ssh.revoke_all_certificates(credential, Body::new(body))).await)
-        }
-        "ssh/revokeCertificate" => {
-            answer(Box::pin(api.ssh.revoke_certificate(credential, Body::new(body))).await)
-        }
-        "ssh/revokeIdentity" => {
-            answer(Box::pin(api.ssh.revoke_identity(credential, Body::new(body))).await)
-        }
-        "ssh/rotateAuthority" => {
-            answer(Box::pin(api.ssh.rotate_authority(credential, Body::new(body))).await)
-        }
-        "ssh/setup" => answer(Box::pin(api.ssh.setup(credential, Body::new(body))).await),
-        "ssh/status" => answer(Box::pin(api.ssh.status(credential, Body::new(body))).await),
-        "ssh/sweep" => answer(Box::pin(api.ssh.sweep(credential, Body::new(body))).await),
-        "ssh/syncHost" => answer(Box::pin(api.ssh.sync_host(Body::new(body))).await),
-        "ssh/trust" => answer(Box::pin(api.ssh.trust(Body::new(body))).await),
-        "ssh/updateHost" => {
-            answer(Box::pin(api.ssh.update_host(credential, Body::new(body))).await)
-        }
-        "ssh/updateSettings" => {
-            answer(Box::pin(api.ssh.update_settings(credential, Body::new(body))).await)
-        }
-        "ssh/whoCanLogin" => {
-            answer(Box::pin(api.ssh.who_can_login(credential, Body::new(body))).await)
-        }
-        "sts/assumeRoleWithWebIdentity" => {
-            answer(Box::pin(api.sts.assume_role_with_web_identity(Body::new(body))).await)
-        }
-        "sts/getCallerIdentity" => {
-            answer(Box::pin(api.sts.get_caller_identity(credential, Body::new(body))).await)
-        }
-        "sts/getSessionToken" => {
-            answer(Box::pin(api.sts.get_session_token(credential, Body::new(body))).await)
-        }
-        "teams/addMember" => {
-            answer(Box::pin(api.teams.add_member(credential, Body::new(body))).await)
-        }
-        "teams/addMembers" => {
-            answer(Box::pin(api.teams.add_members(credential, Body::new(body))).await)
-        }
-        "teams/approveRequest" => {
-            answer(Box::pin(api.teams.approve_request(credential, Body::new(body))).await)
-        }
-        "teams/cancelRequest" => {
-            answer(Box::pin(api.teams.cancel_request(credential, Body::new(body))).await)
-        }
-        "teams/cancelReview" => {
-            answer(Box::pin(api.teams.cancel_review(credential, Body::new(body))).await)
-        }
-        "teams/candidates" => {
-            answer(Box::pin(api.teams.candidates(credential, Body::new(body))).await)
-        }
-        "teams/completeReview" => {
-            answer(Box::pin(api.teams.complete_review(credential, Body::new(body))).await)
-        }
-        "teams/create" => answer(Box::pin(api.teams.create(credential, Body::new(body))).await),
-        "teams/decideReview" => {
-            answer(Box::pin(api.teams.decide_review(credential, Body::new(body))).await)
-        }
-        "teams/delete" => answer(Box::pin(api.teams.delete(credential, Body::new(body))).await),
-        "teams/denyRequest" => {
-            answer(Box::pin(api.teams.deny_request(credential, Body::new(body))).await)
-        }
-        "teams/get" => answer(Box::pin(api.teams.get(credential, Body::new(body))).await),
-        "teams/getReview" => {
-            answer(Box::pin(api.teams.get_review(credential, Body::new(body))).await)
-        }
-        "teams/leave" => answer(Box::pin(api.teams.leave(credential, Body::new(body))).await),
-        "teams/list" => answer(Box::pin(api.teams.list(credential, Body::new(body))).await),
-        "teams/listForIdentity" => {
-            answer(Box::pin(api.teams.list_for_identity(credential, Body::new(body))).await)
-        }
-        "teams/listMembers" => {
-            answer(Box::pin(api.teams.list_members(credential, Body::new(body))).await)
-        }
-        "teams/listMine" => {
-            answer(Box::pin(api.teams.list_mine(credential, Body::new(body))).await)
-        }
-        "teams/listRequests" => {
-            answer(Box::pin(api.teams.list_requests(credential, Body::new(body))).await)
-        }
-        "teams/listReviews" => {
-            answer(Box::pin(api.teams.list_reviews(credential, Body::new(body))).await)
-        }
-        "teams/reconcile" => {
-            answer(Box::pin(api.teams.reconcile(credential, Body::new(body))).await)
-        }
-        "teams/removeMember" => {
-            answer(Box::pin(api.teams.remove_member(credential, Body::new(body))).await)
-        }
-        "teams/requestToJoin" => {
-            answer(Box::pin(api.teams.request_to_join(credential, Body::new(body))).await)
-        }
-        "teams/startReview" => {
-            answer(Box::pin(api.teams.start_review(credential, Body::new(body))).await)
-        }
-        "teams/suggestBirthright" => {
-            answer(Box::pin(api.teams.suggest_birthright(credential, Body::new(body))).await)
-        }
-        "teams/update" => answer(Box::pin(api.teams.update(credential, Body::new(body))).await),
-        "teams/updateMember" => {
-            answer(Box::pin(api.teams.update_member(credential, Body::new(body))).await)
-        }
-        "tenants/acceptInvitation" => {
-            answer(Box::pin(api.tenants.accept_invitation(Body::new(body))).await)
-        }
-        "tenants/create" => answer(Box::pin(api.tenants.create(credential, Body::new(body))).await),
-        "tenants/get" => answer(Box::pin(api.tenants.get(credential, Body::new(body))).await),
-        "tenants/listChildren" => {
-            answer(Box::pin(api.tenants.list_children(credential, Body::new(body))).await)
-        }
-        "tenants/listInvitations" => {
-            answer(Box::pin(api.tenants.list_invitations(credential, Body::new(body))).await)
-        }
-        "tenants/lookup" => answer(Box::pin(api.tenants.lookup(Body::new(body))).await),
-        "tenants/reparent" => {
-            answer(Box::pin(api.tenants.reparent(credential, Body::new(body))).await)
-        }
-        "tenants/resendInvitation" => {
-            answer(Box::pin(api.tenants.resend_invitation(credential, Body::new(body))).await)
-        }
-        "tenants/revokeInvitation" => {
-            answer(Box::pin(api.tenants.revoke_invitation(credential, Body::new(body))).await)
-        }
-        "tenants/revokeSessions" => {
-            answer(Box::pin(api.tenants.revoke_sessions(credential, Body::new(body))).await)
-        }
-        "tenants/setAccessPolicy" => {
-            answer(Box::pin(api.tenants.set_access_policy(credential, Body::new(body))).await)
-        }
-        "tenants/setAuthPolicy" => {
-            answer(Box::pin(api.tenants.set_auth_policy(credential, Body::new(body))).await)
-        }
-        "tenants/setBoundary" => {
-            answer(Box::pin(api.tenants.set_boundary(credential, Body::new(body))).await)
-        }
-        "tenants/setLimits" => {
-            answer(Box::pin(api.tenants.set_limits(credential, Body::new(body))).await)
-        }
-        "tenants/setRegion" => {
-            answer(Box::pin(api.tenants.set_region(credential, Body::new(body))).await)
-        }
-        "tenants/setSlug" => {
-            answer(Box::pin(api.tenants.set_slug(credential, Body::new(body))).await)
-        }
-        "tenants/setStatus" => {
-            answer(Box::pin(api.tenants.set_status(credential, Body::new(body))).await)
-        }
-        "tenants/update" => answer(Box::pin(api.tenants.update(credential, Body::new(body))).await),
-        "tenants/usage" => answer(Box::pin(api.tenants.usage(credential, Body::new(body))).await),
-        "threats/addNote" => {
-            answer(Box::pin(api.threats.add_note(credential, Body::new(body))).await)
-        }
-        "threats/configure" => {
-            answer(Box::pin(api.threats.configure(credential, Body::new(body))).await)
-        }
-        "threats/createPlaybook" => {
-            answer(Box::pin(api.threats.create_playbook(credential, Body::new(body))).await)
-        }
-        "threats/deletePlaybook" => {
-            answer(Box::pin(api.threats.delete_playbook(credential, Body::new(body))).await)
-        }
-        "threats/detect" => answer(Box::pin(api.threats.detect(credential, Body::new(body))).await),
-        "threats/dismissDetection" => {
-            answer(Box::pin(api.threats.dismiss_detection(credential, Body::new(body))).await)
-        }
-        "threats/getDetection" => {
-            answer(Box::pin(api.threats.get_detection(credential, Body::new(body))).await)
-        }
-        "threats/getIncident" => {
-            answer(Box::pin(api.threats.get_incident(credential, Body::new(body))).await)
-        }
-        "threats/getRisk" => {
-            answer(Box::pin(api.threats.get_risk(credential, Body::new(body))).await)
-        }
-        "threats/getSettings" => {
-            answer(Box::pin(api.threats.get_settings(credential, Body::new(body))).await)
-        }
-        "threats/listDetections" => {
-            answer(Box::pin(api.threats.list_detections(credential, Body::new(body))).await)
-        }
-        "threats/listIncidents" => {
-            answer(Box::pin(api.threats.list_incidents(credential, Body::new(body))).await)
-        }
-        "threats/listPlaybooks" => {
-            answer(Box::pin(api.threats.list_playbooks(credential, Body::new(body))).await)
-        }
-        "threats/listRisk" => {
-            answer(Box::pin(api.threats.list_risk(credential, Body::new(body))).await)
-        }
-        "threats/release" => {
-            answer(Box::pin(api.threats.release(credential, Body::new(body))).await)
-        }
-        "threats/reportSuspicious" => {
-            answer(Box::pin(api.threats.report_suspicious(credential, Body::new(body))).await)
-        }
-        "threats/resolveIncident" => {
-            answer(Box::pin(api.threats.resolve_incident(credential, Body::new(body))).await)
-        }
-        "threats/respond" => {
-            answer(Box::pin(api.threats.respond(credential, Body::new(body))).await)
-        }
-        "threats/rules" => answer(Box::pin(api.threats.rules(credential, Body::new(body))).await),
-        "threats/setRisk" => {
-            answer(Box::pin(api.threats.set_risk(credential, Body::new(body))).await)
-        }
-        "threats/summary" => {
-            answer(Box::pin(api.threats.summary(credential, Body::new(body))).await)
-        }
-        "threats/timeline" => {
-            answer(Box::pin(api.threats.timeline(credential, Body::new(body))).await)
-        }
-        "threats/updateIncident" => {
-            answer(Box::pin(api.threats.update_incident(credential, Body::new(body))).await)
-        }
-        "threats/updatePlaybook" => {
-            answer(Box::pin(api.threats.update_playbook(credential, Body::new(body))).await)
-        }
-        "trust/create" => answer(Box::pin(api.trust.create(credential, Body::new(body))).await),
-        "trust/evaluateWebIdentity" => {
-            answer(Box::pin(api.trust.evaluate_web_identity(credential, Body::new(body))).await)
-        }
-        "trust/list" => answer(Box::pin(api.trust.list(credential, Body::new(body))).await),
-        "trust/revoke" => answer(Box::pin(api.trust.revoke(credential, Body::new(body))).await),
-        "trust/revokeSessions" => {
-            answer(Box::pin(api.trust.revoke_sessions(credential, Body::new(body))).await)
-        }
-        "trust/update" => answer(Box::pin(api.trust.update(credential, Body::new(body))).await),
-        "vault/accessLog" => {
-            answer(Box::pin(api.vault.access_log(credential, Body::new(body))).await)
-        }
-        "vault/checkin" => answer(Box::pin(api.vault.checkin(credential, Body::new(body))).await),
-        "vault/checkout" => answer(Box::pin(api.vault.checkout(credential, Body::new(body))).await),
-        "vault/create" => answer(Box::pin(api.vault.create(credential, Body::new(body))).await),
-        "vault/delete" => answer(Box::pin(api.vault.delete(credential, Body::new(body))).await),
-        "vault/destroyVersion" => {
-            answer(Box::pin(api.vault.destroy_version(credential, Body::new(body))).await)
-        }
-        "vault/generate" => answer(Box::pin(api.vault.generate(credential, Body::new(body))).await),
-        "vault/get" => answer(Box::pin(api.vault.get(credential, Body::new(body))).await),
-        "vault/lease" => answer(Box::pin(api.vault.lease(credential, Body::new(body))).await),
-        "vault/list" => answer(Box::pin(api.vault.list(credential, Body::new(body))).await),
-        "vault/listLeases" => {
-            answer(Box::pin(api.vault.list_leases(credential, Body::new(body))).await)
-        }
-        "vault/listMine" => {
-            answer(Box::pin(api.vault.list_mine(credential, Body::new(body))).await)
-        }
-        "vault/listVersions" => {
-            answer(Box::pin(api.vault.list_versions(credential, Body::new(body))).await)
-        }
-        "vault/promote" => answer(Box::pin(api.vault.promote(credential, Body::new(body))).await),
-        "vault/put" => answer(Box::pin(api.vault.put(credential, Body::new(body))).await),
-        "vault/renewLease" => {
-            answer(Box::pin(api.vault.renew_lease(credential, Body::new(body))).await)
-        }
-        "vault/restore" => answer(Box::pin(api.vault.restore(credential, Body::new(body))).await),
-        "vault/reveal" => answer(Box::pin(api.vault.reveal(credential, Body::new(body))).await),
-        "vault/revokeLease" => {
-            answer(Box::pin(api.vault.revoke_lease(credential, Body::new(body))).await)
-        }
-        "vault/rotate" => answer(Box::pin(api.vault.rotate(credential, Body::new(body))).await),
-        "vault/setStage" => {
-            answer(Box::pin(api.vault.set_stage(credential, Body::new(body))).await)
-        }
-        "vault/setVersionState" => {
-            answer(Box::pin(api.vault.set_version_state(credential, Body::new(body))).await)
-        }
-        "vault/update" => answer(Box::pin(api.vault.update(credential, Body::new(body))).await),
-        "verifiableCredentials/available" => answer(
-            Box::pin(
-                api.verifiable_credentials
-                    .available(credential, Body::new(body)),
-            )
-            .await,
-        ),
-        "verifiableCredentials/createOffer" => answer(
-            Box::pin(
-                api.verifiable_credentials
-                    .create_offer(credential, Body::new(body)),
-            )
-            .await,
-        ),
-        "verifiableCredentials/createType" => answer(
-            Box::pin(
-                api.verifiable_credentials
-                    .create_type(credential, Body::new(body)),
-            )
-            .await,
-        ),
-        "verifiableCredentials/deleteType" => answer(
-            Box::pin(
-                api.verifiable_credentials
-                    .delete_type(credential, Body::new(body)),
-            )
-            .await,
-        ),
-        "verifiableCredentials/getType" => answer(
-            Box::pin(
-                api.verifiable_credentials
-                    .get_type(credential, Body::new(body)),
-            )
-            .await,
-        ),
-        "verifiableCredentials/issuerMetadata" => {
-            answer(Box::pin(api.verifiable_credentials.issuer_metadata(Body::new(body))).await)
-        }
-        "verifiableCredentials/listIssued" => answer(
-            Box::pin(
-                api.verifiable_credentials
-                    .list_issued(credential, Body::new(body)),
-            )
-            .await,
-        ),
-        "verifiableCredentials/listKeys" => answer(
-            Box::pin(
-                api.verifiable_credentials
-                    .list_keys(credential, Body::new(body)),
-            )
-            .await,
-        ),
-        "verifiableCredentials/listTypes" => answer(
-            Box::pin(
-                api.verifiable_credentials
-                    .list_types(credential, Body::new(body)),
-            )
-            .await,
-        ),
-        "verifiableCredentials/mine" => {
-            answer(Box::pin(api.verifiable_credentials.mine(credential, Body::new(body))).await)
-        }
-        "verifiableCredentials/nonce" => {
-            answer(Box::pin(api.verifiable_credentials.nonce(Body::new(body))).await)
-        }
-        "verifiableCredentials/reinstate" => answer(
-            Box::pin(
-                api.verifiable_credentials
-                    .reinstate(credential, Body::new(body)),
-            )
-            .await,
-        ),
-        "verifiableCredentials/request" => answer(
-            Box::pin(
-                api.verifiable_credentials
-                    .request(credential, Body::new(body)),
-            )
-            .await,
-        ),
-        "verifiableCredentials/retireKey" => answer(
-            Box::pin(
-                api.verifiable_credentials
-                    .retire_key(credential, Body::new(body)),
-            )
-            .await,
-        ),
-        "verifiableCredentials/revoke" => answer(
-            Box::pin(
-                api.verifiable_credentials
-                    .revoke(credential, Body::new(body)),
-            )
-            .await,
-        ),
-        "verifiableCredentials/rotateKey" => answer(
-            Box::pin(
-                api.verifiable_credentials
-                    .rotate_key(credential, Body::new(body)),
-            )
-            .await,
-        ),
-        "verifiableCredentials/status" => answer(
-            Box::pin(
-                api.verifiable_credentials
-                    .status(credential, Body::new(body)),
-            )
-            .await,
-        ),
-        "verifiableCredentials/suspend" => answer(
-            Box::pin(
-                api.verifiable_credentials
-                    .suspend(credential, Body::new(body)),
-            )
-            .await,
-        ),
-        "verifiableCredentials/updateType" => answer(
-            Box::pin(
-                api.verifiable_credentials
-                    .update_type(credential, Body::new(body)),
-            )
-            .await,
-        ),
-        "verifiableCredentials/verify" => {
-            answer(Box::pin(api.verifiable_credentials.verify(Body::new(body))).await)
-        }
-        "webhooks/create" => {
-            answer(Box::pin(api.webhooks.create(credential, Body::new(body))).await)
-        }
-        "webhooks/delete" => {
-            answer(Box::pin(api.webhooks.delete(credential, Body::new(body))).await)
-        }
-        "webhooks/get" => answer(Box::pin(api.webhooks.get(credential, Body::new(body))).await),
-        "webhooks/list" => answer(Box::pin(api.webhooks.list(credential, Body::new(body))).await),
-        "webhooks/listDeliveries" => {
-            answer(Box::pin(api.webhooks.list_deliveries(credential, Body::new(body))).await)
-        }
-        "webhooks/ping" => answer(Box::pin(api.webhooks.ping(credential, Body::new(body))).await),
-        "webhooks/redeliver" => {
-            answer(Box::pin(api.webhooks.redeliver(credential, Body::new(body))).await)
-        }
-        "webhooks/rotateSecret" => {
-            answer(Box::pin(api.webhooks.rotate_secret(credential, Body::new(body))).await)
-        }
-        "webhooks/update" => {
-            answer(Box::pin(api.webhooks.update(credential, Body::new(body))).await)
-        }
-        "workflows/cancelRun" => {
-            answer(Box::pin(api.workflows.cancel_run(credential, Body::new(body))).await)
-        }
-        "workflows/create" => {
-            answer(Box::pin(api.workflows.create(credential, Body::new(body))).await)
-        }
-        "workflows/delete" => {
-            answer(Box::pin(api.workflows.delete(credential, Body::new(body))).await)
-        }
-        "workflows/evaluate" => {
-            answer(Box::pin(api.workflows.evaluate(credential, Body::new(body))).await)
-        }
-        "workflows/get" => answer(Box::pin(api.workflows.get(credential, Body::new(body))).await),
-        "workflows/getRun" => {
-            answer(Box::pin(api.workflows.get_run(credential, Body::new(body))).await)
-        }
-        "workflows/list" => answer(Box::pin(api.workflows.list(credential, Body::new(body))).await),
-        "workflows/listRuns" => {
-            answer(Box::pin(api.workflows.list_runs(credential, Body::new(body))).await)
-        }
-        "workflows/preview" => {
-            answer(Box::pin(api.workflows.preview(credential, Body::new(body))).await)
-        }
-        "workflows/retryRun" => {
-            answer(Box::pin(api.workflows.retry_run(credential, Body::new(body))).await)
-        }
-        "workflows/run" => answer(Box::pin(api.workflows.run(credential, Body::new(body))).await),
-        "workflows/update" => {
-            answer(Box::pin(api.workflows.update(credential, Body::new(body))).await)
-        }
-        _ => return None,
-    })
+    let index = ROUTES
+        .binary_search_by(|(route, _)| route.cmp(&path))
+        .ok()?;
+    Some((ROUTES[index].1)(api, credential, body).await)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_route_table_lists_every_route_path_in_order() {
+        let paths: Vec<&str> = ROUTES.iter().map(|(path, _)| *path).collect();
+        assert_eq!(paths, ROUTE_PATHS);
+    }
 }

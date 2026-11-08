@@ -59,6 +59,18 @@ pub fn error_shape(error: &IamError) -> Value {
     let mut shape = Map::new();
     shape.insert("code".into(), Value::String(error.code.clone()));
     shape.insert("status".into(), json!(error.status));
+    // Anything that is not an IamError: "Internal server error", with the exception in `thrown`.
+    if let Some(name) = crate::js::thrown_name(error) {
+        shape.insert(
+            "message".into(),
+            Value::String(crate::js::internal_error().message),
+        );
+        shape.insert(
+            "thrown".into(),
+            json!({ "name": name, "message": error.message }),
+        );
+        return Value::Object(shape);
+    }
     shape.insert("message".into(), Value::String(error.message.clone()));
     if let Some(retry) = details_of(error).and_then(|details| details.retry_after_ms)
         && retry > 0.0
@@ -72,6 +84,13 @@ pub fn error_shape(error: &IamError) -> Value {
         );
     }
     Value::Object(shape)
+}
+
+/// What an in-process `iam.sessionTokens.verify` failure answers: TypeScript throws `SessionTokenError` (a plain
+/// `Error` subclass, not an `IamError`) for every failure, so it is INTERNAL_ERROR 500 rather than the HTTP layer's
+/// INVALID_SESSION_TOKEN 401.
+fn session_token_thrown(error: IamError) -> IamError {
+    crate::js::ThrownError::new("SessionTokenError", error.message).into_iam()
 }
 
 /// `decodeValue(value)`: the tagged encoding of FORMAT.md back to plain JSON (`$undefined` becomes absent where it is
@@ -280,10 +299,14 @@ pub async fn call_member(
                         .and_then(|options| options.get("audience"))
                         .and_then(Value::as_str)
                         .map(str::to_owned);
+                    // `iam.sessionTokens.verify` throws `SessionTokenError`, a plain `Error` subclass and not an
+                    // `IamError`, so the conformance server answers every failure as INTERNAL_ERROR 500 (the HTTP
+                    // layer's INVALID_SESSION_TOKEN 401 mapping does not apply to an in-process call).
                     Some(
                         tokens
                             .verify(&token, audience.as_deref())
                             .await
+                            .map_err(session_token_thrown)
                             .and_then(|claims| {
                                 serde_json::to_value(claims)
                                     .map_err(|_| crate::js::internal_error())
@@ -460,6 +483,34 @@ async fn auth_member(
             )
             .await
             .and_then(|result| serde_json::to_value(result).map_err(|_| crate::js::internal_error()))
+        }
+        "authenticate" => auth
+            .authenticate(&credential_arg(input.as_ref()))
+            .await
+            .map(|principal| principal_json(&principal)),
+        "requireRecent" => {
+            let principal = match input.as_ref().map(crate::kms::principal_from_json) {
+                Some(Ok(principal)) => principal,
+                _ => return Some(Err(crate::js::internal_error())),
+            };
+            auth.require_recent(&principal).map(|()| undefined())
+        }
+        "verifyStepUpCode" => {
+            let identity = match input.map(serde_json::from_value) {
+                Some(Ok(identity)) => identity,
+                _ => return Some(Err(crate::js::internal_error())),
+            };
+            let code = arg(args, offset + 1).and_then(Value::as_str).unwrap_or_default();
+            auth.verify_step_up_code(&store, &identity, code)
+                .await
+                .and_then(|result| serde_json::to_value(result).map_err(|_| crate::js::internal_error()))
+        }
+        "issuePasswordReset" => {
+            let identity = match input.map(serde_json::from_value) {
+                Some(Ok(identity)) => identity,
+                _ => return Some(Err(crate::js::internal_error())),
+            };
+            auth.issue_password_reset(&store, &identity).await.map(|()| undefined())
         }
         _ => {
             // The authentication API methods (`auth.signIn(body)`, `auth.getSession(credential)`).
@@ -908,9 +959,13 @@ impl Server {
                         script[index].raw.clone()
                     })
                 };
+                let name = name.clone();
                 Box::pin(async move {
                     let Some(answer) = answer else {
-                        return Err(crate::js::internal_error());
+                        return Err(crate::js::thrown_error(
+                            "ConformanceScriptError",
+                            format!("No scripted answer for {name}"),
+                        ));
                     };
                     if let Some(error) = answer.get("error") {
                         if error.get("iam") == Some(&Value::Bool(true)) {
@@ -923,7 +978,14 @@ impl Server {
                                 error.get("status").and_then(Value::as_u64).unwrap_or(500) as u16,
                             ));
                         }
-                        return Err(crate::js::internal_error());
+                        // `{"name", "message"}`: a plain error carrying its message (serve.mjs `throwScripted`).
+                        return Err(crate::js::thrown_error(
+                            error.get("name").and_then(Value::as_str).unwrap_or("Error"),
+                            error
+                                .get("message")
+                                .and_then(Value::as_str)
+                                .unwrap_or("Scripted callback failed"),
+                        ));
                     }
                     Ok(answer
                         .get("result")
@@ -1621,6 +1683,17 @@ mod tests {
     }
 
     #[test]
+    fn session_token_verify_failures_are_thrown() {
+        let error = session_token_thrown(IamError::from(
+            crate::session_tokens::SessionTokenError::new("revoked", None),
+        ));
+        let shape = error_shape(&error);
+        assert_eq!(shape["code"], json!("INTERNAL_ERROR"));
+        assert_eq!(shape["status"], json!(500));
+        assert_eq!(shape["message"], json!("Internal server error"));
+    }
+
+    #[test]
     fn timeless_values() {
         assert_eq!(timeless(&json!(1_700_000_000_000.0_f64)), json!(0));
         assert_eq!(timeless(&json!("2024-01-01T00:00:00.000Z")), json!(""));
@@ -1638,5 +1711,161 @@ mod tests {
         let credential =
             credential_arg(Some(&json!({ "headers": { "authorization": "Bearer x" } })));
         assert_eq!(credential.headers.unwrap()[0].1, "Bearer x");
+    }
+
+    /// `auth.authenticate`, `auth.requireRecent`, and inside a store transaction `auth.verifyStepUpCode` and
+    /// `auth.issuePasswordReset`, resolve to the authentication service instead of answering `Unknown method`.
+    #[test]
+    fn auth_service_members() {
+        std::thread::Builder::new()
+            .stack_size(64 * 1024 * 1024)
+            .spawn(|| {
+                tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .unwrap()
+                    .block_on(auth_service_members_body());
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+
+    async fn auth_service_members_body() {
+        use better_iam_core::IamStoreExt;
+        let store = better_iam_adapter_sqlite::sqlite_adapter(
+            better_iam_adapter_sqlite::SqliteAdapterOptions::new(":memory:"),
+        )
+        .expect("sqlite");
+        let inbox: Arc<Mutex<Vec<DeliveryMessage>>> = Arc::default();
+        let sink = inbox.clone();
+        let mut options = crate::options::BetterIamOptions::new(
+            store,
+            "conformance-auth-test-secret-with-32-chars!!",
+            "https://iam.example.com",
+        );
+        options.authentication = Some(crate::options::ServerAuthOptions {
+            send_email: Some(better_iam_auth::delivery_fn(move |message| {
+                let sink = sink.clone();
+                async move {
+                    sink.lock().unwrap().push(message);
+                    Ok(())
+                }
+            })),
+            ..Default::default()
+        });
+        let iam = better_iam(options).expect("valid options");
+        iam.initialize().await.expect("initialize");
+        let root = iam
+            .bootstrap(&json!({ "email": "root@example.test", "name": "Root", "password": "a strong root test password" }))
+            .await
+            .expect("bootstrap");
+        let identity = root["identity"].clone();
+        let failure = |result: Option<IamResult<Value>>| {
+            let error = result.expect("a known member").expect_err("an error");
+            (error.code, error.status)
+        };
+
+        let tx_args = |rest: Vec<Value>| {
+            let mut args = vec![json!({ "$tx": true })];
+            args.extend(rest);
+            args
+        };
+        let issued = {
+            let (iam, args) = (
+                &iam,
+                tx_args(vec![identity.clone(), json!({ "mfa": true })]),
+            );
+            iam.store
+                .transaction(|tx| async move {
+                    auth_member(iam, "issueSession", &args, Some(&tx))
+                        .await
+                        .expect("a known member")
+                })
+                .await
+                .expect("issueSession")
+        };
+
+        // authenticate({ token }): { identity, session }.
+        let principal = auth_member(
+            &iam,
+            "authenticate",
+            &[json!({ "token": issued["token"] })],
+            None,
+        )
+        .await
+        .expect("a known member")
+        .expect("authenticate");
+        assert_eq!(principal["identity"]["id"], identity["id"]);
+        assert_eq!(principal["session"]["id"], issued["session"]["id"]);
+        assert_eq!(
+            failure(
+                auth_member(
+                    &iam,
+                    "authenticate",
+                    &[json!({ "token": "biam_ses_nope" })],
+                    None
+                )
+                .await
+            ),
+            ("UNAUTHENTICATED".to_owned(), 401)
+        );
+
+        // requireRecent(principal): undefined for a fresh user session, RECENT_AUTH_REQUIRED for a temporary one.
+        assert_eq!(
+            auth_member(
+                &iam,
+                "requireRecent",
+                std::slice::from_ref(&principal),
+                None
+            )
+            .await
+            .expect("a known member")
+            .expect("fresh"),
+            undefined()
+        );
+        let mut temporary = principal.clone();
+        temporary["session"]["kind"] = json!("session-token");
+        assert_eq!(
+            failure(auth_member(&iam, "requireRecent", &[temporary], None).await),
+            ("RECENT_AUTH_REQUIRED".to_owned(), 403)
+        );
+
+        // verifyStepUpCode({ $tx }, identity, code) without an enrolled authenticator.
+        let not_enrolled = {
+            let (iam, args) = (&iam, tx_args(vec![identity.clone(), json!("123456")]));
+            iam.store
+                .transaction(|tx| async move {
+                    Ok(auth_member(iam, "verifyStepUpCode", &args, Some(&tx)).await)
+                })
+                .await
+                .expect("transaction")
+        };
+        assert_eq!(failure(not_enrolled), ("MFA_NOT_ENROLLED".to_owned(), 403));
+
+        // issuePasswordReset({ $tx }, identity): undefined, and a password-reset email goes out.
+        let reset = {
+            let (iam, args) = (&iam, tx_args(vec![identity.clone()]));
+            iam.store
+                .transaction(|tx| async move {
+                    auth_member(iam, "issuePasswordReset", &args, Some(&tx))
+                        .await
+                        .expect("a known member")
+                })
+                .await
+                .expect("issuePasswordReset")
+        };
+        assert_eq!(reset, undefined());
+        auth_member(&iam, "dispatchOutbox", &[], None)
+            .await
+            .expect("a known member")
+            .expect("dispatchOutbox");
+        let sent = inbox.lock().unwrap().clone();
+        assert!(
+            sent.iter()
+                .any(|message| message.template == "password-reset"
+                    && message.to == "root@example.test"),
+            "a password-reset email was delivered: {sent:?}"
+        );
     }
 }

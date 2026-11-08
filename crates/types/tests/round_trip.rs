@@ -124,6 +124,9 @@ const KNOWN_SCHEMA_GAPS: &[(&str, &str)] = &[
     ("verifiableCredentials/suspend", "differs"),
     ("verifiableCredentials/reinstate", "differs"),
     ("verifiableCredentials/revoke", "differs"),
+    // `create` returns `Activate extends true ? ActivatedTenant : InvitedTenant`; the generator keeps only the members
+    // both share (`tenant`, `ownerEmail`), so the invited result's `invitationId` is refused.
+    ("tenants/create", "differs"),
 ];
 
 fn known_gap(route: &str, why: &str) -> Option<usize> {

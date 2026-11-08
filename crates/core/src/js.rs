@@ -10,6 +10,9 @@
 //! the nearest double, exactly as `JSON.parse` does.
 
 use std::cmp::Ordering;
+use std::collections::HashSet;
+use std::future::Future;
+use std::sync::Arc;
 
 use serde_json::{Map, Number, Value};
 
@@ -243,15 +246,44 @@ pub fn stringify_object(map: &Map<String, Value>) -> String {
 
 /// `JSON.parse(text)`. Rust strings cannot hold unpaired UTF-16 surrogates, which `JSON.stringify` writes as
 /// `\udXXX` escapes; such escapes read as U+FFFD (the only lossy case, and only for text written by another
-/// implementation).
+/// implementation). [`parse_reporting`] also says which strings that happened to.
 pub fn parse(text: &str) -> Result<Value, serde_json::Error> {
+    parse_reporting(text).map(|(value, _)| value)
+}
+
+/// [`parse`], also returning the strings (as read, with U+FFFD in place of each unpaired surrogate) that held an
+/// unpaired surrogate escape, so a caller that must refuse text that is not well-formed UTF-16 (`isWellFormed`, or
+/// a lone-surrogate test) can still tell them from a literal U+FFFD. The set is empty when the text had none.
+pub fn parse_reporting(text: &str) -> Result<(Value, HashSet<String>), serde_json::Error> {
     match serde_json::from_str(text) {
-        Ok(value) => Ok(value),
+        Ok(value) => Ok((value, HashSet::new())),
         Err(error) => match replace_lone_surrogates(text) {
-            Some(repaired) => serde_json::from_str(&repaired),
+            Some((repaired, ill_formed)) => {
+                serde_json::from_str(&repaired).map(|value| (value, ill_formed))
+            }
             None => Err(error),
         },
     }
+}
+
+tokio::task_local! {
+    static ILL_FORMED: Arc<HashSet<String>>;
+}
+
+/// Runs `future` with the strings [`parse_reporting`] found ill-formed in the request it serves, for
+/// [`was_ill_formed`] to consult anywhere in that call chain (on the same task).
+pub async fn with_ill_formed<F: Future>(ill_formed: HashSet<String>, future: F) -> F::Output {
+    ILL_FORMED.scope(Arc::new(ill_formed), future).await
+}
+
+/// Whether `value` stands for a string of the request being served that held an unpaired surrogate before parsing
+/// replaced it with U+FFFD (a string that is not well-formed UTF-16 in TypeScript). Only a string containing U+FFFD
+/// can be one; outside a [`with_ill_formed`] scope nothing is.
+pub fn was_ill_formed(value: &str) -> bool {
+    value.contains('\u{fffd}')
+        && ILL_FORMED
+            .try_with(|set| set.contains(value))
+            .unwrap_or(false)
 }
 
 fn hex4(bytes: &[u8]) -> Option<u32> {
@@ -262,12 +294,18 @@ fn hex4(bytes: &[u8]) -> Option<u32> {
     u32::from_str_radix(text, 16).ok()
 }
 
-/// Rewrites unpaired surrogate escapes inside JSON strings as `�`; None when there were none.
-fn replace_lone_surrogates(text: &str) -> Option<String> {
+/// Rewrites unpaired surrogate escapes inside JSON strings as `�`, with the strings that held one (decoded
+/// after the rewrite); None when there were none.
+fn replace_lone_surrogates(text: &str) -> Option<(String, HashSet<String>)> {
     let bytes = text.as_bytes();
     let mut out = String::with_capacity(text.len());
+    let mut ill_formed = HashSet::new();
     let mut changed = false;
     let mut in_string = false;
+    // Where the current string literal begins in `out` (text from `start` on is copied verbatim), and whether it
+    // was rewritten.
+    let mut literal_start = 0;
+    let mut literal_changed = false;
     let mut index = 0;
     let mut start = 0;
     while index < bytes.len() {
@@ -275,6 +313,8 @@ fn replace_lone_surrogates(text: &str) -> Option<String> {
         if !in_string {
             if byte == b'"' {
                 in_string = true;
+                literal_start = out.len() + (index - start);
+                literal_changed = false;
             }
             index += 1;
             continue;
@@ -283,6 +323,13 @@ fn replace_lone_surrogates(text: &str) -> Option<String> {
             b'"' => {
                 in_string = false;
                 index += 1;
+                if literal_changed {
+                    out.push_str(&text[start..index]);
+                    start = index;
+                    if let Ok(decoded) = serde_json::from_str::<String>(&out[literal_start..]) {
+                        ill_formed.insert(decoded);
+                    }
+                }
             }
             b'\\' if index + 1 < bytes.len() && bytes[index + 1] == b'u' => {
                 let Some(code) = hex4(&bytes[index + 2..]) else {
@@ -306,6 +353,7 @@ fn replace_lone_surrogates(text: &str) -> Option<String> {
                 out.push_str(&text[start..index]);
                 out.push_str("\\ufffd");
                 changed = true;
+                literal_changed = true;
                 index += 6;
                 start = index;
             }
@@ -317,7 +365,7 @@ fn replace_lone_surrogates(text: &str) -> Option<String> {
         return None;
     }
     out.push_str(&text[start..]);
-    Some(out)
+    Some((out, ill_formed))
 }
 
 /// JavaScript `===` between two JSON values: primitives by value (numbers as doubles, so `0 === -0`), objects and
@@ -569,6 +617,34 @@ mod tests {
             json!({"a": "x\u{fffd}"})
         );
         assert_eq!(parse(r#"["😀"]"#).unwrap(), json!(["😀"]));
+    }
+
+    #[test]
+    fn reports_the_strings_that_held_lone_surrogates() {
+        let (value, ill_formed) = parse_reporting(
+            r#"{"a":"key-\ud800","b":["key-\udc00x","�","ok😀"],"c\ud800":"x\\ud800"}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            value,
+            json!({"a": "key-\u{fffd}", "b": ["key-\u{fffd}x", "\u{fffd}", "ok😀"], "c\u{fffd}": "x\\ud800"})
+        );
+        let mut found: Vec<&str> = ill_formed.iter().map(String::as_str).collect();
+        found.sort_unstable();
+        assert_eq!(found, ["c\u{fffd}", "key-\u{fffd}", "key-\u{fffd}x"]);
+        // A literal U+FFFD (escaped or not) is well-formed text.
+        assert!(parse_reporting(r#"["�","�"]"#).unwrap().1.is_empty());
+    }
+
+    #[tokio::test]
+    async fn ill_formed_strings_are_known_only_inside_their_scope() {
+        let (_, ill_formed) = parse_reporting(r#"["key-\ud800"]"#).unwrap();
+        assert!(!was_ill_formed("key-\u{fffd}"));
+        with_ill_formed(ill_formed, async {
+            assert!(was_ill_formed("key-\u{fffd}"));
+            assert!(!was_ill_formed("other-\u{fffd}"));
+        })
+        .await;
     }
 
     #[test]

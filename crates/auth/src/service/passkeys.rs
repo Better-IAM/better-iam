@@ -3,6 +3,7 @@
 
 use std::collections::HashSet;
 
+use better_iam_core::boxed;
 use better_iam_core::{
     AuthMethod, CredentialInput, Filter, IamError, IamResult, IamStoreExt, Identity,
     ip_counter_key, js,
@@ -243,18 +244,19 @@ impl AuthService {
         let config = self.passkey_config()?;
         self.store()
             .transaction(|tx| async move {
-                let principal = self.authenticate(credentials).await?;
+                let principal = boxed(|| self.authenticate(credentials)).await?;
                 self.require_recent(&principal)?;
                 let token = text(prop(input, "challengeId"), "token", 512)?;
-                let challenge = self
-                    .read_challenge(
+                let challenge = boxed(|| {
+                    self.read_challenge(
                         &tx,
                         &principal.identity.tenant_id,
                         &token,
                         "passkey-register",
                         ChallengeMatch::default(),
                     )
-                    .await?;
+                })
+                .await?;
                 if challenge.identity_id != principal.identity.id
                     || challenge.session_id.as_deref() != Some(principal.session.id.as_str())
                 {
@@ -265,13 +267,16 @@ impl AuthService {
                     ));
                 }
                 let response = prop(input, "response").cloned().unwrap_or(Value::Null);
-                let result = webauthn::verify_registration_response(
-                    &response,
-                    challenge.payload_str("challenge").unwrap_or_default(),
-                    &self.expected_origins(),
-                    &config.rp_id,
-                    true,
-                )
+                let result = boxed(|| async {
+                    webauthn::verify_registration_response(
+                        &response,
+                        challenge.payload_str("challenge").unwrap_or_default(),
+                        &self.expected_origins(),
+                        &config.rp_id,
+                        true,
+                    )
+                    .await
+                })
                 .await
                 .map_err(|_| {
                     IamError::with_status(
@@ -292,13 +297,15 @@ impl AuthService {
                 };
                 let id = new_id("pk");
                 // A credential is globally unique for this RP, including across tenant accounts.
-                let taken = tx
-                    .find(
+                let taken = boxed(|| async {
+                    tx.find(
                         "authPasskeys",
                         &Filter::new().eq("credentialId", info.credential_id.clone()),
                         &Default::default(),
                     )
-                    .await?;
+                    .await
+                })
+                .await?;
                 if !taken.is_empty() {
                     return Err(IamError::with_status(
                         "PASSKEY_EXISTS",
@@ -328,15 +335,17 @@ impl AuthService {
                         .then(|| info.aaguid.clone()),
                     extra: Map::new(),
                 };
-                insert(tx.as_ref(), "authPasskeys", &record).await?;
-                tx.delete("authChallenges", &challenge.id).await?;
-                self.audit(
-                    &tx,
-                    &principal.identity,
-                    "auth:passkey:create",
-                    None,
-                    Some(single("name", name.clone())),
-                )
+                boxed(|| insert(tx.as_ref(), "authPasskeys", &record)).await?;
+                boxed(|| tx.delete("authChallenges", &challenge.id)).await?;
+                boxed(|| {
+                    self.audit(
+                        &tx,
+                        &principal.identity,
+                        "auth:passkey:create",
+                        None,
+                        Some(single("name", name.clone())),
+                    )
+                })
                 .await?;
                 Ok(PasskeyRegistered { id, name })
             })
@@ -693,32 +702,37 @@ impl AuthService {
         let tenant_id = text(prop(input, "tenantId"), "tenantId", 512)?;
         let token = text(prop(input, "challengeId"), "challengeId", 512)?;
         let remember = prop(input, "rememberDevice") == Some(&Value::Bool(true));
-        self.rate(
-            &tenant_id,
-            &format!("passkey-mfa-finish:{}", hash_token(&token)),
-            RateTier::Sensitive,
-        )
+        boxed(|| async {
+            self.rate(
+                &tenant_id,
+                &format!("passkey-mfa-finish:{}", hash_token(&token)),
+                RateTier::Sensitive,
+            )
+            .await
+        })
         .await?;
-        self.rate_challenge_identity(&tenant_id, &token, "passkey-mfa", "passkey-mfa-verify")
-            .await?;
+        boxed(|| {
+            self.rate_challenge_identity(&tenant_id, &token, "passkey-mfa", "passkey-mfa-verify")
+        })
+        .await?;
         let config = &config;
         self.store()
             .transaction(|tx| async move {
-                let challenge = self
-                    .read_challenge(
+                let challenge = boxed(|| {
+                    self.read_challenge(
                         &tx,
                         &tenant_id,
                         &token,
                         "passkey-mfa",
                         ChallengeMatch::default(),
                     )
-                    .await?;
-                let identity = self
-                    .user(&tx, &challenge.identity_id, Some(&tenant_id))
-                    .await?;
+                })
+                .await?;
+                let identity =
+                    boxed(|| self.user(&tx, &challenge.identity_id, Some(&tenant_id))).await?;
                 // The login challenge this assertion completes must still be open and belong to the same person.
                 let login: Option<Challenge> = match challenge.payload_str("loginChallengeId") {
-                    Some(id) => get(tx.as_ref(), "authChallenges", id).await?,
+                    Some(id) => boxed(|| get(tx.as_ref(), "authChallenges", id)).await?,
                     None => None,
                 };
                 let login = match login {
@@ -741,14 +755,17 @@ impl AuthService {
                     .get("id")
                     .and_then(Value::as_str)
                     .unwrap_or_default();
-                let key: Option<PasskeyRecord> = find::<PasskeyRecord>(
-                    tx.as_ref(),
-                    "authPasskeys",
-                    &Filter::new()
-                        .eq("tenantId", tenant_id.clone())
-                        .eq("identityId", identity.id.clone())
-                        .eq("credentialId", credential_id),
-                )
+                let key: Option<PasskeyRecord> = boxed(|| async {
+                    find::<PasskeyRecord>(
+                        tx.as_ref(),
+                        "authPasskeys",
+                        &Filter::new()
+                            .eq("tenantId", tenant_id.clone())
+                            .eq("identityId", identity.id.clone())
+                            .eq("credentialId", credential_id),
+                    )
+                    .await
+                })
                 .await?
                 .into_iter()
                 .next();
@@ -762,14 +779,14 @@ impl AuthService {
                 let result = self.verify_assertion(config, &challenge, response, &key)?;
                 key.counter = f64::from(result.new_counter);
                 key.last_used_at = Some(self.now());
-                put(tx.as_ref(), "authPasskeys", &key).await?;
-                tx.delete("authChallenges", &challenge.id).await?;
-                tx.delete("authChallenges", &login.id).await?;
+                boxed(|| put(tx.as_ref(), "authPasskeys", &key)).await?;
+                boxed(|| tx.delete("authChallenges", &challenge.id)).await?;
+                boxed(|| tx.delete("authChallenges", &login.id)).await?;
                 let method = login.payload_str("method").and_then(|method| {
                     serde_json::from_value::<AuthMethod>(Value::String(method.to_owned())).ok()
                 });
-                let session = self
-                    .issue_session(
+                let session = boxed(|| {
+                    self.issue_session(
                         &tx,
                         &identity,
                         IssueSessionOptions {
@@ -778,9 +795,10 @@ impl AuthService {
                             ..Default::default()
                         },
                     )
-                    .await?;
+                })
+                .await?;
                 let device = if remember {
-                    self.remember_device(&tx, &identity).await?
+                    boxed(|| self.remember_device(&tx, &identity)).await?
                 } else {
                     None
                 };
@@ -794,10 +812,8 @@ impl AuthService {
         &self,
         credentials: &CredentialInput,
     ) -> IamResult<Vec<SafePasskey>> {
-        let principal = self.authenticate(credentials).await?;
-        let mut keys = self
-            .identity_passkeys(self.store(), &principal.identity)
-            .await?;
+        let principal = boxed(|| self.authenticate(credentials)).await?;
+        let mut keys = boxed(|| self.identity_passkeys(self.store(), &principal.identity)).await?;
         keys.sort_by(|a, b| {
             crate::util::by_number_then_id(
                 (b.created_at.unwrap_or(0.0), &a.id),

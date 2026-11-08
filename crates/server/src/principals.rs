@@ -27,7 +27,7 @@ use crate::session_kinds::revoked_by_watermark;
 use crate::session_tokens::{SessionTokenClaims, looks_like_jwt};
 use crate::utils::{hash, same_hash};
 use crate::validation::text_str;
-use better_iam_core::AuditOutcome;
+use better_iam_core::{AuditOutcome, boxed};
 
 /// The kinds a session token may be minted from; temporary kinds never are (no chaining).
 const SESSION_TOKEN_SOURCE_KINDS: [SessionKind; 2] = [SessionKind::User, SessionKind::ApiKey];
@@ -194,7 +194,7 @@ impl Principals {
     ) -> IamResult<AuthenticatedPrincipal> {
         ctx.store
             .transaction(|tx| async move {
-                let raw = tx.get("sessions", session_id).await?;
+                let raw = boxed(|| tx.get("sessions", session_id)).await?;
                 let Some(mut raw) = raw else {
                     return Err(expired_or_revoked());
                 };
@@ -206,7 +206,7 @@ impl Principals {
                     return Err(expired_or_revoked());
                 }
                 let identity: Option<Identity> =
-                    get(&tx, "identities", &session.identity_id).await?;
+                    boxed(|| get(&tx, "identities", &session.identity_id)).await?;
                 let Some(identity) =
                     identity.filter(|identity| identity.status == IdentityStatus::Active)
                 else {
@@ -229,7 +229,7 @@ impl Principals {
                     && now - session.last_seen_at >= 60_000.0
                 {
                     raw.insert("lastSeenAt".into(), crate::js::number(now));
-                    decode(tx.put("sessions", &raw).await?)?
+                    decode(boxed(|| tx.put("sessions", &raw)).await?)?
                 } else {
                     session
                 };
@@ -269,7 +269,7 @@ impl Principals {
         }) else {
             return Err(expired_or_revoked());
         };
-        self.resolve_stored(ctx, &candidate.id, &token_hash, Some(&claims), device_proof)
+        boxed(|| self.resolve_stored(ctx, &candidate.id, &token_hash, Some(&claims), device_proof))
             .await
     }
 
@@ -280,11 +280,11 @@ impl Principals {
     ) -> IamResult<AuthenticatedPrincipal> {
         let provided = credential_value(input)?;
         if provided.is_empty() {
-            return ctx.auth.authenticate(input).await;
+            return boxed(|| ctx.auth.authenticate(input)).await;
         }
         let device_proof = device_proof_of(input.headers.as_deref());
         if looks_like_jwt(&provided) {
-            return self.resolve_jwt(ctx, &provided, device_proof).await;
+            return boxed(|| self.resolve_jwt(ctx, &provided, device_proof)).await;
         }
         // Prefixed tokens route by type; the stored kind stays authoritative and a mismatch never falls back.
         let mut expected: Option<&'static str> = None;
@@ -293,12 +293,12 @@ impl Principals {
                 return Err(invalid_credentials());
             };
             if parsed.kind() == "user" {
-                return ctx.auth.authenticate(input).await;
+                return boxed(|| ctx.auth.authenticate(input)).await;
             }
             expected = Some(parsed.kind());
         } else if !opaque_token(&provided) {
             // Refused there, unread.
-            return ctx.auth.authenticate(input).await;
+            return boxed(|| ctx.auth.authenticate(input)).await;
         }
         let token_hash = hash(&provided);
         let candidate: Option<Session> = ctx
@@ -327,13 +327,12 @@ impl Principals {
                     .as_ref()
                     .is_none_or(|candidate| candidate.kind == SessionKind::User)
                 {
-                    return ctx.auth.authenticate(input).await;
+                    return boxed(|| ctx.auth.authenticate(input)).await;
                 }
             }
         }
         let candidate = candidate.ok_or_else(invalid_credentials)?;
-        self.resolve_stored(ctx, &candidate.id, &token_hash, None, device_proof)
-            .await
+        boxed(|| self.resolve_stored(ctx, &candidate.id, &token_hash, None, device_proof)).await
     }
 
     /// `checkSessionToken(tx, identity, session)`: a session token lives only as long as its source.
@@ -386,11 +385,11 @@ impl Principals {
         request: &AuthenticatedPrincipal,
     ) -> IamResult<()> {
         let trust: Option<Trust> = match &session.trust_id {
-            Some(id) => get(tx, "trusts", id).await?,
+            Some(id) => boxed(|| get(tx, "trusts", id)).await?,
             None => None,
         };
         let role: Option<Role> = match &session.role_id {
-            Some(id) => get(tx, "roles", id).await?,
+            Some(id) => boxed(|| get(tx, "roles", id)).await?,
             None => None,
         };
         let (Some(trust), Some(role)) = (trust, role) else {
@@ -409,11 +408,13 @@ impl Principals {
             return Err(role_revoked());
         }
         if session.web_identity.is_some() {
-            self.check_web_identity_session(ctx, tx, identity, session, &trust, &role)
+            boxed(|| self.check_web_identity_session(ctx, tx, identity, session, &trust, &role))
                 .await
         } else {
-            self.check_classic_role_session(ctx, tx, identity, session, &trust, &role, request)
-                .await
+            boxed(|| {
+                self.check_classic_role_session(ctx, tx, identity, session, &trust, &role, request)
+            })
+            .await
         }
     }
 
@@ -429,7 +430,7 @@ impl Principals {
         request: &AuthenticatedPrincipal,
     ) -> IamResult<()> {
         let source: Option<Session> = match &session.source_session_id {
-            Some(id) => get(tx, "sessions", id).await?,
+            Some(id) => boxed(|| get(tx, "sessions", id)).await?,
             None => None,
         };
         let consistent = trust.kind.as_deref().unwrap_or("identity") == "identity"
@@ -461,7 +462,10 @@ impl Principals {
             request,
         );
         for authority_id in session.source_authority_ids.iter().flatten() {
-            if ctx.authority_chain(tx, authority_id).await?.is_none() {
+            if boxed(|| ctx.authority_chain(tx, authority_id))
+                .await?
+                .is_none()
+            {
                 return Err(IamError::with_status(
                     "UNAUTHENTICATED",
                     "Source authority revoked",
@@ -469,7 +473,7 @@ impl Principals {
                 ));
             }
         }
-        if !self.role_authority_live(ctx, tx, role).await? {
+        if !boxed(|| self.role_authority_live(ctx, tx, role)).await? {
             return Err(IamError::with_status(
                 "UNAUTHENTICATED",
                 "Role authority revoked",
@@ -529,7 +533,8 @@ impl Principals {
         let Some(web) = &session.web_identity else {
             return Err(role_revoked());
         };
-        let provider: Option<OidcProvider> = get(tx, "oidcProviders", &web.provider_id).await?;
+        let provider: Option<OidcProvider> =
+            boxed(|| get(tx, "oidcProviders", &web.provider_id)).await?;
         let Some(provider) = provider else {
             return Err(role_revoked());
         };
@@ -551,18 +556,16 @@ impl Principals {
         {
             return Err(role_revoked());
         }
-        if ctx
-            .authority_chain(tx, &provider.authority_id)
+        if boxed(|| ctx.authority_chain(tx, &provider.authority_id))
             .await?
             .is_none()
-            || ctx
-                .authority_chain(tx, trust_authority.unwrap_or_default())
+            || boxed(|| ctx.authority_chain(tx, trust_authority.unwrap_or_default()))
                 .await?
                 .is_none()
         {
             return Err(role_revoked());
         }
-        if !self.role_authority_live(ctx, tx, role).await? {
+        if !boxed(|| self.role_authority_live(ctx, tx, role)).await? {
             return Err(IamError::with_status(
                 "UNAUTHENTICATED",
                 "Role authority revoked",
@@ -581,7 +584,7 @@ impl Principals {
     ) -> IamResult<AuthenticatedPrincipal> {
         let slot: Arc<Mutex<Option<NetworkMismatch>>> = Arc::default();
         let result = MISMATCH
-            .scope(slot.clone(), self.resolve_credential(ctx, input))
+            .scope(slot.clone(), boxed(|| self.resolve_credential(ctx, input)))
             .await;
         let Err(error) = result else {
             return result;
@@ -679,10 +682,10 @@ impl PrincipalService for Principals {
                 ctx.config.base_url.as_str(),
             );
             ctx.auth
-                .with_client(client, self.resolve_recorded(&ctx, input))
+                .with_client(client, boxed(|| self.resolve_recorded(&ctx, input)))
                 .await?
         } else {
-            self.resolve_recorded(&ctx, input).await?
+            boxed(|| self.resolve_recorded(&ctx, input)).await?
         };
         // On an organization's own address (`hosts`), only that organization's credentials are accepted.
         ctx.auth.assert_request_host(&principal.session.tenant_id)?;
@@ -702,8 +705,9 @@ impl PrincipalService for Principals {
         principal: &AuthenticatedPrincipal,
     ) -> IamResult<AuthenticatedPrincipal> {
         let ctx = self.context()?;
-        let identity: Option<Identity> = get(tx, "identities", &principal.identity.id).await?;
-        let session: Option<Session> = get(tx, "sessions", &principal.session.id).await?;
+        let identity: Option<Identity> =
+            boxed(|| get(tx, "identities", &principal.identity.id)).await?;
+        let session: Option<Session> = boxed(|| get(tx, "sessions", &principal.session.id)).await?;
         let now = ctx.now();
         let revoked = || IamError::with_status("UNAUTHENTICATED", "Credential revoked", 401);
         let (Some(identity), Some(session)) = (identity, session) else {
@@ -723,11 +727,15 @@ impl PrincipalService for Principals {
                 401,
             ));
         }
-        let realm = ctx.tenant(tx, &identity.tenant_id).await?;
+        let realm = boxed(|| ctx.tenant(tx, &identity.tenant_id)).await?;
         // `||` short-circuits: the session's tenant is read (and may be NOT_FOUND) only when the realm chain is active.
-        if Self::tenant_chain_inactive(&ctx, tx, &realm).await?
-            || Self::tenant_chain_inactive(&ctx, tx, &ctx.tenant(tx, &session.tenant_id).await?)
-                .await?
+        if boxed(|| Self::tenant_chain_inactive(&ctx, tx, &realm)).await?
+            || Self::tenant_chain_inactive(
+                &ctx,
+                tx,
+                &boxed(|| ctx.tenant(tx, &session.tenant_id)).await?,
+            )
+            .await?
         {
             return Err(IamError::with_status(
                 "TENANT_INACTIVE",
@@ -749,27 +757,34 @@ impl PrincipalService for Principals {
                         401,
                     ));
                 }
-                if !session.mfa && ctx.auth.mfa_required(tx, &identity).await? {
+                if !session.mfa && boxed(|| ctx.auth.mfa_required(tx, &identity)).await? {
                     return Err(IamError::with_status(
                         "MFA_REQUIRED",
                         "Multi-factor authentication is required",
                         403,
                     ));
                 }
-                ctx.auth.assert_impersonation_source(tx, &session).await?;
+                boxed(|| ctx.auth.assert_impersonation_source(tx, &session)).await?;
                 // The recorded address is judged as the auth service judges it, so a role session sourced from this
                 // one ends as soon as this session's network is blocked or no longer allowed.
                 ctx.auth
                     .assert_ip_allowed(Some(&realm), session_ip(&session))?;
-                ctx.auth
-                    .assert_network_not_blocked(tx, &session.tenant_id, session_ip(&session))
-                    .await?;
+                boxed(|| {
+                    ctx.auth.assert_network_not_blocked(
+                        tx,
+                        &session.tenant_id,
+                        session_ip(&session),
+                    )
+                })
+                .await?;
                 // The address presenting the credential now is judged too.
                 let presented = client_ip(&ctx);
                 let presented = presented.as_deref().filter(|ip| !ip.is_empty());
-                ctx.auth
-                    .assert_network_not_blocked(tx, &session.tenant_id, presented)
-                    .await?;
+                boxed(|| {
+                    ctx.auth
+                        .assert_network_not_blocked(tx, &session.tenant_id, presented)
+                })
+                .await?;
                 if binds_to_ip(&realm)
                     && let (Some(recorded), Some(presented)) = (session_ip(&session), presented)
                     && presented != recorded
@@ -779,7 +794,9 @@ impl PrincipalService for Principals {
             }
             SessionKind::ApiKey => {
                 let authority_live = match &session.credential_authority_id {
-                    Some(authority_id) => ctx.authority_chain(tx, authority_id).await?.is_some(),
+                    Some(authority_id) => boxed(|| ctx.authority_chain(tx, authority_id))
+                        .await?
+                        .is_some(),
                     None => false,
                 };
                 if !machine_identity(&identity)
@@ -794,28 +811,36 @@ impl PrincipalService for Principals {
                 }
                 // An agent's key works only while the agent and its sponsor are in good standing (agents.ts).
                 if identity.kind == IdentityKind::Agent {
-                    assert_agent_usable(&ctx, tx, &identity).await?;
+                    boxed(|| assert_agent_usable(&ctx, tx, &identity)).await?;
                 }
             }
-            SessionKind::SessionToken => self.check_session_token(tx, &identity, &session).await?,
+            SessionKind::SessionToken => {
+                boxed(|| self.check_session_token(tx, &identity, &session)).await?
+            }
             SessionKind::Role => {
-                self.check_role_session(&ctx, tx, &identity, &session, principal)
-                    .await?
+                boxed(|| self.check_role_session(&ctx, tx, &identity, &session, principal)).await?
             }
             SessionKind::Delegated => {
-                check_delegated_session(&ctx, tx, &identity, &session, self).await?
+                boxed(|| check_delegated_session(&ctx, tx, &identity, &session, self)).await?
+            }
+            SessionKind::Unknown => {
+                return Err(IamError::with_status(
+                    "UNAUTHENTICATED",
+                    "Invalid credential kind",
+                    401,
+                ));
             }
         }
         if session.kind != SessionKind::User {
             // API keys, assumed roles and session tokens have no sign-in of their own to refuse, so they are judged
             // against the address presenting them now (and any address recorded on them).
             let target = if session.kind == SessionKind::Role {
-                Some(ctx.tenant(tx, &session.tenant_id).await?)
+                Some(boxed(|| ctx.tenant(tx, &session.tenant_id)).await?)
             } else {
                 None
             };
             if session.kind == SessionKind::SessionToken {
-                let home = ctx.tenant(tx, &session.tenant_id).await?;
+                let home = boxed(|| ctx.tenant(tx, &session.tenant_id)).await?;
                 ctx.auth
                     .assert_ip_allowed(Some(&home), session_ip(&session))?;
                 // With `bindSessionsToIp`, a session token works only from the network it was issued from.
@@ -841,9 +866,11 @@ impl PrincipalService for Principals {
                 if let Some(target) = &target {
                     ctx.auth.assert_ip_allowed(Some(target), ip)?;
                 }
-                ctx.auth
-                    .assert_network_not_blocked(tx, &session.tenant_id, ip)
-                    .await?;
+                boxed(|| {
+                    ctx.auth
+                        .assert_network_not_blocked(tx, &session.tenant_id, ip)
+                })
+                .await?;
             }
         }
         // The request's device proof (still unverified) stays with the principal for decisions (devices.ts).

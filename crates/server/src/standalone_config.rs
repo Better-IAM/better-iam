@@ -1155,12 +1155,32 @@ pub fn options_from_config(config: &Value, runtime: &ConfigRuntime) -> IamResult
 }
 
 /// Reads `better-iam.json` (`JSON.parse`; a syntax error is an exception the server answers as INTERNAL_ERROR) and
-/// builds the options.
+/// builds the options. A missing file is CONFIG_NOT_FOUND with the message the CLI's `loadConfig` gives
+/// (`importConfigModule`); a file that exists but cannot be read is CONFIG_LOAD_FAILED naming the reason.
 pub fn load_config_file(
     path: &std::path::Path,
     runtime: &ConfigRuntime,
 ) -> IamResult<BetterIamOptions> {
-    let text = std::fs::read_to_string(path).map_err(|_| internal_error())?;
+    let text = std::fs::read_to_string(path).map_err(|error| config_read_error(path, &error))?;
     let config = js::parse_json(&text)?;
     options_from_config(&config, runtime)
+}
+
+/// The error of a configuration file that could not be read: CONFIG_NOT_FOUND when it does not exist (the code and
+/// message of `importConfigModule` in packages/cli), otherwise CONFIG_LOAD_FAILED with the operating system's reason.
+fn config_read_error(path: &std::path::Path, error: &std::io::Error) -> IamError {
+    if error.kind() == std::io::ErrorKind::NotFound {
+        IamError::new(
+            "CONFIG_NOT_FOUND",
+            format!("Configuration {} does not exist", path.display()),
+        )
+    } else {
+        IamError::new(
+            "CONFIG_LOAD_FAILED",
+            format!(
+                "Configuration {} could not be read: {error}",
+                path.display()
+            ),
+        )
+    }
 }

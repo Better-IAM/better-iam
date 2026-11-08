@@ -10,6 +10,7 @@
 #![forbid(unsafe_code)]
 
 pub mod audit;
+pub mod boxing;
 pub mod classification;
 #[cfg(feature = "conformance")]
 pub mod conformance;
@@ -36,6 +37,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 pub use audit::*;
+pub use boxing::boxed;
 pub use classification::*;
 pub use delegation_tokens::*;
 pub use filter_compilers::*;
@@ -73,6 +75,11 @@ pub struct IamErrorDetails {
     pub region: Option<String>,
     /// `WRONG_REGION`: the organization's sign-in address in that region.
     pub location: Option<String>,
+    /// The name of the JavaScript exception this error stands for when TypeScript throws something that is not an
+    /// `IamError` (`Error`, `TypeError`, ...). Such an error is `INTERNAL_ERROR` 500 and keeps the exception's own
+    /// message for the code that reads `error.message` (an archive failure report, for one), while the HTTP answer
+    /// still says "Internal server error".
+    pub thrown: Option<String>,
 }
 
 impl PartialEq for IamError {
@@ -318,12 +325,11 @@ pub trait IamStoreExt: IamStore {
         Fut: Future<Output = IamResult<T>> + Send + 'a,
     {
         async move {
+            // The callback's future is created in this closure, not inside the boxed future's poll, so it never
+            // occupies an unoptimized build's stack frame on the way to the heap.
             let erased: TransactionFn<'a> = Box::new(move |tx| {
-                Box::pin(async move {
-                    run(tx)
-                        .await
-                        .map(|value| Box::new(value) as TransactionValue)
-                })
+                let work = run(tx);
+                Box::pin(async move { work.await.map(|value| Box::new(value) as TransactionValue) })
             });
             let value = self.transaction_dyn(erased).await?;
             match value.downcast::<T>() {

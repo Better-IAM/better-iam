@@ -1,0 +1,32 @@
+[package]
+name = "better-iam-projects"
+description = "Reference Better IAM plugin for Rust: tenant-scoped project records with create, list, get, update, archive and restore endpoints, authorized by the server like every other operation and sharing its records with the TypeScript plugin."
+readme = "README.md"
+keywords = ["iam", "plugin", "projects", "multi-tenant", "authorization"]
+categories = ["authentication", "web-programming"]
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+better-iam-core.workspace = true
+async-trait.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+uuid = { version = "1", features = ["v4"] }
+
+[dev-dependencies]
+better-iam-server.workspace = true
+better-iam-adapter-sqlite.workspace = true
+better-iam-auth.workspace = true
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "time"] }
+serde.workspace = true
+bytes.workspace = true
+http = "1"
+
+[lib]
+doctest = false
