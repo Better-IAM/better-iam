@@ -447,10 +447,7 @@ func ReadAiState(ctx context.Context, server *ServerContext, tx core.IamStore, t
 		}
 	}
 	aiSortByName(agents)
-	inference, err := InferenceEnabled(inferenceServerValue(server))
-	if err != nil {
-		return nil, err
-	}
+	inference := InferenceEnabled(server)
 	models, providers, budgets := []*core.Object{}, []*core.Object{}, []*core.Object{}
 	if inference {
 		if models, err = tx.Find(ctx, "inferenceModels", core.NewObject("tenantId", tenantID), nil); err != nil {

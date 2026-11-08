@@ -30,11 +30,6 @@ var inferenceTierPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$
 // inferenceModelPattern is the model name pattern a budget's `models` take.
 var inferenceModelPattern = regexp.MustCompile(`^[A-Za-z0-9*?][A-Za-z0-9._:/@+*?-]{0,127}$`)
 
-// inferenceServerValue is the `Pick<ServerContext, 'options'>` the inference.ts settings helpers take.
-func inferenceServerValue(server *ServerContext) *core.Object {
-	return core.NewObject("options", OptionsValue(server.Options))
-}
-
 // inferenceBody is a request body, empty when there is none.
 func inferenceBody(body *core.Object) *core.Object {
 	if body == nil {
@@ -119,8 +114,8 @@ func addUsage(row *usageRow, record *core.Object) {
 	row.costUsd = jsMathRound(row.costMicros) / 1_000_000
 }
 
-// inferenceDay is `new Date(Math.floor(createdAt / 86_400_000) * 86_400_000).toISOString().slice(0, 10)`.
-func inferenceDay(createdAt float64) string {
+// inferenceDayKey is `new Date(Math.floor(createdAt / 86_400_000) * 86_400_000).toISOString().slice(0, 10)`.
+func inferenceDayKey(createdAt float64) string {
 	day := math.Floor(createdAt/86_400_000) * 86_400_000
 	return time.UnixMilli(int64(day)).UTC().Format("2006-01-02")
 }
@@ -140,7 +135,7 @@ func aggregate(records []*core.Object, groupBy string, from, to float64, labels 
 		case "model":
 			key = jsString(record.Get("model"))
 		default:
-			key = inferenceDay(jsNumber(record.Get("createdAt")))
+			key = inferenceDayKey(jsNumber(record.Get("createdAt")))
 		}
 		row := rows[key]
 		if row == nil {
@@ -783,12 +778,12 @@ func CreateInferenceAPI(server *ServerContext) *InferenceAPI {
 
 // enabled refuses with FEATURE_DISABLED when inference is off (`enabled` wraps every operation).
 func (api *InferenceAPI) enabled() error {
-	return AssertInference(inferenceServerValue(api.server))
+	return AssertInference(api.server)
 }
 
 // settings is inferenceSettings(ctx).
-func (api *InferenceAPI) settings() (*core.Object, error) {
-	return InferenceSettings(inferenceServerValue(api.server))
+func (api *InferenceAPI) settings() *InferenceOptions {
+	return InferenceSettings(api.server)
 }
 
 // ownProvider is one of the tenant's own providers (NOT_FOUND otherwise).
@@ -806,15 +801,12 @@ func (api *InferenceAPI) allowedBaseURL(ctx context.Context, tx core.IamStore, p
 		}
 		return jsString(fallback), nil
 	}
-	settings, err := api.settings()
-	if err != nil {
-		return "", err
-	}
+	settings := api.settings()
 	url, err := BaseURL(value, settings)
 	if err != nil {
 		return "", err
 	}
-	if !core.StrictEquals(url, fallback) && !truthy(member(settings, "allowCustomBaseUrls")) {
+	if !core.StrictEquals(url, fallback) && !(settings.AllowCustomBaseUrls != nil && *settings.AllowCustomBaseUrls) {
 		root, err := api.server.RootPrincipal(ctx, tx, principal)
 		if err != nil {
 			return "", err
@@ -1611,7 +1603,7 @@ func PermitPrincipal(permit *core.Object) *Principal {
 // Models lists the enabled models a credential may invoke in its session's tenant (or tenantID).
 func (r *InferenceRuntime) Models(ctx context.Context, credential core.CredentialInput, tenantID ...string) ([]any, error) {
 	server := r.server
-	if err := AssertInference(inferenceServerValue(server)); err != nil {
+	if err := AssertInference(server); err != nil {
 		return nil, err
 	}
 	authenticated, err := server.Principals.Authenticate(ctx, credential)
@@ -1685,7 +1677,7 @@ func writeGatewayResponse(w http.ResponseWriter, response *http.Response) {
 func (r *InferenceRuntime) Authorize(ctx context.Context, credential core.CredentialInput, input *core.Object) (*core.Object, error) {
 	server := r.server
 	input = inferenceBody(input)
-	if err := AssertInference(inferenceServerValue(server)); err != nil {
+	if err := AssertInference(server); err != nil {
 		return nil, err
 	}
 	authenticated, err := server.Principals.Authenticate(ctx, credential)

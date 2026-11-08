@@ -258,7 +258,7 @@ func TestInferenceMetersCallsRefusesExhaustedBudgetsAndReportsUsage(t *testing.T
 	infSame(t, "next day", f.infCheck(fresh, "model", "haiku", "estimatedTokens", 900.0), `{"allowed":true}`)
 }
 
-func TestInferenceCapsAnAgentAcrossEverythingItDoes(t *testing.T) {
+func TestInferenceAPICapsAnAgentAcrossEverythingItDoes(t *testing.T) {
 	f := newInfFixture(t, nil)
 	api := f.iam.API.Inference
 	_, alice, role, aliceSession := f.infSetup()
