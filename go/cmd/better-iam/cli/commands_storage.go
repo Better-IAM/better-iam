@@ -12,7 +12,6 @@ import (
 	"strings"
 
 	"github.com/Better-IAM/better-iam/go/core"
-	"github.com/Better-IAM/better-iam/go/server"
 )
 
 var storageCommands = []*CommandSpec{
@@ -164,5 +163,3 @@ func readLines(file io.Reader) func(yield func(string, error) bool) {
 		}
 	}
 }
-
-var _ = server.New

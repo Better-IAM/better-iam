@@ -11,7 +11,6 @@ package cli
 
 import (
 	"context"
-	"errors"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -226,11 +225,6 @@ func storeOf[T core.IamStore](store T, err error) (core.IamStore, error) {
 	return store, nil
 }
 
-// Instance is an IAM instance the CLI created, with the store it closes afterwards.
-type openedInstance struct {
-	iam *server.BetterIam
-}
-
 // closeInstance stops the instance's background work and closes its store.
 func closeInstance(ctx context.Context, iam *server.BetterIam) error {
 	if iam == nil {
@@ -414,10 +408,4 @@ func ConfigFromEnv(env map[string]string) (*server.BetterIamOptions, error) {
 		options.TrustedOrigins = origins
 	}
 	return options, nil
-}
-
-// errConfigNotFound reports whether err is a missing-configuration failure.
-func errConfigNotFound(err error) bool {
-	var cliErr *CliError
-	return errors.As(err, &cliErr) && cliErr.Code == "CONFIG_NOT_FOUND"
 }

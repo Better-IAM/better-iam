@@ -6,7 +6,6 @@ import (
 	"context"
 	"regexp"
 	"slices"
-	"strings"
 
 	"github.com/Better-IAM/better-iam/go/core"
 )
@@ -382,5 +381,3 @@ var sessionCommands = []*CommandSpec{
 		},
 	}),
 }
-
-var _ = strings.TrimSpace
