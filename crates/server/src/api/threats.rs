@@ -18,6 +18,7 @@ use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use better_iam_core::boxed;
 use better_iam_core::js as core_js;
 use better_iam_core::{
     AuditOutcome, AuthenticatedPrincipal, CredentialInput, Direction, Filter, FindOptions,
@@ -2729,8 +2730,8 @@ impl ThreatsApi {
                         403,
                     ));
                 }
-                let realm = ctx.tenant(&tx, &tenant_id).await?;
-                let settings = resolve(stored_settings(&tx, &tenant_id).await?.as_ref())?;
+                let realm = boxed(|| ctx.tenant(&tx, &tenant_id)).await?;
+                let settings = resolve(boxed(|| stored_settings(&tx, &tenant_id)).await?.as_ref())?;
                 let rule = rule_setting(&settings, "user-reported")
                     .cloned()
                     .unwrap_or(Value::Null);
@@ -2765,7 +2766,7 @@ impl ThreatsApi {
                     ));
                 }
                 if let Some(session_id) = &session_id
-                    && let Some(reported) = tx.get("sessions", session_id).await?
+                    && let Some(reported) = boxed(|| tx.get("sessions", session_id)).await?
                     && (str_of(&reported, "identityId") != identity.id
                         || str_of(&reported, "tenantId") != tenant_id)
                 {
@@ -2800,7 +2801,7 @@ impl ThreatsApi {
                     "metadata": Value::Object(candidate_metadata),
                 });
                 let recorded =
-                    record_detection(&ctx, &tx, &tenant_id, candidate, &settings, now).await?;
+                    boxed(|| record_detection(&ctx, &tx, &tenant_id, candidate, &settings, now)).await?;
                 let detection_id = recorded
                     .get("detection")
                     .map(|detection| str_member(detection, "id").to_owned())
@@ -2823,23 +2824,23 @@ impl ThreatsApi {
                         "reason": "Reported by the account holder",
                     })
                 };
-                let revoked = apply_response(
+                let revoked = boxed(|| apply_response(
                     &ctx,
                     &tx,
                     &tenant_id,
                     own(json!({ "kind": "revoke-sessions", "keepApiKeys": true })),
                     &actor,
                     &settings,
-                )
+                ))
                 .await?;
-                let forgotten = apply_response(
+                let forgotten = boxed(|| apply_response(
                     &ctx,
                     &tx,
                     &tenant_id,
                     own(json!({ "kind": "forget-devices" })),
                     &actor,
                     &settings,
-                )
+                ))
                 .await?;
                 let count = |response: &Value, key: &str| {
                     response
@@ -2878,11 +2879,11 @@ impl ThreatsApi {
                         Some(details),
                     )
                     .await?;
-                let responses = playbooks_for(&ctx, &tx, &tenant_id, &recorded, &settings).await?;
+                let responses = boxed(|| playbooks_for(&ctx, &tx, &tenant_id, &recorded, &settings)).await?;
                 Ok((report, responses))
             })
             .await?;
-        after_threat_responses(&ctx, &tenant_id, &responses).await?;
+        boxed(|| after_threat_responses(&ctx, &tenant_id, &responses)).await?;
         Ok(Reply::json(report))
     }
 

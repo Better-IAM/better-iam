@@ -9,6 +9,7 @@
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex, Weak};
 
+use better_iam_core::boxed;
 use better_iam_core::{
     AuthenticatedPrincipal, Effect, Filter, FindOptions, IamError, IamResult, IamStore, Identity,
     IdentityKind, PolicyDocument, Record, Session, SessionKind, js as core_js, match_pattern,
@@ -908,21 +909,21 @@ pub async fn check_delegated_session(
     let revoked = || IamError::with_status("UNAUTHENTICATED", "Delegation revoked", 401);
     let now = ctx.now();
     let delegation: Option<Delegation> = match &session.delegation_id {
-        Some(id) => match tx.get("delegations", id).await? {
+        Some(id) => match boxed(|| tx.get("delegations", id)).await? {
             Some(record) => Some(decode(record)?),
             None => None,
         },
         None => None,
     };
     let agent: Option<Identity> = match &session.agent_id {
-        Some(id) => match tx.get("identities", id).await? {
+        Some(id) => match boxed(|| tx.get("identities", id)).await? {
             Some(record) => Some(decode(record)?),
             None => None,
         },
         None => None,
     };
     let source: Option<Session> = match &session.source_session_id {
-        Some(id) => match tx.get("sessions", id).await? {
+        Some(id) => match boxed(|| tx.get("sessions", id)).await? {
             Some(record) => Some(decode(record)?),
             None => None,
         },
@@ -954,9 +955,12 @@ pub async fn check_delegated_session(
     {
         return Err(revoked());
     }
-    crate::agents::assert_agent_usable(ctx, tx, &agent).await?;
+    boxed(|| crate::agents::assert_agent_usable(ctx, tx, &agent)).await?;
     // A hand-off works only while every delegation above it does, with its agents in good standing.
-    if delegation.parent_id.is_some() && live_ancestors(ctx, tx, &delegation, now).await?.is_none()
+    if delegation.parent_id.is_some()
+        && boxed(|| live_ancestors(ctx, tx, &delegation, now))
+            .await?
+            .is_none()
     {
         return Err(revoked());
     }

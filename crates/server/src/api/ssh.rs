@@ -9,6 +9,7 @@ use std::net::{Ipv4Addr, Ipv6Addr};
 use std::sync::{Arc, Mutex};
 
 use better_iam_auth::service::base::LimitAttemptOptions;
+use better_iam_core::boxed;
 use better_iam_core::{
     AuditOutcome, AuthenticatedPrincipal, CredentialInput, Filter, FindOptions, IamError,
     IamResult, IamStoreExt, Identity, IdentityKind, Record, SessionKind, Tenant, js as core_js,
@@ -1458,16 +1459,19 @@ impl SshApi {
             Some(value) => Some(text(Some(value), "reason", 512)?),
         };
         let authenticated = ctx.principals()?.authenticate(credential).await?;
-        ctx.auth
-            .limit_attempt(
-                &tenant_id,
-                &format!("ssh:issue:{}", authenticated.identity.id),
-                LimitAttemptOptions {
-                    limit: Some(options.issuance_limit),
-                    ..LimitAttemptOptions::default()
-                },
-            )
-            .await?;
+        boxed(|| async {
+            ctx.auth
+                .limit_attempt(
+                    &tenant_id,
+                    &format!("ssh:issue:{}", authenticated.identity.id),
+                    LimitAttemptOptions {
+                        limit: Some(options.issuance_limit),
+                        ..LimitAttemptOptions::default()
+                    },
+                )
+                .await
+        })
+        .await?;
         let (
             options_ref,
             key_ref,
@@ -1490,7 +1494,7 @@ impl SshApi {
                 .principals()?
                 .current_principal(&tx, authenticated_ref)
                 .await?;
-            let tenant = ctx.tenant(&tx, tenant_ref).await?;
+            let tenant = boxed(|| ctx.tenant(&tx, tenant_ref)).await?;
             let target = match hosts_ref {
                 Some(hosts) if !hosts.is_empty() => {
                     truncate_utf16(&format!("ssh-login/{}", hosts.join(",")), 256)
@@ -1521,11 +1525,11 @@ impl SshApi {
                 }
             };
             if principal.session.impersonator_id.is_some() {
-                return refuse(
+                return boxed(|| refuse(
                     "IMPERSONATION_RESTRICTED",
                     "SSH certificates cannot be issued while viewing as someone",
                     403,
-                )
+                ))
                 .await;
             }
             // Decided first, so a principal of another tenant learns nothing about this one's hosts or settings.
@@ -1534,40 +1538,40 @@ impl SshApi {
                 .prepare_decision(&tx, &principal, &tenant, SSH_LOGIN_ACTION)
                 .await?;
             if refused_fixed(&prepared) {
-                return refuse("ACCESS_DENIED", "Access denied", 403).await;
+                return boxed(|| refuse("ACCESS_DENIED", "Access denied", 403)).await;
             }
             // The platform's root override never opens an organization's servers: a root administrator needs a role
             // in that organization like anyone else (only the root tenant's own hosts are theirs).
             if cross_tenant_root(&prepared, &principal, tenant_ref) {
-                return refuse(
+                return boxed(|| refuse(
                     "ROOT_SSH_RESTRICTED",
                     "Platform administrators need a role in this organization to open its hosts",
                     403,
-                )
+                ))
                 .await;
             }
-            let settings = load_ssh_settings(ctx, &tx, tenant_ref).await?;
+            let settings = boxed(|| load_ssh_settings(ctx, &tx, tenant_ref)).await?;
             if settings.require_mfa
                 && principal.identity.kind == IdentityKind::User
                 && !principal.session.mfa
             {
-                return refuse(
+                return boxed(|| refuse(
                     "MFA_REQUIRED",
                     "Sign in with multi-factor authentication to get an SSH certificate",
                     403,
-                )
+                ))
                 .await;
             }
             if settings.require_security_key && !key_ref.security_key {
-                return refuse(
+                return boxed(|| refuse(
                     "SECURITY_KEY_REQUIRED",
                     "This organization certifies only hardware security keys (ed25519-sk or ecdsa-sk)",
                     403,
-                )
+                ))
                 .await;
             }
-            let authority = active_authority(&tx, tenant_ref, "user").await?;
-            let authorities = tenant_authorities(&tx, tenant_ref, None).await?;
+            let authority = boxed(|| active_authority(&tx, tenant_ref, "user")).await?;
+            let authorities = boxed(|| tenant_authorities(&tx, tenant_ref, None)).await?;
             if authorities
                 .iter()
                 .any(|item| item.fingerprint == key_ref.fingerprint)
@@ -1581,7 +1585,7 @@ impl SshApi {
                 Some(names) => {
                     let mut hosts = Vec::new();
                     for name in names {
-                        match host_by_name(&tx, tenant_ref, name).await? {
+                        match boxed(|| host_by_name(&tx, tenant_ref, name)).await? {
                             Some(host) if host.status == "enrolled" => hosts.push(host),
                             _ => {
                                 return Ok(IssueOutcome::Refused(IamError::with_status(
@@ -1595,19 +1599,19 @@ impl SshApi {
                     hosts
                 }
                 None => {
-                    find_hosts(
+                    boxed(|| find_hosts(
                         &tx,
                         Filter::new()
                             .eq("tenantId", tenant_ref.as_str())
                             .eq("status", "enrolled"),
-                    )
+                    ))
                     .await?
                 }
             };
-            let labeled = self.classified_hosts(&tx, tenant_ref, &hosts).await?;
+            let labeled = boxed(|| self.classified_hosts(&tx, tenant_ref, &hosts)).await?;
             let access = access_of(&prepared, &hosts, logins_ref.as_ref(), &labeled)?;
             if access.is_empty() {
-                return refuse("ACCESS_DENIED", "Access denied", 403).await;
+                return boxed(|| refuse("ACCESS_DENIED", "Access denied", 403)).await;
             }
             if access.len() as f64 > options_ref.max_hosts_per_certificate {
                 return Ok(IssueOutcome::Refused(IamError::with_status(
@@ -1655,7 +1659,7 @@ impl SshApi {
                 valid_before = valid_before.min(now + DELEGATED_CERTIFICATE_MS);
             }
             if !is_root_override(&prepared) {
-                valid_before = grant_deadline(ctx, &tx, &principal, tenant_ref, valid_before).await?;
+                valid_before = boxed(|| grant_deadline(ctx, &tx, &principal, tenant_ref, valid_before)).await?;
             }
             if valid_before < now + 60_000.0 {
                 return Ok(IssueOutcome::Refused(IamError::with_status(
@@ -1713,7 +1717,7 @@ impl SshApi {
             let line = signed.line;
             let root_override = is_root_override(&prepared);
             // The device this request proved, which the sweep judges device conditions by (devices.ts).
-            let device = presented_device(&tx, &principal, now).await?;
+            let device = boxed(|| presented_device(&tx, &principal, now)).await?;
             let mut sorted_extensions = extensions.clone();
             crate::js::sort_strings(&mut sorted_extensions);
             let access_value = Value::Array(
@@ -1768,7 +1772,7 @@ impl SshApi {
                 "expiresAt".into(),
                 number(valid_before + options_ref.record_retention_ms),
             );
-            let record = tx.insert("sshCertificates", &record).await?;
+            let record = boxed(|| tx.insert("sshCertificates", &record)).await?;
             let record_id = str_of(&record, "id").to_owned();
             let mut metadata = Map::new();
             metadata.insert(
@@ -1799,8 +1803,8 @@ impl SshApi {
                     Some(metadata),
                 )
                 .await?;
-            let bundle = trust_bundle(ctx, &tx, &tenant, "member").await?;
-            let host_list = revocation_list(ctx, &tx, &tenant, Some("host")).await?;
+            let bundle = boxed(|| trust_bundle(ctx, &tx, &tenant, "member")).await?;
+            let host_list = boxed(|| revocation_list(ctx, &tx, &tenant, Some("host"))).await?;
             let mut value = Map::new();
             value.insert("id".into(), s(&record_id));
             value.insert("certificate".into(), s(&line));
@@ -1850,9 +1854,8 @@ impl SshApi {
                 usage: !root_override,
             })
         });
-        let outcome = ctx
-            .observe
-            .span(
+        let outcome = boxed(|| {
+            ctx.observe.span(
                 SpanKind::Operation,
                 "ssh:certificate:issue",
                 Some(&tenant_id),
@@ -1860,7 +1863,8 @@ impl SshApi {
                 None,
                 None,
             )
-            .await?;
+        })
+        .await?;
         match outcome {
             IssueOutcome::Refused(error) => Err(error),
             IssueOutcome::Issued { value, usage } => {

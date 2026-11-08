@@ -19,6 +19,7 @@ use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 
 use better_iam_auth::outbox::EnqueueInput;
+use better_iam_core::boxed;
 use better_iam_core::{
     AuditOutcome, AuthenticatedPrincipal, ClassificationLabel, ClassificationLevel,
     ClassificationSchemeDefinition, ClearanceParty, Decision, DominanceFailure, Filter,
@@ -1410,29 +1411,31 @@ pub async fn parties_of(
     };
     if root {
         return Ok(vec![
-            party_state(tx, scheme, Some(identity), &identity.id, None, now).await?,
+            boxed(|| party_state(tx, scheme, Some(identity), &identity.id, None, now)).await?,
         ]);
     }
     if session.tenant_id != target_id || identity.tenant_id != target_id {
         return Ok(vec![uncleared(identity.id.clone())]);
     }
     let local = |candidate: Option<Identity>, identity_id: String| async move {
-        party_state(
-            tx,
-            scheme,
-            candidate.as_ref(),
-            &identity_id,
-            Some(target_id),
-            now,
-        )
+        boxed(|| {
+            party_state(
+                tx,
+                scheme,
+                candidate.as_ref(),
+                &identity_id,
+                Some(target_id),
+                now,
+            )
+        })
         .await
     };
     match session.kind {
         SessionKind::User => Ok(vec![
-            local(Some(identity.clone()), identity.id.clone()).await?,
+            boxed(|| local(Some(identity.clone()), identity.id.clone())).await?,
         ]),
         SessionKind::ApiKey | SessionKind::SessionToken => {
-            let own = local(Some(identity.clone()), identity.id.clone()).await?;
+            let own = boxed(|| local(Some(identity.clone()), identity.id.clone())).await?;
             if identity.kind != IdentityKind::Agent {
                 return Ok(vec![own]);
             }
@@ -1444,23 +1447,24 @@ pub async fn parties_of(
             if sponsor_id.is_empty() {
                 return Ok(vec![own, uncleared(format!("{}#sponsor", identity.id))]);
             }
-            let sponsor = load_identity(tx, &sponsor_id)
+            let sponsor = boxed(|| load_identity(tx, &sponsor_id))
                 .await?
                 .filter(|sponsor| sponsor.kind == IdentityKind::User);
-            Ok(vec![own, local(sponsor, sponsor_id).await?])
+            Ok(vec![own, boxed(|| local(sponsor, sponsor_id)).await?])
         }
         SessionKind::Delegated => {
-            let mut states = vec![local(Some(identity.clone()), identity.id.clone()).await?];
+            let mut states =
+                vec![boxed(|| local(Some(identity.clone()), identity.id.clone())).await?];
             let agent_ids = delegated_agents(principal, agent_scope);
             if agent_ids.is_empty() {
                 states.push(uncleared(format!("{}#agent", identity.id)));
                 return Ok(states);
             }
             for agent_id in agent_ids {
-                let agent = load_identity(tx, &agent_id)
+                let agent = boxed(|| load_identity(tx, &agent_id))
                     .await?
                     .filter(|agent| agent.kind == IdentityKind::Agent);
-                states.push(local(agent, agent_id).await?);
+                states.push(boxed(|| local(agent, agent_id)).await?);
             }
             Ok(states)
         }

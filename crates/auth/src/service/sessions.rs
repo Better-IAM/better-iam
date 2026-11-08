@@ -2,6 +2,7 @@
 
 use std::sync::Mutex;
 
+use better_iam_core::boxed;
 use better_iam_core::{
     AuthMethod, CredentialInput, Filter, IamError, IamResult, IamStoreExt, Identity, IdentityKind,
     IdentityStatus, OutboxKind, Record, Session, Tenant, js,
@@ -305,25 +306,27 @@ impl AuthService {
                 "limit must be an integer between 1 and 200",
             ));
         }
-        let principal = self.authenticate(credentials).await?;
-        let mut events: Vec<Record> = self
-            .store()
-            .find(
-                "audit",
-                &Filter::new()
-                    .eq("tenantId", principal.identity.tenant_id.clone())
-                    .eq("actorId", principal.identity.id.clone()),
-                &Default::default(),
-            )
-            .await?
-            .into_iter()
-            .filter(|event| {
-                event
-                    .get("action")
-                    .and_then(Value::as_str)
-                    .is_some_and(|action| action.starts_with("auth:"))
-            })
-            .collect();
+        let principal = boxed(|| self.authenticate(credentials)).await?;
+        let mut events: Vec<Record> = boxed(|| async {
+            self.store()
+                .find(
+                    "audit",
+                    &Filter::new()
+                        .eq("tenantId", principal.identity.tenant_id.clone())
+                        .eq("actorId", principal.identity.id.clone()),
+                    &Default::default(),
+                )
+                .await
+        })
+        .await?
+        .into_iter()
+        .filter(|event| {
+            event
+                .get("action")
+                .and_then(Value::as_str)
+                .is_some_and(|action| action.starts_with("auth:"))
+        })
+        .collect();
         let timestamp = |event: &Record| {
             event
                 .get("timestamp")

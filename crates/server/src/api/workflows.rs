@@ -13,6 +13,7 @@ use std::time::Duration;
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use better_iam_auth::outbox::EnqueueInput;
+use better_iam_core::boxed;
 use better_iam_core::js::{self as core_js, to_lower};
 use better_iam_core::{
     AuditOutcome, AuthenticatedPrincipal, CredentialInput, Filter, FindOptions, IamError,
@@ -740,22 +741,26 @@ impl Engine {
         let ctx = &self.ctx;
         let tenant_id = tenant.id.as_str();
         let (mut target_record, target) =
-            active_identity_record(ctx, tx, member_str(run, "identityId"), tenant_id).await?;
-        self.protect(tx, step, &target, owner, run).await?;
+            boxed(|| active_identity_record(ctx, tx, member_str(run, "identityId"), tenant_id))
+                .await?;
+        boxed(|| self.protect(tx, step, &target, owner, run)).await?;
         let kind = step_kind(step);
         if kind == "send-email" {
-            assert_recipients(tx, tenant_id, std::slice::from_ref(step)).await?;
+            boxed(|| assert_recipients(tx, tenant_id, std::slice::from_ref(step))).await?;
         }
         for (action, resource) in requirements(step, tenant_id, Some(&target.id)) {
-            allow(
-                ctx,
-                tx,
-                owner,
-                tenant_id,
-                &action,
-                &resource,
-                &format!("run the {kind} step"),
-            )
+            boxed(|| async {
+                allow(
+                    ctx,
+                    tx,
+                    owner,
+                    tenant_id,
+                    &action,
+                    &resource,
+                    &format!("run the {kind} step"),
+                )
+                .await
+            })
             .await?;
         }
         let now = ctx.now();
@@ -771,19 +776,20 @@ impl Engine {
         };
         match kind {
             "add-to-group" => {
-                let group_record = ctx
-                    .scoped(tx, "groups", step.get("groupId"), tenant_id)
-                    .await?;
+                let group_record =
+                    boxed(|| ctx.scoped(tx, "groups", step.get("groupId"), tenant_id)).await?;
                 let group: Group = decode(group_record)?;
                 // Already a member (a joiner run for someone who was added by hand, say): nothing to do.
                 let mut already = false;
-                for record in find(
-                    tx,
-                    "groupMembers",
-                    by_tenant(tenant_id)
-                        .eq("groupId", group.id.clone())
-                        .eq("identityId", target.id.clone()),
-                )
+                for record in boxed(|| {
+                    find(
+                        tx,
+                        "groupMembers",
+                        by_tenant(tenant_id)
+                            .eq("groupId", group.id.clone())
+                            .eq("identityId", target.id.clone()),
+                    )
+                })
                 .await?
                 {
                     let member: GroupMember = decode(record)?;
@@ -802,61 +808,71 @@ impl Engine {
                 if let Some(expires_at) = days_ms("days") {
                     input.insert("expiresAt".into(), number(expires_at));
                 }
-                add_group_member(ctx, tx, owner, &Value::Object(input)).await?;
-                self.step_audit(
-                    tx,
-                    owner,
-                    tenant_id,
-                    run,
-                    "iam:groups:update",
-                    &group.id,
-                    identity_meta(json!({ "added": true })),
-                )
+                boxed(|| async { add_group_member(ctx, tx, owner, &Value::Object(input)).await })
+                    .await?;
+                boxed(|| {
+                    self.step_audit(
+                        tx,
+                        owner,
+                        tenant_id,
+                        run,
+                        "iam:groups:update",
+                        &group.id,
+                        identity_meta(json!({ "added": true })),
+                    )
+                })
                 .await?;
                 Ok(StepOutcome::done(Some(group.name), true))
             }
             "remove-from-group" => {
-                let group_record = ctx
-                    .scoped(tx, "groups", step.get("groupId"), tenant_id)
-                    .await?;
+                let group_record =
+                    boxed(|| ctx.scoped(tx, "groups", step.get("groupId"), tenant_id)).await?;
                 let group: Group = decode(group_record)?;
-                let members = find(
-                    tx,
-                    "groupMembers",
-                    by_tenant(tenant_id)
-                        .eq("groupId", group.id.clone())
-                        .eq("identityId", target.id.clone()),
-                )
+                let members = boxed(|| {
+                    find(
+                        tx,
+                        "groupMembers",
+                        by_tenant(tenant_id)
+                            .eq("groupId", group.id.clone())
+                            .eq("identityId", target.id.clone()),
+                    )
+                })
                 .await?;
                 if members.is_empty() {
                     return Ok(StepOutcome::skipped(format!("not in {}", group.name)));
                 }
-                remove_group_member(
+                boxed(|| async {
+                    remove_group_member(
                     ctx,
                     tx,
                     owner,
                     &json!({ "tenantId": tenant_id, "groupId": group.id, "identityId": target.id }),
-                )
+                ).await
+                })
                 .await?;
-                self.step_audit(
-                    tx,
-                    owner,
-                    tenant_id,
-                    run,
-                    "iam:groups:update",
-                    &group.id,
-                    identity_meta(json!({ "removed": true })),
-                )
+                boxed(|| {
+                    self.step_audit(
+                        tx,
+                        owner,
+                        tenant_id,
+                        run,
+                        "iam:groups:update",
+                        &group.id,
+                        identity_meta(json!({ "removed": true })),
+                    )
+                })
                 .await?;
                 Ok(StepOutcome::done(Some(group.name), true))
             }
             "remove-from-all-groups" => {
                 // Memberships a team or an access package manages are left to them.
-                let memberships: Vec<Record> = find(
-                    tx,
-                    "groupMembers",
-                    by_tenant(tenant_id).eq("identityId", target.id.clone()),
-                )
+                let memberships: Vec<Record> = boxed(|| {
+                    find(
+                        tx,
+                        "groupMembers",
+                        by_tenant(tenant_id).eq("identityId", target.id.clone()),
+                    )
+                })
                 .await?
                 .into_iter()
                 .filter(|member| {
@@ -870,32 +886,36 @@ impl Engine {
                 );
                 crate::js::sort_strings(&mut groups);
                 for group_id in &groups {
-                    allow(
-                        ctx,
-                        tx,
-                        owner,
-                        tenant_id,
-                        "iam:groups:update",
-                        group_id,
-                        "remove from a group",
-                    )
+                    boxed(|| {
+                        allow(
+                            ctx,
+                            tx,
+                            owner,
+                            tenant_id,
+                            "iam:groups:update",
+                            group_id,
+                            "remove from a group",
+                        )
+                    })
                     .await?;
-                    remove_group_member(
+                    boxed(|| async { remove_group_member(
                         ctx,
                         tx,
                         owner,
                         &json!({ "tenantId": tenant_id, "groupId": group_id, "identityId": target.id }),
-                    )
+                    ).await })
                     .await?;
-                    self.step_audit(
-                        tx,
-                        owner,
-                        tenant_id,
-                        run,
-                        "iam:groups:update",
-                        group_id,
-                        identity_meta(json!({ "removed": true })),
-                    )
+                    boxed(|| {
+                        self.step_audit(
+                            tx,
+                            owner,
+                            tenant_id,
+                            run,
+                            "iam:groups:update",
+                            group_id,
+                            identity_meta(json!({ "removed": true })),
+                        )
+                    })
                     .await?;
                 }
                 Ok(if groups.is_empty() {
@@ -906,7 +926,7 @@ impl Engine {
             }
             "assign-package" => {
                 let pkg: AccessPackage = decode(
-                    ctx.scoped(tx, "accessPackages", step.get("packageId"), tenant_id)
+                    boxed(|| ctx.scoped(tx, "accessPackages", step.get("packageId"), tenant_id))
                         .await?,
                 )?;
                 let mut input = Map::new();
@@ -918,8 +938,10 @@ impl Engine {
                     "justification".into(),
                     Value::String(format!("Workflow: {}", member_str(run, "workflowName"))),
                 );
-                let assigned =
-                    assign_package(ctx, tx, owner, &pkg, &Value::Object(input), None).await?;
+                let assigned = boxed(|| async {
+                    assign_package(ctx, tx, owner, &pkg, &Value::Object(input), None).await
+                })
+                .await?;
                 let assignment = assigned.get("assignment");
                 let count = |key: &str| {
                     assignment
@@ -936,15 +958,17 @@ impl Engine {
                 if let Some(skipped) = assigned.get("skipped") {
                     metadata.insert("skipped".into(), skipped.clone());
                 }
-                self.step_audit(
-                    tx,
-                    owner,
-                    tenant_id,
-                    run,
-                    "package:assign",
-                    &pkg.id,
-                    metadata,
-                )
+                boxed(|| {
+                    self.step_audit(
+                        tx,
+                        owner,
+                        tenant_id,
+                        run,
+                        "package:assign",
+                        &pkg.id,
+                        metadata,
+                    )
+                })
                 .await?;
                 Ok(StepOutcome::done(Some(pkg.name), true))
             }
@@ -952,11 +976,13 @@ impl Engine {
                 // Assignments a package rule made belong to the rule (packages.revoke refuses them too): it removes
                 // them itself once the person no longer matches.
                 let package_id = step.get("packageId").filter(|value| truthy(Some(value)));
-                let assignments: Vec<Record> = find(
-                    tx,
-                    "packageAssignments",
-                    by_tenant(tenant_id).eq("identityId", target.id.clone()),
-                )
+                let assignments: Vec<Record> = boxed(|| {
+                    find(
+                        tx,
+                        "packageAssignments",
+                        by_tenant(tenant_id).eq("identityId", target.id.clone()),
+                    )
+                })
                 .await?
                 .into_iter()
                 .filter(|assignment| {
@@ -966,30 +992,34 @@ impl Engine {
                 .collect();
                 for record in &assignments {
                     let package = js_string(record.get("packageId"));
-                    allow(
-                        ctx,
-                        tx,
-                        owner,
-                        tenant_id,
-                        "iam:packages:assign",
-                        &package,
-                        "revoke a package",
-                    )
+                    boxed(|| {
+                        allow(
+                            ctx,
+                            tx,
+                            owner,
+                            tenant_id,
+                            "iam:packages:assign",
+                            &package,
+                            "revoke a package",
+                        )
+                    })
                     .await?;
                     let assignment: PackageAssignment = decode(record.clone())?;
-                    revoke_assignment(ctx, tx, &assignment).await?;
-                    self.step_audit(
-                        tx,
-                        owner,
-                        tenant_id,
-                        run,
-                        "package:revoke",
-                        &package,
-                        json!({ "packageId": package, "identityId": target.id })
-                            .as_object()
-                            .cloned()
-                            .unwrap_or_default(),
-                    )
+                    boxed(|| revoke_assignment(ctx, tx, &assignment)).await?;
+                    boxed(|| {
+                        self.step_audit(
+                            tx,
+                            owner,
+                            tenant_id,
+                            run,
+                            "package:revoke",
+                            &package,
+                            json!({ "packageId": package, "identityId": target.id })
+                                .as_object()
+                                .cloned()
+                                .unwrap_or_default(),
+                        )
+                    })
                     .await?;
                 }
                 Ok(if assignments.is_empty() {
@@ -1008,7 +1038,7 @@ impl Engine {
                     "manager" => {
                         let manager = match target.manager_id.as_deref().filter(|id| !id.is_empty())
                         {
-                            Some(manager_id) => tx.get("identities", manager_id).await?,
+                            Some(manager_id) => boxed(|| tx.get("identities", manager_id)).await?,
                             None => None,
                         };
                         match manager {
@@ -1053,8 +1083,8 @@ impl Engine {
                         10_000,
                     )),
                 );
-                ctx.auth
-                    .enqueue_delivery(
+                boxed(|| {
+                    ctx.auth.enqueue_delivery(
                         tx,
                         EnqueueInput {
                             tenant_id: tenant_id.to_owned(),
@@ -1065,7 +1095,8 @@ impl Engine {
                             reference: None,
                         },
                     )
-                    .await?;
+                })
+                .await?;
                 Ok(StepOutcome::done(
                     Some(if recipient == to {
                         "sent".to_owned()
@@ -1076,16 +1107,18 @@ impl Engine {
                 ))
             }
             "revoke-sessions" => {
-                ctx.revoke_all(tx, &target.id).await?;
-                self.step_audit(
-                    tx,
-                    owner,
-                    tenant_id,
-                    run,
-                    "identity:revoke-sessions",
-                    &target.id,
-                    Map::new(),
-                )
+                boxed(|| ctx.revoke_all(tx, &target.id)).await?;
+                boxed(|| {
+                    self.step_audit(
+                        tx,
+                        owner,
+                        tenant_id,
+                        run,
+                        "identity:revoke-sessions",
+                        &target.id,
+                        Map::new(),
+                    )
+                })
                 .await?;
                 Ok(StepOutcome::done(None, false))
             }
@@ -1093,26 +1126,28 @@ impl Engine {
                 if target.status == IdentityStatus::Disabled {
                     return Ok(StepOutcome::skipped("already disabled"));
                 }
-                ctx.protect_last_owner(tx, &target).await?;
+                boxed(|| ctx.protect_last_owner(tx, &target)).await?;
                 target_record.insert("status".into(), str_value("disabled"));
-                tx.put("identities", &target_record).await?;
-                end_containment(tx, &target.id, ctx.now()).await?;
-                ctx.revoke_all(tx, &target.id).await?;
+                boxed(|| tx.put("identities", &target_record)).await?;
+                boxed(|| end_containment(tx, &target.id, ctx.now())).await?;
+                boxed(|| ctx.revoke_all(tx, &target.id)).await?;
                 // As setStatus does: invitations the person sent (or, for guests, sponsors) and nobody redeemed yet
                 // are revoked, so re-enabling them later does not bring the tokens back.
-                revoke_invitations_by(tx, &target.id).await?;
-                self.step_audit(
-                    tx,
-                    owner,
-                    tenant_id,
-                    run,
-                    "iam:identities:update",
-                    &target.id,
-                    json!({ "status": "disabled" })
-                        .as_object()
-                        .cloned()
-                        .unwrap_or_default(),
-                )
+                boxed(|| revoke_invitations_by(tx, &target.id)).await?;
+                boxed(|| {
+                    self.step_audit(
+                        tx,
+                        owner,
+                        tenant_id,
+                        run,
+                        "iam:identities:update",
+                        &target.id,
+                        json!({ "status": "disabled" })
+                            .as_object()
+                            .cloned()
+                            .unwrap_or_default(),
+                    )
+                })
                 .await?;
                 Ok(StepOutcome::done(None, true))
             }
@@ -1129,21 +1164,23 @@ impl Engine {
                     .into());
                 }
                 target_record.insert("status".into(), str_value("active"));
-                tx.put("identities", &target_record).await?;
+                boxed(|| tx.put("identities", &target_record)).await?;
                 // As setStatus does: re-enabling ends a threats containment.
-                end_containment(tx, &target.id, ctx.now()).await?;
-                self.step_audit(
-                    tx,
-                    owner,
-                    tenant_id,
-                    run,
-                    "iam:identities:update",
-                    &target.id,
-                    json!({ "status": "active" })
-                        .as_object()
-                        .cloned()
-                        .unwrap_or_default(),
-                )
+                boxed(|| end_containment(tx, &target.id, ctx.now())).await?;
+                boxed(|| {
+                    self.step_audit(
+                        tx,
+                        owner,
+                        tenant_id,
+                        run,
+                        "iam:identities:update",
+                        &target.id,
+                        json!({ "status": "active" })
+                            .as_object()
+                            .cloned()
+                            .unwrap_or_default(),
+                    )
+                })
                 .await?;
                 Ok(StepOutcome::done(None, true))
             }
@@ -1172,21 +1209,23 @@ impl Engine {
                 if !next.is_empty() {
                     target_record.insert("attributes".into(), Value::Object(next));
                 }
-                tx.put("identities", &target_record).await?;
+                boxed(|| tx.put("identities", &target_record)).await?;
                 let mut names: Vec<String> =
                     core_js::keys(&attributes).into_iter().cloned().collect();
                 crate::js::sort_strings(&mut names);
                 let mut metadata = Map::new();
                 metadata.insert("attributes".into(), json!(names));
-                self.step_audit(
-                    tx,
-                    owner,
-                    tenant_id,
-                    run,
-                    "iam:identities:update",
-                    &target.id,
-                    metadata,
-                )
+                boxed(|| {
+                    self.step_audit(
+                        tx,
+                        owner,
+                        tenant_id,
+                        run,
+                        "iam:identities:update",
+                        &target.id,
+                        metadata,
+                    )
+                })
                 .await?;
                 Ok(StepOutcome::done(None, true))
             }
@@ -1199,37 +1238,41 @@ impl Engine {
                 if let Some(expires_at) = expires_at {
                     target_record.insert("expiresAt".into(), number(expires_at));
                 }
-                tx.put("identities", &target_record).await?;
+                boxed(|| tx.put("identities", &target_record)).await?;
                 let mut metadata = Map::new();
                 metadata.insert("expiresAt".into(), expires_at.map_or(Value::Null, number));
-                self.step_audit(
-                    tx,
-                    owner,
-                    tenant_id,
-                    run,
-                    "iam:identities:update",
-                    &target.id,
-                    metadata,
-                )
+                boxed(|| {
+                    self.step_audit(
+                        tx,
+                        owner,
+                        tenant_id,
+                        run,
+                        "iam:identities:update",
+                        &target.id,
+                        metadata,
+                    )
+                })
                 .await?;
                 Ok(StepOutcome::done(None, true))
             }
             "delete" => {
-                delete_identity(ctx, tx, owner, &target).await?;
+                boxed(|| delete_identity(ctx, tx, owner, &target)).await?;
                 let mut metadata = Map::new();
                 metadata.insert(
                     "kind".into(),
                     serde_json::to_value(target.kind).unwrap_or(Value::Null),
                 );
-                self.step_audit(
-                    tx,
-                    owner,
-                    tenant_id,
-                    run,
-                    "identity:delete",
-                    &target.id,
-                    metadata,
-                )
+                boxed(|| {
+                    self.step_audit(
+                        tx,
+                        owner,
+                        tenant_id,
+                        run,
+                        "identity:delete",
+                        &target.id,
+                        metadata,
+                    )
+                })
                 .await?;
                 Ok(StepOutcome::done(None, true))
             }
@@ -1237,15 +1280,17 @@ impl Engine {
                 let name = js_string(step.get("name"));
                 let mut metadata = Map::new();
                 metadata.insert("name".into(), Value::String(name.clone()));
-                self.step_audit(
-                    tx,
-                    owner,
-                    tenant_id,
-                    run,
-                    "workflow:event",
-                    &target.id,
-                    metadata,
-                )
+                boxed(|| {
+                    self.step_audit(
+                        tx,
+                        owner,
+                        tenant_id,
+                        run,
+                        "workflow:event",
+                        &target.id,
+                        metadata,
+                    )
+                })
                 .await?;
                 Ok(StepOutcome::done(Some(name), false))
             }
@@ -1260,7 +1305,7 @@ impl Engine {
         let ctx = &self.ctx;
         ctx.store
             .transaction(|tx| async move {
-                let Some(mut run) = tx.get("workflowRuns", run_id).await? else {
+                let Some(mut run) = boxed(|| tx.get("workflowRuns", run_id)).await? else {
                     return Ok((Next::Stop, false, String::new(), String::new()));
                 };
                 if run.get("leaseToken").and_then(Value::as_str) != Some(token)
@@ -1278,7 +1323,7 @@ impl Engine {
                     run.insert("status".into(), str_value("completed"));
                     run.insert("finishedAt".into(), number(now));
                     run.insert("expiresAt".into(), number(now + RUN_RETENTION_MS));
-                    tx.put("workflowRuns", &run).await?;
+                    boxed(|| tx.put("workflowRuns", &run)).await?;
                     let mut metadata = Map::new();
                     copy(&mut metadata, &run, "workflowId");
                     copy(&mut metadata, &run, "identityId");
@@ -1297,8 +1342,8 @@ impl Engine {
                         .await?;
                     return Ok((Next::Stop, false, tenant_id, identity_id));
                 }
-                if tx
-                    .get("workflows", member_str(&run, "workflowId"))
+                if boxed(|| tx
+                    .get("workflows", member_str(&run, "workflowId")))
                     .await?
                     .is_none()
                 {
@@ -1310,7 +1355,7 @@ impl Engine {
                 }
                 // The rights of the owner who approved these steps: a later editor never lends theirs to old step
                 // lists.
-                let owner = match tx.get("identities", member_str(&run, "ownerId")).await? {
+                let owner = match boxed(|| tx.get("identities", member_str(&run, "ownerId"))).await? {
                     Some(record) => Some(decode::<Identity>(record)?),
                     None => None,
                 };
@@ -1329,7 +1374,7 @@ impl Engine {
                         ));
                     }
                 };
-                let tenant = ctx.tenant(&tx, &tenant_id).await?;
+                let tenant = boxed(|| ctx.tenant(&tx, &tenant_id)).await?;
                 if tenant.status != TenantStatus::Active {
                     return Err(IamError::with_status(
                         "TENANT_INACTIVE",
@@ -1366,15 +1411,15 @@ impl Engine {
                         "detail": format!("until {iso}"),
                     }));
                     run.insert("results".into(), Value::Array(results));
-                    tx.put("workflowRuns", &run).await?;
+                    boxed(|| tx.put("workflowRuns", &run)).await?;
                     return Ok((Next::Stop, false, tenant_id, identity_id));
                 }
                 let principal = ctx.decisions()?.simulated_principal(
                     &owner,
                     run.get("ownerMfa") == Some(&Value::Bool(true)),
                 );
-                let result = self
-                    .perform(&tx, &principal, &tenant, &run, &step)
+                let result = boxed(|| self
+                    .perform(&tx, &principal, &tenant, &run, &step))
                     .await
                     .map_err(IamError::from)?;
                 let kind = step_kind(&step).to_owned();
@@ -1390,7 +1435,7 @@ impl Engine {
                 run.insert("stepIndex".into(), number(step_index + 1.0));
                 run.insert("leaseUntil".into(), number(now + LEASE_MS));
                 run.insert("results".into(), Value::Array(results));
-                tx.put("workflowRuns", &run).await?;
+                boxed(|| tx.put("workflowRuns", &run)).await?;
                 let mut metadata = Map::new();
                 copy(&mut metadata, &run, "workflowId");
                 copy(&mut metadata, &run, "identityId");

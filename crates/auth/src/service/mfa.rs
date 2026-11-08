@@ -3,6 +3,7 @@
 
 use std::sync::Mutex;
 
+use better_iam_core::boxed;
 use better_iam_core::{
     AuthMethod, AuthenticatedPrincipal, CredentialInput, Filter, IamError, IamResult, IamStoreExt,
     Identity, IdentityKind, OutboxKind, Tenant, js,
@@ -157,19 +158,23 @@ impl AuthService {
                 tenant_id,
                 challenge,
             } => {
-                let login = self
-                    .read_challenge(
+                let login = boxed(|| {
+                    self.read_challenge(
                         tx,
                         tenant_id,
                         challenge,
                         "mfa-login",
                         ChallengeMatch::default(),
                     )
-                    .await?;
-                let identity = self.user(tx, &login.identity_id, Some(tenant_id)).await?;
+                })
+                .await?;
+                let identity = boxed(|| self.user(tx, &login.identity_id, Some(tenant_id))).await?;
                 // A password alone must not add a factor over an existing one.
-                let mfa: Option<MfaRecord> = get(tx.as_ref(), "authMfa", &identity.id).await?;
-                if mfa.is_some_and(|mfa| mfa.enabled) || self.passkey_factor(tx, &identity).await? {
+                let mfa: Option<MfaRecord> =
+                    boxed(|| get(tx.as_ref(), "authMfa", &identity.id)).await?;
+                if mfa.is_some_and(|mfa| mfa.enabled)
+                    || boxed(|| self.passkey_factor(tx, &identity)).await?
+                {
                     return Err(IamError::with_status(
                         "MFA_REQUIRED",
                         "Use an existing MFA factor before changing enrollment",
@@ -183,7 +188,7 @@ impl AuthService {
                 })
             }
             MfaCredential::Credential(credential) => {
-                let principal = self.authenticate(credential).await?;
+                let principal = boxed(|| self.authenticate(credential)).await?;
                 self.require_recent(&principal)?;
                 Ok(MfaActor {
                     identity: principal.identity.clone(),
@@ -198,9 +203,9 @@ impl AuthService {
     pub async fn begin_mfa(&self, credential: &MfaCredential) -> IamResult<MfaEnrollment> {
         self.store()
             .transaction(|tx| async move {
-                let actor = self.mfa_actor(&tx, credential).await?;
+                let actor = boxed(|| self.mfa_actor(&tx, credential)).await?;
                 let existing: Option<MfaRecord> =
-                    get(tx.as_ref(), "authMfa", &actor.identity.id).await?;
+                    boxed(|| get(tx.as_ref(), "authMfa", &actor.identity.id)).await?;
                 if existing.as_ref().is_some_and(|existing| existing.enabled) {
                     return Err(IamError::with_status(
                         "MFA_ALREADY_ENABLED",
@@ -234,9 +239,9 @@ impl AuthService {
                     extra: Map::new(),
                 };
                 if existing.is_some() {
-                    put(tx.as_ref(), "authMfa", &record).await?;
+                    boxed(|| put(tx.as_ref(), "authMfa", &record)).await?;
                 } else {
-                    insert(tx.as_ref(), "authMfa", &record).await?;
+                    boxed(|| insert(tx.as_ref(), "authMfa", &record)).await?;
                 }
                 let account = actor
                     .identity
@@ -307,19 +312,22 @@ impl AuthService {
     pub async fn confirm_mfa(&self, input: &ConfirmMfaInput) -> IamResult<ConfirmedMfa> {
         let actor = self
             .store()
-            .transaction(|tx| async move { self.mfa_actor(&tx, &input.credential).await })
+            .transaction(|tx| async move { boxed(|| self.mfa_actor(&tx, &input.credential)).await })
             .await?;
-        self.rate(
-            &actor.identity.tenant_id,
-            &format!("mfa-enroll:{}", actor.identity.id),
-            RateTier::Sensitive,
-        )
+        boxed(|| async {
+            self.rate(
+                &actor.identity.tenant_id,
+                &format!("mfa-enroll:{}", actor.identity.id),
+                RateTier::Sensitive,
+            )
+            .await
+        })
         .await?;
         self.store()
             .transaction(|tx| async move {
-                let verified = self.mfa_actor(&tx, &input.credential).await?;
+                let verified = boxed(|| self.mfa_actor(&tx, &input.credential)).await?;
                 let record: Option<MfaRecord> =
-                    get(tx.as_ref(), "authMfa", &verified.identity.id).await?;
+                    boxed(|| get(tx.as_ref(), "authMfa", &verified.identity.id)).await?;
                 let expected = verified
                     .principal
                     .as_ref()
@@ -359,9 +367,9 @@ impl AuthService {
                 let recovery_codes = new_recovery_codes();
                 record.recovery_hashes =
                     recovery_codes.iter().map(|code| hash_token(code)).collect();
-                put(tx.as_ref(), "authMfa", &record).await?;
-                self.revoke_identity(&tx, &verified.identity.id).await?;
-                self.audit(&tx, &verified.identity, "auth:mfa:enable", None, None)
+                boxed(|| put(tx.as_ref(), "authMfa", &record)).await?;
+                boxed(|| self.revoke_identity(&tx, &verified.identity.id)).await?;
+                boxed(|| self.audit(&tx, &verified.identity, "auth:mfa:enable", None, None))
                     .await?;
                 let method = match &verified.login_challenge {
                     Some(login) => method_of(login.payload_str("method")),
@@ -373,8 +381,8 @@ impl AuthService {
                         .as_ref()
                         .and_then(|principal| principal.session.method)
                 });
-                let session = self
-                    .issue_session(
+                let session = boxed(|| {
+                    self.issue_session(
                         &tx,
                         &verified.identity,
                         IssueSessionOptions {
@@ -383,9 +391,10 @@ impl AuthService {
                             ..Default::default()
                         },
                     )
-                    .await?;
+                })
+                .await?;
                 let device = if input.remember_device {
-                    self.remember_device(&tx, &verified.identity).await?
+                    boxed(|| self.remember_device(&tx, &verified.identity)).await?
                 } else {
                     None
                 };
@@ -411,14 +420,17 @@ impl AuthService {
         let tenant_id = text(prop(input, "tenantId"), "tenantId", 512)?;
         let token = text(prop(input, "challenge"), "challenge", 512)?;
         let remember = prop(input, "rememberDevice") == Some(&Value::Bool(true));
-        self.rate(
-            &tenant_id,
-            &format!("mfa:{}", hash_token(&token)),
-            RateTier::Sensitive,
-        )
+        boxed(|| async {
+            self.rate(
+                &tenant_id,
+                &format!("mfa:{}", hash_token(&token)),
+                RateTier::Sensitive,
+            )
+            .await
+        })
         .await?;
         // Also per person: each correct password mints a new challenge with a fresh per-challenge budget.
-        self.rate_challenge_identity(&tenant_id, &token, "mfa-login", "mfa-verify")
+        boxed(|| self.rate_challenge_identity(&tenant_id, &token, "mfa-login", "mfa-verify"))
             .await?;
         // A wrong code for a real login challenge counts as a failed attempt once the refusal rolled back.
         let attempted: Mutex<Option<Identity>> = Mutex::new(None);
@@ -427,27 +439,27 @@ impl AuthService {
             .transaction(|tx| {
                 let attempted = &attempted;
                 async move {
-                    let challenge = self
-                        .read_challenge(
+                    let challenge = boxed(|| {
+                        self.read_challenge(
                             &tx,
                             &tenant_id,
                             &token,
                             "mfa-login",
                             ChallengeMatch::default(),
                         )
-                        .await?;
-                    let identity = self
-                        .user(&tx, &challenge.identity_id, Some(&tenant_id))
-                        .await?;
+                    })
+                    .await?;
+                    let identity =
+                        boxed(|| self.user(&tx, &challenge.identity_id, Some(&tenant_id))).await?;
                     *attempted
                         .lock()
                         .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(identity.clone());
                     let record: Option<MfaRecord> =
-                        get(tx.as_ref(), "authMfa", &identity.id).await?;
+                        boxed(|| get(tx.as_ref(), "authMfa", &identity.id)).await?;
                     match record {
                         Some(mut record) if record.enabled => {
                             record.last_used_step = self.check_totp(&record, &code)?;
-                            put(tx.as_ref(), "authMfa", &record).await?;
+                            boxed(|| put(tx.as_ref(), "authMfa", &record)).await?;
                         }
                         _ => {
                             // No authenticator: only a code emailed for this very challenge can satisfy it.
@@ -489,9 +501,9 @@ impl AuthService {
                             }
                         }
                     }
-                    tx.delete("authChallenges", &challenge.id).await?;
-                    let session = self
-                        .issue_session(
+                    boxed(|| tx.delete("authChallenges", &challenge.id)).await?;
+                    let session = boxed(|| {
+                        self.issue_session(
                             &tx,
                             &identity,
                             IssueSessionOptions {
@@ -500,9 +512,10 @@ impl AuthService {
                                 ..Default::default()
                             },
                         )
-                        .await?;
+                    })
+                    .await?;
                     let device = if remember {
-                        self.remember_device(&tx, &identity).await?
+                        boxed(|| self.remember_device(&tx, &identity)).await?
                     } else {
                         None
                     };
@@ -607,13 +620,16 @@ impl AuthService {
         let code = text(prop(input, "code"), "code", 128)?;
         let tenant_id = text(prop(input, "tenantId"), "tenantId", 512)?;
         let token = text(prop(input, "challenge"), "challenge", 512)?;
-        self.rate(
-            &tenant_id,
-            &format!("mfa-recover:{}", hash_token(&token)),
-            RateTier::Sensitive,
-        )
+        boxed(|| async {
+            self.rate(
+                &tenant_id,
+                &format!("mfa-recover:{}", hash_token(&token)),
+                RateTier::Sensitive,
+            )
+            .await
+        })
         .await?;
-        self.rate_challenge_identity(&tenant_id, &token, "mfa-login", "mfa-recovery")
+        boxed(|| self.rate_challenge_identity(&tenant_id, &token, "mfa-login", "mfa-recovery"))
             .await?;
         let attempted: Mutex<Option<Identity>> = Mutex::new(None);
         let result = self
@@ -621,23 +637,23 @@ impl AuthService {
             .transaction(|tx| {
                 let attempted = &attempted;
                 async move {
-                    let challenge = self
-                        .read_challenge(
+                    let challenge = boxed(|| {
+                        self.read_challenge(
                             &tx,
                             &tenant_id,
                             &token,
                             "mfa-login",
                             ChallengeMatch::default(),
                         )
-                        .await?;
-                    let identity = self
-                        .user(&tx, &challenge.identity_id, Some(&tenant_id))
-                        .await?;
+                    })
+                    .await?;
+                    let identity =
+                        boxed(|| self.user(&tx, &challenge.identity_id, Some(&tenant_id))).await?;
                     *attempted
                         .lock()
                         .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(identity.clone());
                     let record: Option<MfaRecord> =
-                        get(tx.as_ref(), "authMfa", &identity.id).await?;
+                        boxed(|| get(tx.as_ref(), "authMfa", &identity.id)).await?;
                     let code_hash = hash_token(&code);
                     let index = record.as_ref().and_then(|record| {
                         record.recovery_hashes.iter().position(|value| {
@@ -656,19 +672,20 @@ impl AuthService {
                         }
                     };
                     record.recovery_hashes.remove(index);
-                    put(tx.as_ref(), "authMfa", &record).await?;
-                    tx.delete("authChallenges", &challenge.id).await?;
-                    self.audit(&tx, &identity, "auth:mfa:recover", None, None)
-                        .await?;
-                    self.issue_session(
-                        &tx,
-                        &identity,
-                        IssueSessionOptions {
-                            mfa: Some(true),
-                            method: method_of(challenge.payload_str("method")),
-                            ..Default::default()
-                        },
-                    )
+                    boxed(|| put(tx.as_ref(), "authMfa", &record)).await?;
+                    boxed(|| tx.delete("authChallenges", &challenge.id)).await?;
+                    boxed(|| self.audit(&tx, &identity, "auth:mfa:recover", None, None)).await?;
+                    boxed(|| {
+                        self.issue_session(
+                            &tx,
+                            &identity,
+                            IssueSessionOptions {
+                                mfa: Some(true),
+                                method: method_of(challenge.payload_str("method")),
+                                ..Default::default()
+                            },
+                        )
+                    })
                     .await
                 }
             })
@@ -687,24 +704,27 @@ impl AuthService {
     /// `mfaStatus(credentials)`: what the caller has set up: authenticator state, unused recovery codes, passkeys, and
     /// remembered devices.
     pub async fn mfa_status(&self, credentials: &CredentialInput) -> IamResult<MfaStatus> {
-        let principal = self.authenticate(credentials).await?;
+        let principal = boxed(|| self.authenticate(credentials)).await?;
         let scope = Filter::new()
             .eq("tenantId", principal.identity.tenant_id.clone())
             .eq("identityId", principal.identity.id.clone());
         let record: Option<MfaRecord> =
-            get(self.store().as_ref(), "authMfa", &principal.identity.id).await?;
+            boxed(|| get(self.store().as_ref(), "authMfa", &principal.identity.id)).await?;
         let enabled = record.as_ref().is_some_and(|record| record.enabled);
-        let passkeys = self
-            .store()
-            .find("authPasskeys", &scope, &Default::default())
-            .await?
-            .len();
+        let passkeys = boxed(|| async {
+            self.store()
+                .find("authPasskeys", &scope, &Default::default())
+                .await
+        })
+        .await?
+        .len();
         let now = self.now();
-        let trusted_devices = find::<TrustedDevice>(self.store().as_ref(), "authDevices", &scope)
-            .await?
-            .iter()
-            .filter(|device| device.expires_at > now)
-            .count();
+        let trusted_devices =
+            boxed(|| find::<TrustedDevice>(self.store().as_ref(), "authDevices", &scope))
+                .await?
+                .iter()
+                .filter(|device| device.expires_at > now)
+                .count();
         Ok(MfaStatus {
             enabled,
             recovery_codes_remaining: if enabled {

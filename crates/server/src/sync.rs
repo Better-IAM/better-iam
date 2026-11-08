@@ -7,6 +7,7 @@
 
 use std::sync::{Arc, Mutex};
 
+use better_iam_core::boxed;
 use better_iam_core::{
     AuditOutcome, AuthenticatedPrincipal, CredentialInput, Filter, FindOptions, IamError,
     IamResult, Identity, IdentityStatus, Record, Tenant, js as core_js,
@@ -2845,18 +2846,20 @@ async fn apply_plan(
     let allower = ConfigAllow::new(ctx, tx, principal, tenant_id);
     let allow = |action: &'static str, resource_id: String, what: String| {
         let allower = &allower;
-        async move { allower.allow(action, &resource_id, &what).await }
+        async move { boxed(|| allower.allow(action, &resource_id, &what)).await }
     };
     if let Some(item) = planned
         .access_policy
         .as_ref()
         .filter(|item| item.change.action == "update")
     {
-        allow(
-            "iam:tenants:update",
-            tenant_id.to_owned(),
-            "change the access policy".into(),
-        )
+        boxed(|| {
+            allow(
+                "iam:tenants:update",
+                tenant_id.to_owned(),
+                "change the access policy".into(),
+            )
+        })
         .await?;
         // As `tenants.setAccessPolicy`: loosening elevation floors needs a fresh sign-in in person (not a stale,
         // impersonated, assumed-role or delegated session), and is audited as such.
@@ -2867,7 +2870,7 @@ async fn apply_plan(
         if !policy.is_empty() {
             rest.insert("accessPolicy".into(), Value::Object(policy.clone()));
         }
-        tx.put("tenants", &rest).await?;
+        boxed(|| tx.put("tenants", &rest)).await?;
         let mut metadata = Map::new();
         metadata.insert(
             "accessPolicy".into(),
@@ -2895,23 +2898,27 @@ async fn apply_plan(
         let change = &item.change;
         match change.action.as_str() {
             "create" => {
-                allow(
-                    "iam:resource-types:create",
-                    tenant_id.to_owned(),
-                    format!("create resource type {}", change.name),
-                )
+                boxed(|| {
+                    allow(
+                        "iam:resource-types:create",
+                        tenant_id.to_owned(),
+                        format!("create resource type {}", change.name),
+                    )
+                })
                 .await?;
                 let mut input = Map::new();
                 input.insert("tenantId".into(), json!(tenant_id));
                 input.extend(item.desired.clone().unwrap_or_default());
-                register_resource_type(ctx, tx, &input).await?;
+                boxed(|| register_resource_type(ctx, tx, &input)).await?;
             }
             "update" => {
-                allow(
-                    "iam:resource-types:update",
-                    tenant_id.to_owned(),
-                    format!("update resource type {}", change.name),
-                )
+                boxed(|| {
+                    allow(
+                        "iam:resource-types:update",
+                        tenant_id.to_owned(),
+                        format!("update resource type {}", change.name),
+                    )
+                })
                 .await?;
                 let desired = item.desired.clone().unwrap_or_default();
                 let mut input = Map::new();
@@ -2940,17 +2947,19 @@ async fn apply_plan(
                         .cloned()
                         .unwrap_or_else(|| json!([])),
                 );
-                update_resource_type(ctx, tx, &input, true).await?;
+                boxed(|| update_resource_type(ctx, tx, &input, true)).await?;
             }
             "delete" => {
-                allow(
-                    "iam:resource-types:delete",
-                    tenant_id.to_owned(),
-                    format!("delete resource type {}", change.name),
-                )
+                boxed(|| {
+                    allow(
+                        "iam:resource-types:delete",
+                        tenant_id.to_owned(),
+                        format!("delete resource type {}", change.name),
+                    )
+                })
                 .await?;
                 let record = decode(item.record.clone().unwrap_or_default())?;
-                delete_resource_type(ctx, tx, &record).await?;
+                boxed(|| delete_resource_type(ctx, tx, &record)).await?;
             }
             _ => {}
         }
@@ -2965,24 +2974,31 @@ async fn apply_plan(
         let change = &item.change;
         let desired = item.desired.clone().unwrap_or_default();
         if change.action == "create" {
-            allow(
-                "iam:policies:create",
-                tenant_id.to_owned(),
-                format!("create policy {}", change.name),
-            )
+            boxed(|| {
+                allow(
+                    "iam:policies:create",
+                    tenant_id.to_owned(),
+                    format!("create policy {}", change.name),
+                )
+            })
             .await?;
             let mut input = Map::new();
             input.insert("tenantId".into(), json!(tenant_id));
             input.extend(desired);
-            let created = create_policy(ctx, tx, principal, tenant, &Value::Object(input)).await?;
+            let created = boxed(|| async {
+                create_policy(ctx, tx, principal, tenant, &Value::Object(input)).await
+            })
+            .await?;
             policy_ids.insert(created.name.clone(), created.id.clone());
         } else if change.action == "update" {
             let record = item.record.clone().unwrap_or_default();
-            allow(
-                "iam:policies:update",
-                id_of(&record).to_owned(),
-                format!("update policy {}", change.name),
-            )
+            boxed(|| {
+                allow(
+                    "iam:policies:update",
+                    id_of(&record).to_owned(),
+                    format!("update policy {}", change.name),
+                )
+            })
             .await?;
             let mut input = Map::new();
             input.insert("tenantId".into(), json!(tenant_id));
@@ -2994,7 +3010,8 @@ async fn apply_plan(
                 desired.get("description").cloned(),
             );
             put_opt(&mut input, "document", desired.get("document").cloned());
-            update_policy(ctx, tx, principal, &Value::Object(input)).await?;
+            boxed(|| async { update_policy(ctx, tx, principal, &Value::Object(input)).await })
+                .await?;
         }
     }
     // Roles (creates and updates), then deletions after bindings are gone.
@@ -3016,11 +3033,13 @@ async fn apply_plan(
             .collect::<IamResult<Vec<String>>>()?;
         let document = role_document(&desired)?;
         if change.action == "create" {
-            allow(
-                "iam:roles:create",
-                tenant_id.to_owned(),
-                format!("create role {}", change.name),
-            )
+            boxed(|| {
+                allow(
+                    "iam:roles:create",
+                    tenant_id.to_owned(),
+                    format!("create role {}", change.name),
+                )
+            })
             .await?;
             let mut input = Map::new();
             input.insert("tenantId".into(), json!(tenant_id));
@@ -3032,15 +3051,20 @@ async fn apply_plan(
             );
             input.insert("policyIds".into(), strings_value(&policies));
             put_opt(&mut input, "document", document);
-            let created = create_role(ctx, tx, principal, tenant, &Value::Object(input)).await?;
+            let created = boxed(|| async {
+                create_role(ctx, tx, principal, tenant, &Value::Object(input)).await
+            })
+            .await?;
             role_ids.insert(created.name.clone(), created.id.clone());
         } else {
             let record = item.record.clone().unwrap_or_default();
-            allow(
-                "iam:roles:update",
-                id_of(&record).to_owned(),
-                format!("update role {}", change.name),
-            )
+            boxed(|| {
+                allow(
+                    "iam:roles:update",
+                    id_of(&record).to_owned(),
+                    format!("update role {}", change.name),
+                )
+            })
             .await?;
             let mut input = Map::new();
             input.insert("tenantId".into(), json!(tenant_id));
@@ -3052,7 +3076,7 @@ async fn apply_plan(
             );
             input.insert("policyIds".into(), strings_value(&policies));
             input.insert("document".into(), document.unwrap_or(Value::Null));
-            update_role_record(ctx, tx, principal, &input).await?;
+            boxed(|| update_role_record(ctx, tx, principal, &input)).await?;
         }
     }
     // Inheritance is applied once every role exists, so a document may introduce parent and child together.
@@ -3088,11 +3112,13 @@ async fn apply_plan(
         let Some(role_id) = role_ids.get(name_of(&desired)).cloned() else {
             continue;
         };
-        allow(
-            "iam:roles:update",
-            role_id.clone(),
-            format!("set inheritance of role {}", change.name),
-        )
+        boxed(|| {
+            allow(
+                "iam:roles:update",
+                role_id.clone(),
+                format!("set inheritance of role {}", change.name),
+            )
+        })
         .await?;
         let inherits = wanted
             .iter()
@@ -3102,7 +3128,7 @@ async fn apply_plan(
         input.insert("tenantId".into(), json!(tenant_id));
         input.insert("roleId".into(), json!(role_id));
         input.insert("inherits".into(), strings_value(&inherits));
-        update_role_record(ctx, tx, principal, &input).await?;
+        boxed(|| update_role_record(ctx, tx, principal, &input)).await?;
     }
     // Groups and their members
     let mut group_ids: IndexMap<String, String> = state
@@ -3125,25 +3151,31 @@ async fn apply_plan(
         let fields: &[String] = change.fields.as_deref().unwrap_or_default();
         let mut group_id = item.record.as_ref().map(|record| id_of(record).to_owned());
         if change.action == "create" {
-            allow(
-                "iam:groups:create",
-                tenant_id.to_owned(),
-                format!("create group {}", change.name),
-            )
+            boxed(|| {
+                allow(
+                    "iam:groups:create",
+                    tenant_id.to_owned(),
+                    format!("create group {}", change.name),
+                )
+            })
             .await?;
             let mut input = Map::new();
             input.insert("tenantId".into(), json!(tenant_id));
             input.extend(desired.clone());
-            let created = create_group(ctx, tx, tenant, &Value::Object(input)).await?;
+            let created =
+                boxed(|| async { create_group(ctx, tx, tenant, &Value::Object(input)).await })
+                    .await?;
             group_ids.insert(name_of(&desired).to_owned(), created.id.clone());
             group_id = Some(created.id);
         } else if change.action == "update" && fields.iter().any(|field| field == "description") {
             let record = item.record.clone().unwrap_or_default();
-            allow(
-                "iam:groups:update",
-                group_id.clone().unwrap_or_default(),
-                format!("update group {}", change.name),
-            )
+            boxed(|| {
+                allow(
+                    "iam:groups:update",
+                    group_id.clone().unwrap_or_default(),
+                    format!("update group {}", change.name),
+                )
+            })
             .await?;
             let mut next = record;
             if let Some(description) = desired.get("description") {
@@ -3152,7 +3184,7 @@ async fn apply_plan(
                     Value::String(text(Some(description), "description", 512)?),
                 );
             }
-            tx.put("groups", &next).await?;
+            boxed(|| tx.put("groups", &next)).await?;
         }
         let Some(wanted_emails) = list_member(&desired, "members") else {
             continue;
@@ -3161,11 +3193,13 @@ async fn apply_plan(
             continue;
         }
         let group_id = group_id.unwrap_or_default();
-        allow(
-            "iam:groups:update",
-            group_id.clone(),
-            format!("change members of {}", change.name),
-        )
+        boxed(|| {
+            allow(
+                "iam:groups:update",
+                group_id.clone(),
+                format!("change members of {}", change.name),
+            )
+        })
         .await?;
         let mut wanted_ids: IndexSet<String> = IndexSet::new();
         for email in &wanted_emails {
@@ -3183,15 +3217,17 @@ async fn apply_plan(
             .map(|identity| identity.id.clone())
             .collect();
         // License seats of the group's products are reconciled once, after its members changed.
-        reconcile_members(
-            ctx,
-            tx,
-            principal,
-            tenant_id,
-            &group_id,
-            wanted_ids,
-            current_ids,
-        )
+        boxed(|| {
+            reconcile_members(
+                ctx,
+                tx,
+                principal,
+                tenant_id,
+                &group_id,
+                wanted_ids,
+                current_ids,
+            )
+        })
         .await?;
     }
     // Group bindings
@@ -3203,14 +3239,16 @@ async fn apply_plan(
         let records = item.record.clone().unwrap_or_default();
         if change.action == "delete" {
             for record in records {
-                allow(
-                    "iam:bindings:delete",
-                    id_of(&record).to_owned(),
-                    format!("delete binding {}", change.name),
-                )
+                boxed(|| {
+                    allow(
+                        "iam:bindings:delete",
+                        id_of(&record).to_owned(),
+                        format!("delete binding {}", change.name),
+                    )
+                })
                 .await?;
                 let binding: Binding = decode(record)?;
-                delete_binding(ctx, tx, principal, &binding).await?;
+                boxed(|| delete_binding(ctx, tx, principal, &binding)).await?;
             }
             continue;
         }
@@ -3220,11 +3258,13 @@ async fn apply_plan(
         let (Some(role_id), Some(group_id)) = (role_id.cloned(), group_id.cloned()) else {
             return Err(invalid_input(format!("Unknown binding {}", change.name)).into());
         };
-        allow(
-            "iam:bindings:create",
-            role_id.clone(),
-            format!("bind {}", change.name),
-        )
+        boxed(|| {
+            allow(
+                "iam:bindings:create",
+                role_id.clone(),
+                format!("bind {}", change.name),
+            )
+        })
         .await?;
         // What configuration cannot express survives a replacement: an approver group sync does not manage (a team's
         // backing group, left out of exports), and the start and end dates of a temporary or future-dated grant.
@@ -3300,10 +3340,11 @@ async fn apply_plan(
         if change.action != "create" {
             // Eligibility changes replace the binding so the authority and activations start clean.
             for binding in &previous {
-                delete_binding(ctx, tx, principal, binding).await?;
+                boxed(|| delete_binding(ctx, tx, principal, binding)).await?;
             }
         }
-        create_binding(ctx, tx, principal, &Value::Object(input), None).await?;
+        boxed(|| async { create_binding(ctx, tx, principal, &Value::Object(input), None).await })
+            .await?;
     }
     // Teams and departments (org-sync.ts) are created and updated before packages, whose rules may name them.
     let org_env = OrgApplyEnv {
@@ -3312,15 +3353,17 @@ async fn apply_plan(
         group_ids: &group_ids,
         identities_by_email: &state.identities_by_email,
     };
-    apply_org(
-        ctx,
-        tx,
-        principal,
-        tenant,
-        &planned.org,
-        &org_env,
-        Some("upsert"),
-    )
+    boxed(|| {
+        apply_org(
+            ctx,
+            tx,
+            principal,
+            tenant,
+            &planned.org,
+            &org_env,
+            Some("upsert"),
+        )
+    })
     .await?;
     // AI agents, models and budgets (ai-sync.ts), once groups exist; agents before the budgets that name them.
     let ai_env = AiApplyEnv {
@@ -3328,17 +3371,19 @@ async fn apply_plan(
         group_ids: &group_ids,
         identities_by_email: &state.identities_by_email,
     };
-    apply_ai(
-        ctx,
-        tx,
-        principal,
-        tenant,
-        &planned.ai,
-        &ai_env,
-        Some("upsert"),
-    )
+    boxed(|| {
+        apply_ai(
+            ctx,
+            tx,
+            principal,
+            tenant,
+            &planned.ai,
+            &ai_env,
+            Some("upsert"),
+        )
+    })
     .await?;
-    let org_ids = org_rule_ids(tx, tenant_id).await?;
+    let org_ids = boxed(|| org_rule_ids(tx, tenant_id)).await?;
     // Rules name groups; the tenant stores their IDs (including groups this apply just created).
     let rule_ids = |rule: &Value| -> IamResult<Value> {
         let mapped = map_rule_groups(rule, &|name: &str| {
@@ -3357,14 +3402,16 @@ async fn apply_plan(
         }
         if change.action == "delete" {
             let record = item.record.clone().unwrap_or_default();
-            allow(
-                "iam:packages:delete",
-                id_of(&record).to_owned(),
-                format!("delete package {}", change.name),
-            )
+            boxed(|| {
+                allow(
+                    "iam:packages:delete",
+                    id_of(&record).to_owned(),
+                    format!("delete package {}", change.name),
+                )
+            })
             .await?;
             let pkg = decode(record)?;
-            delete_package(ctx, tx, &pkg).await?;
+            boxed(|| delete_package(ctx, tx, &pkg)).await?;
             continue;
         }
         let desired = item.desired.clone().unwrap_or_default();
@@ -3385,11 +3432,13 @@ async fn apply_plan(
                 .map_or(Value::Null, Value::String)
         });
         if change.action == "create" {
-            allow(
-                "iam:packages:create",
-                tenant_id.to_owned(),
-                format!("create package {}", change.name),
-            )
+            boxed(|| {
+                allow(
+                    "iam:packages:create",
+                    tenant_id.to_owned(),
+                    format!("create package {}", change.name),
+                )
+            })
             .await?;
             let mut input = Map::new();
             input.insert("tenantId".into(), json!(tenant_id));
@@ -3425,14 +3474,19 @@ async fn apply_plan(
             if let Some(rule) = desired.get("autoAssign").filter(|rule| truthy(Some(rule))) {
                 input.insert("autoAssign".into(), rule_ids(rule)?);
             }
-            create_package(ctx, tx, &Value::Object(input), Some(principal)).await?;
+            boxed(|| async {
+                create_package(ctx, tx, &Value::Object(input), Some(principal)).await
+            })
+            .await?;
         } else {
             let record = item.record.clone().unwrap_or_default();
-            allow(
-                "iam:packages:update",
-                id_of(&record).to_owned(),
-                format!("update package {}", change.name),
-            )
+            boxed(|| {
+                allow(
+                    "iam:packages:update",
+                    id_of(&record).to_owned(),
+                    format!("update package {}", change.name),
+                )
+            })
             .await?;
             let mut input = Map::new();
             if name_of(&record) != name_of(&desired) {
@@ -3486,7 +3540,10 @@ async fn apply_plan(
                 input.insert("autoAssign".into(), rule);
             }
             let existing = decode(record)?;
-            update_package(ctx, tx, &existing, &Value::Object(input), Some(principal)).await?;
+            boxed(|| async {
+                update_package(ctx, tx, &existing, &Value::Object(input), Some(principal)).await
+            })
+            .await?;
         }
     }
     // Terms of use: a content change publishes a new version (people accept what they were shown).
@@ -3495,19 +3552,21 @@ async fn apply_plan(
         if change.action == "unchanged" {
             continue;
         }
-        allow(
-            "iam:agreements:manage",
-            item.record
-                .as_ref()
-                .map_or_else(|| tenant_id.to_owned(), |record| id_of(record).to_owned()),
-            format!("{} agreement {}", change.action, change.name),
-        )
+        boxed(|| {
+            allow(
+                "iam:agreements:manage",
+                item.record
+                    .as_ref()
+                    .map_or_else(|| tenant_id.to_owned(), |record| id_of(record).to_owned()),
+                format!("{} agreement {}", change.action, change.name),
+            )
+        })
         .await?;
         let record: Option<crate::agreements::Agreement> =
             item.record.clone().map(decode).transpose()?;
         if change.action == "delete" {
             if let Some(record) = &record {
-                delete_agreement(tx, record).await?;
+                boxed(|| delete_agreement(tx, record)).await?;
             }
             continue;
         }
@@ -3538,14 +3597,17 @@ async fn apply_plan(
                 .fields
                 .as_ref()
                 .is_some_and(|fields| fields.iter().any(|field| field == "content"));
-        save_agreement(
-            ctx,
-            tx,
-            tenant_id,
-            &Value::Object(input),
-            record.as_ref(),
-            Some(new_version),
-        )
+        boxed(|| async {
+            save_agreement(
+                ctx,
+                tx,
+                tenant_id,
+                &Value::Object(input),
+                record.as_ref(),
+                Some(new_version),
+            )
+            .await
+        })
         .await?;
     }
     // Access invariants, once their groups exist and before any group is deleted.
@@ -3554,17 +3616,19 @@ async fn apply_plan(
         if change.action == "unchanged" {
             continue;
         }
-        allow(
-            "iam:invariants:manage",
-            item.record
-                .as_ref()
-                .map_or_else(|| tenant_id.to_owned(), |record| id_of(record).to_owned()),
-            format!("{} invariant {}", change.action, change.name),
-        )
+        boxed(|| {
+            allow(
+                "iam:invariants:manage",
+                item.record
+                    .as_ref()
+                    .map_or_else(|| tenant_id.to_owned(), |record| id_of(record).to_owned()),
+                format!("{} invariant {}", change.action, change.name),
+            )
+        })
         .await?;
         if change.action == "delete" {
             let record = item.record.clone().unwrap_or_default();
-            tx.delete("accessInvariants", id_of(&record)).await?;
+            boxed(|| tx.delete("accessInvariants", id_of(&record))).await?;
             continue;
         }
         let desired = item.desired.clone().unwrap_or_default();
@@ -3618,37 +3682,44 @@ async fn apply_plan(
         );
         let previous: Option<crate::invariants::AccessInvariant> =
             item.record.clone().map(decode).transpose()?;
-        save_invariant(
-            ctx,
-            tx,
-            tenant_id,
-            &Value::Object(input),
-            &principal.identity.id,
-            previous.as_ref(),
-        )
+        boxed(|| async {
+            save_invariant(
+                ctx,
+                tx,
+                tenant_id,
+                &Value::Object(input),
+                &principal.identity.id,
+                previous.as_ref(),
+            )
+            .await
+        })
         .await?;
     }
     // Team and department deletions (org-sync.ts), once packages stopped naming them and before any role is deleted.
-    apply_org(
-        ctx,
-        tx,
-        principal,
-        tenant,
-        &planned.org,
-        &org_env,
-        Some("delete"),
-    )
+    boxed(|| {
+        apply_org(
+            ctx,
+            tx,
+            principal,
+            tenant,
+            &planned.org,
+            &org_env,
+            Some("delete"),
+        )
+    })
     .await?;
     // AI budget, model and agent deletions (ai-sync.ts), before the groups budgets name are deleted.
-    apply_ai(
-        ctx,
-        tx,
-        principal,
-        tenant,
-        &planned.ai,
-        &ai_env,
-        Some("delete"),
-    )
+    boxed(|| {
+        apply_ai(
+            ctx,
+            tx,
+            principal,
+            tenant,
+            &planned.ai,
+            &ai_env,
+            Some("delete"),
+        )
+    })
     .await?;
     // Deletions, dependents first.
     for item in planned
@@ -3657,14 +3728,16 @@ async fn apply_plan(
         .filter(|item| item.change.action == "delete")
     {
         let record = item.record.clone().unwrap_or_default();
-        allow(
-            "iam:groups:delete",
-            id_of(&record).to_owned(),
-            format!("delete group {}", item.change.name),
-        )
+        boxed(|| {
+            allow(
+                "iam:groups:delete",
+                id_of(&record).to_owned(),
+                format!("delete group {}", item.change.name),
+            )
+        })
         .await?;
         let group = decode(record)?;
-        delete_group(ctx, tx, principal, &group).await?;
+        boxed(|| delete_group(ctx, tx, principal, &group)).await?;
     }
     for item in planned
         .roles
@@ -3672,14 +3745,16 @@ async fn apply_plan(
         .filter(|item| item.change.action == "delete")
     {
         let record = item.record.clone().unwrap_or_default();
-        allow(
-            "iam:roles:delete",
-            id_of(&record).to_owned(),
-            format!("delete role {}", item.change.name),
-        )
+        boxed(|| {
+            allow(
+                "iam:roles:delete",
+                id_of(&record).to_owned(),
+                format!("delete role {}", item.change.name),
+            )
+        })
         .await?;
         let role = decode(record)?;
-        delete_role(ctx, tx, principal, &role).await?;
+        boxed(|| delete_role(ctx, tx, principal, &role)).await?;
     }
     for item in planned
         .policies
@@ -3687,14 +3762,16 @@ async fn apply_plan(
         .filter(|item| item.change.action == "delete")
     {
         let record = item.record.clone().unwrap_or_default();
-        allow(
-            "iam:policies:delete",
-            id_of(&record).to_owned(),
-            format!("delete policy {}", item.change.name),
-        )
+        boxed(|| {
+            allow(
+                "iam:policies:delete",
+                id_of(&record).to_owned(),
+                format!("delete policy {}", item.change.name),
+            )
+        })
         .await?;
         let policy = decode(record)?;
-        delete_policy(ctx, tx, principal, &policy).await?;
+        boxed(|| delete_policy(ctx, tx, principal, &policy)).await?;
     }
     Ok(())
 }

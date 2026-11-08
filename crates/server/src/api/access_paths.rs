@@ -8,6 +8,7 @@
 
 use std::sync::{Arc, Mutex};
 
+use better_iam_core::boxed;
 use better_iam_core::{
     AuthenticatedPrincipal, CredentialInput, Decision, Filter, FindOptions, IamError, IamResult,
     IamStoreExt, IdentityKind, Record, Tenant,
@@ -114,12 +115,12 @@ async fn paths(
     let now = ctx.now();
     let check = |who: AuthenticatedPrincipal| async move {
         Ok::<bool, IamError>(
-            allowed(ctx, tx, &who, tenant_id, action, resource)
+            boxed(|| allowed(ctx, tx, &who, tenant_id, action, resource))
                 .await?
                 .allowed,
         )
     };
-    let base = allowed(ctx, tx, principal, tenant_id, action, resource).await?;
+    let base = boxed(|| allowed(ctx, tx, principal, tenant_id, action, resource)).await?;
     if base.allowed {
         return Ok(json!({ "allowed": true, "reason": base.reason, "paths": [] }));
     }
@@ -134,27 +135,29 @@ async fn paths(
     if !principal.session.mfa {
         let mut stepped = principal.clone();
         stepped.session.mfa = true;
-        if check(stepped).await? {
+        if boxed(|| check(stepped)).await? {
             found.push(json!({ "kind": "mfa" }));
         }
     }
 
     // Required terms of use not yet accepted (simulated as accepted, then removed again).
     let agreements: Vec<Agreement> =
-        find_records(tx, "agreements", Filter::new().eq("tenantId", tenant_id))
+        boxed(|| find_records(tx, "agreements", Filter::new().eq("tenantId", tenant_id)))
             .await?
             .into_iter()
             .map(decode)
             .collect::<IamResult<_>>()?;
     if !agreements.is_empty() && principal.identity.kind == IdentityKind::User {
         let mut acceptances: IndexMap<String, (AgreementAcceptance, Record)> = IndexMap::new();
-        for record in find_records(
-            tx,
-            "agreementAcceptances",
-            Filter::new()
-                .eq("tenantId", tenant_id)
-                .eq("identityId", identity_id),
-        )
+        for record in boxed(|| {
+            find_records(
+                tx,
+                "agreementAcceptances",
+                Filter::new()
+                    .eq("tenantId", tenant_id)
+                    .eq("identityId", identity_id),
+            )
+        })
         .await?
         {
             let acceptance: AgreementAcceptance = decode(record.clone())?;
@@ -184,13 +187,13 @@ async fn paths(
                 record.insert("version".into(), crate::js::number(agreement.version));
                 record.insert("acceptedAt".into(), crate::js::number(now));
                 if previous.is_some() {
-                    tx.put("agreementAcceptances", &record).await?;
+                    boxed(|| tx.put("agreementAcceptances", &record)).await?;
                 } else {
-                    tx.insert("agreementAcceptances", &record).await?;
+                    boxed(|| tx.insert("agreementAcceptances", &record)).await?;
                 }
                 written.push((acceptance_id, previous));
             }
-            if check(principal.clone()).await? {
+            if boxed(|| check(principal.clone())).await? {
                 found.push(json!({
                     "kind": "accept-agreements",
                     "agreements": owed
@@ -206,9 +209,9 @@ async fn paths(
             for (entry_id, previous) in &written {
                 match previous {
                     Some(previous) => {
-                        tx.put("agreementAcceptances", previous).await?;
+                        boxed(|| tx.put("agreementAcceptances", previous)).await?;
                     }
-                    None => tx.delete("agreementAcceptances", entry_id).await?,
+                    None => boxed(|| tx.delete("agreementAcceptances", entry_id)).await?,
                 }
             }
         }
@@ -216,13 +219,15 @@ async fn paths(
 
     // Eligible bindings the caller holds directly or through a group, simulated as activated.
     let mut group_ids: IndexSet<String> = IndexSet::new();
-    for record in find_records(
-        tx,
-        "groupMembers",
-        Filter::new()
-            .eq("tenantId", tenant_id)
-            .eq("identityId", identity_id),
-    )
+    for record in boxed(|| {
+        find_records(
+            tx,
+            "groupMembers",
+            Filter::new()
+                .eq("tenantId", tenant_id)
+                .eq("identityId", identity_id),
+        )
+    })
     .await?
     {
         let member: GroupMember = decode(record)?;
@@ -231,7 +236,9 @@ async fn paths(
         }
     }
     let mut eligible: Vec<Binding> = Vec::new();
-    for record in find_records(tx, "bindings", Filter::new().eq("tenantId", tenant_id)).await? {
+    for record in
+        boxed(|| find_records(tx, "bindings", Filter::new().eq("tenantId", tenant_id))).await?
+    {
         let binding: Binding = decode(record)?;
         let holds = if binding.subject_type == "identity" {
             binding.subject_id == identity_id
@@ -244,20 +251,22 @@ async fn paths(
     }
     eligible.truncate(MAX_CANDIDATES);
     let mut activations: IndexMap<String, Record> = IndexMap::new();
-    for record in find_records(
-        tx,
-        "bindingActivations",
-        Filter::new()
-            .eq("tenantId", tenant_id)
-            .eq("identityId", identity_id),
-    )
+    for record in boxed(|| {
+        find_records(
+            tx,
+            "bindingActivations",
+            Filter::new()
+                .eq("tenantId", tenant_id)
+                .eq("identityId", identity_id),
+        )
+    })
     .await?
     {
         let activation: BindingActivation = decode(record.clone())?;
         activations.insert(activation.binding_id, record);
     }
     for binding in &eligible {
-        let Some(role) = tx.get("roles", &binding.role_id).await? else {
+        let Some(role) = boxed(|| tx.get("roles", &binding.role_id)).await? else {
             continue;
         };
         let role: Role = decode(role)?;
@@ -280,27 +289,29 @@ async fn paths(
         simulated.insert("expiresAt".into(), crate::js::number(now + 3_600_000.0));
         simulated.insert("sessionId".into(), json!(principal.session.id));
         if previous.is_some() {
-            tx.put("bindingActivations", &simulated).await?;
+            boxed(|| tx.put("bindingActivations", &simulated)).await?;
         } else {
-            tx.insert("bindingActivations", &simulated).await?;
+            boxed(|| tx.insert("bindingActivations", &simulated)).await?;
         }
         // `requireMfa` gates the activation itself, not the grants it brings, so the caller is evaluated as is.
-        let helps = check(principal.clone()).await?;
+        let helps = boxed(|| check(principal.clone())).await?;
         match previous {
             Some(previous) => {
-                tx.put("bindingActivations", previous).await?;
+                boxed(|| tx.put("bindingActivations", previous)).await?;
             }
-            None => tx.delete("bindingActivations", &simulated_id).await?,
+            None => boxed(|| tx.delete("bindingActivations", &simulated_id)).await?,
         }
         if helps
-            && may(
-                ctx,
-                tx,
-                principal,
-                tenant_id,
-                "iam:bindings:activate",
-                &binding.role_id,
-            )
+            && boxed(|| {
+                may(
+                    ctx,
+                    tx,
+                    principal,
+                    tenant_id,
+                    "iam:bindings:activate",
+                    &binding.role_id,
+                )
+            })
             .await?
         {
             let mut path = Map::new();
@@ -328,11 +339,13 @@ async fn paths(
 
     // Requestable packages, simulated as assigned (standing bindings under each role's own authority, memberships).
     let mut packages: Vec<AccessPackage> = Vec::new();
-    for record in find_records(
-        tx,
-        "accessPackages",
-        Filter::new().eq("tenantId", tenant_id),
-    )
+    for record in boxed(|| {
+        find_records(
+            tx,
+            "accessPackages",
+            Filter::new().eq("tenantId", tenant_id),
+        )
+    })
     .await?
     {
         let package: AccessPackage = decode(record)?;
@@ -342,21 +355,23 @@ async fn paths(
     }
     packages.truncate(MAX_CANDIDATES);
     for package in &packages {
-        if !may(
-            ctx,
-            tx,
-            principal,
-            tenant_id,
-            "iam:packages:request",
-            &package.id,
-        )
+        if !boxed(|| {
+            may(
+                ctx,
+                tx,
+                principal,
+                tenant_id,
+                "iam:packages:request",
+                &package.id,
+            )
+        })
         .await?
         {
             continue;
         }
         let mut created: Vec<(&str, String)> = Vec::new();
         for role_id in &package.role_ids {
-            let Some(role) = tx.get("roles", role_id).await? else {
+            let Some(role) = boxed(|| tx.get("roles", role_id)).await? else {
                 continue;
             };
             let Some(Value::String(authority_id)) = role.get("authorityId") else {
@@ -374,7 +389,7 @@ async fn paths(
             binding.insert("subjectId".into(), json!(identity_id));
             binding.insert("roleId".into(), json!(role_id));
             binding.insert("authorityId".into(), json!(authority_id));
-            tx.insert("bindings", &binding).await?;
+            boxed(|| tx.insert("bindings", &binding)).await?;
             created.push(("bindings", binding_id));
         }
         for group_id in &package.group_ids {
@@ -388,12 +403,12 @@ async fn paths(
             member.insert("uniqueKey".into(), json!(format!("simulation:{member_id}")));
             member.insert("groupId".into(), json!(group_id));
             member.insert("identityId".into(), json!(identity_id));
-            tx.insert("groupMembers", &member).await?;
+            boxed(|| tx.insert("groupMembers", &member)).await?;
             created.push(("groupMembers", member_id));
         }
-        let helps = !created.is_empty() && check(principal.clone()).await?;
+        let helps = !created.is_empty() && boxed(|| check(principal.clone())).await?;
         for (collection, record_id) in &created {
-            tx.delete(collection, record_id).await?;
+            boxed(|| tx.delete(collection, record_id)).await?;
         }
         if helps {
             let mut summary = Map::new();

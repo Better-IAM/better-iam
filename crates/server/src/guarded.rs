@@ -8,6 +8,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
+use better_iam_core::boxed;
 use better_iam_core::{
     AuditOutcome, AuthenticatedPrincipal, CredentialInput, Decision, IamError, IamResult,
     IamStoreExt, OperationHookInput, Tenant,
@@ -352,18 +353,18 @@ impl<T: Clone + GuardTarget + 'static> Guard<T> {
                             .principals()?
                             .current_principal(&tx, authenticated_ref)
                             .await?;
-                        let tenant = ctx.tenant_of(&tx, tenant_id).await?;
+                        let tenant = boxed(|| ctx.tenant_of(&tx, tenant_id)).await?;
                         let events = ctx.events()?;
                         // Callers from another tenant (and "view as" sessions) are refused before anything is looked
                         // up, so they learn nothing about which resources exist.
                         let impersonating = principal.session.impersonator_id.is_some();
                         if impersonating
                             || (principal.session.tenant_id != tenant.id
-                                && !ctx.root_principal(&tx, &principal).await?)
+                                && !boxed(|| ctx.root_principal(&tx, &principal)).await?)
                         {
                             lock(state_ref).resource_id = self.collection.clone();
-                            events
-                                .audit(
+                            boxed(|| {
+                                events.audit(
                                     &tx,
                                     &principal,
                                     label_ref,
@@ -377,10 +378,11 @@ impl<T: Clone + GuardTarget + 'static> Guard<T> {
                                         "tenant"
                                     })),
                                 )
-                                .await?;
+                            })
+                            .await?;
                             return Ok(Outcome::Denied);
                         }
-                        let target = locate(tx.clone(), principal.clone()).await?;
+                        let target = boxed(|| locate(tx.clone(), principal.clone())).await?;
                         let resolved_action = match action_ref {
                             GuardAction::Fixed(action) => action.clone(),
                             GuardAction::Of(of) => of(&target),
@@ -391,8 +393,8 @@ impl<T: Clone + GuardTarget + 'static> Guard<T> {
                             state.resource_id = target.resource_id().to_owned();
                         }
                         let prepared: PreparedCache = Arc::new(Mutex::new(HashMap::new()));
-                        let decision = self
-                            .decide_on_target(
+                        let decision = boxed(|| {
+                            self.decide_on_target(
                                 &tx,
                                 &principal,
                                 &tenant,
@@ -401,7 +403,8 @@ impl<T: Clone + GuardTarget + 'static> Guard<T> {
                                 Some(&target),
                                 Some(&prepared),
                             )
-                            .await?;
+                        })
+                        .await?;
                         if !decision.decision.allowed {
                             // A refusal names what was asked for (a profile, a purpose) as an allowed call would.
                             let mut refused = self.describe(&target);
@@ -409,8 +412,8 @@ impl<T: Clone + GuardTarget + 'static> Guard<T> {
                                 refused
                                     .insert("reason".into(), Value::String("impersonation".into()));
                             }
-                            events
-                                .audit(
+                            boxed(|| {
+                                events.audit(
                                     &tx,
                                     &principal,
                                     &resolved_action,
@@ -420,19 +423,22 @@ impl<T: Clone + GuardTarget + 'static> Guard<T> {
                                     false,
                                     (!refused.is_empty()).then_some(refused),
                                 )
-                                .await?;
+                            })
+                            .await?;
                             return Ok(Outcome::Denied);
                         }
                         // A call a delegation holds back uses up the person's one confirmation (rolled back if the call
                         // fails).
-                        use_confirmation(
-                            &tx,
-                            &principal,
-                            &resolved_action,
-                            "iam",
-                            target.resource_id(),
-                            ctx.now(),
-                        )
+                        boxed(|| {
+                            use_confirmation(
+                                &tx,
+                                &principal,
+                                &resolved_action,
+                                "iam",
+                                target.resource_id(),
+                                ctx.now(),
+                            )
+                        })
                         .await?;
                         lock(state_ref).actor = Some(principal.clone());
                         let hook = OperationHookInput {
@@ -444,7 +450,7 @@ impl<T: Clone + GuardTarget + 'static> Guard<T> {
                         };
                         for plugin in &ctx.plugins {
                             if let Some(hooks) = plugin.hooks() {
-                                hooks.before_operation(&hook).await?;
+                                boxed(|| hooks.before_operation(&hook)).await?;
                             }
                         }
                         let mut metadata = self.describe(&target);
@@ -462,7 +468,7 @@ impl<T: Clone + GuardTarget + 'static> Guard<T> {
                             guard: self.clone(),
                             prepared,
                         };
-                        let value = run(call, target.clone()).await?;
+                        let value = boxed(|| run(call, target.clone())).await?;
                         let raw = serde_json::to_value(&value).unwrap_or(Value::Null);
                         let result = match &self.options.hook_result {
                             Some(hook_result) => hook_result(&raw),
@@ -470,13 +476,13 @@ impl<T: Clone + GuardTarget + 'static> Guard<T> {
                         };
                         for plugin in &ctx.plugins {
                             if let Some(hooks) = plugin.hooks() {
-                                hooks.after_operation(&hook, &result).await?;
+                                boxed(|| hooks.after_operation(&hook, &result)).await?;
                             }
                         }
                         let root_override = decision.decision.reason == "ROOT_OVERRIDE";
                         let metadata = lock(&metadata).clone();
-                        events
-                            .audit(
+                        boxed(|| {
+                            events.audit(
                                 &tx,
                                 &principal,
                                 &resolved_action,
@@ -486,7 +492,8 @@ impl<T: Clone + GuardTarget + 'static> Guard<T> {
                                 root_override,
                                 (!metadata.is_empty()).then_some(metadata),
                             )
-                            .await?;
+                        })
+                        .await?;
                         Ok::<_, crate::contracts::OperationFailure>(Outcome::Allowed {
                             value,
                             root_override,
@@ -562,9 +569,8 @@ impl<T: Clone + GuardTarget + 'static> Guard<T> {
             }
             Err(failure)
         };
-        self.ctx
-            .observe
-            .span(
+        boxed(|| {
+            self.ctx.observe.span(
                 SpanKind::Operation,
                 &label,
                 span_tenant.as_deref(),
@@ -572,7 +578,8 @@ impl<T: Clone + GuardTarget + 'static> Guard<T> {
                 None,
                 None,
             )
-            .await
+        })
+        .await
     }
 
     /// `visible(credential, tenantId, action, resourceId, load)`: for list pages, the targets the caller may perform
