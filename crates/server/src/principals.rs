@@ -805,6 +805,13 @@ impl PrincipalService for Principals {
             SessionKind::Delegated => {
                 check_delegated_session(&ctx, tx, &identity, &session, self).await?
             }
+            SessionKind::Unknown => {
+                return Err(IamError::with_status(
+                    "UNAUTHENTICATED",
+                    "Invalid credential kind",
+                    401,
+                ));
+            }
         }
         if session.kind != SessionKind::User {
             // API keys, assumed roles and session tokens have no sign-in of their own to refuse, so they are judged
