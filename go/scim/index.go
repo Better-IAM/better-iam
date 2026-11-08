@@ -41,7 +41,7 @@ type scimRequest struct {
 
 type listQuery struct {
 	filter             string
-	startIndex         int
+	startIndex         float64
 	count              int
 	sortBy             string
 	sortOrder          string
@@ -146,7 +146,7 @@ func limitedText(request *http.Request, limit int64) (string, error) {
 	return decodeUTF8(data), nil
 }
 
-func pagination(startIndex, count any) (int, int, error) {
+func pagination(startIndex, count any) (float64, int, error) {
 	start := 1.0
 	if !nullish(startIndex) {
 		start = jsNumber(startIndex)
@@ -161,10 +161,7 @@ func pagination(startIndex, count any) (int, int, error) {
 	if size > 200 {
 		size = 200
 	}
-	if start > 1e15 {
-		start = 1e15
-	}
-	return int(start), int(size), nil
+	return start, int(size), nil
 }
 
 func queryFromURL(params searchParams) (*listQuery, error) {
@@ -358,9 +355,9 @@ func (s *Service) perform(ctx context.Context, tx core.IamStore, connection *cor
 		if err != nil {
 			return outcome{}, err
 		}
-		start := query.startIndex - 1
-		if start > len(matches) {
-			start = len(matches)
+		start := len(matches)
+		if query.startIndex-1 < float64(len(matches)) {
+			start = int(query.startIndex - 1)
 		}
 		end := start + query.count
 		if end > len(matches) {

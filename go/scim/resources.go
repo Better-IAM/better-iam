@@ -50,11 +50,11 @@ func response(body any, status int, headers map[string]string) *Response {
 	return &Response{Status: status, Header: header, Body: data}
 }
 
-func listResponse(resources []any, totalResults int, startIndex int) *core.Object {
+func listResponse(resources []any, totalResults int, startIndex float64) *core.Object {
 	return core.NewObject(
 		"schemas", []any{ListSchema},
 		"totalResults", float64(totalResults),
-		"startIndex", float64(startIndex),
+		"startIndex", startIndex,
 		"itemsPerPage", float64(len(resources)),
 		"Resources", resources,
 	)
