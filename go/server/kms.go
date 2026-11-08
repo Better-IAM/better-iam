@@ -1236,12 +1236,13 @@ func kmsUsePrincipal(use *core.Object) *Principal {
 	case *Principal:
 		return value
 	case *core.Object:
-		identity, _ := value.Get("Identity").(*core.Object)
-		session, _ := value.Get("Session").(*core.Object)
+		// A normalized principal is stored by its JSON encoding: {identity, session, deviceProof?}.
+		identity, _ := value.Get("identity").(*core.Object)
+		session, _ := value.Get("session").(*core.Object)
 		if identity == nil || session == nil {
 			return nil
 		}
-		proof, _ := value.Get("DeviceProof").(string)
+		proof, _ := value.Get("deviceProof").(string)
 		return &Principal{Identity: identity, Session: session, DeviceProof: proof}
 	}
 	return nil

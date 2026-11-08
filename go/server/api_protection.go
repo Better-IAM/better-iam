@@ -241,7 +241,7 @@ func (api *ProtectionAPI) requireKeyUse(ctx context.Context, call GuardCall, pro
 
 // protectionUse is the KMS service use of a protection call (`{ via: 'protection', principal }`).
 func protectionUse(principal *Principal) *core.Object {
-	return core.NewObject("via", "protection", "principal", principal)
+	return core.NewObject("via", "protection").SetRaw("principal", principal)
 }
 
 // lookupKey is the profile's fingerprint key, unwrapped by its KMS key (so it stops with the key). Wipe it after use.
