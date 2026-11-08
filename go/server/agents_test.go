@@ -418,7 +418,11 @@ func TestAgentsSponsorKillSwitch(t *testing.T) {
 			t.Fatalf("no %s event", action)
 		}
 	}
-	// What the agent did: its own key's decisions, newest first.
+	// What the agent did: its own key's decisions, newest first. Allowed checks are not audited (only refusals and
+	// root overrides are, as in operations.ts recordedDecision), so the agent makes one refused check.
+	if f.mustRead(token, "a", "documents:write") {
+		t.Fatal("the agent holds no documents:write grant")
+	}
 	activity := mustAgentList(f, f.iam.API.Agents.Activity, alice, "agentId", agentID, "limit", 5.0)
 	if len(activity) == 0 {
 		t.Fatal("expected activity")

@@ -146,29 +146,29 @@ func TestThreatMentionsRisk(t *testing.T) {
 	}
 }
 
-// threatFixture is the identities fixture with an organization tenant under the root.
-type threatFixture struct {
+// threatResponseFixture is the identities fixture with an organization tenant under the root.
+type threatResponseFixture struct {
 	*identitiesFixture
 	orgID string
 }
 
-func newThreatFixture(t *testing.T, mutate func(options *BetterIamOptions)) *threatFixture {
+func newThreatResponseFixture(t *testing.T, mutate func(options *BetterIamOptions)) *threatResponseFixture {
 	t.Helper()
-	f := &threatFixture{identitiesFixture: newIdentitiesFixture(t, mutate), orgID: "org-acme"}
+	f := &threatResponseFixture{identitiesFixture: newIdentitiesFixture(t, mutate), orgID: "org-acme"}
 	f.seed("tenants", core.NewObject("id", f.orgID, "tenantId", f.orgID, "name", "Acme", "type", "organization",
 		"parentId", f.tenantID, "status", "active", "createdAt", 2.0))
 	return f
 }
 
-func (f *threatFixture) server() *ServerContext { return f.iam.Context }
+func (f *threatResponseFixture) server() *ServerContext { return f.iam.Context }
 
 // principal is a principal for an identity with a fresh session.
-func (f *threatFixture) principal(identity *core.Object, mfa bool) *Principal {
+func (f *threatResponseFixture) principal(identity *core.Object, mfa bool) *Principal {
 	_, session := f.signIn(identity, mfa)
 	return &Principal{Identity: f.get("identities", jsString(identity.Get("id"))), Session: session}
 }
 
-func (f *threatFixture) settings(stored string) *core.Object {
+func (f *threatResponseFixture) settings(stored string) *core.Object {
 	if stored == "" {
 		return must(ResolveThreatSettings(nil))
 	}
@@ -176,13 +176,13 @@ func (f *threatFixture) settings(stored string) *core.Object {
 }
 
 // respond runs applyResponse in a transaction.
-func (f *threatFixture) respond(tenantID string, request *core.Object, settings, brake *core.Object) (*core.Object, error) {
+func (f *threatResponseFixture) respond(tenantID string, request *core.Object, settings, brake *core.Object) (*core.Object, error) {
 	return core.Transact(f.ctx, f.iam.Store, func(ctx context.Context, tx core.IamStore) (*core.Object, error) {
 		return ApplyResponse(ctx, f.server(), tx, tenantID, request, settings, brake)
 	})
 }
 
-func (f *threatFixture) release(tenantID, identityID string, actor *core.Object, note string) (*core.Object, error) {
+func (f *threatResponseFixture) release(tenantID, identityID string, actor *core.Object, note string) (*core.Object, error) {
 	return core.Transact(f.ctx, f.iam.Store, func(ctx context.Context, tx core.IamStore) (*core.Object, error) {
 		return ReleaseIdentity(ctx, f.server(), tx, tenantID, identityID, actor, note)
 	})
@@ -206,7 +206,7 @@ func threatRequest(kind, subjectType, subjectID string, actor *core.Object, memb
 	return request
 }
 
-func (f *threatFixture) countAudit(tenantID, action string) int {
+func (f *threatResponseFixture) countAudit(tenantID, action string) int {
 	count := 0
 	for _, event := range f.find("audit", core.NewObject("tenantId", tenantID, "action", action)) {
 		_ = event
@@ -226,7 +226,7 @@ func expectOutcome(t *testing.T, response *core.Object, err error, outcome, reas
 }
 
 func TestThreatContainAndRelease(t *testing.T) {
-	f := newThreatFixture(t, nil)
+	f := newThreatResponseFixture(t, nil)
 	owner := ThreatManualActor(f.principal(f.owner, false))
 	settings := f.settings("")
 	alice := f.member("alice")
@@ -302,7 +302,7 @@ func TestThreatContainAndRelease(t *testing.T) {
 }
 
 func TestThreatNeverReleasesWhatAnotherPathChanged(t *testing.T) {
-	f := newThreatFixture(t, nil)
+	f := newThreatResponseFixture(t, nil)
 	owner := ThreatManualActor(f.principal(f.owner, false))
 	settings := f.settings("")
 	contain := func(identityID string) {
@@ -363,7 +363,7 @@ func TestThreatNeverReleasesWhatAnotherPathChanged(t *testing.T) {
 }
 
 func TestThreatContainProtections(t *testing.T) {
-	f := newThreatFixture(t, nil)
+	f := newThreatResponseFixture(t, nil)
 	settings := f.settings("")
 	coOwner := f.member("coowner")
 	coOwnerID := jsString(coOwner.Get("id"))
@@ -412,7 +412,7 @@ func TestThreatContainProtections(t *testing.T) {
 }
 
 func TestThreatContainmentBrake(t *testing.T) {
-	f := newThreatFixture(t, nil)
+	f := newThreatResponseFixture(t, nil)
 	settings := f.settings(`{"rules":{},"maxAutomaticContainments":1}`)
 	brake := core.NewObject("contained", 0.0)
 	automatic := ThreatAutomaticActor()
@@ -448,7 +448,7 @@ func TestThreatContainmentBrake(t *testing.T) {
 }
 
 func TestThreatRevokeSessionsAndForgetDevices(t *testing.T) {
-	f := newThreatFixture(t, nil)
+	f := newThreatResponseFixture(t, nil)
 	settings := f.settings("")
 	alice := f.member("alice")
 	aliceID := jsString(alice.Get("id"))
@@ -504,7 +504,7 @@ func TestThreatRevokeSessionsAndForgetDevices(t *testing.T) {
 }
 
 func TestThreatBlockNetwork(t *testing.T) {
-	f := newThreatFixture(t, nil)
+	f := newThreatResponseFixture(t, nil)
 	settings := f.settings(`{"rules":{},"trustedNetworks":["203.0.113.0/24"]}`)
 	owner := ThreatManualActor(f.principal(f.owner, false))
 	root := ThreatManualActor(f.principal(f.rootIdentity, true))
@@ -586,7 +586,7 @@ func TestThreatBlockNetwork(t *testing.T) {
 }
 
 func TestThreatNotify(t *testing.T) {
-	f := newThreatFixture(t, nil)
+	f := newThreatResponseFixture(t, nil)
 	settings := f.settings(`{"rules":{},"notify":{"owners":true,"emails":["SOC@example.test","owner@example.test"]}}`)
 	automatic := ThreatAutomaticActor()
 	f.seed("threatDetections", core.NewObject("id", "det-1", "tenantId", f.tenantID, "ruleId", "audit-tampering", "summary", "The chain broke."))
@@ -649,7 +649,7 @@ func TestThreatNotify(t *testing.T) {
 }
 
 func TestThreatNotifyWithoutTransport(t *testing.T) {
-	f := newThreatFixture(t, func(options *BetterIamOptions) { options.Authentication.SendEmail = nil })
+	f := newThreatResponseFixture(t, func(options *BetterIamOptions) { options.Authentication.SendEmail = nil })
 	settings := f.settings(`{"rules":{},"notify":{"owners":false,"emails":["soc@example.test"]}}`)
 	f.seed("threatIncidents", core.NewObject("id", "inc-1", "tenantId", f.tenantID, "subject", core.NewObject("type", "tenant", "id", f.tenantID),
 		"severity", "high", "title", "T", "status", "open", "detectionIds", []any{}, "detectionCount", 0.0))
@@ -665,7 +665,7 @@ func TestThreatNotifyWithoutTransport(t *testing.T) {
 }
 
 func TestThreatSuspendClearance(t *testing.T) {
-	off := newThreatFixture(t, nil)
+	off := newThreatResponseFixture(t, nil)
 	settings := off.settings("")
 	alice := jsString(off.member("alice").Get("id"))
 	disabled, err := off.respond(off.tenantID, threatRequest("suspend-clearance", "identity", alice, ThreatAutomaticActor()), settings, nil)
@@ -673,7 +673,7 @@ func TestThreatSuspendClearance(t *testing.T) {
 	_, err = off.respond(off.tenantID, threatRequest("suspend-clearance", "identity", alice, ThreatManualActor(off.principal(off.owner, false))), settings, nil)
 	expectError(t, err, "FEATURE_DISABLED", "Security clearances are not enabled on this deployment")
 
-	f := newThreatFixture(t, func(options *BetterIamOptions) { options.Clearances = &ClearanceOptions{} })
+	f := newThreatResponseFixture(t, func(options *BetterIamOptions) { options.Clearances = &ClearanceOptions{} })
 	settings = f.settings("")
 	bob := jsString(f.member("bob").Get("id"))
 	automatic := ThreatAutomaticActor()
@@ -714,7 +714,7 @@ func TestThreatSuspendClearance(t *testing.T) {
 }
 
 func TestThreatInvitationsStayRevokedAfterRelease(t *testing.T) {
-	f := newThreatFixture(t, nil)
+	f := newThreatResponseFixture(t, nil)
 	owner := ThreatManualActor(f.principal(f.owner, false))
 	inviter := jsString(f.member("inviter").Get("id"))
 	f.seed("memberInvitations", core.NewObject("id", "invite-1", "tenantId", f.tenantID, "inviterId", inviter, "email", "attacker@evil.example",
@@ -730,7 +730,7 @@ func TestThreatInvitationsStayRevokedAfterRelease(t *testing.T) {
 }
 
 func TestThreatRiskContextAndAudit(t *testing.T) {
-	f := newThreatFixture(t, nil)
+	f := newThreatResponseFixture(t, nil)
 	alice := f.member("alice")
 	aliceID := jsString(alice.Get("id"))
 	agentID := jsString(f.member("agent").Get("id"))
