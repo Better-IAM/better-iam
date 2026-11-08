@@ -498,11 +498,18 @@ pub(crate) async fn handle(inner: &Inner, request: &HttpRequest) -> HttpResponse
 }
 
 fn finish(ctx: Ctx<'_>) -> HttpResponse {
+    let head = ctx.method == "HEAD";
     let mut out = ctx.out;
     for cookie in ctx.set_cookies {
         out.append("set-cookie", cookie);
     }
-    out.finish()
+    let response = out.finish();
+    if !head {
+        return response;
+    }
+    // HEAD: the headers of the GET answer without its body.
+    let (parts, _) = response.into_parts();
+    http::Response::from_parts(parts, Bytes::new())
 }
 
 async fn dispatch(ctx: &mut Ctx<'_>) {
@@ -2915,10 +2922,8 @@ fn assign_claims(auth: &mut Auth) {
 async fn load_account(ctx: &mut Ctx<'_>, auth: &mut Auth) -> ProviderResult<()> {
     let account_id = ctx.session.as_ref().and_then(OpSession::account_id);
     if let Some(account_id) = account_id {
+        // An account that is gone leaves the grant unloaded; the consent checks then fail as a server error.
         auth.account = find_account(ctx.inner, auth.client.as_ref(), &account_id).await?;
-        if auth.account.is_none() {
-            return Err(server_error("findAccount must resolve an account"));
-        }
     }
     Ok(())
 }
@@ -3067,7 +3072,11 @@ async fn interactions(ctx: &mut Ctx<'_>, auth: &mut Auth) -> ProviderResult<bool
         // consent
         let mut failed: Vec<(&str, &str, &str, Map<String, Value>)> = Vec::new();
         let client = auth.client.clone().expect("client loaded");
-        let grant = auth.grant.clone().unwrap_or_default();
+        let Some(grant) = auth.grant.clone() else {
+            return Err(server_error(
+                "Cannot read properties of undefined (reading 'getOIDCScopeEncountered')",
+            ));
+        };
         if prompts_list.iter().any(|prompt| prompt == "consent")
             && prompt_pending(ctx, auth, "consent")
         {
@@ -3615,7 +3624,8 @@ async fn authorization_error(ctx: &mut Ctx<'_>, caught: ProviderError) {
     out.insert("iss".into(), json!(ctx.core().issuer));
     let allow_redirect = match &error {
         ProviderError::Oidc(oidc) => oidc.allow_redirect,
-        ProviderError::Iam(_) => true,
+        // Errors that are not protocol errors carry no `allow_redirect`.
+        ProviderError::Iam(_) => false,
     };
     let redirect = safe("redirect_uri").or_else(|| {
         client
