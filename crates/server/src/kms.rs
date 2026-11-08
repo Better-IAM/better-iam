@@ -2479,9 +2479,9 @@ pub async fn kms_sign_for(
     version: f64,
     algorithm: &str,
     data: &[u8],
-    r#use: &Value,
+    r#use: &KmsServiceUse,
 ) -> IamResult<Vec<u8>> {
-    let service = service_use_of(Some(r#use))?;
+    let service = r#use;
     let key = find_key(tx, tenant_id, Some(&Value::String(key_id.to_owned()))).await?;
     assert_usable(&key, &Value::String("sign".into()))?;
     if !algorithms_for(key.spec(), key.usage())?.contains(&algorithm.to_owned()) {
@@ -2492,7 +2492,7 @@ pub async fn kms_sign_for(
     let mut metadata = Map::new();
     metadata.insert("keyVersion".into(), number(version));
     metadata.insert("algorithm".into(), Value::String(algorithm.into()));
-    service_audit(ctx, tx, &service, kms_action("sign"), &key, metadata).await?;
+    service_audit(ctx, tx, service, kms_action("sign"), &key, metadata).await?;
     Ok(signature)
 }
 
