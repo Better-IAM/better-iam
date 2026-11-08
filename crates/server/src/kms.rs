@@ -629,7 +629,7 @@ pub async fn kms_sign_for(
     version: f64,
     algorithm: &str,
     data: &[u8],
-    r#use: &Value,
+    r#use: &crate::kms::KmsServiceUse,
 ) -> IamResult<Vec<u8>> {
     Err(not_ported("kms.ts kmsSignFor"))
 }
