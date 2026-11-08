@@ -1,0 +1,59 @@
+[package]
+name = "better-iam-saml"
+description = "SAML 2.0 single sign-on for Better IAM (Rust): tenant-managed service-provider connections for Okta, Entra ID, ADFS, Google Workspace, and more, with XML signature validation and decryption implemented without libxml2 or xmlsec, sharing its records with the TypeScript implementation."
+readme = "README.md"
+keywords = ["iam", "saml", "sso", "saml2", "xmldsig"]
+categories = ["authentication", "web-programming"]
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+
+[features]
+default = []
+# Implements `better_iam_server::http::ProtocolService` for the service and builds its host callbacks from
+# `iam.protocol_host()` (`SamlConfigOptions::from_protocol_host`).
+server = ["dep:better-iam-server"]
+
+[dependencies]
+better-iam-core.workspace = true
+better-iam-auth.workspace = true
+better-iam-server = { workspace = true, optional = true }
+async-trait.workspace = true
+futures.workspace = true
+indexmap.workspace = true
+regex.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+bytes.workspace = true
+tokio = { workspace = true, features = ["rt", "sync", "macros", "time"] }
+http = "1"
+url = "2"
+uuid = { version = "1", features = ["v4"] }
+rand = "0.8"
+base64 = "0.22"
+hex = "0.4"
+sha1 = { version = "0.10", features = ["oid"] }
+subtle = "2"
+flate2 = "1"
+rsa = { version = "0.9", default-features = false, features = ["std", "sha2"] }
+aes = "0.8"
+aes-gcm = "0.10"
+cbc = "0.1"
+des = "0.8"
+der = { version = "0.7", features = ["std", "oid"] }
+x509-cert = { version = "0.2", default-features = false, features = ["std"] }
+icu_collator = "2"
+
+[dev-dependencies]
+better-iam-saml = { path = ".", features = ["server"] }
+better-iam-adapter-sqlite.workspace = true
+better-iam-server.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }
+
+[lib]
+doctest = false

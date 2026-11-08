@@ -1,0 +1,53 @@
+[package]
+name = "better-iam-a2a"
+description = "Agent2Agent (A2A) support for Better IAM (Rust): IAM-attested agent cards, card verification and discovery, delegation token verification, and authorization for A2A servers."
+readme = "README.md"
+keywords = ["iam", "a2a", "authorization", "agents", "ai-agents"]
+categories = ["authentication", "web-programming"]
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+
+[features]
+default = ["server"]
+# `A2aIam` for an in-process `BetterIam` (`better_iam(options)`), as the TypeScript gate takes a `betterIam()` instance.
+server = ["dep:better-iam-server"]
+
+[dependencies]
+better-iam-core.workspace = true
+better-iam-auth.workspace = true
+better-iam-server = { workspace = true, optional = true }
+async-trait.workspace = true
+bytes.workspace = true
+futures.workspace = true
+indexmap.workspace = true
+regex.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["rt", "sync", "time", "net"] }
+rustls.workspace = true
+webpki-roots.workspace = true
+base64 = "0.22"
+ed25519-dalek = "2"
+p256 = { version = "0.13", default-features = false, features = ["ecdsa", "std"] }
+http = "1"
+http-body = "1"
+http-body-util = "0.1"
+hyper = { version = "1", features = ["client", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12", "logging"] }
+url = "2"
+
+[dev-dependencies]
+better-iam-adapter-sqlite.workspace = true
+better-iam-server.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }
+rand = "0.8"
+
+[lib]
+doctest = false
