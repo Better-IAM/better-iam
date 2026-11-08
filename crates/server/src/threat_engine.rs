@@ -27,7 +27,8 @@ use crate::models::{Binding, GroupMember, Policy, Role};
 use crate::observe::SpanKind;
 use crate::port::decode;
 use crate::threat_response::{
-    PlaybookBrake, ResponseRequest, after_threat_responses, apply_response, threat_audit,
+    PlaybookBrake, ResponseActor, ResponseRequest, after_threat_responses, apply_response,
+    threat_audit,
 };
 use crate::threat_rules::{
     DetectionCandidate, RuleFacts, RuleInput, RuleState, baseline_identity_ids_of,
@@ -562,7 +563,7 @@ async fn detect_tenant(
         );
     }
 
-    let brake = PlaybookBrake {
+    let mut brake = PlaybookBrake {
         contained: 0.0,
         braked: None,
         extra: Map::new(),
@@ -577,7 +578,7 @@ async fn detect_tenant(
             &foreign_baselines,
             &mut touched,
             &state,
-            &brake,
+            &mut brake,
         );
         let position_hash = &position_hash;
         store
@@ -1414,7 +1415,7 @@ async fn record_candidate(
     detection.insert("incidentId".into(), json!(incident_id));
     tx.insert(collection("detections"), &detection).await?;
     let detection_id = str_member(&detection, "id").unwrap_or("").to_owned();
-    let automatic = json!({ "automatic": true });
+    let automatic = ResponseActor::Automatic;
     let mut metadata: IndexMap<String, Value> = IndexMap::new();
     metadata.insert("ruleId".into(), candidate.rule_id.clone());
     metadata.insert("severity".into(), candidate.severity.clone());
@@ -1803,7 +1804,7 @@ pub async fn run_playbooks(
     detection: &crate::threats::ThreatDetection,
     incident: &crate::threats::ThreatIncident,
     settings: &crate::threats::ResolvedThreatSettings,
-    brake: &crate::threat_response::PlaybookBrake,
+    brake: &mut crate::threat_response::PlaybookBrake,
 ) -> IamResult<Vec<crate::threats::ThreatResponse>> {
     let mut playbooks: Vec<(Record, ThreatPlaybook)> = Vec::new();
     for record in tx
@@ -1846,11 +1847,11 @@ pub async fn run_playbooks(
                 detection_id: Some(detection.id.clone()),
                 playbook_id: Some(playbook.id.clone()),
                 reason: format!("Playbook {}: {}", playbook.name, detection.title),
-                actor: json!({ "automatic": true }),
-                extra: Map::new(),
+                actor: ResponseActor::Automatic,
             };
-            responses
-                .push(apply_response(ctx, tx, tenant_id, &request, settings, Some(brake)).await?);
+            responses.push(
+                apply_response(ctx, tx, tenant_id, &request, settings, Some(&mut *brake)).await?,
+            );
         }
         let mut updated = record;
         let runs = match updated.get("runs") {

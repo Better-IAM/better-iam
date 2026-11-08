@@ -305,7 +305,7 @@ async fn playbooks_for(
         from_json(recorded.get("detection").cloned().unwrap_or(Value::Null))?;
     let incident: crate::threats::ThreatIncident =
         from_json(recorded.get("incident").cloned().unwrap_or(Value::Null))?;
-    let brake: crate::threat_response::PlaybookBrake = from_json(json!({ "contained": 0 }))?;
+    let mut brake: crate::threat_response::PlaybookBrake = from_json(json!({ "contained": 0 }))?;
     crate::threat_engine::run_playbooks(
         ctx,
         tx,
@@ -313,7 +313,7 @@ async fn playbooks_for(
         &detection,
         &incident,
         &engine_settings(settings)?,
-        &brake,
+        &mut brake,
     )
     .await?
     .iter()
