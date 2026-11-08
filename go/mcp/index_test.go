@@ -301,7 +301,17 @@ func TestMcpGateDecidesAnAgentsToolCallsWithItsOwnGrantsAndFiltersTheToolList(t 
 	denials := f.Items(f.IAM.API.Audit.List(f.Ctx, f.Owner, server.Input[apitypes.AuditListInput](core.NewObject(
 		"tenantId", f.TenantID, "action", "documents:write", "outcome", "deny",
 	))))
-	if len(denials) == 0 || denials[0].Get("actorId") != agentID || denials[0].Get("resourceId") != "q3" {
+	// The tools/list filter (resource "any") and the refused call (resource "q3") both audit a
+	// deny, often in the same millisecond, and audit ties are ordered by random id, so the q3
+	// denial is looked up rather than assumed to be first.
+	var refusedDenial *core.Object
+	for _, denial := range denials {
+		if denial.Get("resourceId") == "q3" {
+			refusedDenial = denial
+			break
+		}
+	}
+	if refusedDenial == nil || refusedDenial.Get("actorId") != agentID {
 		t.Fatalf("denials %v", denials)
 	}
 
