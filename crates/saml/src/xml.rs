@@ -729,22 +729,22 @@ impl<'a> Parser<'a> {
             let rest = self.rest();
             if rest.starts_with("</") {
                 self.end_tag()?;
-            } else if rest.starts_with("<!--") {
-                let Some(end) = rest[4..].find("-->") else {
+            } else if let Some(body) = rest.strip_prefix("<!--") {
+                let Some(end) = body.find("-->") else {
                     return Err(error("Unclosed comment"));
                 };
-                let data = rest[4..4 + end].to_owned();
+                let data = body[..end].to_owned();
                 self.position += 4 + end + 3;
                 let parent = self.current();
                 self.document.push(Kind::Comment(data), Some(parent));
-            } else if rest.starts_with("<![CDATA[") {
-                let Some(end) = rest[9..].find("]]>") else {
+            } else if let Some(body) = rest.strip_prefix("<![CDATA[") {
+                let Some(end) = body.find("]]>") else {
                     return Err(error("Unclosed CDATA"));
                 };
                 if self.stack.is_empty() {
                     return Err(error("CDATA outside of the document element"));
                 }
-                let data = rest[9..9 + end].to_owned();
+                let data = body[..end].to_owned();
                 self.position += 9 + end + 3;
                 let parent = self.current();
                 self.document.push(Kind::CData(data), Some(parent));

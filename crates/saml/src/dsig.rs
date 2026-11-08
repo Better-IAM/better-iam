@@ -792,7 +792,7 @@ pub fn compute_signature(xml: &str, options: &SignOptions) -> SamlResult<String>
         ancestor_namespaces: find_ancestor_ns(&document, first_signed_info),
     };
     let canonical = canon_xml(
-        &[options.canonicalization_algorithm.clone()],
+        std::slice::from_ref(&options.canonicalization_algorithm),
         &document,
         signed_info_node,
         &c14n_options,

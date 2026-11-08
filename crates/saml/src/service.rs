@@ -778,7 +778,7 @@ impl SamlService {
         }
     }
 
-    fn from_record(&self, record: &Record) -> SamlConnection {
+    fn connection_of(&self, record: &Record) -> SamlConnection {
         let sp = self.config().service_provider.clone().unwrap_or_default();
         let id = record_text(record, "id").to_owned();
         let urls = self.managed_urls(&id);
@@ -864,7 +864,7 @@ impl SamlService {
                     .get("enabled")
                     .is_some_and(|enabled| truthy(Some(enabled)))
             {
-                return Ok(self.from_record(&record));
+                return Ok(self.connection_of(&record));
             }
         }
         Err(SamlError::Iam(IamError::with_status(
