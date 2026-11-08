@@ -2062,7 +2062,16 @@ fn protects_stored_values_of_any_size_under_an_aes_key_only_service_helpers() {
         .await
         .unwrap();
         assert_eq!(sealed["keyId"], aes["id"]);
-        assert!(!sealed["ciphertext"].as_str().unwrap().contains("tail"));
+        // Neither the plaintext nor its base64url encoding shows through. The
+        // ciphertext is ~267k random base64url characters, so a short marker
+        // such as "tail" would turn up by chance (~1.6% of runs). " and a tail"
+        // contains spaces, which base64url never produces, and "eHh4" is the
+        // encoding of "xxx" at any alignment, so 64 characters of it cannot
+        // occur by chance.
+        let ciphertext = sealed["ciphertext"].as_str().unwrap();
+        assert!(!ciphertext.contains(" and a tail"));
+        assert!(!ciphertext.contains(&"x".repeat(64)));
+        assert!(!ciphertext.contains(&"eHh4".repeat(16)));
         assert_eq!(
             unseal(&f, sealed.clone(), context.clone(), Some(vault.clone()))
                 .await
