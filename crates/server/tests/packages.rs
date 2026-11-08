@@ -1,6 +1,6 @@
 //! Port of the tests of the `packages` API group (api/packages.ts): tests/access-packages.test.ts,
 //! tests/package-requests.test.ts, tests/package-review-requests.test.ts, tests/package-review-integrity.test.ts
-//! and the `packages` cases of tests/package-review-authz.test.ts.
+//! and the `packages` cases of tests/package-review-authz.test.ts and tests/security-packages.test.ts.
 //!
 //! Left out, with the unit that blocks them: steps that offboard or suspend an identity (`identities.offboard` and
 //! `setStatus` reach threats.ts `endContainment`), the configuration document (`config.export`/`plan`/`apply`, the
@@ -2903,5 +2903,287 @@ fn records_keep_the_typescript_member_order() {
             "INVALID_TRANSITION",
         );
         assert_eq!(error.message, "This package has no rule");
+    });
+}
+
+// --- tests/security-packages.test.ts (extend and hand-over) -----------------------------------------------------
+
+/// Acme with Writer and Reader roles, a Finance group that carries Reader, an empty Lounge group, and Mallory, a
+/// package manager who may edit and assign packages and update groups but grant nothing.
+struct Security {
+    f: Org,
+    tenant: String,
+    owner: CredentialInput,
+    writer: String,
+    reader: String,
+    finance: String,
+    lounge: String,
+    alice: String,
+    as_mallory: CredentialInput,
+}
+
+async fn security() -> Security {
+    let (f, _) = fixture().await;
+    let writer = role(&f, "Writer", json!(["documents:write"])).await;
+    let reader = role(&f, "Reader", json!(["documents:read"])).await;
+    let finance = group(&f, "Finance").await;
+    bind(&f, &reader, "group", &finance).await;
+    let lounge = group(&f, "Lounge").await;
+    let alice = f.member("alice").await;
+    let mallory = f.member("mallory").await;
+    grant(
+        &f,
+        &mallory,
+        "Package manager",
+        json!([
+            "iam:packages:update",
+            "iam:packages:assign",
+            "iam:packages:read",
+            "iam:groups:update"
+        ]),
+    )
+    .await;
+    let as_mallory = f.sign_in(&mallory).await;
+    Security {
+        tenant: f.tenant_id.clone(),
+        owner: f.owner_credential.clone(),
+        f,
+        writer,
+        reader,
+        finance,
+        lounge,
+        alice,
+        as_mallory,
+    }
+}
+
+impl Security {
+    async fn package(&self, name: &str, roles: Value, groups: Value) -> String {
+        id_of(&ok(api!(
+            self.f,
+            packages.create,
+            &self.owner,
+            json!({ "tenantId": self.tenant, "name": name, "roleIds": roles, "groupIds": groups })
+        )))
+    }
+
+    async fn assign(&self, package_id: &str, expires_at: Option<f64>) -> Value {
+        let mut input =
+            json!({ "tenantId": self.tenant, "packageId": package_id, "identityId": self.alice });
+        if let Some(expires_at) = expires_at {
+            input["expiresAt"] = num(expires_at);
+        }
+        ok(api!(self.f, packages.assign, &self.owner, input))
+    }
+
+    async fn update(&self, credential: &CredentialInput, package_id: &str, changes: Value) {
+        let mut input = json!({ "tenantId": self.tenant, "packageId": package_id });
+        for (key, value) in changes.as_object().unwrap() {
+            input[key] = value.clone();
+        }
+        ok(api!(self.f, packages.update, credential, input));
+    }
+
+    async fn extend(
+        &self,
+        credential: &CredentialInput,
+        package_id: &str,
+        expires_at: Value,
+    ) -> IamResult<Value> {
+        api!(
+            self.f,
+            packages.extend,
+            credential,
+            json!({
+                "tenantId": self.tenant,
+                "packageId": package_id,
+                "identityId": self.alice,
+                "expiresAt": expires_at,
+            })
+        )
+    }
+
+    async fn bindings_of(&self, assignment: &Value) -> Vec<(Value, Option<Value>)> {
+        tagged(&self.f, "bindings", &id_of(assignment))
+            .await
+            .iter()
+            .map(|binding| (binding["roleId"].clone(), binding.get("expiresAt").cloned()))
+            .collect()
+    }
+
+    async fn finance_member(&self) -> Record {
+        membership(&self.f, &self.finance, &self.alice)
+            .await
+            .unwrap()
+    }
+
+    async fn alice_can(&self, action: &str) -> bool {
+        can(&self.f, &self.f.sign_in(&self.alice).await, action).await
+    }
+}
+
+#[test]
+fn extend_refuses_to_make_a_grant_permanent_after_the_package_was_emptied_of_it() {
+    run(|| async {
+        let s = security().await;
+        let pkg = s
+            .package("Temporary access", json!([s.writer]), json!([s.finance]))
+            .await;
+        let ends = s.f.now() + DAY;
+        let assigned = s.assign(&pkg, Some(ends)).await;
+        fails(
+            s.extend(&s.as_mallory, &pkg, Value::Null).await,
+            "ACCESS_DENIED",
+        );
+        // Emptying the package of what Mallory cannot grant does not let her lengthen what the assignment holds.
+        s.update(
+            &s.as_mallory,
+            &pkg,
+            json!({ "roleIds": [], "groupIds": [s.lounge] }),
+        )
+        .await;
+        ok(s.extend(&s.as_mallory, &pkg, Value::Null).await);
+        assert_eq!(
+            s.bindings_of(&assigned).await,
+            vec![(json!(s.writer), Some(num(ends)))]
+        );
+        assert_eq!(s.finance_member().await["expiresAt"], num(ends));
+        s.f.advance(3.0 * DAY);
+        assert!(!s.alice_can("documents:write").await);
+        assert!(!s.alice_can("documents:read").await);
+    });
+}
+
+#[test]
+fn extend_lengthens_every_record_of_what_the_package_bundles_for_an_extender_with_the_rights() {
+    run(|| async {
+        let s = security().await;
+        let pkg = s
+            .package("Temporary access", json!([s.writer]), json!([s.finance]))
+            .await;
+        let assigned = s.assign(&pkg, Some(s.f.now() + DAY)).await;
+        let extended = ok(s.extend(&s.owner, &pkg, Value::Null).await);
+        assert!(extended.get("expiresAt").is_none());
+        assert_eq!(
+            s.bindings_of(&assigned).await,
+            vec![(json!(s.writer), None)]
+        );
+        assert!(s.finance_member().await.get("expiresAt").is_none());
+        s.f.advance(3.0 * DAY);
+        assert!(s.alice_can("documents:write").await);
+        assert!(s.alice_can("documents:read").await);
+    });
+}
+
+#[test]
+fn extend_leaves_records_of_roles_and_groups_taken_out_of_the_package_at_their_end() {
+    run(|| async {
+        let s = security().await;
+        let pkg = s
+            .package(
+                "Temporary access",
+                json!([s.writer, s.reader]),
+                json!([s.finance]),
+            )
+            .await;
+        let ends = s.f.now() + DAY;
+        let assigned = s.assign(&pkg, Some(ends)).await;
+        s.update(
+            &s.owner,
+            &pkg,
+            json!({ "roleIds": [s.reader], "groupIds": [s.lounge] }),
+        )
+        .await;
+        let later = s.f.now() + 10.0 * DAY;
+        ok(s.extend(&s.owner, &pkg, num(later)).await);
+        let by_role: std::collections::HashMap<String, Option<Value>> = s
+            .bindings_of(&assigned)
+            .await
+            .into_iter()
+            .map(|(role, end)| (role.as_str().unwrap().to_owned(), end))
+            .collect();
+        assert_eq!(by_role[&s.writer], Some(num(ends)));
+        assert_eq!(by_role[&s.reader], Some(num(later)));
+        assert_eq!(s.finance_member().await["expiresAt"], num(ends));
+    });
+}
+
+#[test]
+fn a_package_that_gained_the_group_later_does_not_make_a_membership_permanent() {
+    run(|| async {
+        let s = security().await;
+        let temporary = s
+            .package("Finance for a day", json!([]), json!([s.finance]))
+            .await;
+        let everyday = s.package("Everyday", json!([]), json!([s.lounge])).await;
+        let ends = s.f.now() + DAY;
+        s.assign(&temporary, Some(ends)).await;
+        s.assign(&everyday, None).await;
+        s.update(
+            &s.as_mallory,
+            &everyday,
+            json!({ "groupIds": [s.lounge, s.finance] }),
+        )
+        .await;
+        ok(api!(
+            s.f,
+            packages.revoke,
+            &s.as_mallory,
+            json!({ "tenantId": s.tenant, "packageId": temporary, "identityId": s.alice })
+        ));
+        assert_eq!(s.finance_member().await["expiresAt"], num(ends));
+        s.f.advance(3.0 * DAY);
+        assert!(!s.alice_can("documents:read").await);
+    });
+}
+
+#[test]
+fn shortening_with_a_shared_group_hands_the_membership_over_at_no_later_end() {
+    run(|| async {
+        let s = security().await;
+        let temporary = s
+            .package("Finance for a day", json!([]), json!([s.finance]))
+            .await;
+        let everyday = s.package("Everyday", json!([]), json!([s.lounge])).await;
+        let ends = s.f.now() + DAY;
+        s.assign(&temporary, Some(ends)).await;
+        let permanent = s.assign(&everyday, None).await;
+        s.update(
+            &s.as_mallory,
+            &everyday,
+            json!({ "groupIds": [s.lounge, s.finance] }),
+        )
+        .await;
+        ok(
+            s.extend(&s.as_mallory, &temporary, num(s.f.now() + 60_000.0))
+                .await,
+        );
+        assert_matches(
+            &Value::Object(s.finance_member().await),
+            json!({ "packageAssignmentId": permanent["id"], "expiresAt": num(ends) }),
+        );
+    });
+}
+
+#[test]
+fn a_package_that_bundled_the_group_from_the_start_takes_the_membership_over_with_its_own_end() {
+    run(|| async {
+        let s = security().await;
+        let long = s.package("Long", json!([]), json!([s.finance])).await;
+        let short = s.package("Short", json!([]), json!([s.finance])).await;
+        s.assign(&long, None).await;
+        let three_days = s.assign(&short, Some(s.f.now() + 3.0 * DAY)).await;
+        ok(api!(
+            s.f,
+            packages.revoke,
+            &s.owner,
+            json!({ "tenantId": s.tenant, "packageId": long, "identityId": s.alice })
+        ));
+        assert_matches(
+            &Value::Object(s.finance_member().await),
+            json!({ "packageAssignmentId": three_days["id"], "expiresAt": three_days["expiresAt"] }),
+        );
+        s.f.advance(2.0 * DAY);
+        assert!(s.alice_can("documents:read").await);
     });
 }
