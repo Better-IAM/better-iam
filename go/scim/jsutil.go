@@ -317,7 +317,7 @@ func encodeURIComponent(s string) (string, error) {
 func mustEncode(s string) string {
 	encoded, err := encodeURIComponent(s)
 	if err != nil {
-		encoded, _ = encodeURIComponent(strings.ToValidUTF8(s, "�"))
+		encoded, _ = encodeURIComponent(strings.ToValidUTF8(s, replacementChar))
 	}
 	return encoded
 }
@@ -401,7 +401,7 @@ func decodeURIComponent(s string) (string, error) {
 // formEncode is the application/x-www-form-urlencoded byte serializer URLSearchParams uses.
 func formEncode(s string) string {
 	var out strings.Builder
-	for _, c := range []byte(strings.ToValidUTF8(s, "�")) {
+	for _, c := range []byte(strings.ToValidUTF8(s, replacementChar)) {
 		switch {
 		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9', c == '*', c == '-', c == '.', c == '_':
 			out.WriteByte(c)
@@ -652,7 +652,7 @@ func decodeUTF8(b []byte) string {
 				upper = 0x8F
 			}
 		default:
-			out.WriteString("�")
+			out.WriteString(replacementChar)
 			i++
 			continue
 		}
@@ -678,7 +678,7 @@ func decodeUTF8(b []byte) string {
 		if ok {
 			out.Write(b[i:j])
 		} else {
-			out.WriteString("�")
+			out.WriteString(replacementChar)
 		}
 		i = j
 	}
@@ -751,3 +751,6 @@ func containsString(items []string, item string) bool {
 	}
 	return false
 }
+
+// replacementChar is U+FFFD.
+var replacementChar = string(rune(0xFFFD))

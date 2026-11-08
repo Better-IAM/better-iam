@@ -116,7 +116,6 @@ func TestScopesTokensResourcesAndSameEmailAccountsToTheConnectionTenant(t *testi
 	}
 }
 
-
 func TestMapsTheTitleAndEnterpriseExtensionToDeclaredIdentityAttributes(t *testing.T) {
 	f := newIsolationFixture(t)
 	created := f.request(f.a, "Users", "POST", obj(

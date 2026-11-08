@@ -125,7 +125,9 @@ func errorOutcome(err error) outcome {
 	)}
 }
 
-func toResponse(result outcome) *Response { return response(result.body, result.status, result.headers) }
+func toResponse(result outcome) *Response {
+	return response(result.body, result.status, result.headers)
+}
 
 const adminMaxBody = 64 * 1024
 
