@@ -70,7 +70,9 @@ func (e *SdJwtError) Error() string { return e.Message }
 // Name is the JavaScript error name.
 func (e *SdJwtError) Name() string { return "SdJwtError" }
 
-func sdJwtFail(reason, message string) *SdJwtError { return &SdJwtError{Reason: reason, Message: message} }
+func sdJwtFail(reason, message string) *SdJwtError {
+	return &SdJwtError{Reason: reason, Message: message}
+}
 
 // latin1Bytes is Buffer.from(text, 'ascii'/'latin1'): the low byte of each UTF-16 code unit.
 func latin1Bytes(text string) []byte {
