@@ -2,8 +2,8 @@
 //! cases of tests/protection-security.test.ts. Members and their grants come from the organization fixture (written
 //! as `identities.create`, `roles.create` and `bindings.create` write them).
 //!
-//! Every profile, token and mask goes through tokenization.ts and the KMS service helpers of kms.ts, which belong to
-//! other units and are still stubs: the end-to-end cases are ported and ignored until those land. Input validation
+//! Every profile, token and mask goes through tokenization.ts and the KMS service helpers of kms.ts, which belongs to
+//! another unit and is still a stub: the end-to-end cases are ported and ignored until it lands. Input validation
 //! (which runs before anything is looked up) and the retention sweep (which reads and writes stored records only) run
 //! now.
 
@@ -349,7 +349,7 @@ fn sweep_never_takes_the_token_counter_below_zero() {
 }
 
 #[test]
-#[ignore = "blocked on tokenization.ts and kms.ts (profileName, kmsDataKeyFor, ... are stubs)"]
+#[ignore = "blocked on kms.ts (kmsDataKeyFor, kmsOpenDataKeyFor, ... are stubs)"]
 fn tokenizes_card_numbers_into_format_preserving_tokens_and_back() {
     run(|| async {
         let f = organization(|_| {}).await;
@@ -478,7 +478,7 @@ fn tokenizes_card_numbers_into_format_preserving_tokens_and_back() {
 }
 
 #[test]
-#[ignore = "blocked on tokenization.ts and kms.ts (profileName, kmsDataKeyFor, ... are stubs)"]
+#[ignore = "blocked on kms.ts (kmsDataKeyFor, kmsOpenDataKeyFor, ... are stubs)"]
 fn keeps_each_data_type_recognizable_and_masks_it_for_display() {
     run(|| async {
         let f = organization(|_| {}).await;
@@ -574,7 +574,7 @@ fn keeps_each_data_type_recognizable_and_masks_it_for_display() {
 }
 
 #[test]
-#[ignore = "blocked on tokenization.ts and kms.ts (profileName, kmsDataKeyFor, ... are stubs)"]
+#[ignore = "blocked on kms.ts (kmsDataKeyFor, kmsOpenDataKeyFor, ... are stubs)"]
 fn decides_detokenizing_by_profile_and_purpose_apart_from_tokenizing_and_masking() {
     run(|| async {
         let f = organization(|_| {}).await;
@@ -654,7 +654,7 @@ fn decides_detokenizing_by_profile_and_purpose_apart_from_tokenizing_and_masking
 }
 
 #[test]
-#[ignore = "blocked on tokenization.ts and kms.ts (profileName, kmsDataKeyFor, ... are stubs)"]
+#[ignore = "blocked on kms.ts (kmsDataKeyFor, kmsOpenDataKeyFor, ... are stubs)"]
 fn erases_by_token_or_by_value_sweeps_by_retention_and_follows_its_kms_key() {
     run(|| async {
         let f = organization(|_| {}).await;
@@ -764,7 +764,7 @@ impl IamPlugin for SpyPlugin {
 }
 
 #[test]
-#[ignore = "blocked on tokenization.ts and kms.ts (profileName, kmsDataKeyFor, ... are stubs)"]
+#[ignore = "blocked on kms.ts (kmsDataKeyFor, kmsOpenDataKeyFor, ... are stubs)"]
 fn audits_refusals_with_the_purpose_guards_retention_and_tidies_up_after_itself() {
     run(|| async {
         let seen = Arc::new(Mutex::new(Vec::new()));
