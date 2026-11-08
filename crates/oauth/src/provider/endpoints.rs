@@ -1315,18 +1315,6 @@ async fn save_token(
         let jti = if jwt { nanoid(21) } else { nanoid(43) };
         token.payload.insert("jti".into(), json!(jti));
     }
-    if matches!(token.model, "AccessToken" | "ClientCredentials") {
-        token.payload.insert(
-            "format".into(),
-            json!(
-                token
-                    .resource_server
-                    .as_ref()
-                    .map(|server| server.access_token_format.clone())
-                    .unwrap_or_else(|| "opaque".into())
-            ),
-        );
-    }
     let ttl = match n(&token.payload, "exp") {
         Some(exp) => exp - now,
         None => expiration,
@@ -3203,9 +3191,6 @@ async fn interactions(ctx: &mut Ctx<'_>, auth: &mut Auth) -> ProviderResult<bool
     );
     if let Some(result) = &auth.result {
         interaction.insert("lastSubmission".into(), Value::Object(result.clone()));
-    }
-    if let Some(account) = session.account_id() {
-        interaction.insert("accountId".into(), json!(account));
     }
     interaction.insert("params".into(), Value::Object(auth.params.to_plain()));
     interaction.insert("trusted".into(), json!(auth.trusted));
@@ -5439,10 +5424,27 @@ async fn device_authorization_endpoint(ctx: &mut Ctx<'_>) -> ProviderResult<()> 
     let mut code = Token::new("DeviceCode", Some(&client));
     code.set(
         "deviceInfo",
-        Some(json!({
-            "ip": ctx.header("x-forwarded-for").filter(|_| ctx.inner.config.trust_proxy).map(|value| value.split(',').next().unwrap_or_default().trim().to_owned()),
-            "ua": ctx.header("user-agent"),
-        })),
+        Some({
+            let mut info = Map::new();
+            if let Some(ip) = ctx
+                .header("x-forwarded-for")
+                .filter(|_| ctx.inner.config.trust_proxy)
+                .map(|value| {
+                    value
+                        .split(',')
+                        .next()
+                        .unwrap_or_default()
+                        .trim()
+                        .to_owned()
+                })
+            {
+                info.insert("ip".into(), json!(ip));
+            }
+            if let Some(agent) = ctx.header("user-agent") {
+                info.insert("ua".into(), json!(agent));
+            }
+            Value::Object(info)
+        }),
     );
     code.set("params", Some(Value::Object(auth.params.to_plain())));
     code.set("userCode", Some(json!(normalize_user_code(&user_code))));
