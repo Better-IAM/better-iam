@@ -16,8 +16,6 @@ import (
 	"github.com/Better-IAM/better-iam/go/core"
 )
 
-const sshTestHour = 3_600_000.0
-
 // sshIn is a request body for an API call.
 func sshIn[T any](pairs ...any) In[T] { return Input[T](core.NewObject(pairs...)) }
 
@@ -38,7 +36,7 @@ type sshScenario struct {
 	roleID       string
 }
 
-func newSshFixture(t *testing.T, ssh *Toggle[SshOptions]) (*directoryFixture, string, core.CredentialInput) {
+func newSshAPIFixture(t *testing.T, ssh *Toggle[SshOptions]) (*directoryFixture, string, core.CredentialInput) {
 	t.Helper()
 	f := newDirectoryFixture(t, func(options *BetterIamOptions) { options.Ssh = ssh })
 	tenantID, owner := f.organization("Acme", "owner@acme.test")
@@ -47,7 +45,7 @@ func newSshFixture(t *testing.T, ssh *Toggle[SshOptions]) (*directoryFixture, st
 
 func newSshScenario(t *testing.T) *sshScenario {
 	t.Helper()
-	f, tenantID, owner := newSshFixture(t, On[SshOptions]())
+	f, tenantID, owner := newSshAPIFixture(t, On[SshOptions]())
 	s := &sshScenario{directoryFixture: f, tenantID: tenantID, owner: owner}
 	api := f.iam.API
 	claim := answerObject(api.Domains.Add(f.ctx, owner, sshIn[apitypes.DomainsAddInput]("tenantId", tenantID, "domain", "acme.test")))
@@ -188,7 +186,7 @@ func expectSshJSON(t *testing.T, value any, want string) {
 }
 
 func TestSshIsOffUnlessTheOptionIsSet(t *testing.T) {
-	f, tenantID, owner := newSshFixture(t, nil)
+	f, tenantID, owner := newSshAPIFixture(t, nil)
 	_, err := f.iam.API.Ssh.Setup(f.ctx, owner, sshIn[apitypes.SshSetupInput]("tenantId", tenantID))
 	expectError(t, err, "FEATURE_DISABLED", "The SSH certificate authority is not enabled on this deployment")
 	// The ssh-login type and ssh:login are not in the catalog either.
@@ -416,7 +414,7 @@ func TestSshEnforcesTenantSettings(t *testing.T) {
 	expectError(t, err, "ACCESS_DENIED", "Access denied")
 }
 
-func TestSshRevokesCertificatesAndPublishesThemInTheRevocationLists(t *testing.T) {
+func TestSshAPIRevokesCertificatesAndPublishesThemInTheRevocationLists(t *testing.T) {
 	s := newSshScenario(t)
 	publicKey := sshTestPublicKey(t, "", "")
 	first := s.mustIssue(s.aliceSession, "publicKey", publicKey)
@@ -519,7 +517,7 @@ func TestSshEndsCertificatesWithTheSessionOrAPIKeyThatRequestedThem(t *testing.T
 	}
 }
 
-func TestSshSweepsCertificatesWhoseHolderLoginOrAccessWentAway(t *testing.T) {
+func TestSshAPISweepsCertificatesWhoseHolderLoginOrAccessWentAway(t *testing.T) {
 	s := newSshScenario(t)
 	api := s.iam.API
 	bob, bobSession := s.person(s.tenantID, "bob")
@@ -598,7 +596,7 @@ func TestSshCapsCertificatesAtTheTimeLimitedGrantsThatAllowThem(t *testing.T) {
 	}
 }
 
-func TestSshKeepsTheHostAuthorityToNamesTheOrganizationOwns(t *testing.T) {
+func TestSshAPIKeepsTheHostAuthorityToNamesTheOrganizationOwns(t *testing.T) {
 	s := newSshScenario(t)
 	api := s.iam.API
 	update := func(patterns ...any) error {
@@ -738,7 +736,7 @@ func TestSshRebuildsHostsSupersedesCertificatesRotatesRenewalTokensRefusesKeySwa
 	}
 }
 
-func TestSshRevokesEveryUserCertificateWhileTheOrganizationIsSuspended(t *testing.T) {
+func TestSshAPIRevokesEveryUserCertificateWhileTheOrganizationIsSuspended(t *testing.T) {
 	s := newSshScenario(t)
 	s.mustIssue(s.aliceSession, "publicKey", sshTestPublicKey(t, "", ""))
 	answer(s.iam.API.Tenants.SetStatus(s.ctx, s.rootCred, sshIn[apitypes.TenantsSetStatusInput]("tenantId", s.tenantID, "status", "suspended")))
