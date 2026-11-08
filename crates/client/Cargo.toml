@@ -1,0 +1,51 @@
+[package]
+name = "better-iam-client"
+description = "Typed client for the Better IAM HTTP API in Rust: every route through the generated request and result types, with the browser client's CSRF headers, bearer checks, rate-limit retry, request ids, a session store and registered-device proofs."
+readme = "README.md"
+keywords = ["iam", "client", "authorization", "authentication", "sdk"]
+categories = ["authentication", "api-bindings", "web-programming::http-client"]
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+
+[features]
+default = ["default-transport"]
+# The built-in HTTP(S) transport (hyper with rustls and the webpki roots). Without it, pass your own `Fetch`.
+default-transport = ["dep:hyper", "dep:hyper-util", "dep:hyper-rustls", "dep:http-body-util", "dep:rustls"]
+
+[dependencies]
+better-iam-core.workspace = true
+better-iam-types.workspace = true
+async-trait.workspace = true
+bytes.workspace = true
+futures.workspace = true
+indexmap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+tokio = { workspace = true, features = ["sync", "time"] }
+http = "1"
+url = "2"
+uuid = { version = "1", features = ["v4"] }
+base64 = "0.22"
+# Registered-device proofs: ECDSA P-256 with SHA-256 (ES256), the WebCrypto algorithm of the TypeScript client.
+p256 = { version = "0.13", default-features = false, features = ["ecdsa", "std"] }
+rand = "0.8"
+hyper = { version = "1", features = ["client", "http1"], optional = true }
+hyper-util = { version = "0.1", features = ["client-legacy", "http1", "tokio"], optional = true }
+hyper-rustls = { version = "0.27", default-features = false, features = ["http1", "ring", "tls12", "webpki-roots"], optional = true }
+http-body-util = { version = "0.1", optional = true }
+rustls = { workspace = true, optional = true }
+
+[dev-dependencies]
+better-iam-server.workspace = true
+better-iam-adapter-sqlite.workspace = true
+better-iam-auth.workspace = true
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "time", "test-util"] }
+
+[lib]
+doctest = false
