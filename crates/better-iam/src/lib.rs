@@ -13,6 +13,7 @@
 //! | `sqlite` (default), `postgres`, `libsql` | [`adapter_sqlite`], [`adapter_postgres`], [`adapter_libsql`] | `better-iam/adapter-*` |
 //! | `client` (default) | [`client`] (with [`client::session`], [`client::device`]) | `better-iam/client`, `/client/session`, `/client/device` |
 //! | `projects` (default) | [`projects`] | `better-iam/projects` |
+//! | `middleware` (`axum`, `actix-web` add the framework integrations) | [`middleware`] | `better-iam/middleware` |
 //! | `types` | [`types`] | the API types |
 //!
 //! ```ignore
@@ -76,6 +77,13 @@ pub mod client {
 #[cfg(feature = "projects")]
 pub mod projects {
     pub use better_iam_projects::*;
+}
+
+/// `better-iam/middleware`: framework middleware (the tower layer, request helpers, route guards, and the axum and
+/// actix-web integrations behind the `axum` and `actix-web` features).
+#[cfg(feature = "middleware")]
+pub mod middleware {
+    pub use better_iam_middleware::*;
 }
 
 /// The request, result and model types of the HTTP API.
