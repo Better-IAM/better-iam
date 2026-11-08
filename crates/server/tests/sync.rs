@@ -1,10 +1,6 @@
 //! Configuration as code (`config.export`, `config.plan`, `config.apply`). Ported from tests/config-sync.test.ts,
 //! tests/config-governance.test.ts, tests/security-sync.test.ts and the configuration parts of
 //! tests/config-review.test.ts.
-//!
-//! Every configuration call reads the tenant's AI kinds (ai-sync.ts `readAiState`, `exportAi`, `applyAi`), which are
-//! another unit's stubs: the scenarios are ignored until that unit is ported. Scenarios with access packages also need
-//! package-rules.ts and api/packages.ts (other units).
 
 mod organization_fixture;
 
@@ -14,8 +10,6 @@ use better_iam_core::{
 use better_iam_server::api::Reply;
 use organization_fixture::{Org, assert_matches, body, fails, ok, organization, run};
 use serde_json::{Value, json};
-
-const AI_SYNC: &str = "needs ai-sync.ts readAiState, exportAi and applyAi (ai-sync unit)";
 
 async fn plan(f: &Org, credential: &CredentialInput, input: Value) -> IamResult<Value> {
     f.iam
@@ -168,9 +162,7 @@ async fn list(f: &Org, group: &str, input: Value) -> Value {
 }
 
 #[test]
-#[ignore = "needs ai-sync.ts readAiState, exportAi and applyAi (ai-sync unit)"]
 fn plans_applies_exports_and_converges_a_tenant_configuration() {
-    let _ = AI_SYNC;
     run(|| async {
         let f = tenant_defined_fixture().await;
         let tenant_id = f.tenant_id.clone();
@@ -446,7 +438,6 @@ fn plans_applies_exports_and_converges_a_tenant_configuration() {
 }
 
 #[test]
-#[ignore = "needs ai-sync.ts readAiState, exportAi and applyAi (ai-sync unit)"]
 fn rejects_malformed_or_dangling_configurations_and_applies_atomically_under_authorization() {
     run(|| async {
         let f = tenant_defined_fixture().await;
@@ -571,7 +562,6 @@ fn rejects_malformed_or_dangling_configurations_and_applies_atomically_under_aut
 }
 
 #[test]
-#[ignore = "needs ai-sync.ts readAiState, exportAi and applyAi (ai-sync unit)"]
 fn exports_plans_applies_and_prunes_invariants_and_agreements_by_name() {
     run(|| async {
         let f = organization(|_| {}).await;
@@ -831,7 +821,6 @@ async fn security_setup() -> (Org, CredentialInput, Value) {
 }
 
 #[test]
-#[ignore = "needs ai-sync.ts readAiState, exportAi and applyAi (ai-sync unit)"]
 fn binds_the_administrators_group_never_a_directory_group_that_took_its_name() {
     run(|| async {
         let (f, owner, _writer) = security_setup().await;
@@ -896,7 +885,6 @@ fn binds_the_administrators_group_never_a_directory_group_that_took_its_name() {
 }
 
 #[test]
-#[ignore = "needs ai-sync.ts readAiState, exportAi and applyAi (ai-sync unit)"]
 fn keeps_a_team_approver_group_and_the_dates_of_a_temporary_grant_when_it_replaces_a_binding() {
     run(|| async {
         let (f, owner, writer) = security_setup().await;
@@ -1004,7 +992,6 @@ async fn create_package(f: &Org, owner: &CredentialInput, input: Value) -> Value
 }
 
 #[test]
-#[ignore = "needs ai-sync.ts (ai-sync unit) and api/packages.ts createPackage/updatePackage (api-packages unit)"]
 fn treats_a_null_package_max_duration_as_no_cap_and_converges() {
     run(|| async {
         let (f, tenant_id, owner, reader) = review_setup().await;
@@ -1127,7 +1114,6 @@ fn treats_a_null_package_max_duration_as_no_cap_and_converges() {
 }
 
 #[test]
-#[ignore = "needs ai-sync.ts (ai-sync unit) and api/packages.ts createPackage (api-packages unit)"]
 fn rejects_a_string_or_out_of_range_package_max_duration_at_plan_time() {
     run(|| async {
         let (f, tenant_id, owner, reader) = review_setup().await;
@@ -1196,7 +1182,6 @@ fn rejects_a_string_or_out_of_range_package_max_duration_at_plan_time() {
 }
 
 #[test]
-#[ignore = "needs ai-sync.ts readAiState, exportAi and applyAi (ai-sync unit)"]
 fn treats_a_null_binding_max_activation_as_no_cap_and_rejects_bad_values_at_plan_time() {
     run(|| async {
         let (f, tenant_id, owner, reader) = review_setup().await;
@@ -1343,7 +1328,6 @@ fn treats_a_null_binding_max_activation_as_no_cap_and_rejects_bad_values_at_plan
 }
 
 #[test]
-#[ignore = "needs ai-sync.ts (ai-sync unit) and api/packages.ts (api-packages unit)"]
 fn matches_package_names_regardless_of_case_and_renames_in_place() {
     run(|| async {
         let (f, tenant_id, owner, reader) = review_setup().await;
@@ -1443,7 +1427,6 @@ fn matches_package_names_regardless_of_case_and_renames_in_place() {
 }
 
 #[test]
-#[ignore = "needs ai-sync.ts (ai-sync unit) and api/packages.ts (api-packages unit)"]
 fn renames_on_a_case_only_difference_without_prune_instead_of_creating_a_second_package() {
     run(|| async {
         let (f, tenant_id, owner, reader) = review_setup().await;
@@ -1497,7 +1480,6 @@ fn renames_on_a_case_only_difference_without_prune_instead_of_creating_a_second_
 }
 
 #[test]
-#[ignore = "needs ai-sync.ts (ai-sync unit) and api/packages.ts createPackage (api-packages unit)"]
 fn rejects_package_names_that_differ_only_by_case_as_duplicates_at_plan_time() {
     run(|| async {
         let (f, tenant_id, owner, reader) = review_setup().await;

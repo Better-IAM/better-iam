@@ -2282,26 +2282,30 @@ async fn spend_setup() -> SpendSetup {
 }
 
 /// `call(f, token)`: one model call of 1000 input and 1000 output tokens through the in-process gateway, metered;
-/// `"ok"`, or the refusal (`{ reason, ... }`) when the gateway denies it.
+/// `"ok"`, or the refused check (`{ allowed: false, reason, ... }`) when the gateway denies it.
 async fn call(f: &Fixture, credential: &better_iam_core::CredentialInput) -> Value {
     match f
         .iam
         .inference
         .authorize(credential, &json!({ "model": "haiku" }))
         .await
+        .expect("authorized or denied")
     {
-        Ok(permit) => {
+        better_iam_server::inference_gateway::GatewayAuthorization::Permit(permit) => {
             f.iam
                 .inference
                 .record(
-                    &permit,
+                    &permit.principal,
+                    &permit.tenant_id,
                     &json!({ "model": "haiku", "inputTokens": 1000, "outputTokens": 1000 }),
                 )
                 .await
                 .expect("metered");
             json!("ok")
         }
-        Err(error) => json!({ "reason": error.code, "message": error.message }),
+        better_iam_server::inference_gateway::GatewayAuthorization::Denied(check) => {
+            check.to_json()
+        }
     }
 }
 
