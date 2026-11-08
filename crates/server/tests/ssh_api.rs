@@ -1,8 +1,7 @@
-//! The SSH certificate authority's API group (`api/ssh.ts`), ported from tests/ssh.test.ts. Keys are generated
-//! in-process as tests/support/ssh.ts does, and certificates are read back with a parser of the OpenSSH certificate
-//! format written here (as `parseSshCertificate` reads them). The suites that run the authority need the `ssh` and
-//! `ssh-ca` modules (`ssh.ts`, `ssh-ca.ts`: another unit) and are ignored until those are ported; the checks every
-//! route makes before it reaches them run now.
+//! The SSH certificate authority's API group (`api/ssh.ts`), ported from tests/ssh.test.ts: keys are generated
+//! in-process as tests/support/ssh.ts does, certificates are read back with `parseSshCertificate`, and the
+//! ssh-keygen checks run when it is installed. One more case covers the checks every route makes before it reaches
+//! the authority.
 
 mod organization_fixture;
 
@@ -14,6 +13,7 @@ use base64::Engine;
 use base64::engine::general_purpose::{STANDARD, STANDARD_NO_PAD};
 use better_iam_core::{CredentialInput, Filter, IamError};
 use better_iam_server::options::{AuthorizationRequest, DomainOptions, ResourceTarget, Toggle};
+use better_iam_server::ssh_ca::{ParsedSshCertificate, parse_ssh_certificate};
 use bytes::Bytes;
 use http::Method;
 use organization_fixture::{ORIGIN, Org, bearer, body, code, fails, ok, organization, run};
@@ -96,134 +96,9 @@ fn line_fingerprint(line: &str) -> String {
     fingerprint(&STANDARD.decode(data).expect("base64"))
 }
 
-struct Reader<'a> {
-    data: &'a [u8],
-    position: usize,
-}
-
-impl<'a> Reader<'a> {
-    fn new(data: &'a [u8]) -> Self {
-        Self { data, position: 0 }
-    }
-    fn take(&mut self, count: usize) -> &'a [u8] {
-        let slice = &self.data[self.position..self.position + count];
-        self.position += count;
-        slice
-    }
-    fn u32(&mut self) -> u32 {
-        u32::from_be_bytes(self.take(4).try_into().unwrap())
-    }
-    fn u64(&mut self) -> u64 {
-        u64::from_be_bytes(self.take(8).try_into().unwrap())
-    }
-    fn string(&mut self) -> &'a [u8] {
-        let length = self.u32() as usize;
-        self.take(length)
-    }
-    fn text(&mut self) -> String {
-        String::from_utf8(self.string().to_vec()).unwrap()
-    }
-    fn done(&self) -> bool {
-        self.position >= self.data.len()
-    }
-}
-
-#[derive(Debug)]
-struct ParsedCertificate {
-    kind_name: String,
-    public_key_fingerprint: String,
-    kind: u32,
-    key_id: String,
-    principals: Vec<String>,
-    valid_before: u64,
-    critical_options: Vec<(String, String)>,
-    extensions: Vec<String>,
-    signature_key_fingerprint: String,
-    signature_valid: bool,
-}
-
-fn options_of(data: &[u8], critical: bool) -> Vec<(String, String)> {
-    let mut reader = Reader::new(data);
-    let mut out = Vec::new();
-    while !reader.done() {
-        let name = reader.text();
-        let value = reader.string();
-        let value = if critical && !value.is_empty() {
-            Reader::new(value).text()
-        } else {
-            String::new()
-        };
-        out.push((name, value));
-    }
-    out
-}
-
 /// `parseSshCertificate(line)`.
-fn parse_certificate(line: &str) -> ParsedCertificate {
-    let mut parts = line.split_whitespace();
-    let type_name = parts.next().unwrap().to_owned();
-    let blob = STANDARD.decode(parts.next().unwrap()).unwrap();
-    let base = type_name.strip_suffix("-cert-v01@openssh.com").unwrap();
-    let key_type = if base.starts_with("sk-") {
-        format!("{base}@openssh.com")
-    } else {
-        base.to_owned()
-    };
-    let mut cert = Reader::new(&blob);
-    assert_eq!(cert.text(), type_name);
-    cert.string(); // nonce
-    let key_start = cert.position;
-    let fields = match key_type.as_str() {
-        "ssh-ed25519" => 1,
-        "sk-ecdsa-sha2-nistp256@openssh.com" => 3,
-        _ => 2,
-    };
-    for _ in 0..fields {
-        cert.string();
-    }
-    let mut key_blob = write(&[key_type.as_bytes()]);
-    key_blob.extend_from_slice(&blob[key_start..cert.position]);
-    let _serial = cert.u64();
-    let kind = cert.u32();
-    let key_id = cert.text();
-    let mut principal_reader = Reader::new(cert.string());
-    let mut principals = Vec::new();
-    while !principal_reader.done() {
-        principals.push(principal_reader.text());
-    }
-    let _valid_after = cert.u64();
-    let valid_before = cert.u64();
-    let critical_options = options_of(cert.string(), true);
-    let extensions = options_of(cert.string(), false)
-        .into_iter()
-        .map(|(name, _)| name)
-        .collect();
-    cert.string(); // reserved
-    let signature_key = cert.string();
-    let body_length = cert.position;
-    let mut signature = Reader::new(cert.string());
-    assert!(cert.done(), "unexpected data after the certificate");
-    let algorithm = signature.text();
-    let value = signature.string();
-    let mut ca = Reader::new(signature_key);
-    let signature_valid = algorithm == "ssh-ed25519" && ca.text() == "ssh-ed25519" && {
-        let raw: [u8; 32] = ca.string().try_into().unwrap();
-        let key = ed25519_dalek::VerifyingKey::from_bytes(&raw).unwrap();
-        let signature = ed25519_dalek::Signature::from_slice(value).unwrap();
-        key.verify_strict(&blob[..body_length], &signature).is_ok()
-    };
-    ParsedCertificate {
-        kind_name: type_name,
-        public_key_fingerprint: fingerprint(&key_blob),
-        kind,
-        key_id,
-        principals,
-        valid_before,
-        critical_options,
-        extensions,
-        signature_key_fingerprint: fingerprint(signature_key),
-        signature_valid,
-    }
+fn parse_certificate(line: &str) -> ParsedSshCertificate {
+    parse_ssh_certificate(line).expect("an OpenSSH certificate")
 }
 
 /// The system's ssh-keygen, when installed.
@@ -608,7 +483,6 @@ fn validates_input_and_finds_records_before_reaching_the_authority() {
 // --- tests/ssh.test.ts -------------------------------------------------------------------------------------------
 
 #[test]
-#[ignore = "needs ssh.ts assertSsh (ssh unit)"]
 fn is_off_unless_the_ssh_option_is_set() {
     run(|| async {
         let f = organization(|_| {}).await;
@@ -627,7 +501,6 @@ fn is_off_unless_the_ssh_option_is_set() {
 }
 
 #[test]
-#[ignore = "needs ssh.ts and ssh-ca.ts (ssh unit)"]
 fn sets_up_authorities_enrolls_hosts_and_hands_them_what_sshd_needs() {
     run(|| async {
         let t = setup().await;
@@ -765,7 +638,6 @@ fn sets_up_authorities_enrolls_hosts_and_hands_them_what_sshd_needs() {
 }
 
 #[test]
-#[ignore = "needs ssh.ts and ssh-ca.ts (ssh unit)"]
 fn issues_certificates_for_exactly_the_hosts_and_logins_policies_allow() {
     run(|| async {
         let t = setup().await;
@@ -810,7 +682,7 @@ fn issues_certificates_for_exactly_the_hosts_and_logins_policies_allow() {
         assert_eq!(cert.key_id, format!("alice@acme.test ({})", t.alice));
         assert_eq!(
             cert.valid_before,
-            (issued["validBefore"].as_f64().unwrap() / 1000.0).floor() as u64
+            (issued["validBefore"].as_f64().unwrap() / 1000.0).floor()
         );
         assert!(s(&issued["knownHosts"]).contains("@cert-authority"));
         let krl = STANDARD.decode(s(&issued["revokedHostKeys"])).unwrap();
@@ -931,7 +803,6 @@ fn issues_certificates_for_exactly_the_hosts_and_logins_policies_allow() {
 }
 
 #[test]
-#[ignore = "needs ssh.ts and ssh-ca.ts (ssh unit)"]
 fn enforces_tenant_settings_mfa_security_keys_source_address_lifetimes() {
     run(|| async {
         let t = setup().await;
@@ -974,9 +845,9 @@ fn enforces_tenant_settings_mfa_security_keys_source_address_lifetimes() {
         .unwrap();
         assert_eq!(sk["validBefore"].as_f64().unwrap() - t.f.now(), 600_000.0);
         let parsed = parse_certificate(&s(&sk["certificate"]));
-        assert_eq!(parsed.kind_name, "sk-ssh-ed25519-cert-v01@openssh.com");
+        assert_eq!(parsed.r#type, "sk-ssh-ed25519-cert-v01@openssh.com");
         assert_eq!(
-            parsed.critical_options,
+            parsed.critical_options.into_iter().collect::<Vec<_>>(),
             vec![("verify-required".to_owned(), String::new())]
         );
 
@@ -1025,7 +896,6 @@ fn enforces_tenant_settings_mfa_security_keys_source_address_lifetimes() {
 }
 
 #[test]
-#[ignore = "needs ssh.ts and ssh-ca.ts (ssh unit)"]
 fn revokes_certificates_and_publishes_them_in_the_revocation_lists() {
     run(|| async {
         let t = setup().await;
@@ -1156,7 +1026,6 @@ fn revokes_certificates_and_publishes_them_in_the_revocation_lists() {
 }
 
 #[test]
-#[ignore = "needs ssh.ts and ssh-ca.ts (ssh unit)"]
 fn ends_certificates_with_the_session_or_api_key_that_requested_them() {
     run(|| async {
         let t = setup().await;
@@ -1215,8 +1084,8 @@ fn ends_certificates_with_the_session_or_api_key_that_requested_them() {
                 .await
                 .unwrap();
         assert_eq!(
-            serde_json::to_value(&swept).unwrap(),
-            json!({ "examined": 2, "revoked": 2, "byReason": { "session-ended": 2 } })
+            json!({ "examined": swept.examined, "revoked": swept.revoked, "byReason": swept.by_reason }),
+            json!({ "examined": 2.0, "revoked": 2.0, "byReason": { "session-ended": 2 } })
         );
         let records = ok(api
             .ssh
@@ -1246,7 +1115,6 @@ fn ends_certificates_with_the_session_or_api_key_that_requested_them() {
 }
 
 #[test]
-#[ignore = "needs ssh.ts and ssh-ca.ts (ssh unit)"]
 fn sweeps_certificates_whose_holder_login_or_access_went_away() {
     run(|| async {
         let t = setup().await;
@@ -1266,8 +1134,8 @@ fn sweeps_certificates_whose_holder_login_or_access_went_away() {
             .unwrap();
         let swept = t.f.iam.ssh.sweep(None).await.unwrap();
         assert_eq!(
-            serde_json::to_value(&swept).unwrap(),
-            json!({ "examined": 2, "revoked": 0, "byReason": {} })
+            json!({ "examined": swept.examined, "revoked": swept.revoked, "byReason": swept.by_reason }),
+            json!({ "examined": 2.0, "revoked": 0.0, "byReason": {} })
         );
 
         // Alice's account is disabled: the revocation list refuses her certificate even before the sweep runs.
@@ -1316,8 +1184,8 @@ fn sweeps_certificates_whose_holder_login_or_access_went_away() {
                 .await
                 .unwrap();
         assert_eq!(
-            serde_json::to_value(&swept).unwrap(),
-            json!({ "examined": 2, "revoked": 2, "byReason": { "identity-inactive": 1, "access-changed": 1 } })
+            json!({ "examined": swept.examined, "revoked": swept.revoked, "byReason": swept.by_reason }),
+            json!({ "examined": 2.0, "revoked": 2.0, "byReason": { "identity-inactive": 1, "access-changed": 1 } })
         );
         let records = ok(api
             .ssh
@@ -1374,7 +1242,6 @@ fn sweeps_certificates_whose_holder_login_or_access_went_away() {
 }
 
 #[test]
-#[ignore = "needs ssh.ts and ssh-ca.ts (ssh unit)"]
 fn caps_certificates_at_the_time_limited_grants_that_allow_them() {
     run(|| async {
         let t = setup().await;
@@ -1413,7 +1280,6 @@ fn caps_certificates_at_the_time_limited_grants_that_allow_them() {
 }
 
 #[test]
-#[ignore = "needs ssh.ts and ssh-ca.ts (ssh unit)"]
 fn keeps_the_host_authority_to_names_the_organization_owns_unique_per_host() {
     run(|| async {
         let t = setup().await;
@@ -1520,7 +1386,6 @@ fn keeps_the_host_authority_to_names_the_organization_owns_unique_per_host() {
 }
 
 #[test]
-#[ignore = "needs ssh.ts and ssh-ca.ts (ssh unit)"]
 fn scopes_host_administration_to_the_names_an_administrator_manages() {
     run(|| async {
         let t = setup().await;
@@ -1561,7 +1426,6 @@ fn scopes_host_administration_to_the_names_an_administrator_manages() {
 }
 
 #[test]
-#[ignore = "needs ssh.ts and ssh-ca.ts (ssh unit)"]
 fn rebuilds_hosts_supersedes_old_certificates_rotates_renewal_tokens_refuses_key_swaps() {
     run(|| async {
         let t = setup().await;
@@ -1663,7 +1527,6 @@ fn rebuilds_hosts_supersedes_old_certificates_rotates_renewal_tokens_refuses_key
 }
 
 #[test]
-#[ignore = "needs ssh.ts and ssh-ca.ts (ssh unit)"]
 fn revokes_every_user_certificate_while_the_organization_is_suspended() {
     run(|| async {
         let t = setup().await;
@@ -1697,7 +1560,6 @@ fn revokes_every_user_certificate_while_the_organization_is_suspended() {
 }
 
 #[test]
-#[ignore = "needs ssh.ts and ssh-ca.ts (ssh unit)"]
 fn rotates_authorities_without_breaking_certificates_already_issued() {
     run(|| async {
         let t = setup().await;
@@ -1798,7 +1660,6 @@ fn rotates_authorities_without_breaking_certificates_already_issued() {
 }
 
 #[test]
-#[ignore = "needs ssh.ts and ssh-ca.ts (ssh unit)"]
 fn never_lets_the_platform_root_override_open_an_organization_host() {
     run(|| async {
         let t = setup().await;
@@ -1828,7 +1689,6 @@ fn never_lets_the_platform_root_override_open_an_organization_host() {
 }
 
 #[test]
-#[ignore = "needs ssh.ts and ssh-ca.ts (ssh unit)"]
 fn serves_hosts_over_http_without_a_session_and_members_with_a_bearer_token() {
     run(|| async {
         let t = setup().await;
@@ -1901,7 +1761,6 @@ fn serves_hosts_over_http_without_a_session_and_members_with_a_bearer_token() {
 }
 
 #[test]
-#[ignore = "needs ssh.ts and ssh-ca.ts (ssh unit)"]
 fn produces_a_user_certificate_ssh_keygen_reads() {
     let Some(keygen) = ssh_keygen() else {
         return;

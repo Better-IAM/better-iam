@@ -40,8 +40,9 @@ use crate::ssh::{
     tenant_authorities, trust_bundle, verified_domains,
 };
 use crate::ssh_ca::{
-    SSH_CERT_HOST, SSH_CERT_USER, SshPublicKey, parse_ssh_public_key, sign_ssh_certificate,
-    ssh_host_address, ssh_key_line, ssh_login, ssh_login_principal, ssh_serial,
+    SSH_CERT_HOST, SSH_CERT_USER, SshCertificateSpec, SshPublicKey, parse_ssh_public_key,
+    sign_ssh_certificate, ssh_host_address, ssh_key_line, ssh_login, ssh_login_principal,
+    ssh_serial,
 };
 use crate::utils::{by_id, hash, id, same_hash, token};
 use crate::validation::{integer, text};
@@ -118,28 +119,6 @@ fn truncate_utf16(value: &str, max: usize) -> String {
     out
 }
 
-/// `serial.toString()` of the bigint `sshSerial` returns, however the JSON form carries it.
-fn serial_text(serial: &Value) -> String {
-    match serial {
-        Value::String(text) => text.clone(),
-        Value::Number(number) => number.to_string(),
-        Value::Object(map) => map
-            .get("$bigint")
-            .map(|inner| js_string(Some(inner)))
-            .unwrap_or_default(),
-        other => js_string(Some(other)),
-    }
-}
-
-/// The `line` member of what `signSshCertificate` returns.
-fn signed_line(signed: &Value) -> String {
-    signed
-        .get("line")
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_owned()
-}
-
 /// `key.comment?.replace(/[^\x20-\x7e]/g, '_')` (one `_` per UTF-16 code unit).
 fn printable_comment(comment: &str) -> String {
     let mut out = String::new();
@@ -205,7 +184,7 @@ fn public_authority(authority: &SshAuthority) -> Value {
     let mut view = Map::new();
     view.insert("id".into(), s(&authority.id));
     view.insert("tenantId".into(), s(&authority.tenant_id));
-    view.insert("kind".into(), authority.kind.clone());
+    view.insert("kind".into(), s(&authority.kind));
     view.insert("status".into(), s(&authority.status));
     view.insert("algorithm".into(), s(&authority.algorithm));
     view.insert("publicKey".into(), s(&authority.public_key));
@@ -406,7 +385,7 @@ fn access_of(
             if logins.is_some_and(|wanted| !wanted.contains(login)) {
                 continue;
             }
-            let resource = labeled.apply(&login_resource(host, login)?);
+            let resource = labeled.apply(&login_resource(host, login));
             if decide_on(prepared, &resource, Some(SSH_LOGIN_ACTION))?.allowed {
                 allowed.push(login.clone());
             }
@@ -416,7 +395,7 @@ fn access_of(
         }
         let mut forwarding = IndexMap::new();
         for (action, _) in forwarding_actions() {
-            let resource = labeled.apply(&host_resource(host)?);
+            let resource = labeled.apply(&host_resource(host));
             let allowed = decide_on(prepared, &resource, Some(&action))?.allowed;
             forwarding.insert(action, allowed);
         }
@@ -666,10 +645,10 @@ impl SshApi {
         options: &ResolvedSshOptions,
     ) -> IamResult<(Record, String)> {
         let ctx = &self.ctx;
-        let authority = active_authority(tx, &host.tenant_id, &json!("host")).await?;
+        let authority = active_authority(tx, &host.tenant_id, "host").await?;
         let now = ctx.now();
-        let serial = ssh_serial()?;
-        let serial_string = serial_text(&serial);
+        let serial = ssh_serial();
+        let serial_string = serial.to_string();
         let mut names = vec![host.name.clone()];
         names.extend(host.addresses.iter().cloned());
         let principals = unique(names);
@@ -685,18 +664,20 @@ impl SshApi {
         .await?;
         let valid_before = now + options.host_certificate_ms;
         let key_id = format!("host:{}", host.name);
-        let spec = json!({
-            "key": serde_json::to_value(key).unwrap_or(Value::Null),
-            "serial": serial,
-            "kind": number(SSH_CERT_HOST),
-            "keyId": key_id,
-            "principals": principals,
-            "validAfter": number(((now - options.clock_skew_ms) / 1000.0).floor()),
-            "validBefore": number((valid_before / 1000.0).floor()),
-        });
+        let spec = SshCertificateSpec {
+            key: key.clone(),
+            serial,
+            kind: SSH_CERT_HOST as u32,
+            key_id: key_id.clone(),
+            principals: principals.clone(),
+            valid_after: ((now - options.clock_skew_ms) / 1000.0).floor() as u64,
+            valid_before: (valid_before / 1000.0).floor() as u64,
+            critical_options: IndexMap::new(),
+            extensions: Vec::new(),
+        };
         let signed =
             sign_ssh_certificate(&open_authority(ctx, &authority)?, &spec, Some(&host.name))?;
-        let line = signed_line(&signed);
+        let line = signed.line;
         let mut record = Record::new();
         record.insert("id".into(), s(id()));
         record.insert("tenantId".into(), s(&host.tenant_id));
@@ -748,7 +729,7 @@ impl SshApi {
         let typed: SshHost = decode(host.clone())?;
         let bundle = trust_bundle(ctx, tx, tenant, "member").await?;
         let krl = revocation_list(ctx, tx, tenant, Some("user")).await?;
-        let principals = principal_files(&typed)?;
+        let principals = principal_files(&typed);
         let key_type = typed
             .host_key
             .as_deref()
@@ -860,13 +841,12 @@ impl SshApi {
         actor_id: &str,
     ) -> IamResult<f64> {
         let ctx = &self.ctx;
-        let reason = Value::String(reason.to_owned());
         let mut count = 0.0;
         for record in records {
             if record.revoked_at.is_some() {
                 continue;
             }
-            mark_revoked(ctx, tx, &record, &reason, actor_id).await?;
+            mark_revoked(ctx, tx, &record, reason, actor_id).await?;
             count += 1.0;
         }
         if count > 0.0 {
@@ -884,9 +864,9 @@ impl SshApi {
     ) -> IamResult<ModuleResourceLabels> {
         let mut resources = Vec::new();
         for host in hosts {
-            resources.push(host_resource(host)?);
+            resources.push(host_resource(host));
             for login in &host.logins {
-                resources.push(login_resource(host, login)?);
+                resources.push(login_resource(host, login));
             }
         }
         module_resource_labels(&self.ctx, tx, tenant_id, &resources).await
@@ -1070,7 +1050,7 @@ impl SshApi {
                         .into());
                     }
                     // Creating the authorities is `setup`, a decision of its own.
-                    active_authority(&tx, &tenant.id, &json!("host")).await?;
+                    active_authority(&tx, &tenant.id, "host").await?;
                     let mut names = vec![name_ref.clone()];
                     names.extend(addresses_ref.iter().cloned());
                     self.assert_names_allowed(&tx, &principal, &tenant.id, &names, None)
@@ -1586,7 +1566,7 @@ impl SshApi {
                 )
                 .await;
             }
-            let authority = active_authority(&tx, tenant_ref, &json!("user")).await?;
+            let authority = active_authority(&tx, tenant_ref, "user").await?;
             let authorities = tenant_authorities(&tx, tenant_ref, None).await?;
             if authorities
                 .iter()
@@ -1643,7 +1623,7 @@ impl SshApi {
             let mut principals = Vec::new();
             for entry in &access {
                 for login in &entry.logins {
-                    principals.push(ssh_login_principal(login, &entry.host.name)?);
+                    principals.push(ssh_login_principal(login, &entry.host.name));
                 }
             }
             if principals.len() > 256 {
@@ -1684,7 +1664,7 @@ impl SshApi {
                     401,
                 )));
             }
-            let mut critical_options = Map::new();
+            let mut critical_options: IndexMap<String, String> = IndexMap::new();
             let mut source_address: Option<String> = None;
             if settings.bind_source_address {
                 let ip = ctx.auth.current_client().and_then(|client| client.ip);
@@ -1704,33 +1684,33 @@ impl SshApi {
                     ip.unwrap_or_default(),
                     if family == 6 { 128 } else { 32 }
                 );
-                critical_options.insert("source-address".into(), s(&address));
+                critical_options.insert("source-address".into(), address.clone());
                 source_address = Some(address);
             }
             if key_ref.security_key && settings.require_user_verification {
-                critical_options.insert("verify-required".into(), s(""));
+                critical_options.insert("verify-required".into(), String::new());
             }
-            let serial = ssh_serial()?;
-            let serial_string = serial_text(&serial);
-            let key_id = certificate_key_id(&principal)?;
-            let spec = json!({
-                "key": serde_json::to_value(key_ref).unwrap_or(Value::Null),
-                "serial": serial,
-                "kind": number(SSH_CERT_USER),
-                "keyId": key_id,
-                "principals": principals,
-                "validAfter": number(((now - options_ref.clock_skew_ms) / 1000.0).floor()),
-                "validBefore": number((valid_before / 1000.0).floor()),
-                "criticalOptions": Value::Object(critical_options),
-                "extensions": extensions,
-            });
+            let serial = ssh_serial();
+            let serial_string = serial.to_string();
+            let key_id = certificate_key_id(&principal);
+            let spec = SshCertificateSpec {
+                key: key_ref.clone(),
+                serial,
+                kind: SSH_CERT_USER as u32,
+                key_id: key_id.clone(),
+                principals: principals.clone(),
+                valid_after: ((now - options_ref.clock_skew_ms) / 1000.0).floor() as u64,
+                valid_before: (valid_before / 1000.0).floor() as u64,
+                critical_options,
+                extensions: extensions.clone(),
+            };
             let comment = key_ref.comment.as_deref().map(printable_comment);
             let signed = sign_ssh_certificate(
                 &open_authority(ctx, &authority)?,
                 &spec,
                 comment.as_deref(),
             )?;
-            let line = signed_line(&signed);
+            let line = signed.line;
             let root_override = is_root_override(&prepared);
             // The device this request proved, which the sweep judges device conditions by (devices.ts).
             let device = presented_device(&tx, &principal, now).await?;
@@ -2643,7 +2623,7 @@ impl SshApi {
                         ctx,
                         &tx,
                         &tenant.id,
-                        &s(kind_ref),
+                        kind_ref,
                         "pending",
                         &principal.identity.id,
                     )
@@ -2693,10 +2673,7 @@ impl SshApi {
                     let authorities = tenant_authorities(&tx, &tenant.id, None).await?;
                     let trust = trust_bundle(ctx, &tx, &tenant, "member").await?;
                     let mut out = Map::new();
-                    out.insert(
-                        "created".into(),
-                        ensured.get("created").cloned().unwrap_or(Value::Null),
-                    );
+                    out.insert("created".into(), strings_value(&ensured.created));
                     out.insert(
                         "authorities".into(),
                         Value::Array(authorities.iter().map(public_authority).collect()),
@@ -2759,9 +2736,9 @@ impl SshApi {
                 out.insert(
                     "configured".into(),
                     Value::Bool(
-                        authorities.iter().any(|item| {
-                            item.kind.as_str() == Some("user") && item.status == "active"
-                        }),
+                        authorities
+                            .iter()
+                            .any(|item| item.kind == "user" && item.status == "active"),
                     ),
                 );
                 out.insert("settings".into(), settings_view(&settings, &options));
@@ -2838,9 +2815,7 @@ impl SshApi {
             .await?;
         let result: SshSweepResult =
             sweep_ssh_certificates(ctx, Some(&json!({ "tenantId": tenant_id }))).await?;
-        Ok(Reply::json(
-            serde_json::to_value(&result).map_err(|_| crate::js::internal_error())?,
-        ))
+        Ok(Reply::json(sweep_value(&result)))
     }
 
     /// `ssh/syncHost` (public: no credential): a host's periodic check-in with its renewal token: returns the
@@ -2929,7 +2904,7 @@ impl SshApi {
                 names.extend(typed.addresses.iter().cloned());
                 let principals = unique(names);
                 let host_authority = if active {
-                    Some(active_authority(&tx, &typed.tenant_id, &json!("host")).await?)
+                    Some(active_authority(&tx, &typed.tenant_id, "host").await?)
                 } else {
                     None
                 };
@@ -3357,7 +3332,7 @@ impl SshApi {
                         .await?;
                     let mut allowed = Vec::new();
                     for login in &logins {
-                        let resource = labeled.apply(&login_resource(&host, login)?);
+                        let resource = labeled.apply(&login_resource(&host, login));
                         if decide_on(&prepared, &resource, Some(SSH_LOGIN_ACTION))?.allowed {
                             allowed.push(login.clone());
                         }
@@ -3414,6 +3389,18 @@ fn newest_first(a_issued: f64, a_id: &str, b_issued: f64, b_id: &str) -> Orderin
     }
 }
 
+/// A sweep result as TypeScript returns it (JavaScript numbers).
+fn sweep_value(result: &SshSweepResult) -> Value {
+    let mut out = Map::new();
+    out.insert("examined".into(), number(result.examined));
+    out.insert("revoked".into(), number(result.revoked));
+    out.insert("byReason".into(), result.by_reason.clone());
+    for (key, value) in &result.extra {
+        out.insert(key.clone(), value.clone());
+    }
+    Value::Object(out)
+}
+
 /// `iam.ssh`: the deployment-side jobs and public reads (no credential), for schedulers and custom routes.
 pub struct SshRuntime {
     ctx: Arc<ServerContext>,
@@ -3459,9 +3446,7 @@ impl SshRuntime {
     pub async fn call(&self, method: &str, args: Vec<Value>) -> Option<IamResult<Value>> {
         let arg = |index: usize| args.get(index).filter(|value| !value.is_null());
         match method {
-            "sweep" => Some(self.sweep(arg(0)).await.and_then(|result| {
-                serde_json::to_value(&result).map_err(|_| crate::js::internal_error())
-            })),
+            "sweep" => Some(self.sweep(arg(0)).await.map(|result| sweep_value(&result))),
             "revocationList" => {
                 let tenant_id = arg(0)
                     .map(|value| js_string(Some(value)))
