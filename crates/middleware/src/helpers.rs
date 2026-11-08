@@ -718,11 +718,12 @@ impl<T: IamLike> InProcessClient<T> {
                 .map(str::to_owned);
             let mut failure = IamRequestError::new(code, message, status, None);
             if retry_after_ms.is_some() || region.is_some() || location.is_some() {
-                failure.details = Some(better_iam_core::IamErrorDetails {
+                failure.details = Some(Box::new(better_iam_core::IamErrorDetails {
                     retry_after_ms,
                     region,
                     location,
-                });
+                    ..Default::default()
+                }));
             }
             return Err(failure.into());
         }

@@ -149,6 +149,26 @@ pub fn internal_error() -> IamError {
     IamError::with_status("INTERNAL_ERROR", "Internal server error", 500)
 }
 
+/// A thrown JavaScript exception that is not an `IamError` (an `Error` named `name` with `message`): `INTERNAL_ERROR`
+/// 500 carrying the exception's own message, which code that reads `error.message` reports (an archive failure). The
+/// HTTP layer and the conformance error shape still answer "Internal server error" for it.
+pub fn thrown_error(name: impl Into<String>, message: impl Into<String>) -> IamError {
+    IamError::with_status("INTERNAL_ERROR", message, 500).with_details(
+        better_iam_core::IamErrorDetails {
+            thrown: Some(name.into()),
+            ..Default::default()
+        },
+    )
+}
+
+/// The exception name of an error that stands for a thrown non-`IamError` (see [`thrown_error`]).
+pub fn thrown_name(error: &IamError) -> Option<&str> {
+    error
+        .details
+        .as_deref()
+        .and_then(|details| details.thrown.as_deref())
+}
+
 /// `new IamError('INVALID_INPUT', message)`.
 pub fn invalid_input(message: impl Into<String>) -> IamError {
     IamError::new("INVALID_INPUT", message)

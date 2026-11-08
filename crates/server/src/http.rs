@@ -321,7 +321,13 @@ pub fn error_response(error: &IamError) -> HttpResponse {
     let retry_after = retry_after_ms(error);
     let mut body = Map::new();
     body.insert("code".into(), Value::String(error.code.clone()));
-    body.insert("message".into(), Value::String(error.message.clone()));
+    // An exception that is not an IamError keeps its message to itself (`known ? error.message : '...'`).
+    let message = if crate::js::thrown_name(error).is_some() {
+        crate::js::internal_error().message
+    } else {
+        error.message.clone()
+    };
+    body.insert("message".into(), Value::String(message));
     if let Some(retry_after) = retry_after {
         body.insert("retryAfterMs".into(), crate::js::number(retry_after));
     }

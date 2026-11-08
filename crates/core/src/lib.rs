@@ -73,6 +73,11 @@ pub struct IamErrorDetails {
     pub region: Option<String>,
     /// `WRONG_REGION`: the organization's sign-in address in that region.
     pub location: Option<String>,
+    /// The name of the JavaScript exception this error stands for when TypeScript throws something that is not an
+    /// `IamError` (`Error`, `TypeError`, ...). Such an error is `INTERNAL_ERROR` 500 and keeps the exception's own
+    /// message for the code that reads `error.message` (an archive failure report, for one), while the HTTP answer
+    /// still says "Internal server error".
+    pub thrown: Option<String>,
 }
 
 impl PartialEq for IamError {
