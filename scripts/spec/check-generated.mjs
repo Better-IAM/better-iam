@@ -35,6 +35,13 @@ const generators = [
     owns: (path) =>
       path === 'src/schemas.rs' || path === 'src/routes.rs' || /^src\/api\/[^/]+\.rs$/.test(path),
   },
+  {
+    name: 'rust-client',
+    description: 'crates/client/src/api.rs (better-iam-client methods) from the route markers of crates/types',
+    script: 'scripts/spec/gen-rust-client.mjs',
+    dir: 'crates/client',
+    owns: (path) => path === 'src/api.rs',
+  },
 ];
 
 const args = process.argv.slice(2);

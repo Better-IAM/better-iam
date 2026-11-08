@@ -2,6 +2,7 @@
 //! the last error, and change notifications. UI bindings subscribe to it; it can also drive plain programs.
 
 use std::fmt;
+use std::future::Future;
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use futures::FutureExt;
@@ -255,50 +256,48 @@ impl<C: SessionClient> SessionStore<C> {
         }
     }
 
-    /// Reloads the session from the server. Concurrent calls share one request.
-    pub async fn refresh(&self) -> SnapshotOf<C> {
-        let pending = {
-            let mut state = self.inner.state();
-            match &state.inflight {
-                Some(pending) => pending.clone(),
-                None => {
-                    let inner = self.inner.clone();
-                    let pending = async move {
-                        let next = match inner.client.get_session().await {
-                            Ok(session) => SessionSnapshot {
-                                status: SessionStatus::Authenticated,
-                                session: Some(session),
-                                error: None,
+    /// Reloads the session from the server. Concurrent calls share one request: the request is registered when
+    /// `refresh` is called, and every caller until it settles awaits the same one.
+    pub fn refresh(&self) -> impl Future<Output = SnapshotOf<C>> + Send + 'static + use<C> {
+        let mut state = self.inner.state();
+        match &state.inflight {
+            Some(pending) => pending.clone(),
+            None => {
+                let inner = self.inner.clone();
+                let pending = async move {
+                    let next = match inner.client.get_session().await {
+                        Ok(session) => SessionSnapshot {
+                            status: SessionStatus::Authenticated,
+                            session: Some(session),
+                            error: None,
+                            updated_at: date_now(),
+                        },
+                        Err(error) => {
+                            let unauthenticated = is_unauthenticated(&error);
+                            let current = inner.state().snapshot.session.clone();
+                            SessionSnapshot {
+                                status: if unauthenticated {
+                                    SessionStatus::Unauthenticated
+                                } else {
+                                    SessionStatus::Error
+                                },
+                                session: if unauthenticated { None } else { current },
+                                error: Some(Arc::new(error)),
                                 updated_at: date_now(),
-                            },
-                            Err(error) => {
-                                let unauthenticated = is_unauthenticated(&error);
-                                let current = inner.state().snapshot.session.clone();
-                                SessionSnapshot {
-                                    status: if unauthenticated {
-                                        SessionStatus::Unauthenticated
-                                    } else {
-                                        SessionStatus::Error
-                                    },
-                                    session: if unauthenticated { None } else { current },
-                                    error: Some(Arc::new(error)),
-                                    updated_at: date_now(),
-                                }
                             }
-                        };
-                        inner.publish(next);
-                        let mut state = inner.state();
-                        state.inflight = None;
-                        state.snapshot.clone()
-                    }
-                    .boxed()
-                    .shared();
-                    state.inflight = Some(pending.clone());
-                    pending
+                        }
+                    };
+                    inner.publish(next);
+                    let mut state = inner.state();
+                    state.inflight = None;
+                    state.snapshot.clone()
                 }
+                .boxed()
+                .shared();
+                state.inflight = Some(pending.clone());
+                pending
             }
-        };
-        pending.await
+        }
     }
 
     /// Signs out on the server, then clears the local session even if the server call failed.
