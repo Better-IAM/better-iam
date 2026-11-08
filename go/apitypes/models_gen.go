@@ -26168,17 +26168,6 @@ type AuditArchiveResultGapsItem struct {
 	ToSequence   float64 `json:"toSequence"`
 }
 
-// AuthenticatedPrincipal is the components/schemas/AuthenticatedPrincipal schema.
-//
-// This is the JSON form; core.AuthenticatedPrincipal is the in-process form of the same value (it has no JSON encoding).
-type AuthenticatedPrincipal struct {
-	Identity Identity `json:"identity"`
-	Session  Session  `json:"session"`
-	// The unverified device proof the request carried (`x-better-iam-device`, a compact JWS of at most 2048 characters).
-	// Decisions verify it against the registered device keys and the session before it counts; never trust it as is.
-	DeviceProof *string `json:"deviceProof,omitzero"`
-}
-
 // AuthorizationRequest is the components/schemas/AuthorizationRequest schema.
 type AuthorizationRequest struct {
 	TenantID string                       `json:"tenantId"`

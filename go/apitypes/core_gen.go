@@ -167,6 +167,9 @@ type TenantAuthPolicy = core.TenantAuthPolicy
 // TenantLimits is core.TenantLimits: go/core already defines the components/schemas/TenantLimits record.
 type TenantLimits = core.TenantLimits
 
+// AuthenticatedPrincipal is core.AuthenticatedPrincipal: go/core already defines the components/schemas/AuthenticatedPrincipal record.
+type AuthenticatedPrincipal = core.AuthenticatedPrincipal
+
 // Session is core.Session: go/core already defines the components/schemas/Session record.
 type Session = core.Session
 
@@ -201,6 +204,7 @@ var coreSchemas = []string{
 	"Tenant",
 	"TenantAuthPolicy",
 	"TenantLimits",
+	"AuthenticatedPrincipal",
 	"Session",
 	"StoreDescription",
 }
