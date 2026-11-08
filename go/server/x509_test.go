@@ -428,3 +428,17 @@ func TestX509RevocationListsReadBackWithGo(t *testing.T) {
 		t.Fatalf("empty list: %v", err)
 	}
 }
+
+func TestX509URIsAreCanonicalAsTheURLStandardWritesThem(t *testing.T) {
+	for value, want := range map[string]bool{
+		"file:///x": true, "https://acme.test/a%zz": true, "https://acme.test/a%": true, "https://acme.test/a^b": false,
+		"https://acme.test/x?a=%27": true, "https://acme.test/x?a='b": false, "mailto:a@b.test": true, "urn:a:b": true,
+		"https://acme.test/a|b": true, "ws://acme.test/": true, "https://acme.test/%7E": true, "https://[::1]/": true,
+		"https://127.0.0.1/": true, "https://acme.test/a;b=c": true, "https://acme.test/~x": true, "https://a%zz.test/": false,
+		"https://acme.test/a/../b": false, "HTTPS://acme.test/": false, "https://@acme.test/": false,
+	} {
+		if got := uriCanonical(value); got != want {
+			t.Errorf("%s: canonical %v, want %v", value, got, want)
+		}
+	}
+}

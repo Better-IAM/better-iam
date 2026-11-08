@@ -721,14 +721,34 @@ func canonicalURI(value string) (string, error) {
 }
 
 // uriCanonical is `new URL(value).href === value` with no username or password, for printable ASCII without
-// backslashes.
+// backslashes: the scheme and authority as the parser normalizes them, and a path, query and fragment it leaves alone
+// (no dot segments, nothing in its percent-encode sets).
 func uriCanonical(value string) bool {
-	parsed, err := auth.ParseFetchURL(value)
-	if err != nil || parsed.Href != value || parsed.User != nil {
+	// A % that starts no escape stays as it is in the URL standard but fails Go's parser: parse it escaped.
+	parsed, err := auth.ParseFetchURL(escapeStrayPercent(value))
+	if err != nil || parsed.User != nil || !strings.HasPrefix(value, parsed.Protocol) {
 		return false
 	}
 	special := parsed.Protocol == "http:" || parsed.Protocol == "https:" || parsed.Protocol == "ws:" || parsed.Protocol == "wss:" || parsed.Protocol == "ftp:" || parsed.Protocol == "file:"
 	rest := value[len(parsed.Protocol):]
+	hierarchical := strings.HasPrefix(rest, "//")
+	if hierarchical {
+		authority := rest[2:]
+		end := strings.IndexAny(authority, "/?#")
+		if end < 0 {
+			end = len(authority)
+		}
+		if authority[:end] != parsed.Host {
+			return false
+		}
+		rest = authority[end:]
+		// Special URLs always have a path.
+		if special && !strings.HasPrefix(rest, "/") {
+			return false
+		}
+	} else if special {
+		return false
+	}
 	fragment := ""
 	if at := strings.Index(rest, "#"); at >= 0 {
 		rest, fragment = rest[:at], rest[at+1:]
@@ -739,22 +759,14 @@ func uriCanonical(value string) bool {
 		rest, query, hasQuery = rest[:at], rest[at+1:], true
 	}
 	path := rest
-	if strings.HasPrefix(rest, "//") {
-		authority := rest[2:]
-		if at := strings.Index(authority, "/"); at >= 0 {
-			path = authority[at:]
-		} else {
-			path = ""
-		}
-	}
 	// The parser resolves dot segments in hierarchical paths and percent-encodes what its encode sets name.
-	if strings.HasPrefix(path, "/") || special {
+	if hierarchical || strings.HasPrefix(path, "/") {
 		for _, segment := range strings.Split(path, "/") {
 			if dotSegment.MatchString(segment) {
 				return false
 			}
 		}
-		if strings.ContainsAny(path, "\"<>`{}") {
+		if strings.ContainsAny(path, "\"<>`{}^") {
 			return false
 		}
 	}
@@ -2030,4 +2042,18 @@ func (c *x509Certificate) subjectAltNameText() string {
 		}
 	}
 	return strings.Join(entries, ", ")
+}
+
+// escapeStrayPercent writes every % that does not start a %XX escape as %25.
+func escapeStrayPercent(value string) string {
+	isHex := func(c byte) bool { return c >= '0' && c <= '9' || c >= 'a' && c <= 'f' || c >= 'A' && c <= 'F' }
+	var out strings.Builder
+	for index := 0; index < len(value); index++ {
+		if value[index] == '%' && !(index+2 < len(value) && isHex(value[index+1]) && isHex(value[index+2])) {
+			out.WriteString("%25")
+			continue
+		}
+		out.WriteByte(value[index])
+	}
+	return out.String()
 }
