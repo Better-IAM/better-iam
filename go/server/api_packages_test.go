@@ -104,7 +104,7 @@ func pkgIDs(items []*core.Object) []string {
 	return ids
 }
 
-func sortedStrings(items ...string) []string {
+func sortedPackageStrings(items ...string) []string {
 	out := append([]string(nil), items...)
 	sort.Strings(out)
 	return out
@@ -438,7 +438,7 @@ func TestPackageRequestsRouteToApproversAndAssignOnApproval(t *testing.T) {
 	for _, item := range f.list("listRequests", owner, "packageId", kit.Get("id")) {
 		statuses = append(statuses, jsString(item.Get("status")))
 	}
-	expectEqualJSON(t, "statuses", sortedStrings(statuses...), []string{"approved", "cancelled", "denied", "expired"})
+	expectEqualJSON(t, "statuses", sortedPackageStrings(statuses...), []string{"approved", "cancelled", "denied", "expired"})
 	if events := f.auditTrail(f.tenantID, "package:request-approved"); len(events) != 1 {
 		t.Fatalf("package:request-approved events %d", len(events))
 	}
@@ -671,8 +671,8 @@ func TestPackageRequestsNeverLapseLaterThanTheEndTheyAskFor(t *testing.T) {
 		t.Fatalf("short %s", core.MustStringify(short))
 	}
 	f.clock.Add(int64(3 * pkgHour))
-	expectEqualJSON(t, "approvals", sortedStrings(pkgIDs(f.list("listApprovals", owner))...),
-		sortedStrings(jsString(long.Get("id")), jsString(short.Get("id"))))
+	expectEqualJSON(t, "approvals", sortedPackageStrings(pkgIDs(f.list("listApprovals", owner))...),
+		sortedPackageStrings(jsString(long.Get("id")), jsString(short.Get("id"))))
 	f.clock.Add(int64(2 * pkgHour))
 	expectEqualJSON(t, "approvals after lapse", pkgIDs(f.list("listApprovals", owner)), []string{jsString(long.Get("id"))})
 	f.fails("INVALID_TRANSITION", "approveRequest", owner, "requestId", short.Get("id"))
