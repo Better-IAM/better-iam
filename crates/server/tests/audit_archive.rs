@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use better_iam_core::{
-    ChainHead, Filter, FindOptions, IamError, IamStoreExt, Record, VerifyAuditChainOptions,
+    ChainHead, Filter, FindOptions, IamStoreExt, Record, VerifyAuditChainOptions,
     verify_audit_chain,
 };
 use better_iam_server::audit_archive::create_jsonl_audit_archive;
@@ -35,10 +35,10 @@ fn memory_sink(
             let failing = failing.clone();
             Box::pin(async move {
                 if failing.is_some_and(|failing| failing.load(Ordering::SeqCst)) {
-                    return Err(IamError::with_status(
-                        "INTERNAL_ERROR",
+                    // `throw new Error('bucket unavailable')`: not an IamError, yet its message is reported.
+                    return Err(better_iam_server::js::thrown_error(
+                        "Error",
                         "bucket unavailable",
-                        500,
                     ));
                 }
                 written.lock().unwrap().push(batch);

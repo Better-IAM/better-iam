@@ -101,6 +101,40 @@ fn an_empty_origin_header_counts_as_no_origin() {
 }
 
 #[test]
+fn thrown_errors_keep_their_message_but_answer_internal_server_error() {
+    // A callback that throws `new Error('bucket unavailable')`: code that reads `error.message` sees it ...
+    let thrown = better_iam_server::js::thrown_error("Error", "bucket unavailable");
+    assert_eq!(
+        (thrown.code.as_str(), thrown.status, thrown.message.as_str()),
+        ("INTERNAL_ERROR", 500, "bucket unavailable")
+    );
+    assert_eq!(better_iam_server::js::thrown_name(&thrown), Some("Error"));
+    // ... while the HTTP answer keeps it to itself (`known ? error.message : 'Internal server error'`) ...
+    let response = better_iam_server::http::error_response(&thrown);
+    assert_eq!(response.status(), 500);
+    assert_eq!(
+        json_of(&response),
+        json!({ "error": { "code": "INTERNAL_ERROR", "message": "Internal server error" } })
+    );
+    // ... and the conformance error shape reports the exception beside the generic message (CONTROL.md).
+    assert_eq!(
+        better_iam_server::conformance::error_shape(&thrown),
+        json!({
+            "code": "INTERNAL_ERROR",
+            "status": 500,
+            "message": "Internal server error",
+            "thrown": { "name": "Error", "message": "bucket unavailable" },
+        })
+    );
+    // An IamError with the same code is known: its message is the answer.
+    let known = IamError::with_status("INTERNAL_ERROR", "Impact preview did not complete", 500);
+    assert_eq!(
+        json_of(&better_iam_server::http::error_response(&known))["error"]["message"],
+        json!("Impact preview did not complete")
+    );
+}
+
+#[test]
 fn errors_carry_their_retry_hint_on_the_error() {
     let refused = IamError::with_status("RATE_LIMITED", "Too many attempts; try again later", 429)
         .with_details(IamErrorDetails {

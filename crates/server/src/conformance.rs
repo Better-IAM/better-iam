@@ -59,6 +59,18 @@ pub fn error_shape(error: &IamError) -> Value {
     let mut shape = Map::new();
     shape.insert("code".into(), Value::String(error.code.clone()));
     shape.insert("status".into(), json!(error.status));
+    // Anything that is not an IamError: "Internal server error", with the exception in `thrown`.
+    if let Some(name) = crate::js::thrown_name(error) {
+        shape.insert(
+            "message".into(),
+            Value::String(crate::js::internal_error().message),
+        );
+        shape.insert(
+            "thrown".into(),
+            json!({ "name": name, "message": error.message }),
+        );
+        return Value::Object(shape);
+    }
     shape.insert("message".into(), Value::String(error.message.clone()));
     if let Some(retry) = details_of(error).and_then(|details| details.retry_after_ms)
         && retry > 0.0
@@ -908,9 +920,13 @@ impl Server {
                         script[index].raw.clone()
                     })
                 };
+                let name = name.clone();
                 Box::pin(async move {
                     let Some(answer) = answer else {
-                        return Err(crate::js::internal_error());
+                        return Err(crate::js::thrown_error(
+                            "ConformanceScriptError",
+                            format!("No scripted answer for {name}"),
+                        ));
                     };
                     if let Some(error) = answer.get("error") {
                         if error.get("iam") == Some(&Value::Bool(true)) {
@@ -923,7 +939,14 @@ impl Server {
                                 error.get("status").and_then(Value::as_u64).unwrap_or(500) as u16,
                             ));
                         }
-                        return Err(crate::js::internal_error());
+                        // `{"name", "message"}`: a plain error carrying its message (serve.mjs `throwScripted`).
+                        return Err(crate::js::thrown_error(
+                            error.get("name").and_then(Value::as_str).unwrap_or("Error"),
+                            error
+                                .get("message")
+                                .and_then(Value::as_str)
+                                .unwrap_or("Scripted callback failed"),
+                        ));
                     }
                     Ok(answer
                         .get("result")

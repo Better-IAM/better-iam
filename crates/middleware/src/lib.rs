@@ -97,7 +97,7 @@ pub struct IamRequestError {
     pub message: String,
     pub status: u16,
     pub reason: Option<StepUpReason>,
-    pub details: Option<better_iam_core::IamErrorDetails>,
+    pub details: Option<Box<better_iam_core::IamErrorDetails>>,
 }
 
 impl IamRequestError {
@@ -125,7 +125,7 @@ impl From<IamError> for IamRequestError {
             message: error.message,
             status: error.status,
             reason: None,
-            details: error.details.map(|details| *details),
+            details: error.details,
         }
     }
 }
@@ -136,7 +136,7 @@ impl From<IamRequestError> for IamError {
             code: error.code,
             message: error.message,
             status: error.status,
-            details: error.details.map(Box::new),
+            details: error.details,
         }
     }
 }
