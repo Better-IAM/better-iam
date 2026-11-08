@@ -304,7 +304,11 @@ func New(options *BetterIamOptions) (*BetterIam, error) {
 	server.Flows = CreateFlows(server)
 	server.Usage = CreateUsageRecorder(server)
 	// The billing ledger; validates the billing option, so a bad value fails construction with INVALID_CONFIG.
-	server.Billing = BillingServiceOf(server).Hooks
+	billing := BillingServiceOf(server)
+	if known, ok := asIamError(billing.BillingSettingsError()); ok && known.Code == "INVALID_CONFIG" {
+		return nil, known
+	}
+	server.Billing = billing.Hooks
 	// Wallet-facing issuer endpoints ({basePath}/vc/{tenantId}/... and their /.well-known metadata).
 	if options.VerifiableCredentials.IsOn() {
 		protocol, err := CreateVcProtocol(server)
