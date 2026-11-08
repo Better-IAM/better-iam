@@ -1,0 +1,69 @@
+[package]
+name = "better-iam-scim"
+description = "SCIM 2.0 provisioning for Better IAM (Rust): connection-scoped Users and Groups endpoints with RFC 7644 filters, PATCH, Bulk, and ETags, and outbound provisioning to downstream SCIM services."
+readme = "README.md"
+keywords = ["iam", "scim", "provisioning", "rfc7644", "scim2"]
+categories = ["authentication", "web-programming"]
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+
+[features]
+default = ["server"]
+# Mounting on a Better IAM server: the protocol host's callbacks as a `ScimConfig` / `ProvisioningConfig`,
+# `ProtocolService` for both services, and the server's event bus as the provisioner's event source.
+server = ["dep:better-iam-server"]
+
+[dependencies]
+better-iam-core.workspace = true
+better-iam-auth.workspace = true
+better-iam-server = { workspace = true, optional = true }
+async-trait.workspace = true
+futures.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+tokio = { workspace = true, features = ["rt", "sync", "macros", "time"] }
+bytes.workspace = true
+http = "1"
+url = "2"
+uuid = { version = "1", features = ["v4"] }
+rand = "0.8"
+base64 = "0.22"
+hex = "0.4"
+aes-gcm = "0.10"
+subtle = "2"
+# The ICU root collation of String#localeCompare (list orders).
+icu_collator = "2"
+
+[dev-dependencies]
+better-iam-adapter-sqlite.workspace = true
+better-iam-auth.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time", "net", "io-util"] }
+hyper = { version = "1", features = ["server", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+http-body-util = "0.1"
+serde.workspace = true
+
+[lib]
+doctest = false
+
+# Suites that run SCIM on a Better IAM server (its protocol host and handler).
+[[test]]
+name = "scim_admin"
+required-features = ["server"]
+
+[[test]]
+name = "scim_manager"
+required-features = ["server"]
+
+[[test]]
+name = "security_scim"
+required-features = ["server"]
+
+[[test]]
+name = "scim_attributes"
+required-features = ["server"]
