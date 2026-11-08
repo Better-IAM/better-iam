@@ -940,6 +940,7 @@ func TestKmsProtectsStoredValuesOfAnySizeUnderAnAesKeyOnly(t *testing.T) {
 	rsaKey := kmsObject(f, f.keys.Create, f.owner, "keySpec", "rsa-2048", "keyUsage", "encrypt")
 	server := f.iam.Context
 	vault := core.NewObject("via", "vault")
+	// The needle keeps its spaces so it can never occur by chance in base64url ciphertext.
 	large := strings.Repeat("x", 200_000) + " and a tail"
 	var sealed *core.Object
 	f.transact(func(ctx context.Context, tx core.IamStore) error {
@@ -947,7 +948,7 @@ func TestKmsProtectsStoredValuesOfAnySizeUnderAnAesKeyOnly(t *testing.T) {
 		sealed, err = KmsEncryptFor(ctx, server, tx, f.tenantID, "alias/vault", large, "secret-1", vault)
 		return err
 	})
-	if sealed.Get("keyId") != aesKey.Get("id") || strings.Contains(jsString(sealed.Get("ciphertext")), "tail") {
+	if sealed.Get("keyId") != aesKey.Get("id") || strings.Contains(jsString(sealed.Get("ciphertext")), " and a tail") {
 		t.Fatalf("sealed = %.200s", stringify(sealed))
 	}
 	decrypt := func(value *core.Object, bound string) (string, error) {
