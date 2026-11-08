@@ -715,7 +715,7 @@ func TestVaultEncryptsValuesUnderACustomerManagedKeyAndDisablingTheKeyShredsThem
 	vaultExpect(t, "back reveal", f.ok("reveal", f.owner, "name", "cmk/api").Get("value"), `"under-the-customer-key"`)
 }
 
-func TestVaultValidatesNamesValuesAndSettings(t *testing.T) {
+func TestVaultAPIValidatesNamesValuesAndSettings(t *testing.T) {
 	f := newVaultFixture(t, nil)
 	for _, name := range []string{"../etc", "a//b", ".hidden", "a/-b", strings.Repeat("x", 65)} {
 		f.fails("INVALID_INPUT", "create", f.owner, "name", name, "value", "value")
