@@ -1,0 +1,57 @@
+[package]
+name = "better-iam-middleware"
+description = "Framework middleware for Better IAM (Rust): a tower layer that serves the IAM API and gives every request session, authorization, and in-process client helpers, route guards with step-up and CSRF checks, and axum and actix-web adapters."
+readme = "README.md"
+keywords = ["iam", "middleware", "tower", "axum", "actix-web"]
+categories = ["authentication", "web-programming"]
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+
+[features]
+default = []
+# `IamRequest` as an axum extractor, IAM errors as axum responses, and route parameters for guards.
+axum = ["dep:axum"]
+# The same integration for actix-web: middleware, route guards, an extractor, and `ResponseError`.
+actix-web = ["dep:actix-web", "dep:actix-service"]
+
+[dependencies]
+better-iam-core.workspace = true
+better-iam-server.workspace = true
+async-trait.workspace = true
+bytes.workspace = true
+futures.workspace = true
+indexmap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["rt", "sync", "macros", "time"] }
+http = "1"
+http-body = "1"
+http-body-util = "0.1"
+tower-layer = "0.3"
+tower-service = "0.3"
+url = "2"
+axum = { version = "0.8", default-features = false, optional = true }
+actix-web = { version = "4", default-features = false, features = ["macros"], optional = true }
+actix-service = { version = "2", optional = true }
+
+[dev-dependencies]
+# The integration tests exercise both framework integrations.
+better-iam-middleware = { path = ".", features = ["axum", "actix-web"] }
+better-iam-adapter-sqlite.workspace = true
+better-iam-auth.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time", "net", "io-util"] }
+axum = { version = "0.8", default-features = false, features = ["json"] }
+actix-web = { version = "4", default-features = false, features = ["macros"] }
+tower = { version = "0.5", features = ["util"] }
+actix-http = "3"
+http-body-util = "0.1"
+url = "2"
+
+[lib]
+doctest = false

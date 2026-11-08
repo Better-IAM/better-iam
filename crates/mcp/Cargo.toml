@@ -1,0 +1,36 @@
+[package]
+name = "better-iam-mcp"
+description = "Tool-level authorization for Model Context Protocol servers with Better IAM (Rust): a gate in front of any Streamable HTTP MCP endpoint that authenticates callers, serves RFC 9728 protected resource metadata, refuses tool calls, and filters tool lists."
+readme = "README.md"
+keywords = ["iam", "mcp", "authorization", "oauth", "agents"]
+categories = ["authentication", "web-programming"]
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+better-iam-core.workspace = true
+better-iam-server.workspace = true
+async-trait.workspace = true
+bytes.workspace = true
+futures.workspace = true
+regex.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+http = "1"
+http-body = "1"
+http-body-util = "0.1"
+url = "2"
+
+[dev-dependencies]
+better-iam-adapter-sqlite.workspace = true
+better-iam-auth.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }
+http-body-util = "0.1"
+
+[lib]
+doctest = false
