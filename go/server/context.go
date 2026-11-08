@@ -18,10 +18,11 @@ import (
 
 // Principal is core's AuthenticatedPrincipal with the identity and session as stored records.
 type Principal struct {
-	Identity *core.Object
-	Session  *core.Object
-	// DeviceProof is the unverified device proof the request carried (x-better-iam-device), "" when none.
-	DeviceProof string
+	Identity *core.Object `json:"identity"`
+	Session  *core.Object `json:"session"`
+	// DeviceProof is the unverified device proof the request carried (x-better-iam-device), "" when none. It encodes
+	// only when present, as principals.ts authenticate spreads it in only then.
+	DeviceProof string `json:"deviceProof,omitempty"`
 	// proofBinding is the session the device proof is bound to when it is not this principal's own (devices.go
 	// WithRequestDevice).
 	proofBinding *ProofBinding

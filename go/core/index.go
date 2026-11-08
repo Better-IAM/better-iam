@@ -388,10 +388,10 @@ type AuditSessionContext struct {
 
 // AuthenticatedPrincipal is produced by verified credential resolution. Server services never accept it from JSON.
 type AuthenticatedPrincipal struct {
-	Identity *Identity
-	Session  *Session
+	Identity *Identity `json:"identity"`
+	Session  *Session  `json:"session"`
 	// DeviceProof is the unverified device proof the request carried (x-better-iam-device).
-	DeviceProof string
+	DeviceProof string `json:"deviceProof,omitempty"`
 }
 
 // AuditEvent is a record of the `audit` collection. Events are hashed as *Object (see audit.go); this struct is a
