@@ -140,6 +140,23 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2af50177e190e07a26ab74f8b1efbfe2ef87da2116221318cb1c2e82baf7de06"
 
 [[package]]
+name = "better-iam"
+version = "0.3.1"
+dependencies = [
+ "better-iam-adapter-libsql",
+ "better-iam-adapter-postgres",
+ "better-iam-adapter-sqlite",
+ "better-iam-auth",
+ "better-iam-client",
+ "better-iam-core",
+ "better-iam-projects",
+ "better-iam-server",
+ "better-iam-types",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "better-iam-a2a"
 version = "0.3.1"
 dependencies = [
@@ -254,6 +271,36 @@ dependencies = [
 ]
 
 [[package]]
+name = "better-iam-client"
+version = "0.3.1"
+dependencies = [
+ "async-trait",
+ "base64 0.22.1",
+ "better-iam-adapter-sqlite",
+ "better-iam-auth",
+ "better-iam-core",
+ "better-iam-server",
+ "better-iam-types",
+ "bytes",
+ "futures",
+ "http 1.5.0",
+ "http-body-util",
+ "hyper 1.12.0",
+ "hyper-rustls 0.27.10",
+ "hyper-util",
+ "indexmap",
+ "p256",
+ "rand 0.8.8",
+ "rustls 0.23.46",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tokio",
+ "url",
+ "uuid",
+]
+
+[[package]]
 name = "better-iam-core"
 version = "0.3.1"
 dependencies = [
@@ -322,6 +369,23 @@ dependencies = [
  "subtle",
  "tokio",
  "url",
+ "uuid",
+]
+
+[[package]]
+name = "better-iam-projects"
+version = "0.3.1"
+dependencies = [
+ "async-trait",
+ "better-iam-adapter-sqlite",
+ "better-iam-auth",
+ "better-iam-core",
+ "better-iam-server",
+ "bytes",
+ "http 1.5.0",
+ "serde",
+ "serde_json",
+ "tokio",
  "uuid",
 ]
 
@@ -1461,17 +1525,40 @@ dependencies = [
 ]
 
 [[package]]
+name = "hyper-rustls"
+version = "0.27.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dfa8e654703247911e29c23fbeaa261834bd9bb74efba2f9acddc37bfb127f53"
+dependencies = [
+ "http 1.5.0",
+ "hyper 1.12.0",
+ "hyper-util",
+ "rustls 0.23.46",
+ "tokio",
+ "tokio-rustls 0.26.6",
+ "tower-service",
+ "webpki-roots 1.0.9",
+]
+
+[[package]]
 name = "hyper-util"
 version = "0.1.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ddc03d96684f9226b8a787cdb71488417b53ab5ea8fdb1dac946cb9431cc8bff"
 dependencies = [
  "bytes",
+ "futures-channel",
+ "futures-util",
  "http 1.5.0",
  "http-body 1.1.0",
+ "httparse",
  "hyper 1.12.0",
+ "libc",
  "pin-project-lite",
+ "socket2 0.6.5",
  "tokio",
+ "tower-service",
+ "tracing",
 ]
 
 [[package]]
@@ -1786,7 +1873,7 @@ dependencies = [
  "futures",
  "http 0.2.12",
  "hyper 0.14.32",
- "hyper-rustls",
+ "hyper-rustls 0.25.0",
  "libsql-hrana",
  "libsql-sqlite3-parser",
  "serde",
