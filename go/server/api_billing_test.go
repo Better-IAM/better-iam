@@ -712,7 +712,7 @@ func TestBillingFeedsMeteredInferenceCallsIntoTheLedgerAsTheInferenceMeter(t *te
 		"apiKey", "sk-ant-billing-test-key-0001")
 	b.object("inference/createModel", b.owner, "tenantId", b.tenantID, "name", "haiku", "providerId", provider.Get("id"),
 		"upstreamModel", "claude-haiku-4-5", "inputPricePerMTok", 1, "outputPricePerMTok", 5)
-	outcome, err := b.iam.Inference.Authorize(b.ctx, core.NewObject("token", b.owner.Token, "model", "haiku"))
+	outcome, err := b.iam.Inference.Authorize(b.ctx, b.owner, core.NewObject("model", "haiku"))
 	requirePorted(t, err)
 	if outcome.Has("denied") {
 		t.Fatalf("denied: %s", core.MustStringify(outcome))
