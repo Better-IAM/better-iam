@@ -124,6 +124,8 @@ type ServerContext struct {
 	Hosts *HostService
 	// Billing is the billing ledger's hooks (nil until attached).
 	Billing *BillingHooks
+	// billingService memoizes BillingServiceOf (billing-service.ts `services` WeakMap).
+	billingService *BillingService
 }
 
 // ContextBase is what createContext receives.
