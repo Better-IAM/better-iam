@@ -86,6 +86,19 @@ func (f *threatsFixture) refused(err error, code string) {
 func (f *threatsFixture) member(name string) *core.Object {
 	f.t.Helper()
 	identity, _ := f.person(f.tenantID, name)
+	// A member starts signed out (person also issues a session); signIn hands out each session the test counts.
+	f.transact(func(ctx context.Context, tx core.IamStore) error {
+		sessions, err := tx.Find(ctx, "sessions", core.NewObject("identityId", identity.Get("id")), nil)
+		if err != nil {
+			return err
+		}
+		for _, session := range sessions {
+			if err := tx.Delete(ctx, "sessions", jsString(session.Get("id"))); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 	return identity
 }
 

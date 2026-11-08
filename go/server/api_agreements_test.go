@@ -6,6 +6,7 @@ package server
 
 import (
 	"context"
+	"sort"
 	"strings"
 	"testing"
 
@@ -122,7 +123,9 @@ func TestAgreementsHoldBackAccessUntilAccepted(t *testing.T) {
 	if s.can(fresh, "documents:read") {
 		t.Fatal("a lapsed acceptance holds back access")
 	}
-	if events := s.find("audit", core.NewObject("tenantId", tenant, "action", "agreement:accept")); len(events) != 3 ||
+	events := s.find("audit", core.NewObject("tenantId", tenant, "action", "agreement:accept"))
+	sort.SliceStable(events, func(i, j int) bool { return jsNumber(events[i].Get("sequence")) < jsNumber(events[j].Get("sequence")) })
+	if len(events) != 3 ||
 		events[0].Get("actorId") != s.aliceID || stringify(events[0].Get("metadata")) != `{"name":"Acceptable use","version":1}` {
 		t.Errorf("accept audit = %s", stringify(certRecordList(events)))
 	}
