@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/Better-IAM/better-iam/go/apitypes"
+	"github.com/Better-IAM/better-iam/go/auth"
 	"github.com/Better-IAM/better-iam/go/core"
 )
 
@@ -50,11 +51,13 @@ func (f *pkiOrg) seedAuthority(tenantID, name string, made *testAuthority, paren
 	f.t.Helper()
 	read := must(parseCertificateDer(made.der))
 	subject := core.NewObject("commonName", strings.TrimPrefix(read.subjectText(), "CN="))
+	authorityID := ID()
+	keyID := f.seedAuthorityKey(tenantID, authorityID, made)
 	authority := core.NewObject(
-		"id", ID(), "tenantId", tenantID, "uniqueKey", "name:"+core.JSLower(name), "name", name,
+		"id", authorityID, "tenantId", tenantID, "uniqueKey", "name:"+core.JSLower(name), "name", name,
 		"type", map[bool]string{true: "intermediate", false: "root"}[parent != nil], "subject", subject,
 		"subjectDer", base64.StdEncoding.EncodeToString(made.subjectDer), "subjectKeyId", hexOf(made.keyID),
-		"keyId", ID(), "keyVersion", 1.0, "algorithm", made.algorithm, "certificatePem", made.pem,
+		"keyId", keyID, "keyVersion", 1.0, "algorithm", made.algorithm, "certificatePem", made.pem,
 		"serialNumber", made.serial, "notBefore", f.now()-pkiClockSkewMs, "notAfter", made.notAfter, "state", "active",
 		"maxValiditySeconds", 90.0*86_400, "defaultValiditySeconds", 86_400.0, "revision", 0.0, "crlNumber", 0.0,
 		"createdAt", f.now(), "createdBy", f.ownerID, "updatedAt", f.now(),
@@ -85,6 +88,26 @@ func (f *pkiOrg) seedAuthority(tenantID, name string, made *testAuthority, paren
 		))
 	}
 	return authority
+}
+
+// seedAuthorityKey stores the authority's test key as a KMS key managed by pki (version 1), as createAuthority's
+// CreateServiceKey does, so signing through KmsSignFor uses the key the seeded certificate certifies.
+func (f *pkiOrg) seedAuthorityKey(tenantID, authorityID string, made *testAuthority) string {
+	f.t.Helper()
+	keyID := ID()
+	privateDer := must(x509.MarshalPKCS8PrivateKey(made.key))
+	publicDer := must(x509.MarshalPKIXPublicKey(made.key.Public()))
+	f.seed("kmsKeys", core.NewObject(
+		"id", keyID, "tenantId", tenantID, "description", "Certificate authority", "keySpec", "ecc-p256",
+		"keyUsage", "sign", "state", "enabled", "currentVersion", 1.0, "tags", core.NewObject(),
+		"managedBy", "pki", "managedId", authorityID, "createdAt", f.now(), "createdBy", f.ownerID, "updatedAt", f.now(),
+	))
+	f.seed("kmsKeyVersions", core.NewObject(
+		"id", ID(), "tenantId", tenantID, "uniqueKey", keyID+":1", "keyId", keyID, "version", 1.0, "wrapper", "secret",
+		"materialSealed", auth.EncryptSecret(kmsPem("PRIVATE KEY", privateDer), f.iam.Context.Options.Secret, kmsVersionContext(keyID, 1)),
+		"publicKeyPem", kmsPem("PUBLIC KEY", publicDer), "createdAt", f.now(), "origin", "create",
+	))
+	return keyID
 }
 
 // seedLeaf issues a leaf under the issuing authority as issue does, and stores its record.
