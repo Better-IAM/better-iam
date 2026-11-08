@@ -4043,7 +4043,7 @@ func (s *BillingService) findAnomalies(ctx context.Context, tx core.IamStore, ro
 			add("team|"+team, row, share)
 		}
 	}
-	var found []*core.Object
+	found := []*core.Object{}
 	for _, compound := range order {
 		entry := totals[compound]
 		costMicros := calc.micros(entry.onDay)
@@ -4141,9 +4141,11 @@ func (s *BillingService) DetectAnomalies(ctx context.Context, input *core.Object
 		found := map[string]*core.Object{}
 		var candidates []*core.Object
 		if isUndefined(rawTenantID) {
-			if candidates, err = tx.Find(ctx, "tenants", core.NewObject("status", "active"), nil); err != nil {
+			active, err := tx.Find(ctx, "tenants", core.NewObject("status", "active"), nil)
+			if err != nil {
 				return nil, err
 			}
+			candidates = active
 		} else {
 			tenantID, err := Text(rawTenantID, "tenantId")
 			if err != nil {
