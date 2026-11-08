@@ -230,10 +230,46 @@ fn hides_and_replaces_letters_and_digits_of_every_script() {
     assert!(key.starts_with("token:p1:") && key.len() == "token:p1:".len() + 43);
 }
 
+#[tokio::test]
+async fn refuses_values_that_held_lone_surrogates() {
+    // tests/protection-security.test.ts: 'key-\ud800' and 'key-\udc00x' are refused, while a literal U+FFFD is
+    // ordinary text. The request body parser reports which strings held an unpaired surrogate.
+    let (body, ill_formed) = better_iam_core::js::parse_reporting(
+        r#"{"values":["key-\ud800","key-\udc00x","a\udc00@acme.test"]}"#,
+    )
+    .unwrap();
+    let values = body["values"].as_array().unwrap().clone();
+    better_iam_core::js::with_ill_formed(ill_formed, async {
+        for value in &values[..2] {
+            assert_eq!(
+                normalize_value(&s("generic"), Some(value))
+                    .unwrap_err()
+                    .message,
+                "Values are 1 to 4096 characters of well-formed text without control or bidirectional formatting characters"
+            );
+        }
+        assert_eq!(
+            normalize_value(&s("email"), Some(&values[2]))
+                .unwrap_err()
+                .message,
+            "Not a valid email address"
+        );
+        assert_eq!(
+            normalize_value(&s("generic"), Some(&s("key-\u{fffd}y"))).unwrap(),
+            "key-\u{fffd}y"
+        );
+    })
+    .await;
+    assert_eq!(
+        normalize_value(&s("generic"), Some(&s("key-\u{fffd}"))).unwrap(),
+        "key-\u{fffd}"
+    );
+}
+
 #[test]
 fn normalizes_text_and_refuses_what_cannot_be_shown_faithfully() {
     // tests/protection-security.test.ts "normalizes text so equal values share a token, and refuses what cannot be
-    // shown faithfully". (Unpaired surrogates cannot reach Rust: the JSON decoder refuses them.)
+    // shown faithfully". (Unpaired surrogates reach Rust as U+FFFD; see `refuses_values_that_held_lone_surrogates`.)
     assert_eq!(
         normalize_value(&s("generic"), Some(&s("jos\u{e9} garcia"))).unwrap(),
         normalize_value(&s("generic"), Some(&s("jose\u{301} garcia"))).unwrap()
