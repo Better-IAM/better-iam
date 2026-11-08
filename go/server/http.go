@@ -761,6 +761,8 @@ func (h *HTTPTransport) Handle(r *http.Request) *Response {
 			return errorResponse(err)
 		}
 		body = data
+		// Fetch-style protocol mounts (the Shared Signals push endpoint) read the body too.
+		r.Body = io.NopCloser(bytes.NewReader(data))
 	}
 	return h.handle(r, body, hasBody)
 }
