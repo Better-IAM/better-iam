@@ -803,7 +803,6 @@ async fn plain_error(ctx: &mut Ctx<'_>, error: ProviderError) {
                         | Route::PushedAuthorizationRequest
                         | Route::DeviceAuthorization
                 )
-                && oidc.class == "InvalidClientAuth"
             {
                 append_www_authenticate(
                     &mut ctx.out,

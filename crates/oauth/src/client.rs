@@ -1235,25 +1235,28 @@ impl OAuthLogin {
         if token_url.scheme() != "https" && !self.allow() {
             return Err(protocol_failure("only requests to HTTPS are allowed"));
         }
-        let mut form = url::form_urlencoded::Serializer::new(String::new());
-        form.append_pair("redirect_uri", &item.redirect_uri);
-        form.append_pair("code", &code);
-        form.append_pair("code_verifier", &saved_text("codeVerifier"));
-        form.append_pair("grant_type", "authorization_code");
-        form.append_pair("client_id", &item.client_id);
-        if let Some(secret) = item
-            .client_secret
-            .as_deref()
-            .filter(|secret| !secret.is_empty())
-        {
-            form.append_pair("client_secret", secret);
-        }
+        let token_body = {
+            let mut form = url::form_urlencoded::Serializer::new(String::new());
+            form.append_pair("redirect_uri", &item.redirect_uri);
+            form.append_pair("code", &code);
+            form.append_pair("code_verifier", &saved_text("codeVerifier"));
+            form.append_pair("grant_type", "authorization_code");
+            form.append_pair("client_id", &item.client_id);
+            if let Some(secret) = item
+                .client_secret
+                .as_deref()
+                .filter(|secret| !secret.is_empty())
+            {
+                form.append_pair("client_secret", secret);
+            }
+            form.finish()
+        };
         let mut token_response = self
             .send(
                 FetchRequest::new(
                     token_url.to_string(),
                     "POST",
-                    Some(FetchBody::Text(form.finish())),
+                    Some(FetchBody::Text(token_body)),
                 )
                 .header("accept", "application/json")
                 .header("user-agent", USER_AGENT)

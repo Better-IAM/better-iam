@@ -379,3 +379,5 @@ pub fn query_param(url: &str, name: &str) -> Option<String> {
 }
 
 pub mod provider;
+
+pub mod host;
