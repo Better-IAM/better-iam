@@ -293,7 +293,7 @@ func (p *Provider) devicePage(oc *oidcCtx, input DevicePageInput) error {
 	if err != nil {
 		return err
 	}
-	oc.setHTML(page)
+	oc.setText(page)
 	return nil
 }
 
@@ -607,7 +607,7 @@ func (p *Provider) endSessionInitSteps(oc *oidcCtx) error {
 		if err != nil {
 			return err
 		}
-		oc.setHTML(page)
+		oc.respBody, oc.contentType = page, "text/html; charset=utf-8"
 		return nil
 	}
 	oc.formPost(action, [][2]string{{"xsrf", secret}, {"logout", "yes"}})

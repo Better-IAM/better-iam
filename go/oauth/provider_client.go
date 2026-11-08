@@ -226,7 +226,7 @@ func (p *Provider) clientSchema(ctx context.Context, metadata *core.Object) (*co
 		{"application_type", []string{"native", "web"}},
 		{"default_acr_values", []string{}},
 		{"grant_types", p.grantTypes},
-		{"id_token_signed_response_alg", idTokenSigningAlgs},
+		{"id_token_signed_response_alg", p.keys.idTokenAlgs},
 		{"response_types", []string{"code"}},
 		{"response_modes", responseModesHandled},
 		{"subject_type", []string{"public"}},

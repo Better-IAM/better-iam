@@ -87,7 +87,9 @@ func newManagementFixture(t *testing.T, configure func(config *OAuthProviderConf
 		RenderDevicePage: func(_ context.Context, input DevicePageInput) (string, error) {
 			return "<html><body>" + input.Form + "</body></html>", nil
 		},
-		RenderLogoutPage: func(_ context.Context, form string) (string, error) { return "<html><body>" + form + "</body></html>", nil },
+		RenderLogoutPage: func(_ context.Context, form string) (string, error) {
+			return "<html><body>" + form + "</body></html>", nil
+		},
 	}
 	if configure != nil {
 		configure(&config)
@@ -803,7 +805,9 @@ func TestInvalidResourceServerConfiguration(t *testing.T) {
 	base := func() OAuthProviderConfig {
 		return OAuthProviderConfig{Store: store, Issuer: "https://issuer.example.test", JWKS: core.NewObject("keys", []any{signing}),
 			EncryptionKey: randomKey(), CookieKeys: []string{"test-key-with-at-least-32-characters-long"}, TrustedOrigins: []string{"https://issuer.example.test"},
-			Authenticate:     func(context.Context, core.CredentialInput) (*auth.Principal, error) { return nil, core.NewIamError("X", "unused") },
+			Authenticate: func(context.Context, core.CredentialInput) (*auth.Principal, error) {
+				return nil, core.NewIamError("X", "unused")
+			},
 			Authorize:        func(context.Context, core.CredentialInput, string, core.ResourceRef) error { return nil },
 			InteractionURL:   func(uid string) string { return uid },
 			RenderDevicePage: func(context.Context, DevicePageInput) (string, error) { return "", nil },
@@ -824,6 +828,8 @@ func TestInvalidResourceServerConfiguration(t *testing.T) {
 	check(func(c *OAuthProviderConfig) {
 		c.ResourceServers = map[string]OAuthResourceServer{testAPI + "#x": {Scopes: []string{"a"}}}
 	}, "fragment")
-	check(func(c *OAuthProviderConfig) { c.ResourceServers = map[string]OAuthResourceServer{testAPI: {Scopes: []string{}}} }, "scope identifiers")
+	check(func(c *OAuthProviderConfig) {
+		c.ResourceServers = map[string]OAuthResourceServer{testAPI: {Scopes: []string{}}}
+	}, "scope identifiers")
 	check(func(c *OAuthProviderConfig) { c.DPoPNonceSecret = "short" }, "32 bytes")
 }

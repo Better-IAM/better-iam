@@ -289,8 +289,8 @@ func (p *Provider) respondWithMode(oc *oidcCtx, mode, redirectURI string, pairs 
 			return
 		}
 		copy := *target.URL
-		copy.Fragment, copy.RawFragment = "", formEncode(pairs.items)
-		oc.redirect(copy.String())
+		copy.Fragment, copy.RawFragment = "", ""
+		oc.redirect(copy.String() + "#" + formEncode(pairs.items))
 	default:
 		target, err := parseURL(redirectURI)
 		if err != nil {

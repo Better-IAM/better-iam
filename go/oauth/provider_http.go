@@ -448,6 +448,19 @@ func (oc *oidcCtx) setHTML(text string) {
 	}
 }
 
+// setText is Koa's string body: HTML when it starts with '<', plain text otherwise.
+func (oc *oidcCtx) setText(text string) {
+	if strings.HasPrefix(core.JSTrim(text), "<") {
+		oc.setHTML(text)
+		return
+	}
+	oc.respBody = text
+	oc.contentType = "text/plain; charset=utf-8"
+	if !oc.statusSet {
+		oc.setStatus(200)
+	}
+}
+
 // redirect is Koa's ctx.redirect after ctx.status = 303.
 func (oc *oidcCtx) redirect(target string) {
 	oc.setStatus(303)
@@ -605,7 +618,7 @@ func (oc *oidcCtx) handleError(err error) {
 			oc.setJSON(outObject(errOut(renderErr, "", false)))
 			return
 		}
-		oc.setHTML(page)
+		oc.setText(page)
 		return
 	}
 	if oc.preferred() == "html" {
@@ -900,6 +913,7 @@ func (p *Provider) dispatch(oc *oidcCtx) {
 		oc.cors(corsPolicy{methods: "GET"})
 		err = p.guard(oc, func(oc *oidcCtx) error {
 			oc.setJSON(p.keys.public)
+			oc.contentType = "application/jwk-set+json; charset=utf-8"
 			return nil
 		})
 	case "discovery":
@@ -1138,7 +1152,7 @@ func (p *Provider) discovery(oc *oidcCtx) *core.Object {
 	body.Set("token_endpoint_auth_methods_supported", anyList(clientAuthMethods))
 	body.Set("token_endpoint_auth_signing_alg_values_supported", anyList(clientAuthAlgs))
 	body.Set("token_endpoint", oc.urlFor("token", nil, nil))
-	body.Set("id_token_signing_alg_values_supported", anyList(idTokenSigningAlgs))
+	body.Set("id_token_signing_alg_values_supported", anyList(p.keys.idTokenAlgs))
 	body.Set("pushed_authorization_request_endpoint", oc.urlFor("pushed_authorization_request", nil, nil))
 	if p.config.RequirePushedAuthorizationRequests {
 		body.Set("require_pushed_authorization_requests", true)

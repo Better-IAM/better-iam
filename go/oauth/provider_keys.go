@@ -24,6 +24,8 @@ type providerKey struct {
 
 type providerKeys struct {
 	keys []*providerKey
+	// idTokenAlgs are the signing algorithms of the keys the ID token algorithms allow (idTokenSigningAlgValues).
+	idTokenAlgs []string
 	// public is the JWKS endpoint's document.
 	public *core.Object
 }
@@ -115,6 +117,11 @@ func newProviderKeys(list []any) (*providerKeys, error) {
 			}
 		}
 		algs := jwkSignatureAlgorithms(jwk)
+		for _, alg := range algs {
+			if contains(idTokenSigningAlgs, alg) && !contains(store.idTokenAlgs, alg) {
+				store.idTokenAlgs = append(store.idTokenAlgs, alg)
+			}
+		}
 		if len(algs) == 1 && str(jwk, "alg") != algs[0] {
 			jwk.Set("alg", algs[0])
 		}

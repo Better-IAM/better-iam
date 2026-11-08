@@ -82,7 +82,9 @@ func newOAuthFixture(t *testing.T, configure func(config *OAuthProviderConfig)) 
 		RenderDevicePage: func(_ context.Context, input DevicePageInput) (string, error) {
 			return "<html><body>" + input.Form + "</body></html>", nil
 		},
-		RenderLogoutPage: func(_ context.Context, form string) (string, error) { return "<html><body>" + form + "</body></html>", nil },
+		RenderLogoutPage: func(_ context.Context, form string) (string, error) {
+			return "<html><body>" + form + "</body></html>", nil
+		},
 	}
 	if configure != nil {
 		configure(&config)
