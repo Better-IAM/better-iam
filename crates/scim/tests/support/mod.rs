@@ -3,6 +3,8 @@
 
 #![allow(dead_code)]
 
+pub mod fake_server;
+
 use std::future::Future;
 use std::sync::Arc;
 

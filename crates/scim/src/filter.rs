@@ -567,11 +567,12 @@ pub fn evaluate_filter(node: &FilterNode, value: &Value, prefix: &[String]) -> b
     }
 }
 
+/// A predicate over rendered SCIM resources.
+pub type ScimPredicate = Box<dyn Fn(&Value) -> bool + Send + Sync>;
+
 /// `parseScimFilter(filter)`: parses a filter into a predicate over rendered SCIM resources; an absent filter matches
 /// everything.
-pub fn parse_scim_filter(
-    filter: Option<&str>,
-) -> IamResult<Box<dyn Fn(&Value) -> bool + Send + Sync>> {
+pub fn parse_scim_filter(filter: Option<&str>) -> IamResult<ScimPredicate> {
     match filter.filter(|filter| !filter.is_empty()) {
         None => Ok(Box::new(|_| true)),
         Some(filter) => {
