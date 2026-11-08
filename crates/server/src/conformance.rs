@@ -74,6 +74,13 @@ pub fn error_shape(error: &IamError) -> Value {
     Value::Object(shape)
 }
 
+/// What an in-process `iam.sessionTokens.verify` failure answers: TypeScript throws `SessionTokenError` (a plain
+/// `Error` subclass, not an `IamError`) for every failure, so it is INTERNAL_ERROR 500 rather than the HTTP layer's
+/// INVALID_SESSION_TOKEN 401.
+fn session_token_thrown(error: IamError) -> IamError {
+    crate::js::ThrownError::new("SessionTokenError", error.message).into_iam()
+}
+
 /// `decodeValue(value)`: the tagged encoding of FORMAT.md back to plain JSON (`$undefined` becomes absent where it is
 /// an object member and null elsewhere; dates become their ISO text; numbers their value).
 pub fn decode_value(value: &Value) -> Option<Value> {
@@ -280,10 +287,14 @@ pub async fn call_member(
                         .and_then(|options| options.get("audience"))
                         .and_then(Value::as_str)
                         .map(str::to_owned);
+                    // `iam.sessionTokens.verify` throws `SessionTokenError`, a plain `Error` subclass and not an
+                    // `IamError`, so the conformance server answers every failure as INTERNAL_ERROR 500 (the HTTP
+                    // layer's INVALID_SESSION_TOKEN 401 mapping does not apply to an in-process call).
                     Some(
                         tokens
                             .verify(&token, audience.as_deref())
                             .await
+                            .map_err(session_token_thrown)
                             .and_then(|claims| {
                                 serde_json::to_value(claims)
                                     .map_err(|_| crate::js::internal_error())
@@ -1618,6 +1629,17 @@ mod tests {
         );
         assert!(parse_args(&["--port".into(), "1".into()]).is_err());
         assert_eq!(parse_args(&["--help".into()]).unwrap(), None);
+    }
+
+    #[test]
+    fn session_token_verify_failures_are_thrown() {
+        let error = session_token_thrown(IamError::from(
+            crate::session_tokens::SessionTokenError::new("revoked", None),
+        ));
+        let shape = error_shape(&error);
+        assert_eq!(shape["code"], json!("INTERNAL_ERROR"));
+        assert_eq!(shape["status"], json!(500));
+        assert_eq!(shape["message"], json!("Internal server error"));
     }
 
     #[test]
