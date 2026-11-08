@@ -471,17 +471,41 @@ func TestVaultSealsWithTheDeploymentSecretAndOpensWithPreviousOnes(t *testing.T)
 func TestVaultCustomerManagedKeysEncryptThroughKms(t *testing.T) {
 	k := newKernel(t, nil)
 	k.tenantTree()
-	secret := vaultSecretRecord(k, "cmk/app", "kmsKeyId", "key-1")
+	// A customer-managed AES key, stored as keys.create stores one.
+	now := float64(k.server.Now())
+	key := core.NewObject("id", ID(), "tenantId", "org", "keySpec", "aes-256-gcm", "keyUsage", "encrypt", "state", "enabled",
+		"currentVersion", 1.0, "tags", core.NewObject(), "createdAt", now, "createdBy", "owner", "updatedAt", now)
+	if err := k.tx(func(ctx context.Context, tx core.IamStore) error {
+		if _, err := tx.Insert(ctx, "kmsKeys", key); err != nil {
+			return err
+		}
+		_, err := AddKeyVersion(ctx, k.server, tx, key, 1, "create")
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	keyID := jsString(key.Get("id"))
+	secret := vaultSecretRecord(k, "cmk/app", "kmsKeyId", keyID)
+	var added *core.Object
 	err := k.tx(func(ctx context.Context, tx core.IamStore) error {
-		_, err := AddVersion(ctx, k.server, tx, secret, "value", "put", "owner", nil)
+		var err error
+		added, err = AddVersion(ctx, k.server, tx, secret, "value", "put", "owner", nil)
 		return err
 	})
-	if known, ok := asIamError(err); ok && known.Code == "NOT_IMPLEMENTED" {
-		t.Skip("kms.ts kmsEncryptFor is not ported yet")
-	}
 	if err != nil {
 		t.Fatal(err)
 	}
+	version, _ := added.Get("version").(*core.Object)
+	if version == nil || version.Get("kmsKeyId") != keyID || !strings.HasPrefix(jsString(version.Get("sealed")), "kms1."+keyID+".1.b.") {
+		t.Fatalf("added = %s", core.MustStringify(added))
+	}
+	// A missing key refuses the write.
+	missing := vaultSecretRecord(k, "cmk/missing", "kmsKeyId", "key-1")
+	err = k.tx(func(ctx context.Context, tx core.IamStore) error {
+		_, err := AddVersion(ctx, k.server, tx, missing, "value", "put", "owner", nil)
+		return err
+	})
+	expectError(t, err, "NOT_FOUND", "Key not found")
 }
 
 func TestVaultTimesOutSlowCalls(t *testing.T) {
