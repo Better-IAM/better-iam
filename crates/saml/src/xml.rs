@@ -760,9 +760,7 @@ impl<'a> Parser<'a> {
                 if target.is_empty() {
                     return Err(error("Invalid processing instruction"));
                 }
-                let data = body[target_end..]
-                    .trim_start_matches(is_js_space)
-                    .to_owned();
+                let data = body[target_end..].trim_matches(is_js_space).to_owned();
                 self.position += end + 2;
                 let parent = self.current();
                 self.document.push(Kind::Pi { target, data }, Some(parent));
