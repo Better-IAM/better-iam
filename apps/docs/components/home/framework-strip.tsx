@@ -4,12 +4,14 @@ import { RiArrowRightLine } from 'react-icons/ri';
 import {
   SiExpress,
   SiFastify,
+  SiGo,
   SiHono,
   SiNestjs,
   SiNextdotjs,
   SiNuxt,
   SiReact,
   SiReactrouter,
+  SiRust,
   SiSvelte,
   SiVuedotjs,
 } from 'react-icons/si';
@@ -29,6 +31,8 @@ const frameworks: [name: string, logo: IconType, href: string][] = [
   ['Express', SiExpress, '/docs/integrations/express'],
   ['Hono', SiHono, '/docs/integrations/hono'],
   ['Fastify', SiFastify, '/docs/integrations/fastify'],
+  ['Rust', SiRust, '/docs/integrations/rust'],
+  ['Go', SiGo, '/docs/integrations/go'],
 ];
 
 const corners = [
@@ -38,7 +42,7 @@ const corners = [
   'right-3 bottom-3 translate-x-1 translate-y-1 border-r border-b',
 ];
 
-/** The frameworks Better IAM ships integrations for, as their own logos (Simple Icons) in one hairline grid. */
+/** The frameworks and languages Better IAM ships integrations for, as their own logos (Simple Icons) in one hairline grid. */
 export function FrameworkStrip() {
   return (
     <Band aria-label="Framework integrations">
@@ -57,7 +61,7 @@ export function FrameworkStrip() {
           All integrations
         </TextLink>
       </div>
-      <StaggerList className="grid grid-cols-2 gap-px bg-separator-border sm:grid-cols-5 xl:grid-cols-10">
+      <StaggerList className="grid grid-cols-2 gap-px bg-separator-border sm:grid-cols-4 lg:grid-cols-6 xl:grid-cols-12">
         {frameworks.map(([name, Logo, href]) => (
           <li key={name} className="bg-background-full">
             <StaggerChild>

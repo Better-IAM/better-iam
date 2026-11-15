@@ -1,8 +1,8 @@
 # Better IAM
 
-An embeddable TypeScript authentication, identity provisioning, and access-management platform. Better IAM runs in your application with your database. It is independent of Better Auth and uses maintained protocol and cryptographic libraries.
+An embeddable authentication, identity provisioning, and access-management platform for TypeScript, with native Rust and Go servers. Better IAM runs in your application with your database. It is independent of Better Auth and uses maintained protocol and cryptographic libraries.
 
-**Version 0.2.0 · Node.js 22.12+ · PostgreSQL, SQLite, and libSQL/Turso · Apache-2.0**
+**Version 0.3.1 · Node.js 22.12+ · Rust 1.88+ (beta) · Go 1.24+ (beta) · PostgreSQL, SQLite, and libSQL/Turso · Apache-2.0**
 
 ```sh
 npm install better-iam
@@ -20,7 +20,7 @@ npm install better-iam
 - OAuth/OIDC sign-in, Google/GitHub, a persistent OAuth/OIDC provider with device authorization, SAML SSO, and SCIM Users/Groups.
 - A tamper-evident audit log (per-tenant hash chain with verification and export), events on every audit record, signed webhooks per tenant, in-process subscribers, observability spans with built-in Prometheus metrics and health endpoints, stateless service assertions, a typed browser client with React hooks, Next.js helpers, Vue composables, and a Nuxt module, SQL adapters, CLI, plugins, a reference tenant-scoped Projects plugin, filterable audit records, and an encrypted transactional delivery outbox.
 
-The workspace contains separately publishable `@better-iam/*` packages. The umbrella `better-iam` package installs them together and exposes subpath imports. Protocol packages are loaded only when their subpaths are imported. CI (`.github/workflows/ci.yml`) publishes to npm when a new version lands on `main` and every check passes.
+The workspace contains separately publishable `@better-iam/*` packages. The umbrella `better-iam` package installs them together and exposes subpath imports. Protocol packages are loaded only when their subpaths are imported. CI (`.github/workflows/ci.yml`) publishes to npm, crates.io, and the Go module proxy when a new version lands on `main` and every check passes.
 
 ## Develop locally
 
@@ -221,6 +221,17 @@ Client-side permission results are advisory. Enforce authorization on the server
 | `better-iam/oauth`            | OAuth sign-in and OAuth/OIDC provider                |
 | `better-iam/saml`             | SAML service provider                                |
 | `better-iam/scim`             | SCIM provisioning server                             |
+
+## Rust and Go
+
+The server is also implemented natively in Rust (`crates/`) and Go (`go/`), in beta. All three implementations serve the same HTTP API, read and write the same database schema, and produce the same audit chain, so a deployment can mix TypeScript, Rust, and Go servers on one database.
+
+| Language | Package                                                 | Framework adapters       | Docs                                                  |
+| -------- | ------------------------------------------------------- | ------------------------ | ----------------------------------------------------- |
+| Rust     | `better-iam` crate (umbrella) and `better-iam-*` crates | axum, actix-web, tower   | [Rust](https://better-iam.com/docs/integrations/rust) |
+| Go       | `github.com/Better-IAM/better-iam/go`                   | net/http, chi, gin, echo | [Go](https://better-iam.com/docs/integrations/go)     |
+
+Each port also has a typed HTTP client and a `better-iam` CLI. Parity is checked in CI: both servers replay all 1,396 replayable traces recorded from the TypeScript test suite (`spec/conformance`), and `scripts/conformance/fleet/servers.mjs` runs the three servers against one SQLite database. The crates are not on crates.io and the Go module has no release tag yet, so depend on a checkout until the first release. [spec/BUILDOUT.md](spec/BUILDOUT.md) describes the design.
 
 ## Operational defaults
 

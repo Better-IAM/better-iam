@@ -9,7 +9,9 @@ import { Blocks, Building2, Fingerprint, KeyRound, LockKeyhole, Network, ScrollT
 Better IAM gives an application the identity layer that is usually bought as a hosted service: multi-tenant
 organizations, sign-in with every modern method, fine-grained authorization, governance, and enterprise
 federation. It is a library, not a SaaS. It runs in your process, stores its data in your PostgreSQL,
-SQLite, or libSQL database, and exposes a typed API to your server and browser code.
+SQLite, or libSQL database, and exposes a typed API to your server and browser code. The same server also runs
+natively in [Rust](/docs/integrations/rust) and [Go](/docs/integrations/go) (beta), with the same HTTP API and the
+same database, so services written in all three languages can share one deployment.
 
 You create one instance with `betterIam()`, giving it a database, a deployment secret, and the URL it is served
 from, and import that instance wherever your server code needs identity or authorization:
@@ -86,7 +88,7 @@ decisions, governance, and federation, all behind a single typed API.
   </Feature>
   <Feature icon={<Blocks />} title="Every framework" href="/docs/integrations">
     A typed client plus Next.js, React, Vue, Nuxt, SvelteKit, React Router, NestJS, Express, Hono, and
-    Fastify integrations.
+    Fastify integrations, and native Rust and Go servers.
   </Feature>
 </FeatureGrid>
 
@@ -133,7 +135,7 @@ Better IAM is created and maintained by Sean Filimon. Every package is open sour
 | Authentication | Sign-in methods, sessions, MFA, passkeys, API keys, tokens, and per-tenant sign-in policies | [Authentication](/docs/authentication) |
 | Authorization | Roles, policies, conditions, relationships, reverse queries, and data filtering | [Authorization](/docs/authorization) |
 | Databases | The PostgreSQL, SQLite, and libSQL adapters, migrations, and the schema | [Databases](/docs/databases) |
-| Integrations | The typed client and every framework integration | [Integrations](/docs/integrations) |
+| Integrations | The typed client, every framework integration, and the Rust and Go servers | [Integrations](/docs/integrations) |
 | Features | Optional modules you turn on with options: privileged access, governance, secrets and keys, AI agents, billing, and more | [Features](/docs/features) |
 | Federation | OAuth/OIDC, SAML, SCIM, Shared Signals, verifiable credentials, and LDAP | [Federation](/docs/federation) |
 | Guides | Task-oriented walkthroughs, migration from other providers, upgrade notes, and a recipes cookbook | [Guides](/docs/guides) |

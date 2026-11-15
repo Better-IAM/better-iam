@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+Native Rust and Go servers (beta), built from the same specification as the TypeScript packages.
+
+- Rust crates (`crates/`, umbrella crate `better-iam` with features per package) and a Go module (`github.com/Better-IAM/better-iam/go`) port the server, every API group, the SQLite, PostgreSQL and libSQL adapters, OAuth/OIDC, SAML, SCIM, LDAP, Projects, MCP, A2A, the typed client, the CLI, and framework middleware (axum, actix-web and tower; net/http, chi, gin and echo).
+- All three implementations serve the same HTTP API on the same database schema and audit chain, so TypeScript, Rust and Go servers can run against one database. `scripts/conformance/fleet/servers.mjs` checks this with all three servers on one SQLite file.
+- `spec/` holds the shared contract (OpenAPI, migrations, test vectors), and `spec/conformance` holds traces recorded from the TypeScript test suite. Both ports replay all 1,396 replayable traces. CI runs the replay and the mixed-fleet check, and versions stay in lockstep across npm, crates.io and the Go module.
+- New docs: [Rust](https://better-iam.com/docs/integrations/rust) and [Go](https://better-iam.com/docs/integrations/go) under Integrations.
+
 Closes gaps the SCIM, Okta SAML and migration guides had to work around.
 
 - SCIM + SSO: SAML and OAuth/OIDC login connections take `trustScimProvisioned` (`true` or a list of SCIM connection IDs). A first federated sign-in whose verified email belongs to an account a trusted, unrevoked SCIM connection of the tenant provisioned links to it (marking the email verified, audited as `identity:link-provider` with `via: 'scim'`) instead of failing with `ACCOUNT_LINK_REQUIRED`, so SCIM-provisioned people need no manual link, even with `allowedMethods: ['federated']`. Owners, root administrators, disabled accounts, accounts SCIM did not create and accounts already linked through that connection are never linked this way. On tenant-managed SAML connections, turning it on is a trust change (`assertTrustChange`), and connection summaries now show `trustScimProvisioned` and `providerId`.

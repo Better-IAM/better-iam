@@ -14,8 +14,8 @@ sources:
   - apps/docs/content/docs/reference/faq.mdx
 ---
 
-Better IAM is an identity and access management platform delivered as TypeScript packages. It runs inside your
-Node.js application, stores its records in your own PostgreSQL, SQLite, or libSQL database, and covers sign-in,
+Better IAM is an identity and access management platform delivered as TypeScript packages, with native Rust and Go
+servers (beta) that share its API and database. It runs inside your application, stores its records in your own PostgreSQL, SQLite, or libSQL database, and covers sign-in,
 authorization, governance, and enterprise federation behind one typed API. This page compares that design with the
 four kinds of tools teams usually reach for instead:
 
@@ -35,7 +35,7 @@ change quickly; check their current documentation for their feature lists.
 | Where identity data lives | Your database | The vendor's infrastructure | Your database | Mostly authorization data (policies, relationship tuples, or synced attributes); sign-in lives elsewhere | A database Keycloak manages, separate from your application's |
 | Main job | Sign-in, authorization, governance, federation | Sign-in, user management, enterprise SSO | Sign-in and sessions | Authorization decisions | Sign-in, SSO, identity brokering |
 | How your code checks access | A function call: `iam.require(...)` reads current state from your database | Token claims or calls to the vendor's API, plus your own code | Your own code | A call to the decision service with the facts it needs | Token claims, or Keycloak's authorization services over HTTP |
-| Language and runtime | TypeScript on Node.js 22.12 or newer | Any, through SDKs and standard protocols | The library's language | Any, through SDKs and APIs | Any, through OIDC and SAML |
+| Language and runtime | TypeScript on Node.js 22.12 or newer, plus native Rust and Go servers (beta) | Any, through SDKs and standard protocols | The library's language | Any, through SDKs and APIs | Any, through OIDC and SAML |
 | Who runs it | You | The vendor | You | You or the vendor | You |
 
 ## What Better IAM includes
@@ -120,7 +120,7 @@ Better IAM combines both halves in one process:
   working on the very next request. Batch with `authorizeMany` (up to 50 checks per call) and list with
   `listAccessible` to keep pages fast. See [How decisions work](/docs/authorization/how-decisions-work).
 - **Scope.** A dedicated authorization service is built to be the single decision point for many services written in
-  many languages. Better IAM's engine runs in a Node.js process; other services rely on the decisions, signed
+  many languages. Better IAM's engine runs inside your application's process (Node.js, Rust, or Go); other services rely on the decisions, signed
   assertions, or tokens it issues.
 
 ## Compared with Keycloak
@@ -130,19 +130,19 @@ clients, and identity providers in its admin console or REST API, and your appli
 OIDC or SAML. Better IAM covers similar ground (tenants comparable to realms, SSO, SCIM, an OAuth/OIDC provider, an
 LDAP gateway) with a different shape:
 
-- **Embedded, not standalone.** Better IAM is a dependency of your Node.js application, configured in TypeScript,
-  migrated with `better-iam migrate`, and called with typed functions. There is no separate server to deploy, secure,
+- **Embedded, not standalone.** Better IAM is a dependency of your Node.js, Rust, or Go application, configured in
+  code, migrated with `better-iam migrate`, and called with typed functions. There is no separate server to deploy, secure,
   or theme.
 - **Application authorization.** Policies, relationships, and resource attributes from your own records are first
   class, so the same engine that signs people in also enforces `documents:write` on one document in your routes.
 - **Language reach.** Keycloak serves applications in any language through standard protocols. Better IAM's server
-  APIs are TypeScript; applications in other languages integrate through its OAuth/OIDC provider, SAML, SCIM, or the
+  runs natively in TypeScript, Rust, and Go with one API and database; applications in other languages integrate through its OAuth/OIDC provider, SAML, SCIM, or the
   signed session JWTs it publishes at `/api/iam/.well-known/jwks.json` when session JWTs are enabled.
 
 ## When to choose something else
 
 Better IAM is a good fit when access control, multi-tenancy, and auditability are part of your product and your
-backend runs on Node.js. Choose something else when:
+backend runs on Node.js, Rust, or Go. Choose something else when:
 
 - **You do not want to operate identity.** A hosted identity provider runs the service, the database, and the
   sign-in pages for you, and the vendor carries the operational and compliance work for that service.
@@ -150,7 +150,7 @@ backend runs on Node.js. Choose something else when:
   build your screens on the client and framework helpers.
 - **Your application only signs individuals in.** With no organizations, custom roles, or enterprise customers, an
   authentication library such as Better Auth or Auth.js is smaller and simpler.
-- **Your backend is not Node.js, or many services in different languages need one decision point.** Keycloak, a hosted
+- **Your backend is not Node.js, Rust, or Go, or many services in different languages need one decision point.** Keycloak, a hosted
   provider, or an authorization service such as OpenFGA, SpiceDB, or Cerbos fits a polyglot backend better.
 - **Authorization is your only problem and the relationship graph is very large.** A Zanzibar-style service is built
   for that single job at that scale.
